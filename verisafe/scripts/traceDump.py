@@ -180,7 +180,7 @@ def extract_human_response(msgs: List[BaseMessage], nxt_index: int) -> str:
             else:
                 content = first_elem
         case str():
-            content = answer_msg.content
+            content = 55
         case _:
             raise RuntimeError(f"Unexpected type {type(answer_msg.content)}")
     return content
