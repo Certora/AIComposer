@@ -19,7 +19,7 @@ def upload_file_if_needed(client: anthropic.Anthropic, file_path: str, uploaded_
         print(f"Uploaded {basename} with ID: {uploaded_file.id}")
         return UploadedFile(file_id=uploaded_file.id, basename=basename, path=file_path)
     else:
-        print(f"Found existing {basename} with ID: {uploaded_files[basename]} (canonical name {crc_basename})")
+        print(f"Found existing {basename} with ID: {uploaded_files[crc_basename]} (canonical name {crc_basename})")
         return UploadedFile(file_id=uploaded_files[crc_basename], basename=basename, path=file_path)
 
 def upload_input(i: CommandLineArgs) -> InputData:
