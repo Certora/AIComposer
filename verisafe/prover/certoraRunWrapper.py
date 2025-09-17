@@ -14,7 +14,7 @@
 #      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
-p = sys.path.pop(0)
+sys.path.pop(0)
 import pickle
 import os
 
