@@ -1,6 +1,6 @@
 from verisafe.core.state import CryptoStateGen
 from graphcore.graph import BoundLLM
-from verisafe.prover.types import RuleResult
+from verisafe.prover.ptypes import RuleResult
 from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
 from graphcore.utils import cached_invoke
 from verisafe.templates.loader import load_jinja_template

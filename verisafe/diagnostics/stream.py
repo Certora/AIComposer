@@ -1,6 +1,6 @@
 from typing import Literal, Generic, TypeVar, TypedDict, List, Dict, Optional, Annotated, Union
 from pydantic import Discriminator
-from verisafe.prover.types import StatusCodes
+from verisafe.prover.ptypes import StatusCodes
 from verisafe.rag.types import ManualRef
 
 

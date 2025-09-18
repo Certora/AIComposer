@@ -11,7 +11,7 @@ from verisafe.diagnostics.stream import ProgressUpdate, RuleAuditResult, AuditUp
 from certoraRun import CertoraRunResult
 from dataclasses import dataclass
 from verisafe.prover.results import read_and_format_run_result
-from verisafe.prover.types import RuleResult
+from verisafe.prover.ptypes import RuleResult
 from verisafe.prover.analysis import analyze_cex
 
 

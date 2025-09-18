@@ -3,7 +3,7 @@ from typing import List, Optional, Dict
 from pathlib import Path
 import re
 import json
-from verisafe.prover.types import RuleResult, StatusCodes
+from verisafe.prover.ptypes import RuleResult, StatusCodes
 
 class RuleNodeModel(BaseModel):
     name: str = Field(description="The name of the node")

@@ -16,7 +16,7 @@ environment under `ANTHROPIC_API_KEY`.
 You will need to build the local RAG database used for CVL manual searches by the LLM.
 Instructions are as follows:
 
-1. cd into `scripts/CryptoSafe`
+1. cd into `verisafe/scripts/`
 2. run `docker compose create && docker compose start`. This will initalize a local postgres database. NB: no attempt has been made
    to ensure this database is secure; caveat emptor
 3. Run the base script `./gen_docs.sh`; if it completes without error, you should have `cvl_manual.html` in your directory
@@ -24,7 +24,7 @@ Instructions are as follows:
    on your filesystem
 5. Run `source somepath/bin/activate`.
 6. Run `pip3 install -r ./rag_build_requirements.txt`
-7. Run `python3 ./ragbuild3.py cvl_manual.html`.
+7. Run `python3 ./ragbuild.py cvl_manual.html`.
 8. Run the command `deactivate`
 9. (Optional) cleanup `somepath`
 
