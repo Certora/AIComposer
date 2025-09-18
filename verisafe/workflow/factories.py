@@ -41,7 +41,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
     )
 
 def get_cryptostate_builder(llm: BaseChatModel) -> Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM]:
-    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, put_file]
+    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, put_file, foundry_test]
 
     workflow_builder: Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
         state_class=CryptoStateGen,

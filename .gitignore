@@ -1,1 +1,10 @@
 *.pyc
+outputs/
+inputs/
+experiments/
+.certora_internal/
+cryptosafe.db
+cryptosafe.db-shm
+cryptosafe.db-wal
+cvl_manual.html
+launch.json

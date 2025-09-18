@@ -15,6 +15,7 @@ def setup_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     parser.add_argument("spec_file", help="Specification file for the smart contract")
     parser.add_argument("interface_file", help="The interface file for the smart contract")
     parser.add_argument("system_doc", help="A text document describing the system")
+    parser.add_argument("test_file", help="A foundry test")
     parser.add_argument("--model", default="claude-sonnet-4-20250514",
                         help="Model to use for code generation (default: claude-sonnet-4-20250514)")
     parser.add_argument("--tokens", type=int, default=10_000,

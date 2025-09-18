@@ -19,7 +19,7 @@ def upload_file_if_needed(client: anthropic.Anthropic, file_path: str, uploaded_
         print(f"Uploaded {basename} with ID: {uploaded_file.id}")
         return UploadedFile(file_id=uploaded_file.id, basename=basename, path=file_path)
     else:
-        print(f"Found existing {basename} with ID: {uploaded_files[basename]} (canonical name {crc_basename})")
+        print(f"Found existing {basename} with ID: {uploaded_files[crc_basename]} (canonical name {crc_basename})")
         return UploadedFile(file_id=uploaded_files[crc_basename], basename=basename, path=file_path)
 
 def upload_input(i: CommandLineArgs) -> InputData:
@@ -32,9 +32,11 @@ def upload_input(i: CommandLineArgs) -> InputData:
     interface_file = upload_file_if_needed(client, i.interface_file, d)
     spec_file = upload_file_if_needed(client, i.spec_file, d)
     system_doc_file = upload_file_if_needed(client, i.system_doc, d)
+    test_file = upload_file_if_needed(client, i.test_file, d)
 
     return InputData(
         spec=spec_file,
         system_doc=system_doc_file,
         intf=interface_file,
+        test_file=test_file,
     )

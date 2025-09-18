@@ -4,5 +4,6 @@ from verisafe.tools.proposal import propose_spec_change
 from verisafe.tools.question import human_in_the_loop
 from verisafe.tools.search import cvl_manual_search
 from verisafe.tools.result import code_result
+from verisafe.tools.foundry import foundry_test
 
-__all__ = ["certora_prover", "put_file", "propose_spec_change","human_in_the_loop", "cvl_manual_search", "code_result"]
+__all__ = ["certora_prover", "put_file", "propose_spec_change","human_in_the_loop", "cvl_manual_search", "code_result", "foundry_test"]

@@ -59,6 +59,7 @@ class CommandLineArgs(WorkflowOptions, ModelOptions):
     spec_file: str
     interface_file: str
     system_doc: str
+    test_file: str
     debug_fs: str
 
     debug: bool
@@ -71,3 +72,4 @@ class InputData:
     spec: UploadedFile
     system_doc: UploadedFile
     intf: UploadedFile
+    test_file: UploadedFile

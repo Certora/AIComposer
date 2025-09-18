@@ -29,6 +29,7 @@ def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> s
         spec_filename=input_data.spec.basename,
         interface_filename=input_data.intf.basename,
         system_doc_filename=input_data.system_doc.basename,
+        test_file_filename=input_data.test_file.basename,
         debug_prompt=debug_prompt)
 
 def execute_cryptosafe_workflow(
@@ -55,11 +56,12 @@ def execute_cryptosafe_workflow(
         input.intf.to_document_dict(),
         input.spec.to_document_dict(),
         input.system_doc.to_document_dict(),
+        input.test_file.to_document_dict(),
         {
             "type": "text",
             "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
         }
-    ], virtual_fs={"rules.spec": input.spec.read()})
+    ], virtual_fs={"rules.spec": input.spec.read(), "test.t.sol": input.test_file.read()})
 
     audit_db: Optional[AuditDB] = None
     if workflow_options.audit_db is not None:

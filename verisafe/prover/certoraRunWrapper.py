@@ -14,7 +14,7 @@
 #      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
-import pathlib
+p = sys.path.pop(0)
 import pickle
 import os
 
@@ -33,7 +33,6 @@ All other arguments past the first are passed through to `run_certora`.
 
 os.putenv("DONT_USE_VERIFICATION_RESULTS_FOR_EXITCODE", "1")
 
-curr = pathlib.Path(__file__)
 
 certora_path = os.environ.get("CERTORA")
 if certora_path is None:

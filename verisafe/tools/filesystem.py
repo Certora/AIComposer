@@ -26,13 +26,13 @@ def put_file(
     files: Dict[str, str],
     tool_call_id: Annotated[str, InjectedToolCallId]
 ) -> Command:
-    if "rules.spec" in files:
+    if "rules.spec" in files or "test.t.sol" in files:
         return Command(
             update={
                 "messages": [
                     ToolMessage(
                         tool_call_id = tool_call_id,
-                        content="You may not mutate the rules.spec file via this tool; " \
+                        content="You may not mutate the rules.spec or test.t.sol files via this tool; " \
                                 "all mutations must go through the propose_spec_change tool"
                     )
                 ]
