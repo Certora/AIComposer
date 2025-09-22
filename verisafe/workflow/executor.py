@@ -39,9 +39,14 @@ def execute_cryptosafe_workflow(
     """Execute the CryptoSafe workflow with interrupt handling."""
     checkpointer = get_checkpointer()
 
-    (workflow_builder, bound_llm) = get_cryptostate_builder(llm)
+    (workflow_builder, bound_llm) = get_cryptostate_builder(
+        llm,
+        workflow_options.summarization_threshold
+    )
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer)
+    # TODO -- only used for debugging, requires grandalf
+    workflow_exec.get_graph().print_ascii()
 
     thread_id = workflow_options.thread_id
 
