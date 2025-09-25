@@ -5,7 +5,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from verisafe.workflow.types import Input
 from verisafe.core.context import CryptoContext
 from verisafe.core.state import CryptoStateGen
-from graphcore.graph import build_workflow, BoundLLM, SummarizationConfig
+from graphcore.graph import build_workflow, BoundLLM
+from graphcore.summary import DefaultSummarizer
 from langgraph.graph import StateGraph
 from verisafe.input.types import ModelOptions
 from langchain_anthropic import ChatAnthropic
@@ -42,19 +43,27 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
 
 def get_cryptostate_builder(llm: BaseChatModel, summarization_threshold: int = None) -> Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM]:
     crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, put_file]
-    summarization_config=SummarizationConfig(max_messages=summarization_threshold
-        ) if summarization_threshold is not None else None
+
+    system_prompt = get_system_prompt()
+    initial_prompt = get_initial_prompt()
+
+    if summarization_threshold is not None:
+        CryptoContext.summarizer = DefaultSummarizer(
+            llm,
+            initial_prompt,
+            system_prompt,
+            max_messages=summarization_threshold
+        )
 
     workflow_builder: Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
         state_class=CryptoStateGen,
         input_type=Input,
         tools_list=crypto_tools,
-        sys_prompt=get_system_prompt(),
-        initial_prompt=get_initial_prompt(),
+        sys_prompt=system_prompt,
+        initial_prompt=initial_prompt,
         output_key="generated_code",
         unbound_llm=llm,
         context_schema=CryptoContext,
-        summarization_config=summarization_config
     )
 
     return workflow_builder

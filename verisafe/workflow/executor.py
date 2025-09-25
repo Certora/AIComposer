@@ -1,5 +1,7 @@
-from typing import Optional, Literal, cast
 import uuid
+import sqlite3
+
+from typing import Optional, Literal, cast
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -18,7 +20,6 @@ from verisafe.diagnostics.stream import AllUpdates
 from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
-import sqlite3
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
@@ -45,8 +46,15 @@ def execute_cryptosafe_workflow(
     )
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer)
-    # TODO -- only used for debugging, requires grandalf
-    workflow_exec.get_graph().print_ascii()
+
+    try:
+        import grandalf
+        import logging
+        logger = logging.getLogger(__name__)
+        layout = workflow_exec.get_graph().draw_ascii()
+        logger.debug(f"\n{layout}")
+    except ModuleNotFoundError:
+        pass
 
     thread_id = workflow_options.thread_id
 
