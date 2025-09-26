@@ -1,3 +1,4 @@
+import logging
 import uuid
 import sqlite3
 
@@ -38,6 +39,8 @@ def execute_cryptosafe_workflow(
     workflow_options: WorkflowOptions
 ) -> int:
     """Execute the CryptoSafe workflow with interrupt handling."""
+    logger = logging.getLogger(__name__)
+
     checkpointer = get_checkpointer()
 
     (workflow_builder, bound_llm) = get_cryptostate_builder(
@@ -49,8 +52,6 @@ def execute_cryptosafe_workflow(
 
     try:
         import grandalf
-        import logging
-        logger = logging.getLogger(__name__)
         layout = workflow_exec.get_graph().draw_ascii()
         logger.debug(f"\n{layout}")
     except ModuleNotFoundError:
@@ -61,6 +62,7 @@ def execute_cryptosafe_workflow(
     if thread_id is None:
         thread_id = "crypto_session_" + str(uuid.uuid1())
         print(f"Selected thread id: {thread_id}")
+        logger.info(f"Selected thread id: {thread_id}")
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     config["recursion_limit"] = workflow_options.recursion_limit
 
@@ -117,6 +119,7 @@ def execute_cryptosafe_workflow(
             match event_ty:
                 case "checkpoints":
                     print("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
+                    logger.info("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
                 case "updates":
                     if "__interrupt__" in payload:
                         if "configurable" in config and "checkpoint_id" in config["configurable"]:
