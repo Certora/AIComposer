@@ -1,14 +1,20 @@
-from langgraph.checkpoint.sqlite import SqliteSaver
+
 import sqlite3
-from typing import Tuple, Any
+from typing import Any
+
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_anthropic import ChatAnthropic
+from langgraph.graph import StateGraph
+
+from graphcore.graph import build_workflow, BoundLLM
+from graphcore.tools.vfs import vfs_tools, Materializer, VFSToolConfig
+
 from verisafe.workflow.types import Input
 from verisafe.core.context import CryptoContext
 from verisafe.core.state import CryptoStateGen
-from graphcore.graph import build_workflow, BoundLLM
-from langgraph.graph import StateGraph
+
 from verisafe.input.types import ModelOptions
-from langchain_anthropic import ChatAnthropic
 
 from verisafe.tools import *
 from verisafe.templates.loader import load_jinja_template
@@ -26,7 +32,6 @@ def get_initial_prompt() -> str:
     """Load and render the initial prompt from Jinja template"""
     return load_jinja_template("synthesis_prompt.j2")
 
-
 def create_llm(args: ModelOptions) -> BaseChatModel:
     """Create and configure the LLM."""
     return ChatAnthropic(
@@ -40,10 +45,24 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         betas=["files-api-2025-04-14"],
     )
 
-def get_cryptostate_builder(llm: BaseChatModel) -> Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM]:
-    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, put_file]
+def get_cryptostate_builder(llm: BaseChatModel) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, Materializer[CryptoStateGen]]:
+    (vfs_tooling, mat) = vfs_tools(VFSToolConfig(
+        immutable=False,
+        forbidden_write="^rules.spec$",
+        put_doc_extra= \
+"""
+By convention, every Solidity placed into the virtual filesystem should contain exactly one contract/interface/library defitions.
+Further, the name of the contract/interface/library defined in that file should name the name of the solidity source file sans extension.
+For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`"
 
-    workflow_builder: Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
+IMPORTANT: You may not use this tool to update the specification, nor should you attempt to
+add new specification files.
+"""
+    ), CryptoStateGen)
+
+    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
+
+    workflow_builder: tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
         state_class=CryptoStateGen,
         input_type=Input,
         tools_list=crypto_tools,
@@ -54,4 +73,4 @@ def get_cryptostate_builder(llm: BaseChatModel) -> Tuple[StateGraph[CryptoStateG
         context_schema=CryptoContext
     )
 
-    return workflow_builder
+    return workflow_builder + (mat,)

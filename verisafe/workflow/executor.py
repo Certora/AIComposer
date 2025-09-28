@@ -39,7 +39,7 @@ def execute_cryptosafe_workflow(
     """Execute the CryptoSafe workflow with interrupt handling."""
     checkpointer = get_checkpointer()
 
-    (workflow_builder, bound_llm) = get_cryptostate_builder(llm)
+    (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(llm)
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer)
 
@@ -59,7 +59,7 @@ def execute_cryptosafe_workflow(
             "type": "text",
             "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
         }
-    ], virtual_fs={"rules.spec": input.spec.read()})
+    ], vfs={"rules.spec": input.spec.read()})
 
     audit_db: Optional[AuditDB] = None
     if workflow_options.audit_db is not None:
@@ -92,7 +92,7 @@ def execute_cryptosafe_workflow(
     )
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
-    work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts)
+    work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer)
 
     while True:
         interrupted = False

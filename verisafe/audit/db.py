@@ -22,7 +22,7 @@ class AuditDB():
                     analysis TEXT,
                     CONSTRAINT pk PRIMARY KEY (tool_id, rule_name, thread_id) ON CONFLICT REPLACE
                 );
-                        
+
                 CREATE TABLE IF NOT EXISTS manual_results(
                     tool_id TEXT NOT NULL,
                     thread_id TEXT NOT NULL,
@@ -30,9 +30,9 @@ class AuditDB():
                     text_body TEXT NOT NULL,
                     header_string TEXT NOT NULL
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS manual_result_idx ON manual_results (tool_id, thread_id);
-                              
+
                 CREATE TABLE IF NOT EXISTS file_blobs(
                     file_id VARCHAR(64) PRIMARY KEY ON CONFLICT IGNORE,
                     file_blob BLOB NOT NULL
