@@ -1,5 +1,6 @@
 import os
 import sys
+import anthropic
 
 if __name__ == "__main__":
     import pathlib
@@ -47,4 +48,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     import sys
+    # client = anthropic.Anthropic()
+    # for f in client.beta.files.list():
+    #     client.beta.files.delete(f.id)
     sys.exit(main())
