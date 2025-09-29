@@ -31,7 +31,7 @@ def code_result(
 ) -> Command:
     output = {}
     for s in source:
-        contents = state["virtual_fs"][s]
+        contents = state["vfs"][s]
         output[s] = contents
     return tool_output(
         tool_call_id=tool_call_id,
