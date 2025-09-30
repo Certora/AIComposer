@@ -104,7 +104,7 @@ def execute_cryptosafe_workflow(
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,
         keep_folder=workflow_options.prover_keep_folders
-    )
+    )   
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
     work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts)

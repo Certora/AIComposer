@@ -48,6 +48,7 @@ class WorkflowOptions(Protocol):
     thread_id: Optional[str]
     recursion_limit: int
     audit_db: Optional[str]
+    summarization_threshold: Optional[int]
 
 
 class ModelOptions(Protocol):
