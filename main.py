@@ -1,6 +1,10 @@
 import verisafe.certora as _
 
+<<<<<<< HEAD
 from verisafe.input.parsing import setup_argument_parser
+=======
+from verisafe.input.parsing import fresh_workflow_argument_parser
+>>>>>>> b02a375 (Meta iteration POC)
 from verisafe.workflow.factories import create_llm
 from verisafe.input.files import upload_input
 from verisafe.workflow.executor import execute_cryptosafe_workflow
@@ -8,7 +12,7 @@ from verisafe.diagnostics.debug import setup_logging, dump_fs
 
 def main() -> int:
     """Main entry point for the CryptoSafe tool."""
-    parser = setup_argument_parser()
+    parser = fresh_workflow_argument_parser()
     args = parser.parse_args()
 
     setup_logging(args.debug)

@@ -11,7 +11,7 @@ from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig
 from graphcore.summary import SummaryConfig
 
-from verisafe.workflow.types import Input
+from verisafe.workflow.types import Input, PromptParams
 from verisafe.core.context import CryptoContext
 from verisafe.core.state import CryptoStateGen
 from verisafe.input.types import ModelOptions
@@ -28,9 +28,9 @@ def get_system_prompt() -> str:
     """Load and render the system prompt from Jinja template"""
     return load_jinja_template("system_prompt.j2")
 
-def get_initial_prompt() -> str:
+def get_initial_prompt(prompt: PromptParams) -> str:
     """Load and render the initial prompt from Jinja template"""
-    return load_jinja_template("synthesis_prompt.j2")
+    return load_jinja_template("synthesis_prompt.j2", **prompt)
 
 
 def create_llm(args: ModelOptions) -> BaseChatModel:
@@ -54,17 +54,12 @@ class SummaryGeneration(SummaryConfig[CryptoStateGen]):
         return res
 
 
-def get_cryptostate_builder(llm: BaseChatModel, summarization_threshold: int | None, fs_layer: str | None) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
-
-    system_prompt = get_system_prompt()
-    initial_prompt = get_initial_prompt()
-    
+def get_cryptostate_builder(llm: BaseChatModel, summarization_threshold: int | None, fs_layer: str | None, prompt_params: PromptParams) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
     conf : SummaryGeneration | None = None
     if summarization_threshold is not None:
         conf = SummaryGeneration(
             max_messages=summarization_threshold
         )
-
     (vfs_tooling, mat) = vfs_tools(VFSToolConfig(
         fs_layer=fs_layer,
         immutable=False,
@@ -87,8 +82,8 @@ add new specification files.
         state_class=CryptoStateGen,
         input_type=Input,
         tools_list=crypto_tools,
-        sys_prompt=system_prompt,
-        initial_prompt=initial_prompt,
+        sys_prompt=get_system_prompt(),
+        initial_prompt=get_initial_prompt(prompt_params),
         output_key="generated_code",
         unbound_llm=llm,
         context_schema=CryptoContext,

@@ -9,6 +9,10 @@ class InputFileLike(Protocol):
     def bytes_contents(self) -> bytes:
         ...
 
+    @property
+    def string_contents(self) -> str:
+        ...
+
 
 class RuleResult(TypedDict):
     analysis: NotRequired[str]

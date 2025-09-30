@@ -14,10 +14,20 @@ intended to provide context for what the component does and the intention behind
 You also have access to the Certora Prover, which can automatically determine
 whether code satisfies the CVL specification. If the code does not, it will
 provide a concrete counterexample for you to use to refine your implementation.
+
+{% if is_resume %}
+You are starting with an existing implementation you wrote that satisfied
+some previous version of the interface, spec, and system document. However, those
+requirements have changed; details are below.
+{% endif %}
 </background>
 
 <task>
+{% if is_resume %}
+  Update your implementation to that it satisfies the (update) normative specification the component.
+{% else %}
 Write one or more Solidity files that implement the normative specification for the component.
+{%endif%}
 This task is only complete when the code you have written is type correct and compiles, AND
 satisfies all of the rules expressed in the provided specification.
 
@@ -78,9 +88,14 @@ store your work. You have tools to read, modify, and query this VFS.
      vacuously true.</advice>
   <reminder>The specification file provided to you has already been put onto the VFS, and may not be modified or updated
   except via the designated "propose_spec_change" tool.</reminder>
+  {% if is_update %}
+  <reminder>The VFS contains the implementation you produced according to some older version of the specification/interface/system document.
+    You should use the VFS tools to query their contents to understand your work</reminder>
+  {% else %}
   <reminder>Aside from the spec file mentioned above, the VFS starts empty, the interface file has NOT been uploaded yet.
     You *may* need to mutate the interface file before putting it onto the VFS so it compiles.
   </reminder>
+  {% endif %}
   <advice>When the Certora Prover encounters a timeout, it is likely because something about the way the code is written
   make it difficult to prove automatically. This is NOT necessarily a problem with the Certora Prover; instead, consider why the prover maybe timed
   out on your code, and what could be done to fix that; e.g., refactoring, summarization, simplification, etc.</advice>

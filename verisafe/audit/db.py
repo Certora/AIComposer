@@ -1,9 +1,11 @@
 import sqlite3
-from typing import Optional, Iterable, Tuple, cast
+from typing import Optional, Iterable, Tuple, cast, Sequence, Iterator
 from typing_extensions import Iterable
 import hashlib
+import pathlib
 import gzip
 from dataclasses import dataclass
+from functools import cached_property
 
 from verisafe.rag.types import ManualRef
 from verisafe.audit.types import ManualResult, RuleResult, RunInput, InputFileLike, InputFile
@@ -51,9 +53,140 @@ _setup_script ="""
     );
 
     CREATE INDEX IF NOT EXISTS vfs_thread_idx on vfs_result(thread_id);
+
+    CREATE TABLE IF NOT EXISTS resume_artifact(
+        thread_id TEXT NOT NULL PRIMARY KEY ON CONFLICT REPLACE REFERENCES run_info(thread_id),
+        interface_path TEXT NOT NULL,
+        commentary TEXT NOT NULL,
+        CONSTRAINT thread_interface_fk FOREIGN KEY (thread_id, interface_path) REFERENCES vfs_result(thread_id, path)
+    );
 """
 
+_resume_q = """
+SELECT 
+ r.commentary,
+ r.interface_path,
+ ri.system_id as system_id,
+ ri.system_name as system_name,
+ final_spec_id.file_id as spec_id,
+ intf_id.file_id as interface_id
+FROM resume_artifact r
+INNER JOIN vfs_result intf_id ON intf_id.path = r.interface_path AND intf_id.thread_id = r.thread_id
+INNER JOIN run_info ri ON ri.thread_id = r.thread_id
+INNER JOIN vfs_result final_spec_id ON r.thread_id = final_spec_id.thread_id AND final_spec_id.path = 'rules.spec'
+WHERE r.thread_id = ?
+"""
+
+_vfs_q = """
+SELECT
+   path,
+   f.file_blob
+FROM vfs_result
+INNER JOIN file_blobs f ON f.file_id = vfs_result.file_id
+WHERE thread_id = ?
+"""
+
+class VFSFile:
+    def __init__(self, path: str, file_id: str, parent: 'VFSRetriever'):
+        self.parent = parent
+        self.path = path
+        self.file_id = file_id
+
+    @property
+    def basename(self) -> str:
+        return pathlib.Path(self.path).name
+
+    @property
+    def bytes_contents(self) -> bytes:
+        with self.parent.conn:
+            cur = self.parent.conn.cursor()
+            cur.execute("""
+SELECT file_blob from file_blobs WHERE file_id = ?
+""", (self.file_id,))
+            return gzip.decompress(cur.fetchone()[0])
+        
+    @property
+    def string_contents(self) -> str:
+        return self.bytes_contents.decode("utf-8")
+
+
+@dataclass
+class VFSRetriever:
+    thread_id: str
+    conn: sqlite3.Connection
+
+    def to_dict(self) -> dict[str, bytes]:
+        to_ret = {}
+        for (p, cont) in self:
+            to_ret[p] = cont
+        return to_ret
+
+    def __iter__(self) -> Iterator[tuple[str, bytes]]:
+        with self.conn:
+            cur = self.conn.cursor()
+            cur.execute(_vfs_q, (self.thread_id,))
+            for r in cur:
+                p = cast(str, r[0])
+                compressed_blob = cast(bytes, r[1])
+                yield (p, gzip.decompress(compressed_blob))
+
+    def get_file(self, p: str) -> VFSFile | None:
+        with self.conn:
+            cur = self.conn.cursor()
+            cur.execute("""
+SELECT file_id FROM vfs_result WHERE path = ? AND thread_id = ?
+""", (p, self.thread_id))
+            r = cur.fetchone()
+            if r is None:
+                return None
+            return VFSFile(p, r[0], self)
+
+    def __getitem__(self, p: str) -> VFSFile | None:
+        return self.get_file(p)
+
+
+class ResumeArtifact:
+    def __init__(self,
+                 final_intf: VFSFile,
+                 final_spec: VFSFile,
+                 system_doc: VFSFile,
+                 commentary: str,
+                 intf_path: str,
+                 vfs_cur: VFSRetriever):
+        self.intf_vfs_handle = final_intf
+        self.spec_vfs_handle = final_spec
+        self.system_vfs_handle = system_doc
+        self.vfs = vfs_cur
+        self.commentary = commentary
+        self.interface_path = intf_path
+
+    @cached_property
+    def interface_file(self) -> str:
+        return self.intf_vfs_handle.bytes_contents.decode("utf-8")
+    
+    @cached_property
+    def spec_file(self) -> str:
+        return self.spec_vfs_handle.bytes_contents.decode("utf-8")
+    
+    @cached_property
+    def system_doc(self) -> str:
+        return self.system_vfs_handle.bytes_contents.decode("utf-8")
+        
+
 class AuditDB():
+    class _StringFile:
+        def __init__(self, path: str, contents: str):
+            self.path = path
+            self.contents = contents
+
+        @property
+        def bytes_contents(self) -> bytes:
+            return self.contents.encode("utf-8")
+        
+        @property
+        def basename(self) -> str:
+            return pathlib.Path(self.path).name
+
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self._setup()
@@ -123,7 +256,7 @@ class AuditDB():
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (thread_id, spec_hash, spec_file.basename, interface_hash, interface_file.basename,  system_hash, system_doc.basename))
 
-    def register_complete(self, thread_id: str, vfs: Iterable[tuple[str, bytes]]) -> None:
+    def register_complete(self, thread_id: str, vfs: Iterable[tuple[str, bytes]], intf: str, commentary: str) -> None:
         files = [
             (lambda d: (nm, d[0], d[1]))(self._hash_and_compress_bytes(cont))
             for (nm, cont) in vfs
@@ -151,6 +284,44 @@ INSERT INTO vfs_result(
 ) VALUES (?, ?, ?)
 """,
 file_updates
+            )
+            cur.execute(
+                """
+INSERT INTO resume_artifact(thread_id, interface_path, commentary) VALUES (?, ?, ?)
+""", (thread_id, intf, commentary)
+            )
+
+    def get_resume_artifact(self, thread_id: str) -> ResumeArtifact:
+        with self.conn:
+            cur = self.conn.cursor()
+            cur.execute(_resume_q, (thread_id,))
+            retriever = VFSRetriever(thread_id=thread_id, conn=self.conn)
+            r = cur.fetchone()
+            system_file = VFSFile(
+                file_id=r[2],
+                path=r[3],
+                parent=retriever
+            )
+            interface_file = VFSFile(
+                file_id=r[5],
+                parent=retriever,
+                path=r[1]
+            )
+
+            rule_file = VFSFile(
+                parent=retriever,
+                path="rules.spec",
+                file_id=r[4]
+            )
+            
+        
+            return ResumeArtifact(
+                commentary=r[0],
+                intf_path=r[1],
+                final_intf=interface_file,
+                final_spec=rule_file,
+                system_doc=system_file,
+                vfs_cur=retriever
             )
 
     def get_run_info(self, thread_id: str) -> RunInput:

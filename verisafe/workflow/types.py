@@ -1,5 +1,9 @@
+from typing import TypedDict
+
 from graphcore.graph import FlowInput
-from typing import Dict
+
+class PromptParams(TypedDict):
+    is_resume: bool
 
 class Input(FlowInput):
     """
