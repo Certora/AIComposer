@@ -40,5 +40,5 @@ def put_file(
         )
     return tool_output(
         tool_call_id=tool_call_id,
-        res={"virtual_fs": files}
+        res={"vfs": files}
     )

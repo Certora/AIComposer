@@ -1,22 +1,12 @@
-from typing import Annotated, List, Dict, NotRequired
-from typing_extensions import TypedDict
-from langchain_core.messages import AnyMessage
-from langgraph.graph.message import add_messages
+from typing import NotRequired
 from pydantic import BaseModel
 
+from graphcore.tools.vfs import VFSState
+
 class ResultStateSchema(BaseModel):
-    source: Dict[str, str]
+    source: list[str]
     comments: str
 
-
-def merge_fs(left: Dict[str, str], right: Dict[str, str]) -> Dict[str, str]:
-    to_ret = left.copy()
-    for (k, v) in right.items():
-        to_ret[k] = v
-    return to_ret
-
-class CryptoStateGen(TypedDict):
-    messages: Annotated[List[AnyMessage], add_messages]
-    virtual_fs: Annotated[Dict[str, str], merge_fs]
+class CryptoStateGen(VFSState):
     generated_code: NotRequired[ResultStateSchema]
 

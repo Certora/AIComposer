@@ -18,7 +18,8 @@ def setup_logging(debug: bool) -> None:
 
 def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
     workflow = get_cryptostate_builder(
-        llm=llm
+        llm=llm,
+        fs_layer=None,
     )[0]
     config: RunnableConfig = {
         "configurable": {
@@ -30,7 +31,7 @@ def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
     st = build.get_state(config)
     output = pathlib.Path(args.debug_fs)
     output.mkdir(exist_ok=True, parents=True)
-    for (t, r) in st.values["virtual_fs"].items():
+    for (t, r) in st.values["vfs"].items():
         out_path : pathlib.Path = output / t
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:

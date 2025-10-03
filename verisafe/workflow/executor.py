@@ -1,5 +1,8 @@
-from typing import Optional, Literal, cast
+from typing import Optional, Literal, cast, TypeVar
 import uuid
+import sqlite3
+from dataclasses import dataclass
+import pathlib
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -8,17 +11,16 @@ from langgraph.types import Command
 from verisafe.input.types import WorkflowOptions, InputData
 from verisafe.workflow.factories import get_checkpointer, get_cryptostate_builder
 from verisafe.workflow.types import Input
-from verisafe.core.state import ResultStateSchema
+from verisafe.core.state import ResultStateSchema, CryptoStateGen
 from verisafe.core.context import CryptoContext, ProverOptions
 from verisafe.rag.types import DatabaseConfig
 from verisafe.rag.db import PostgreSQLRAGDatabase
 from verisafe.rag.models import get_model as get_rag_model
-from verisafe.audit.db import AuditDB
+from verisafe.audit.db import AuditDB, InputFileLike
 from verisafe.diagnostics.stream import AllUpdates
 from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
-import sqlite3
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
@@ -31,6 +33,18 @@ def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> s
         system_doc_filename=input_data.system_doc.basename,
         debug_prompt=debug_prompt)
 
+
+def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> Input:
+    return Input(input=[
+                input.intf.to_document_dict(),
+                input.spec.to_document_dict(),
+                input.system_doc.to_document_dict(),
+                {
+                    "type": "text",
+                    "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
+                }
+            ], vfs={"rules.spec": input.spec.read()})
+
 def execute_cryptosafe_workflow(
     llm: BaseChatModel,
     input: InputData,
@@ -39,40 +53,46 @@ def execute_cryptosafe_workflow(
     """Execute the CryptoSafe workflow with interrupt handling."""
     checkpointer = get_checkpointer()
 
-    (workflow_builder, bound_llm) = get_cryptostate_builder(llm)
-
-    workflow_exec = workflow_builder.compile(checkpointer=checkpointer)
-
-    thread_id = workflow_options.thread_id
-
-    if thread_id is None:
-        thread_id = "crypto_session_" + str(uuid.uuid1())
-        print(f"Selected thread id: {thread_id}")
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-    config["recursion_limit"] = workflow_options.recursion_limit
-
-    current_input: Optional[Input | Command] = Input(input=[
-        input.intf.to_document_dict(),
-        input.spec.to_document_dict(),
-        input.system_doc.to_document_dict(),
-        {
-            "type": "text",
-            "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
-        }
-    ], virtual_fs={"rules.spec": input.spec.read()})
 
     audit_db: Optional[AuditDB] = None
     if workflow_options.audit_db is not None:
         conn = sqlite3.connect(workflow_options.audit_db)
         audit_db = AuditDB(conn)
 
+    thread_id = workflow_options.thread_id
+
+    if thread_id is None:
+        thread_id = "crypto_session_" + str(uuid.uuid1())
+        print(f"Selected thread id: {thread_id}")
+
+
+    fs_layer: str | None = None
+    flow_input: Input
+
+    system_doc: InputFileLike
+    interface_file: InputFileLike
+    spec_file: InputFileLike
+    flow_input = get_fresh_input(input, workflow_options)
+    system_doc = input.system_doc
+    interface_file = input.intf
+    spec_file = input.spec
+
     if audit_db is not None:
         audit_db.register_run(
             thread_id=thread_id,
-            system_doc=input.system_doc,
-            interface_file=input.intf,
-            spec_file=input.spec
+            system_doc=system_doc,
+            interface_file=spec_file,
+            spec_file=interface_file
         )
+
+    (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(llm, fs_layer=fs_layer)
+
+    workflow_exec = workflow_builder.compile(checkpointer=checkpointer)
+
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    config["recursion_limit"] = workflow_options.recursion_limit
+
+    current_input: Optional[Input | Command] = flow_input
 
     if workflow_options.checkpoint_id is not None:
         config["configurable"]["checkpoint_id"] = workflow_options.checkpoint_id
@@ -92,7 +112,7 @@ def execute_cryptosafe_workflow(
     )
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
-    work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts)
+    work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer)
 
     while True:
         interrupted = False
@@ -126,16 +146,25 @@ def execute_cryptosafe_workflow(
             }
         }
         state = workflow_exec.get_state(result_config)
-        result = state.values.get("generated_code", None)
+        final_state = cast(CryptoStateGen, state.values)
+        result = final_state.get("generated_code", None)
         if result is None:
             return 1
+        if audit_db is not None:
+            audit_db.register_complete(
+                thread_id, materializer.iterate(final_state)
+            )
+
         assert isinstance(result, ResultStateSchema)
         print("\n" + "=" * 80)
         print("CODE GENERATION COMPLETED")
         print("=" * 80)
         print("Generated Source Files:")
-        for path, content in result.source.items():
+        for path in result.source:
             print(f"\n--- {path} ---")
+            file_contents = materializer.get(final_state, path)
+            assert file_contents is not None
+            content = file_contents.decode("utf-8")
             print(content)
 
         print(f"\nComments: {result.comments}")

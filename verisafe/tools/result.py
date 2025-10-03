@@ -23,22 +23,17 @@ class ResultStateArgSchema(WithToolCallId):
 
 @tool(args_schema=ResultStateArgSchema)
 def code_result(
-    # approved_spec: str,
     source: List[str],
     comments: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[CryptoStateGen, InjectedState]
 ) -> Command:
-    output = {}
-    for s in source:
-        contents = state["virtual_fs"][s]
-        output[s] = contents
     return tool_output(
         tool_call_id=tool_call_id,
         res={
             "generated_code": ResultStateSchema(
                 comments=comments,
-                source=output
+                source=source
             )
         }
     )

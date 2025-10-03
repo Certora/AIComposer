@@ -88,10 +88,10 @@ def summarize_update(
                         print("[Tool result]")
                     case _:
                         print(f"[Unhandled message {type(m)}]")
-        if "virtual_fs" in state_update:
+        if "vfs" in state_update:
             print_node()
             print("Put file(s):")
-            for (k, _) in state_update["virtual_fs"].items():
+            for (k, _) in state_update["vfs"].items():
                 print(f" > {k}")
 
 # ++++++++++++++++++++++++

@@ -1,17 +1,4 @@
-import os
-import sys
-
-if __name__ == "__main__":
-    import pathlib
-    verisafe_dir = str(pathlib.Path(__file__).parent.parent.absolute())
-    if verisafe_dir not in sys.path:
-        sys.path.append(verisafe_dir)
-
-env = os.environ.get("CERTORA")
-if env is None:
-    raise RuntimeError("CERTORA environment variable not set")
-if env not in sys.path:
-    sys.path.append(env)
+import verisafe.certora as _
 
 from verisafe.input.parsing import setup_argument_parser
 from verisafe.workflow.factories import create_llm

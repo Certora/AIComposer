@@ -2,13 +2,17 @@ from typing import Annotated
 from graphcore.graph import WithToolCallId
 from pydantic import Field
 
-from graphcore.graph import WithToolCallId, tool_return
 from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.types import Command, interrupt
 from langchain_core.messages import ToolMessage
-from verisafe.human.types import ProposalType
 from langgraph.prebuilt import InjectedState
+from langgraph.runtime import get_runtime
+
+from graphcore.graph import WithToolCallId, tool_return
+
+from verisafe.human.types import ProposalType
 from verisafe.core.state import CryptoStateGen
+from verisafe.core.context import CryptoContext
 
 
 
@@ -64,10 +68,14 @@ def propose_spec_change(
     tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[CryptoStateGen, InjectedState]
 ) -> Command:
+    ctxt = get_runtime(CryptoContext)
+    vfs_access = ctxt.context.vfs_materializer 
+    curr_spec = vfs_access.get(state, "rules.spec")
+    assert curr_spec is not None
     human_response = interrupt(ProposalType(
         type="proposal",
         proposed_spec=proposed_spec,
-        current_spec=state["virtual_fs"]["rules.spec"],
+        current_spec=curr_spec.decode("utf-8"),
         explanation=explanation
     ))
     assert isinstance(human_response, str)
@@ -80,7 +88,7 @@ def propose_spec_change(
                         content=human_response
                     )
                 ],
-                "virtual_fs": {
+                "vfs": {
                     "rules.spec": proposed_spec
                 }
             }

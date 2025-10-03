@@ -5,4 +5,4 @@ class Input(FlowInput):
     """
     Input state, with initial virtual fs definitions
     """
-    virtual_fs: Dict[str, str]
+    vfs: dict[str, str]

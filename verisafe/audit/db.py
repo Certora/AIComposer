@@ -1,9 +1,57 @@
 import sqlite3
 from typing import Optional, Iterable, Tuple, cast
-from verisafe.rag.types import ManualRef
+from typing_extensions import Iterable
 import hashlib
 import gzip
+from dataclasses import dataclass
+
+from verisafe.rag.types import ManualRef
 from verisafe.audit.types import ManualResult, RuleResult, RunInput, InputFileLike, InputFile
+
+_setup_script ="""
+    CREATE TABLE IF NOT EXISTS prover_results(
+        tool_id TEXT NOT NULL,
+        rule_name TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        result TEXT NOT NULL CHECK (result in ('VIOLATED', 'ERROR', 'TIMEOUT', 'VERIFIED')),
+        analysis TEXT,
+        CONSTRAINT pk PRIMARY KEY (tool_id, rule_name, thread_id) ON CONFLICT REPLACE
+    );
+
+    CREATE TABLE IF NOT EXISTS manual_results(
+        tool_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        similarity FLOAT NOT NULL,
+        text_body TEXT NOT NULL,
+        header_string TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS manual_result_idx ON manual_results (tool_id, thread_id);
+
+    CREATE TABLE IF NOT EXISTS file_blobs(
+        file_id VARCHAR(64) PRIMARY KEY ON CONFLICT IGNORE,
+        file_blob BLOB NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS run_info(
+        thread_id TEXT NOT NULL PRIMARY KEY ON CONFLICT REPLACE,
+        spec_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
+        spec_name TEXT NOT NULL,
+        interface_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
+        interface_name TEXT NOT NULL,
+        system_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
+        system_name TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS vfs_result(
+        thread_id TEXT NOT NULL REFERENCES run_info(thread_id),
+        path TEXT NOT NULL,
+        file_id VARCHAR(64) REFERENCES file_blobs(file_id),
+        CONSTRAINT thread_path_pk PRIMARY KEY(thread_id, path) ON CONFLICT REPLACE
+    );
+
+    CREATE INDEX IF NOT EXISTS vfs_thread_idx on vfs_result(thread_id);
+"""
 
 class AuditDB():
     def __init__(self, conn: sqlite3.Connection):
@@ -13,41 +61,7 @@ class AuditDB():
     def _setup(self) -> None:
         with self.conn:
             cur = self.conn.cursor()
-            cur.executescript("""
-                CREATE TABLE IF NOT EXISTS prover_results(
-                    tool_id TEXT NOT NULL,
-                    rule_name TEXT NOT NULL,
-                    thread_id TEXT NOT NULL,
-                    result TEXT NOT NULL CHECK (result in ('VIOLATED', 'ERROR', 'TIMEOUT', 'VERIFIED')),
-                    analysis TEXT,
-                    CONSTRAINT pk PRIMARY KEY (tool_id, rule_name, thread_id) ON CONFLICT REPLACE
-                );
-                        
-                CREATE TABLE IF NOT EXISTS manual_results(
-                    tool_id TEXT NOT NULL,
-                    thread_id TEXT NOT NULL,
-                    similarity FLOAT NOT NULL,
-                    text_body TEXT NOT NULL,
-                    header_string TEXT NOT NULL
-                );
-                
-                CREATE INDEX IF NOT EXISTS manual_result_idx ON manual_results (tool_id, thread_id);
-                              
-                CREATE TABLE IF NOT EXISTS file_blobs(
-                    file_id VARCHAR(64) PRIMARY KEY ON CONFLICT IGNORE,
-                    file_blob BLOB NOT NULL
-                );
-                              
-                CREATE TABLE IF NOT EXISTS run_info(
-                    thread_id TEXT NOT NULL PRIMARY KEY ON CONFLICT REPLACE,
-                    spec_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
-                    spec_name TEXT NOT NULL,
-                    interface_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
-                    interface_name TEXT NOT NULL,
-                    system_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
-                    system_name TEXT NOT NULL
-                );
-            """)
+            cur.executescript(_setup_script)
     
     def add_rule_result(self, thread_id: str, tool_id: str, rule_name: str, result: str, analysis: Optional[str]):
         with self.conn:
@@ -82,11 +96,14 @@ class AuditDB():
         for row in cur:
             yield ManualResult(header=row[0], content=row[1], similarity=row[2])
 
-    def _hash_and_compress(self, f: InputFileLike) -> Tuple[str, bytes]:
-        f_bytes = f.bytes_contents
+    def _hash_and_compress_bytes(self, b: bytes) -> Tuple[str, bytes]:
+        f_bytes = b
         f_hash = hashlib.sha256(f_bytes).hexdigest()
         f_compress = gzip.compress(f_bytes, mtime=None)
         return (f_hash, f_compress)
+
+    def _hash_and_compress(self, f: InputFileLike) -> Tuple[str, bytes]:
+        return self._hash_and_compress_bytes(f.bytes_contents)
 
     def register_run(self, thread_id: str, spec_file: InputFileLike, interface_file: InputFileLike, system_doc: InputFileLike) -> None:
         (spec_hash, spec_compress) = self._hash_and_compress(spec_file)
@@ -105,6 +122,36 @@ class AuditDB():
                 INSERT INTO run_info(thread_id, spec_id, spec_name, interface_id, interface_name, system_id, system_name)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (thread_id, spec_hash, spec_file.basename, interface_hash, interface_file.basename,  system_hash, system_doc.basename))
+
+    def register_complete(self, thread_id: str, vfs: Iterable[tuple[str, bytes]]) -> None:
+        files = [
+            (lambda d: (nm, d[0], d[1]))(self._hash_and_compress_bytes(cont))
+            for (nm, cont) in vfs
+        ]
+
+        blob_updates = [
+            (r[1], r[2]) for r in files
+        ]
+        
+        file_updates = [
+            (thread_id, r[0], r[1]) for r in files
+        ]
+        with self.conn:
+            cur = self.conn.cursor()
+            cur.executemany(
+                """
+INSERT INTO file_blobs(file_id, file_blob) VALUES (?, ?)
+""",
+blob_updates
+            )
+            cur.executemany(
+                """
+INSERT INTO vfs_result(
+    thread_id, path, file_id
+) VALUES (?, ?, ?)
+""",
+file_updates
+            )
 
     def get_run_info(self, thread_id: str) -> RunInput:
         cur = self.conn.cursor()

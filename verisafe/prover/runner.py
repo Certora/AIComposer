@@ -29,17 +29,6 @@ class SandboxedRunResult:
     stderr: str
     run_result: Optional[CertoraRunResult]
 
-class TempDirectoryProvider(Protocol):
-    def __call__(self) -> ContextManager[str]:
-        ...
-
-# have to do this because `delete` as an argument to `TemporaryDirectory` is in python3.12 ...
-@contextlib.contextmanager
-def debugging_tmp_directory() -> Iterator[str]:
-    temp_dir = tempfile.mkdtemp()
-    print(f"DEBUG: Working directory: {temp_dir}")
-    yield temp_dir
-
 def sandboxed_certora_run(
     args: List[str],
     prover_opts: ProverOptions
@@ -74,22 +63,11 @@ def certora_prover(
 ) -> str:
     # Create temporary directory and keep it for debugging
     runtime = get_runtime(CryptoContext)
-    provider: TempDirectoryProvider = tempfile.TemporaryDirectory
-    if runtime.context.prover_opts.keep_folder:
-        provider = debugging_tmp_directory
+    ctxt = runtime.context
     writer = get_stream_writer()
-    with provider() as temp_dir:
+    with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
         with contextlib.chdir(temp_dir):
             try:
-                t = Path(temp_dir)
-
-                # Step 2: For each relative path in source_files, write the solidity source
-                for (relative_path, solidity_content) in state["virtual_fs"].items():
-                    file_path = t / relative_path
-                    # Create parent directories if they don't exist
-                    file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_text(solidity_content)
-
                 args = source_files.copy()
                 args.extend([
                     "--verify",

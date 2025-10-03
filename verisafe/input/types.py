@@ -1,4 +1,5 @@
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Literal
+import pathlib
 from dataclasses import dataclass
 
 @dataclass
