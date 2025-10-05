@@ -1354,9 +1354,36 @@
                 messagesContainer.appendChild(messageBubble);
             });
             
-            // Add tool call
+            // Add tool call with arguments
             const toolCall = clone.querySelector('.tool-call');
-            toolCall.textContent = `Tool called: ${step.tool}`;
+            toolCall.innerHTML = `<strong>Tool called:</strong> ${step.tool}`;
+            
+            // Display tool arguments if available
+            if (step.tool_input && Object.keys(step.tool_input).length > 0) {
+                const argsContainer = document.createElement('div');
+                argsContainer.classList.add('tool-arguments');
+                argsContainer.style.marginTop = '10px';
+                argsContainer.style.padding = '10px';
+                argsContainer.style.backgroundColor = '#f5f5f5';
+                argsContainer.style.borderRadius = '4px';
+                argsContainer.style.fontFamily = 'monospace';
+                argsContainer.style.fontSize = '12px';
+                
+                const argsTitle = document.createElement('div');
+                argsTitle.style.fontWeight = 'bold';
+                argsTitle.style.marginBottom = '5px';
+                argsTitle.textContent = 'Arguments:';
+                argsContainer.appendChild(argsTitle);
+                
+                const argsContent = document.createElement('pre');
+                argsContent.style.margin = '0';
+                argsContent.style.whiteSpace = 'pre-wrap';
+                argsContent.style.wordWrap = 'break-word';
+                argsContent.textContent = JSON.stringify(step.tool_input, null, 2);
+                argsContainer.appendChild(argsContent);
+                
+                toolCall.appendChild(argsContainer);
+            }
             
             container.appendChild(clone);
         }
