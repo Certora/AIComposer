@@ -1,5 +1,5 @@
 import pathlib
-import sys
+import sys,os
 
 if __name__ != "__main__":
     raise RuntimeError("This is a script only module")
@@ -17,6 +17,12 @@ verisafe_dir = str(pathlib.Path(__file__).parent.parent.parent.absolute())
 
 if verisafe_dir not in sys.path:
     sys.path.append(verisafe_dir)
+    
+env = os.environ.get("CERTORA")
+if env is None:
+    raise RuntimeError("CERTORA environment variable not set")
+if env not in sys.path:
+    sys.path.append(env)
 
 from verisafe.audit.types import ManualResult, RuleResult
 from verisafe.audit.db import AuditDB
@@ -38,7 +44,7 @@ def get_initial_state(check: CheckpointTuple) -> Optional[Dict[str, str]]:
             if parent_res is not None:
                 return parent_res
     
-    return check.checkpoint["channel_values"].get("virtual_fs", None)
+    return check.checkpoint["channel_values"].get("vfs", None)
 
 assert x is not None
 initial_fs = get_initial_state(x)
@@ -90,6 +96,7 @@ class AIStepMessage(TypedDict):
 class AIStep(AbstractStep[Literal["ai"]]):
     messages: List[AIStepMessage]
     tool: str
+    tool_input: Optional[dict]
 
 class ProverStep(AbstractStep[Literal["prover"]]):
     contract_file: str
@@ -208,11 +215,13 @@ while i < len(msgs):
                     case "tool_use":
                         tool_id = step["id"]
                         which = step["name"]
+                        tool_input = step.get("input", {})
                         events.append(AIStep(
                             vfs_snapshot=vfs.curr_version,
                             type="ai",
                             messages=messages,
-                            tool=which
+                            tool=which,
+                            tool_input=tool_input
                         ))
 
                         match which:
