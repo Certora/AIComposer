@@ -60,7 +60,7 @@ add new specification files.
 """
     ), CryptoStateGen)
 
-    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
+    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search,foundry_test, *vfs_tooling]
 
     workflow_builder: tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
         state_class=CryptoStateGen,

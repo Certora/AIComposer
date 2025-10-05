@@ -15,6 +15,7 @@ def setup_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     parser.add_argument("spec_file", help="Specification file for the smart contract")
     parser.add_argument("interface_file", help="The interface file for the smart contract")
     parser.add_argument("system_doc", help="A text document describing the system")
+    parser.add_argument("project_root", help="The root directory of the project")
     parser.add_argument("--model", default="claude-sonnet-4-20250514",
                         help="Model to use for code generation (default: claude-sonnet-4-20250514)")
     parser.add_argument("--tokens", type=int, default=10_000,
@@ -44,5 +45,6 @@ def setup_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     parser.add_argument("--debug-prompt-override", help="Append this text to the final prompt for debugging instructions to the LLM")
     parser.add_argument("--recursion-limit", type=int, help="The number of iterations of the graph to allow", default=50)
 
+    
     return cast(TypedArgumentParser[CommandLineArgs], parser)
 

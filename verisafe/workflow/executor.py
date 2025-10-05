@@ -19,7 +19,7 @@ from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
 import sqlite3
-
+import os
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
 
@@ -51,6 +51,18 @@ def execute_cryptosafe_workflow(
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     config["recursion_limit"] = workflow_options.recursion_limit
 
+    # Read all files from input root directory into initial VFS
+    root_files = {}
+    for root, _, files in os.walk(input.project_root):
+        for file in files:
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(full_path, input.project_root)
+            with open(full_path, 'r') as f:
+                try:
+                    root_files[rel_path] = f.read()
+                except Exception as e:
+                    pass
+
     current_input: Optional[Input | Command] = Input(input=[
         input.intf.to_document_dict(),
         input.spec.to_document_dict(),
@@ -59,7 +71,7 @@ def execute_cryptosafe_workflow(
             "type": "text",
             "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
         }
-    ], vfs={"rules.spec": input.spec.read()})
+    ], vfs={"rules.spec": input.spec.read(), **root_files})
 
     audit_db: Optional[AuditDB] = None
     if workflow_options.audit_db is not None:
