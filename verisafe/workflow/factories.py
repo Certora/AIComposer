@@ -6,10 +6,14 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph
+from langgraph.store.sqlite.base import SqliteStore
 
 from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig
+<<<<<<< HEAD
 from graphcore.summary import SummaryConfig
+=======
+>>>>>>> 6d70e77 (debug tooling, more iteration)
 
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.core.context import CryptoContext
@@ -23,6 +27,15 @@ def get_checkpointer() -> SqliteSaver:
     state_db = sqlite3.connect("cryptosafe.db", check_same_thread=False)
     checkpointer = SqliteSaver(state_db)
     return checkpointer
+
+def get_store() -> SqliteStore:
+    store_db = sqlite3.connect("verisafe-store.db", check_same_thread=False)
+    store_db.autocommit = True
+    res = SqliteStore(
+        store_db
+    )
+    res.setup()
+    return res
 
 def get_system_prompt() -> str:
     """Load and render the system prompt from Jinja template"""
@@ -46,6 +59,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         betas=["files-api-2025-04-14"],
     )
 
+<<<<<<< HEAD
 class SummaryGeneration(SummaryConfig[CryptoStateGen]):
     def get_resume_prompt(self, state: CryptoStateGen, summary: str) -> str:
         res = super().get_resume_prompt(state, summary)
@@ -60,13 +74,16 @@ def get_cryptostate_builder(llm: BaseChatModel, summarization_threshold: int | N
         conf = SummaryGeneration(
             max_messages=summarization_threshold
         )
+=======
+def get_cryptostate_builder(llm: BaseChatModel, prompt_params: PromptParams, fs_layer: str | None) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
+>>>>>>> 6d70e77 (debug tooling, more iteration)
     (vfs_tooling, mat) = vfs_tools(VFSToolConfig(
         fs_layer=fs_layer,
         immutable=False,
         forbidden_write="^rules.spec$",
         put_doc_extra= \
 """
-By convention, every Solidity placed into the virtual filesystem should contain exactly one contract/interface/library defitions.
+By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library defitions.
 Further, the name of the contract/interface/library defined in that file should name the name of the solidity source file sans extension.
 For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`"
 

@@ -10,7 +10,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.types import Command
 
 from verisafe.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
-from verisafe.workflow.factories import get_checkpointer, get_cryptostate_builder
+from verisafe.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.workflow.meta import create_resume_commentary
 from verisafe.core.state import ResultStateSchema, CryptoStateGen
@@ -209,7 +209,9 @@ def execute_cryptosafe_workflow(
 
     (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(llm, fs_layer=fs_layer, summarization_threshold=workflow_options.summarization_threshold, prompt_params=prompt_params)
 
-    workflow_exec = workflow_builder.compile(checkpointer=checkpointer)
+    store = get_store()
+
+    workflow_exec = workflow_builder.compile(checkpointer=checkpointer, store=store)
 
     try:
         import grandalf # type: ignore

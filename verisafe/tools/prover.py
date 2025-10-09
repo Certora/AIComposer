@@ -2,12 +2,14 @@ from typing import Annotated, List, Optional
 from graphcore.graph import WithToolCallId
 from pydantic import Field
 
-from graphcore.graph import WithToolCallId
+from graphcore.graph import WithToolCallId, tool_return
 from langchain_core.tools import tool, InjectedToolCallId
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.prebuilt import InjectedState
+from langgraph.types import Command
+
 from verisafe.core.state import CryptoStateGen
-from verisafe.prover.runner import certora_prover as prover_impl
+from verisafe.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
 
 class CertoraProverArgs(WithToolCallId):
     """
@@ -20,12 +22,18 @@ class CertoraProverArgs(WithToolCallId):
     unacceptable.
 
     The Certora Prover will automatically check whether a smart contract instance (the "contract under verifiction")
-     satisfies the provided specification on a per rule basis. For each rule, the prover will give one of the following result:
+    satisfies the provided specification on a per rule basis.
+     
+    For each rule, the prover will give one of the following result:
     1. VERIFIED: the smart contract satisfies the rule for all possible inputs
     2. VIOLATED: The smart contract violates the specification. As part of this result, the prover will provide
     a concrete counter example for the input/states which lead to the violation
     3. TIMEOUT: The automated reasoning used by the prover timed out before giving a response either way
-    4. ERROR/other: There was some internal error within the prover
+    4. SANITY_FAIL: The rule succeeded, but was vacuously true, perhaps due to too specific requirements
+    5. ERROR/other: There was some internal error within the prover
+
+    When there are large numbers of failures, these result may be truncated. If this occurs, a summary of results from
+    the prover will be provided.
     """
 
     source_files: List[str] = Field(description="""
@@ -77,8 +85,8 @@ def certora_prover(
     rule: Optional[str],
     state: Annotated[CryptoStateGen, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId]
-) -> str:
-    return prover_impl(
+) -> Command:
+    result = prover_impl(
         source_files,
         target_contract,
         compiler_version,
@@ -86,3 +94,27 @@ def certora_prover(
         rule, state,
         tool_call_id
     )
+    match result:
+        case str():
+            return tool_return(tool_call_id=tool_call_id, content=result)
+        case RawReport():
+            return tool_return(tool_call_id=tool_call_id, content=result.report)
+        case SummarizedReport():
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            tool_call_id=tool_call_id,
+                            content="... Output truncated ..."
+                        ),
+                        HumanMessage(
+                            content=[
+                                "The prover output was too large for the context window. A TODO list extracted from its output is as follows",
+                                result.todo_list
+                            ]
+                        )
+
+                    ]
+                }
+            )
+    

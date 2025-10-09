@@ -197,7 +197,7 @@ while i < len(msgs):
             messages: List[AIStepMessage] = []
             for step in cont:
                 if isinstance(step, str):
-                    messages.append(AIStepMessage(text=step, type="text"))
+                    messages.append(AIStepMessage(text=step, type="text")) # type: ignore
                     continue
                 ty = step.get("type")
                 match ty:

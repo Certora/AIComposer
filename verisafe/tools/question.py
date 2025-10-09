@@ -28,7 +28,9 @@ class HumanInTheLoopArg(WithToolCallId):
     context: str = \
         Field(description="Any context to give for the question, including what you have tried, "
               "what didn't work, and in case of questions about the spec, any quotes from the relevant documentation.")
-    code: Optional[str] = Field(description="Any code snippet(s) that might be relevant to the question")
+    code: Optional[str] = \
+        Field(description="Any code snippet(s) that might be relevant to the question. " \
+              "IMPORTANT: do NOT escape newlines or other special characters; this string will be directly printed to a terminal.")
 
 @tool(args_schema=HumanInTheLoopArg)
 def human_in_the_loop(

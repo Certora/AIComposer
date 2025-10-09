@@ -1,19 +1,61 @@
-from pydantic import Field, BaseModel, ValidationError
-from typing import List, Optional, Dict
+from typing import Optional, Callable, TypeVar
+from typing_extensions import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import json
+
+from pydantic import Field, BaseModel, ValidationError
+
 from verisafe.prover.ptypes import RuleResult, StatusCodes
+
+class _Missing:
+    pass
+_MISSING = _Missing()
+
+T = TypeVar('T')
+R = TypeVar('R')
+
+def _default_or(
+    curr: T,
+    update: _Missing | T
+) -> T:
+    if isinstance(update, _Missing):
+        return curr
+    else:
+        return update
+
+@dataclass
+class RulePath:
+    rule: str
+    contract: Optional[str] = None
+    method: Optional[str] = None
+    sanity: bool = False
+
+    def copy(
+            self,
+            rule : str | _Missing = _MISSING,
+            contract : str | None | _Missing = _MISSING,
+            method : str | None | _Missing = _MISSING,
+            sanity : bool | _Missing = _MISSING
+    ) -> 'RulePath':
+        return RulePath(
+            rule=_default_or(self.rule, rule),
+            contract=_default_or(self.contract, contract),
+            method=_default_or(self.method, method),
+            sanity=_default_or(self.sanity, sanity)
+        )
 
 class RuleNodeModel(BaseModel):
     name: str = Field(description="The name of the node")
-    output: List[str]
-    children: List["RuleNodeModel"]
+    output: list[str]
+    children: list["RuleNodeModel"]
     status: Optional[str] = Field(description="The smt status")
+    nodeType: str
 
 
 class TreeViewStatus(BaseModel):
-    rules: List[RuleNodeModel]
+    rules: list[RuleNodeModel]
 
 
 class SarifArgs(BaseModel):
@@ -23,14 +65,102 @@ class SarifArgs(BaseModel):
 
 class MessageModel(BaseModel):
     text: str
-    arguments: List[SarifArgs]
+    arguments: list[SarifArgs]
 
 
 class CallTraceModel(BaseModel):
     message: MessageModel
-    childrenList: List["CallTraceModel"]
+    childrenList: list["CallTraceModel"]
 
-def read_and_format_run_result(s: Path) -> Dict[str, RuleResult] | str:
+
+def _flat_yield(curr: Iterable[T], gen: Callable[[T], Iterable[R]]) -> Iterable[R]:
+    for t in curr:
+        for to_yield in gen(t):
+            yield to_yield
+
+def _to_status_string(s: str | None) -> StatusCodes:
+    if s is None:
+        return "ERROR"
+    match s:
+        case "VIOLATED" | "VERIFIED" | "TIMEOUT" | "SANITY_FAIL":
+            return s
+        case _:
+            return "ERROR"
+
+
+def flatten_tree_view_root(context: Path, r: RuleNodeModel) -> Iterable[RuleResult]:
+    assert r.nodeType == "ROOT"
+    return flatten_tree_view(context, r, RulePath(rule=r.name))
+
+def _path_pp(p: RulePath) -> str:
+    if p.contract is not None:
+        if p.method is None:
+            return f"{p.rule} in contract {p.contract}"
+
+    if p.method is not None:
+        return f"{p.rule} for {p.method}"
+    else:
+        return p.rule
+
+
+def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterable[RuleResult]:
+    stat = _to_status_string(r.status)
+    effective_path = path
+    if r.nodeType == "METHOD_INSTANTIATION":
+        effective_path = effective_path.copy(method=r.name)
+    elif r.nodeType == "CONTRACT":
+        effective_path = effective_path.copy(contract = r.name)
+    elif r.nodeType == "INVARIANT_SUBCHECK":
+        if "constructor" in r.name:
+            effective_path = effective_path.copy(method="constructor")
+
+    if stat == "ERROR":
+        return [RuleResult(
+            name=_path_pp(effective_path),
+            cex_dump=None,
+            status=stat
+        )]
+    if stat == "VERIFIED":
+        non_sanity_children = any([ c.nodeType != "SANITY" for c in r.children ])
+        if non_sanity_children:
+            return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path))
+        else:
+            return [RuleResult(
+                name =_path_pp(effective_path),
+                cex_dump=None,
+                status=stat
+            )]
+    
+    if stat == "TIMEOUT":
+        if len(r.children) == 0:
+            return [RuleResult(name=_path_pp(effective_path), cex_dump=None,status=stat)]
+    assert stat == "TIMEOUT" or stat == "VIOLATED" or stat == "SANITY_FAIL"
+    violated_assert_children = any([ c.nodeType == "VIOLATED_ASSERT" for c in r.children])
+    if violated_assert_children:
+        assert stat == "VIOLATED" and len(r.output) > 0
+        output_file = r.output[0]
+        dump_model = json.loads((context / output_file).read_text())
+        cex_dump : None | str = None
+        assert isinstance(dump_model, dict)
+        if "callTrace" in dump_model:
+            cex_node = CallTraceModel.model_validate(dump_model["callTrace"])
+            cex_dump = "<counterexample>" + calltrace_to_xml(cex_node) + "</counterexample>"
+        return [RuleResult(
+            name = _path_pp(effective_path),
+            cex_dump=cex_dump,
+            status=stat
+        )]
+    if r.nodeType == "SANITY":
+        assert stat == "SANITY_FAIL"
+        return [RuleResult(
+            name=_path_pp(effective_path),
+            cex_dump=None,
+            status=stat
+        )]
+    return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path))
+
+
+def read_and_format_run_result(s: Path) -> dict[str, RuleResult] | str:
     tree_view_dir = s / "Reports" / "treeView"
     status_files = tree_view_dir.glob("treeViewStatus_*.json")
 
@@ -60,37 +190,10 @@ def read_and_format_run_result(s: Path) -> Dict[str, RuleResult] | str:
     except ValidationError:
         return "Certora prover returned malformed tree view data: this is likely a bug"
 
-    to_ret: Dict[str, RuleResult] = {}
-    for r in loaded_data.rules:
-        to_ret[r.name] = dump_tree_view_node(tree_view_dir, r)
+    to_ret: dict[str, RuleResult] = {}
+    for r in _flat_yield(loaded_data.rules, lambda r: flatten_tree_view_root(tree_view_dir, r)):
+        to_ret[r.name] = r
     return to_ret
-
-
-def dump_tree_view_node(context: Path, r: RuleNodeModel) -> RuleResult:
-    status_string: StatusCodes
-    if r.status is not None:
-        match r.status:
-            case "VIOLATED" | "VERIFIED" | "TIMEOUT":
-                status_string = r.status
-            case _:
-                status_string = "ERROR"
-    else:
-        status_string = "ERROR"
-
-    cex_dump: Optional[str] = None
-    if status_string == "VIOLATED" and len(r.output) > 0:
-        assert len(r.output) == 1
-        with open(context / r.output[0], "r") as cex:
-            dump_model = json.load(cex)
-        assert isinstance(dump_model, dict)
-        if "callTrace" in dump_model:
-            cex_node = CallTraceModel.model_validate(dump_model["callTrace"])
-            cex_dump = "<counterexample>" + calltrace_to_xml(cex_node) + "</counterexample>"
-    return RuleResult(
-        status=status_string,
-        cex_dump=cex_dump,
-        name=r.name
-    )
 
 def calltrace_to_xml(node: CallTraceModel) -> str:
     """

@@ -1,7 +1,7 @@
 from typing import Literal, Optional
 from dataclasses import dataclass
 
-StatusCodes = Literal["VERIFIED", "VIOLATED", "TIMEOUT", "ERROR"]
+StatusCodes = Literal["VERIFIED", "VIOLATED", "TIMEOUT", "ERROR", "SANITY_FAIL"]
 
 @dataclass
 class RuleResult:

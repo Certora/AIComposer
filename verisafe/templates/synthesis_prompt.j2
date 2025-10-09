@@ -102,4 +102,7 @@ store your work. You have tools to read, modify, and query this VFS.
   <advice>The Certora Prover will give counter examples for violated specifications, analyze these counter examples
   and understand what defect in your implementation they point to.</advice>
   <advice>To enable effective verification and summarization, try to place common or repeated code into separate internal functions</advice>
+  <advice>The automatically generated "getter" functions for complex data types can frequently cause stack too deep errors. However, contract storage fields DO NOT need to be public for direct
+    storage access within specs to work. Avoid declaring your storage fields as public unless
+    there is an explicit call to the auto-generated getters.</advice>
 </guidance>
