@@ -1,19 +1,10 @@
-import pathlib
+import bind as _
+
 import sys
 import pprint
 
 from langgraph.checkpoint.base import CheckpointTuple
-from langchain_core.messages import AnyMessage, AIMessage, ToolMessage, HumanMessage, SystemMessage
-
-if __name__ != "__main__":
-    raise RuntimeError("This is a script only module")
-
-verisafe_dir = str(pathlib.Path(__file__).parent.parent.parent.absolute())
-
-if verisafe_dir not in sys.path:
-    sys.path.append(verisafe_dir)
-
-import verisafe.certora as _
+from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
 from verisafe.workflow.factories import get_checkpointer
 

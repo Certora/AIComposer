@@ -31,6 +31,13 @@ def main() -> int:
 
             if not out_dir.is_dir():
                 raise RuntimeError(f"output dir {args.target} is not a directory")
+            session_id_file = out_dir / ".session-id"
+            if session_id_file.is_file() and \
+                (curr_id := session_id_file.read_text().strip()) != args.src_thread_id:
+                print(f"Refusing to materialize in a folder that appears to be a materialization of {curr_id}")
+                print("You can remove the .session-id file to override this behavior")
+                return 1
+            session_id_file.write_text(args.src_thread_id)
             for (p, cont) in res.vfs:
                 output_path = out_dir / p
                 output_path.parent.mkdir(exist_ok=True, parents=True)
@@ -59,14 +66,16 @@ def main() -> int:
                     comments=commentary,
                     new_system=new_system
                 )
+        case _:
+            print(f"Unrecognize sub-command: {args.command}")
+            return 1
 
     llm = create_llm(args)
 
     print("Starting VeriSafe resumption workflow...")
     return execute_cryptosafe_workflow(
         llm=llm,
-        # it's not unbound you foolish type system
-        input=input_data, # pyright: ignore[reportPossiblyUnboundVariable]
+        input=input_data,
         workflow_options=args
     )
 

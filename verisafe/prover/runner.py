@@ -170,7 +170,7 @@ def certora_prover(
                 except CertoraRunFailure as e:
                     return f"Certora Prover run exited with non-zero returncode {e.return_code}.\nStdout:\n{e.stdout}.\nStderr: {e.stderr}"
                 except CertoraRunException as e:
-                    return f"Certora Prover run failed exceptionally with {str(e)}.\n.Stdout:\n{e.stdout}\nStderr: {e.stderr}"
+                    return f"Certora Prover run failed exceptionally with {str(e.wrapped)}.\nStdout:\n{e.stdout}\nStderr: {e.stderr}"
                 if res is None or res.run_result is None:
                     return "Certora prover didn't actually run, this is likely a bug you should consult the user about"
                 run_result = res.run_result
