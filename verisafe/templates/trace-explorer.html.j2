@@ -571,7 +571,7 @@
             color: #1976d2;
         }
 
-        div.llm-comments {
+        div.llm-comments, div.summarization-container {
             padding: 1%;
             line-height: 1.6;
             margin-bottom: 1rem;
@@ -758,6 +758,176 @@
             color: #ffffff80;
             margin-left: 1rem;
         }
+
+        /* VFS Commands Styles */
+        .vfs-commands-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .vfs-command-item {
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #e0e0e0;
+        }
+
+        .vfs-thought {
+            background: #fff9c4;
+            border: 1px solid #fdd835;
+            padding: 1rem 1.5rem;
+            font-style: italic;
+            color: #6d4c41;
+            line-height: 1.6;
+            border-radius: 8px;
+            position: relative;
+        }
+
+        .vfs-thought:before {
+            content: "💭";
+            position: absolute;
+            left: 0.5rem;
+            top: 0.5rem;
+            font-size: 1.2rem;
+        }
+
+        .vfs-thought .vfs-thought-content {
+            margin-left: 1.5rem;
+        }
+
+        .vfs-cmd {
+            background: #1e1e1e;
+            color: #ffffff;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            border-radius: 8px;
+        }
+
+        .vfs-cmd-header {
+            background: #2d2d2d;
+            padding: 0.5rem 1rem;
+            border-bottom: 1px solid #404040;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 12px;
+            color: #b0b0b0;
+        }
+
+        .vfs-cmd-prompt {
+            background: #1e1e1e;
+            padding: 0.75rem 1rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+
+        .vfs-cmd-prompt-symbol {
+            color: #4fc3f7;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .vfs-cmd-text {
+            color: #ffffff;
+            flex: 1;
+            word-break: break-all;
+        }
+
+        .vfs-cmd-output {
+            background: #1e1e1e;
+            padding: 0 1rem 1rem 1rem;
+            white-space: pre-wrap;
+            color: #e0e0e0;
+            line-height: 1.4;
+            border-top: 1px solid #404040;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .vfs-cmd-output.solidity-highlight {
+            padding: 1rem;
+        }
+
+        .vfs-cmd-output.solidity-highlight pre {
+            margin: 0;
+            padding: 1rem;
+            border-radius: 4px;
+        }
+
+        /* Prover TODO List Styles */
+        .prover-todo-section {
+            background: #fff3e0;
+            border: 1px solid #ffb74d;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .prover-todo-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+            color: #e65100;
+        }
+
+        .prover-todo-icon {
+            font-size: 1.2rem;
+        }
+
+        .prover-todo-note {
+            font-size: 0.9rem;
+            color: #bf360c;
+            font-style: italic;
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            background: rgba(255, 183, 77, 0.2);
+            border-radius: 4px;
+        }
+
+        .prover-todo-content {
+            color: #e65100;
+            line-height: 1.6;
+        }
+
+        .prover-todo-content h1,
+        .prover-todo-content h2,
+        .prover-todo-content h3,
+        .prover-todo-content h4,
+        .prover-todo-content h5,
+        .prover-todo-content h6 {
+            color: #e65100;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .prover-todo-content ul,
+        .prover-todo-content ol {
+            margin-left: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .prover-todo-content li {
+            margin-bottom: 0.5rem;
+        }
+
+        .prover-todo-content code {
+            background: rgba(230, 81, 0, 0.1);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            color: #bf360c;
+        }
+
+        .prover-todo-content pre {
+            background: rgba(230, 81, 0, 0.1);
+            border: 1px solid #ffb74d;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
     </style>
 </head>
 <body>
@@ -873,6 +1043,17 @@
                 <div class="prover-rule"></div>
             </div>
             
+            <div class="prover-todo-section hidden">
+                <div class="prover-todo-header">
+                    <span class="prover-todo-icon">📋</span>
+                    <span>Action Items</span>
+                </div>
+                <div class="prover-todo-note">
+                    The following TODO list summarizes actions needed to address the verification failures below.
+                </div>
+                <div class="prover-todo-content"></div>
+            </div>
+            
             <div class="prover-results"></div>
         </div>
     </template>
@@ -985,6 +1166,48 @@
                 <button class="vfs-button" data-vfs-open>View VFS</button>
             </div>
             <div class="messages-container"></div>
+        </div>
+    </template>
+
+    <!-- VFS Step Template -->
+    <template id="vfs-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>VFS Interactions</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            <div class="vfs-commands-container"></div>
+        </div>
+    </template>
+
+    <!-- VFS Thought Template -->
+    <template id="vfs-thought-template">
+        <div class="vfs-thought">
+            <div class="vfs-thought-content"></div>
+        </div>
+    </template>
+
+    <!-- VFS Command Template -->
+    <template id="vfs-cmd-template">
+        <div class="vfs-cmd">
+            <div class="vfs-cmd-header">● ● ● Terminal</div>
+            <div class="vfs-cmd-prompt">
+                <span class="vfs-cmd-prompt-symbol">></span>
+                <span class="vfs-cmd-text"></span>
+            </div>
+            <div class="vfs-cmd-output"></div>
+        </div>
+    </template>
+
+    <!-- Summarization Step Template -->
+    <template id="summarization-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Context Summarization</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            🔄 Task state has been summarized due to context length. The state summary is as follows.
+            <div class="summarization-container"></div>
         </div>
     </template>
     
@@ -1228,11 +1451,83 @@
                 case 'proposal':
                     renderProposalStep(step, container);
                     break;
+                case 'vfs':
+                    renderVFSStep(step, container);
+                    break;
+                case 'summarization':
+                    renderSummarizationStep(step, container);
+                    break;
                 case "result":
                     renderResultStep(step, container);
                 default:
                     console.warn(`Unknown step type: ${step.type}`);
             }
+        }
+
+        // Render Summarization Step
+        function renderSummarizationStep(step, container) {
+            const template = document.getElementById('summarization-step-template');
+            const clone = template.content.cloneNode(true);
+            
+            // Render the markdown summary content
+            const contentDiv = clone.querySelector('.summarization-container');
+            contentDiv.innerHTML = renderMarkdown(step.summary_md);
+            
+            container.appendChild(clone);
+        }
+
+        // Render VFS Step
+        function renderVFSStep(step, container) {
+            const template = document.getElementById('vfs-step-template');
+            const clone = template.content.cloneNode(true);
+            
+            const commandsContainer = clone.querySelector('.vfs-commands-container');
+            
+            // Render each command in the VFS event
+            step.commands.forEach(command => {
+                if (command.type === 'thought') {
+                    const thoughtElement = renderVFSThought(command.msg);
+                    commandsContainer.appendChild(thoughtElement);
+                } else if (command.type === 'cmd') {
+                    const cmdElement = renderVFSCommand(command.cmd, command.stdout);
+                    commandsContainer.appendChild(cmdElement);
+                }
+            });
+            
+            container.appendChild(clone);
+        }
+        
+        // Render VFS thought block using template
+        function renderVFSThought(message) {
+            const template = document.getElementById('vfs-thought-template');
+            const clone = template.content.cloneNode(true);
+            
+            clone.querySelector('.vfs-thought-content').textContent = message;
+            
+            return clone;
+        }
+        
+        // Render VFS command block using template
+        function renderVFSCommand(cmd, stdout) {
+            const template = document.getElementById('vfs-cmd-template');
+            const clone = template.content.cloneNode(true);
+            
+            // Set command text
+            clone.querySelector('.vfs-cmd-text').textContent = cmd;
+            
+            // Set output with syntax highlighting for .sol files in cat commands
+            const outputDiv = clone.querySelector('.vfs-cmd-output');
+            
+            if (cmd.trim().startsWith('cat ') && cmd.includes('.sol')) {
+                outputDiv.classList.add('solidity-highlight');
+                outputDiv.innerHTML = `<pre><code class="language-solidity">${escapeHtml(stdout)}</code></pre>`;
+                // Apply syntax highlighting after DOM insertion
+                setTimeout(() => Prism.highlightAllUnder(outputDiv), 0);
+            } else {
+                outputDiv.textContent = stdout;
+            }
+            
+            return clone;
         }
 
         function renderResultStep(step, container) {
@@ -1383,6 +1678,14 @@
             const ruleElement = clone.querySelector('.prover-rule');
             ruleElement.textContent = step.rule ? `Rule: ${step.rule}` : 'Rule: All rules';
             
+            // Handle optional TODO list
+            const todoSection = clone.querySelector('.prover-todo-section');
+            if (step.todo_list) {
+                todoSection.classList.remove('hidden');
+                const todoContent = clone.querySelector('.prover-todo-content');
+                todoContent.innerHTML = renderMarkdown(step.todo_list);
+            }
+            
             // Render results
             const resultsContainer = clone.querySelector('.prover-results');
             const resultTemplate = document.getElementById('prover-result-template');
@@ -1489,8 +1792,10 @@
                 
                 // Start with first result expanded, others collapsed
                 if (index > 0) {
-                    const collapsible = resultClone.querySelector('.collapsible');
-                    collapsible.dataset.collapsibleState = 'collapsed';
+                    const icon = resultClone.querySelector('.collapse-icon');
+                    const content = resultClone.querySelector('.search-result-content');
+                    icon.classList.add('collapsed');
+                    content.classList.add('collapsed');
                 }
                 
                 resultsContainer.appendChild(resultClone);

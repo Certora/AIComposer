@@ -122,8 +122,6 @@ Steps = Annotated[Union[
     VFSStep
 ], Discriminator("type")]
 
-events: List[Steps] = []
-
 audit = sqlite3.connect(sys.argv[2])
 db = AuditDB(audit)
 
@@ -147,13 +145,6 @@ class VFSManager():
 
 vfs = VFSManager({ k: v.decode("utf-8") for (k, v) in vfs_init.to_dict().items()})
 
-init = InitialStep(
-    vfs_snapshot=0,
-    type="initial",
-    interface=run_info["interface"].string_contents,
-    spec=run_info["spec"].string_contents,
-    system_doc=run_info["system"].string_contents
-)
 
 def compute_diff(path: str, curr_version: str, new_version: str) -> List[str]:
     ud = difflib.unified_diff(
@@ -389,7 +380,7 @@ def parse_message(checkpoint: CheckpointTuple) -> list[Steps]:
     state_messages = cast(list[BaseMessage], checkpoint.checkpoint["channel_values"]["messages"])
     queue = MessageQueue(state_messages)
 
-    events = []
+    events : list[Steps] = []
     prev = checkpoint.parent_config
     while prev is not None:
         prev_tuple = checkpointer.get_tuple(prev)
@@ -454,7 +445,10 @@ def parse_message(checkpoint: CheckpointTuple) -> list[Steps]:
                         case "code_result":
                             events.append(handle_code_result(step))
                         case "get_file" | "list_files" | "grep_files":
-                            events.append(handle_vfs_tools(step, queue))
+                            events.append(VFSStep(
+                                type="vfs",
+                                vfs_snapshot=vfs.curr_version,
+                                commands=handle_vfs_tools(step, queue)))
                         case _:
                             print("unhandled: " + which)
                             print(step)
@@ -469,10 +463,22 @@ x = checkpointer.get_tuple({
 
 assert x is not None
 
-evs = parse_message(x)
-print(json.dumps(evs, indent=2))
+events : list[Steps] = []
+init = InitialStep(
+    vfs_snapshot=0,
+    type="initial",
+    interface=run_info["interface"].string_contents,
+    spec=run_info["spec"].string_contents,
+    system_doc=run_info["system"].string_contents
+)
 
-sys.exit(0)
+events.append(
+    init
+)
+
+
+events.extend(parse_message(x))
+# print(json.dumps(evs, indent=2))
 
 output = load_jinja_template("trace-explorer.html.j2", fs_dump=json.dumps(vfs.fs), steps_dump=json.dumps(events))
 
