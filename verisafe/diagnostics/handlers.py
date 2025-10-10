@@ -114,26 +114,34 @@ def print_prover_updates(payload: ProgressUpdate) -> None:
         print(f"Running prover with args: {' '.join(payload['args'])}")
 
 
-audit_guard: Set[AuditUpdateTy] = {"manual_search", "rule_result"}
+audit_guard: Set[AuditUpdateTy] = {"manual_search", "rule_result", "summarization"}
 
 def is_audit_update(x: AllUpdates) -> TypeGuard[AuditUpdate]:
     return x["type"] in audit_guard
 
 def handle_audit_update(db: AuditDB, upd: AuditUpdate, thread_id: str) -> None:
-    if upd["type"] == "rule_result":
-        db.add_rule_result(
-            thread_id=thread_id,
-            analysis=upd["analysis"],
-            result=upd["status"],
-            rule_name=upd["rule"],
-            tool_id=upd["tool_id"]
-        )
-    elif upd["type"] == "manual_search":
-        db.add_manual_result(
-            thread_id=thread_id,
-            tool_id=upd["tool_id"],
-            ref=upd["ref"]
-        )
+    match upd["type"]:
+        case "manual_search":
+            db.add_manual_result(
+                thread_id=thread_id,
+                tool_id=upd["tool_id"],
+                ref=upd["ref"]
+            )
+        case "rule_result":
+            db.add_rule_result(
+                thread_id=thread_id,
+                analysis=upd["analysis"],
+                result=upd["status"],
+                rule_name=upd["rule"],
+                tool_id=upd["tool_id"]
+            )
+        case "summarization":
+            db.register_summary(
+                thread_id=thread_id,
+                checkpoint_id=upd["checkpoint_id"],
+                summary=upd["summary"]
+            )
+        
 
 def handle_custom_update(p: AllUpdates, thread_id: str, audit_db: Optional[AuditDB]) -> None:
     if is_user_update(p):

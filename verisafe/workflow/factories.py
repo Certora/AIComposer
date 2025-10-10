@@ -7,7 +7,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph
 from langgraph.store.sqlite.base import SqliteStore
+from langgraph.graph import StateGraph
 
+from graphcore.graph import build_workflow, BoundLLM
+from graphcore.summary import SummaryConfig
 from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig
 <<<<<<< HEAD
@@ -18,10 +21,15 @@ from graphcore.summary import SummaryConfig
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.core.context import CryptoContext
 from verisafe.core.state import CryptoStateGen
+<<<<<<< HEAD
+=======
+
+>>>>>>> d1bdd13 (checkpoint)
 from verisafe.input.types import ModelOptions
 
 from verisafe.tools import *
 from verisafe.templates.loader import load_jinja_template
+from verisafe.workflow.summarization import SummaryGeneration
 
 def get_checkpointer() -> SqliteSaver:
     state_db = sqlite3.connect("cryptosafe.db", check_same_thread=False)
@@ -60,6 +68,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
     )
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 class SummaryGeneration(SummaryConfig[CryptoStateGen]):
     def get_resume_prompt(self, state: CryptoStateGen, summary: str) -> str:
         res = super().get_resume_prompt(state, summary)
@@ -77,6 +86,14 @@ def get_cryptostate_builder(llm: BaseChatModel, summarization_threshold: int | N
 =======
 def get_cryptostate_builder(llm: BaseChatModel, prompt_params: PromptParams, fs_layer: str | None) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
 >>>>>>> 6d70e77 (debug tooling, more iteration)
+=======
+def get_cryptostate_builder(
+    llm: BaseChatModel,
+    prompt_params: PromptParams,
+    fs_layer: str | None,
+    summarization_threshold : int | None
+) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
+>>>>>>> d1bdd13 (checkpoint)
     (vfs_tooling, mat) = vfs_tools(VFSToolConfig(
         fs_layer=fs_layer,
         immutable=False,

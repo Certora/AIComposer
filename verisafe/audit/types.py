@@ -24,11 +24,7 @@ class ManualResult(TypedDict):
     header: str
     similarity: float
 
-class InputFile(TypedDict):
-    content: str
-    basename: str
-
 class RunInput(TypedDict):
-    spec: InputFile
-    interface: InputFile
-    system: InputFile
+    spec: InputFileLike
+    interface: InputFileLike
+    system: InputFileLike

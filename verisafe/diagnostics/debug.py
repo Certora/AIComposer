@@ -20,8 +20,13 @@ def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
     workflow = get_cryptostate_builder(
         llm=llm,
         fs_layer=None,
+<<<<<<< HEAD
         summarization_threshold=None,
         prompt_params={"is_resume": False}
+=======
+        prompt_params={"is_resume": False},
+        summarization_threshold=None,
+>>>>>>> d1bdd13 (checkpoint)
     )[0]
     config: RunnableConfig = {
         "configurable": {

@@ -3,7 +3,7 @@ from typing import TypeVar, Generic
 StateT = TypeVar("StateT")
 
 class SummaryConfig(Generic[StateT]):
-    def __init__(self, max_messages: int = ..., keep_last: int = ..., enabled: bool = ...):
+    def __init__(self, max_messages: int = ..., enabled: bool = ...):
         ...
 
     def get_summarization_prompt(self, state: StateT) -> str:

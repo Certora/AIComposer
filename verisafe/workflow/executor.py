@@ -20,7 +20,7 @@ from verisafe.rag.types import DatabaseConfig
 from verisafe.rag.db import PostgreSQLRAGDatabase
 from verisafe.rag.models import get_model as get_rag_model
 from verisafe.audit.db import AuditDB, ResumeArtifact, InputFileLike
-from verisafe.diagnostics.stream import AllUpdates
+from verisafe.diagnostics.stream import AllUpdates, PartialUpdates, Summarization
 from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
@@ -200,15 +200,32 @@ def execute_cryptosafe_workflow(
                     flow_input = get_resume_id_input(input, resume_art, workflow_options)
                     spec_file = input.new_spec
 
+<<<<<<< HEAD
+=======
+    (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(
+        llm=llm,
+        fs_layer=fs_layer,
+        prompt_params=prompt_params,
+        summarization_threshold=workflow_options.summarization_threshold
+    )
+
+>>>>>>> d1bdd13 (checkpoint)
     if audit_db is not None:
         audit_db.register_run(
             thread_id=thread_id,
             system_doc=system_doc,
             interface_file=spec_file,
+<<<<<<< HEAD
             spec_file=interface_file
         )
 
     (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(llm, fs_layer=fs_layer, summarization_threshold=workflow_options.summarization_threshold, prompt_params=prompt_params)
+=======
+            spec_file=interface_file,
+            vfs_init=materializer.iterate(cast(CryptoStateGen, flow_input)) #hack
+        )
+>>>>>>> d1bdd13 (checkpoint)
+
 
     store = get_store()
 
@@ -247,6 +264,13 @@ def execute_cryptosafe_workflow(
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
     work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer)
 
+    curr_state_config: RunnableConfig = {
+        "configurable": {
+            "thread_id": thread_id
+        }
+    }
+
+
     while True:
         interrupted = False
         r = current_input
@@ -269,17 +293,24 @@ def execute_cryptosafe_workflow(
                         break
                     summarize_update(payload)
                 case "custom":
-                    p = cast(AllUpdates, payload)
-                    handle_custom_update(p, thread_id, audit_db)
+                    p = cast(PartialUpdates, payload)
+                    full_update: AllUpdates
+                    if p["type"] == "summarization_raw":
+                        curr_checkpoint = workflow_exec.get_state(curr_state_config).config.get("configurable", {}).get("checkpoint_id", None)
+                        if curr_checkpoint is None:
+                            raise RuntimeError("Have summarization before ever hitting a checkpoint; this is sus")
+                        full_update = Summarization(
+                            type="summarization",
+                            checkpoint_id=curr_checkpoint,
+                            summary=p["summary"]
+                        )
+                    else:
+                        full_update = p
+                    handle_custom_update(full_update, thread_id, audit_db)
 
         if interrupted:
             continue
-        result_config: RunnableConfig = {
-            "configurable": {
-                "thread_id": thread_id
-            }
-        }
-        state = workflow_exec.get_state(result_config)
+        state = workflow_exec.get_state(curr_state_config)
         final_state = cast(CryptoStateGen, state.values)
         result = final_state.get("generated_code", None)
         if result is None:

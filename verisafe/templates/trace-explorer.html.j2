@@ -117,15 +117,15 @@
             background: #2980b9;
         }
         
-        /* Collapsible Sections */
-        .collapsible-section {
+        /* Generic Collapsible System */
+        .collapsible {
             margin-bottom: 1.5rem;
             border: 1px solid #e0e0e0;
             border-radius: 6px;
             overflow: hidden;
         }
         
-        .collapsible-header {
+        .collapsible__trigger {
             background: #f8f9fa;
             padding: 0.75rem 1rem;
             cursor: pointer;
@@ -134,13 +134,18 @@
             gap: 0.5rem;
             user-select: none;
             transition: background 0.2s;
+            border: none;
+            width: 100%;
+            text-align: left;
+            font-size: inherit;
+            color: inherit;
         }
         
-        .collapsible-header:hover {
+        .collapsible__trigger:hover {
             background: #e9ecef;
         }
         
-        .collapse-icon {
+        .collapsible__icon {
             display: inline-block;
             width: 0;
             height: 0;
@@ -148,21 +153,72 @@
             border-right: 6px solid transparent;
             border-top: 6px solid #495057;
             transition: transform 0.2s;
+            flex-shrink: 0;
         }
         
-        .collapse-icon.collapsed {
+        .collapsible[data-collapsible-state="collapsed"] .collapsible__icon {
             transform: rotate(-90deg);
         }
         
-        .collapsible-content {
+        .collapsible__title {
+            flex: 1;
+            font-weight: inherit;
+        }
+        
+        .collapsible__content {
             padding: 1rem;
             background: white;
             max-height: 600px;
             overflow-y: auto;
+            transition: all 0.2s ease;
         }
         
-        .collapsible-content.collapsed {
+        .collapsible[data-collapsible-state="collapsed"] .collapsible__content {
             display: none;
+        }
+        
+        /* Collapsible Variants */
+        .collapsible--search {
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+        }
+        
+        .collapsible--search .collapsible__trigger {
+            background: #fafafa;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .collapsible--search .collapsible__trigger:hover {
+            background: #f0f0f0;
+        }
+        
+        .collapsible--search .collapsible__title {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .collapsible--violation .collapsible__trigger {
+            background: transparent;
+            border: none;
+            padding: 0;
+            font-size: 14px;
+            font-weight: 500;
+            margin-top: 0.75rem;
+        }
+        
+        .collapsible--violation .collapsible__trigger:hover {
+            background: transparent;
+            opacity: 0.8;
+        }
+        
+        .collapsible--violation .collapsible__content {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(0,0,0,0.1);
+            padding-left: 0;
+            padding-right: 0;
         }
         
         /* Pre-formatted text blocks */
@@ -460,30 +516,6 @@
             background: rgba(0,0,0,0.1);
         }
         
-        .prover-violation-toggle {
-            cursor: pointer;
-            user-select: none;
-            display: flex;
-            align-items: center;
-            gap: 0.25rem;
-            margin-top: 0.75rem;
-            font-size: 14px;
-            font-weight: 500;
-        }
-        
-        .prover-violation-toggle:hover {
-            opacity: 0.8;
-        }
-        
-        .prover-violation-content {
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid rgba(0,0,0,0.1);
-        }
-        
-        .prover-violation-content.collapsed {
-            display: none;
-        }
         
         .prover-violation-content h1,
         .prover-violation-content h2,
@@ -565,44 +597,6 @@
             margin-left: 2rem;
             align-self: flex-end;
             width: 85%;
-        }
-        
-        .search-result {
-            background: #f5f5f5;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        
-        .search-result-header {
-            padding: 0.75rem 1rem;
-            background: #fafafa;
-            border-bottom: 1px solid #e0e0e0;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            user-select: none;
-            transition: background 0.2s;
-        }
-        
-        .search-result-header:hover {
-            background: #f0f0f0;
-        }
-        
-        .search-result-title {
-            font-weight: 600;
-            color: #333;
-            flex: 1;
-        }
-        
-        .search-result-content {
-            padding: 1rem;
-            background: white;
-        }
-        
-        .search-result-content.collapsed {
-            display: none;
         }
         
         .search-result-body {
@@ -814,32 +808,32 @@
                 <button class="vfs-button" data-vfs-open>View VFS</button>
             </div>
             
-            <div class="collapsible-section">
-                <div class="collapsible-header" data-collapsible>
-                    <span class="collapse-icon"></span>
-                    <span>Initial Specification</span>
+            <div class="collapsible" data-collapsible-state="expanded">
+                <div class="collapsible__trigger" data-collapsible-trigger>
+                    <span class="collapsible__icon"></span>
+                    <span class="collapsible__title">Initial Specification</span>
                 </div>
-                <div class="collapsible-content">
+                <div class="collapsible__content">
                     <pre class="spec-content"></pre>
                 </div>
             </div>
             
-            <div class="collapsible-section">
-                <div class="collapsible-header" data-collapsible>
-                    <span class="collapse-icon"></span>
-                    <span>Initial Interface</span>
+            <div class="collapsible" data-collapsible-state="expanded">
+                <div class="collapsible__trigger" data-collapsible-trigger>
+                    <span class="collapsible__icon"></span>
+                    <span class="collapsible__title">Initial Interface</span>
                 </div>
-                <div class="collapsible-content">
+                <div class="collapsible__content">
                     <pre class="interface-content"><code class="language-solidity"></code></pre>
                 </div>
             </div>
             
-            <div class="collapsible-section">
-                <div class="collapsible-header" data-collapsible>
-                    <span class="collapse-icon"></span>
-                    <span>System Documentation</span>
+            <div class="collapsible" data-collapsible-state="expanded">
+                <div class="collapsible__trigger" data-collapsible-trigger>
+                    <span class="collapsible__icon"></span>
+                    <span class="collapsible__title">System Documentation</span>
                 </div>
-                <div class="collapsible-content">
+                <div class="collapsible__content">
                     <div class="system-doc"></div>
                 </div>
             </div>
@@ -944,12 +938,12 @@
     
     <!-- Search Result Template -->
     <template id="search-result-template">
-        <div class="search-result">
-            <div class="search-result-header" data-search-toggle>
-                <span class="collapse-icon"></span>
-                <span class="search-result-title"></span>
+        <div class="collapsible collapsible--search" data-collapsible-state="expanded">
+            <div class="collapsible__trigger" data-collapsible-trigger>
+                <span class="collapsible__icon"></span>
+                <span class="collapsible__title search-result-title"></span>
             </div>
-            <div class="search-result-content">
+            <div class="collapsible__content">
                 <div class="search-result-body"></div>
                 <div class="search-result-similarity">
                     Similarity Score: <span class="similarity-score"></span>
@@ -1019,6 +1013,35 @@
             updateNavigationButtons();
         }
         
+        // Generic collapsible system
+        function initCollapsibles() {
+            document.addEventListener('click', (e) => {
+                const trigger = e.target.closest('[data-collapsible-trigger]');
+                if (trigger) {
+                    toggleCollapsible(trigger.closest('.collapsible'));
+                }
+            });
+        }
+        
+        function toggleCollapsible(collapsibleElement) {
+            const currentState = collapsibleElement.dataset.collapsibleState || 'expanded';
+            const newState = currentState === 'expanded' ? 'collapsed' : 'expanded';
+            collapsibleElement.dataset.collapsibleState = newState;
+            
+            // Emit custom event for additional handling
+            collapsibleElement.dispatchEvent(new CustomEvent('collapsible:toggle', {
+                detail: { state: newState, element: collapsibleElement }
+            }));
+        }
+        
+        function expandCollapsible(element) {
+            element.dataset.collapsibleState = 'expanded';
+        }
+        
+        function collapseCollapsible(element) {
+            element.dataset.collapsibleState = 'collapsed';
+        }
+        
         // Attach all event listeners
         function attachEventListeners() {
             // Navigation buttons
@@ -1030,14 +1053,11 @@
                 navigateStep(1);
             });
             
+            // Initialize unified collapsible system
+            initCollapsibles();
+            
             // Event delegation for dynamically created elements
             document.getElementById('paneContainer').addEventListener('click', (e) => {
-                // Collapsible headers
-                const collapsibleHeader = e.target.closest('[data-collapsible]');
-                if (collapsibleHeader) {
-                    toggleCollapse(collapsibleHeader);
-                }
-                
                 // VFS open button
                 const vfsOpenButton = e.target.closest('[data-vfs-open]');
                 if (vfsOpenButton) {
@@ -1049,18 +1069,6 @@
                 if (contractFileLink) {
                     const filePath = contractFileLink.dataset.contractFile;
                     openVFSModalWithFile(filePath);
-                }
-                
-                // Prover violation toggle
-                const violationToggle = e.target.closest('[data-violation-toggle]');
-                if (violationToggle) {
-                    toggleViolation(violationToggle);
-                }
-                
-                // Search result toggle
-                const searchToggle = e.target.closest('[data-search-toggle]');
-                if (searchToggle) {
-                    toggleSearchResult(searchToggle);
                 }
                 
                 // Put view toggle
@@ -1418,12 +1426,14 @@
                     const parsedMarkdown = renderMarkdown(result.analysis);
                     
                     violationSection.innerHTML = `
-                        <div class="prover-violation-toggle" data-violation-toggle>
-                            <span class="collapse-icon collapsed"></span>
-                            <span>View Violation Analysis</span>
-                        </div>
-                        <div class="prover-violation-content collapsed">
-                            ${parsedMarkdown}
+                        <div class="collapsible collapsible--violation" data-collapsible-state="collapsed">
+                            <div class="collapsible__trigger" data-collapsible-trigger>
+                                <span class="collapsible__icon"></span>
+                                <span class="collapsible__title">View Violation Analysis</span>
+                            </div>
+                            <div class="collapsible__content">
+                                ${parsedMarkdown}
+                            </div>
                         </div>
                     `;
                 }
@@ -1479,10 +1489,8 @@
                 
                 // Start with first result expanded, others collapsed
                 if (index > 0) {
-                    const icon = resultClone.querySelector('.collapse-icon');
-                    const content = resultClone.querySelector('.search-result-content');
-                    icon.classList.add('collapsed');
-                    content.classList.add('collapsed');
+                    const collapsible = resultClone.querySelector('.collapsible');
+                    collapsible.dataset.collapsibleState = 'collapsed';
                 }
                 
                 resultsContainer.appendChild(resultClone);
@@ -1614,28 +1622,6 @@
             }
         }
         
-        // Toggle search result
-        function toggleSearchResult(header) {
-            const icon = header.querySelector('.collapse-icon');
-            const content = header.nextElementSibling;
-            
-            icon.classList.toggle('collapsed');
-            content.classList.toggle('collapsed');
-        }
-        
-        // Toggle violation analysis
-        function toggleViolation(toggle) {
-            const icon = toggle.querySelector('.collapse-icon');
-            const content = toggle.nextElementSibling;
-            
-            icon.classList.toggle('collapsed');
-            content.classList.toggle('collapsed');
-            
-            // Update toggle text
-            icon.nextElementSibling.textContent = icon.classList.contains('collapsed') 
-                ? ' View Violation Analysis' 
-                : ' Hide Violation Analysis';
-        }
         
         // Open VFS Modal with specific file selected
         function openVFSModalWithFile(filePath) {
@@ -1646,14 +1632,6 @@
             }, 100);
         }
         
-        // Toggle collapse functionality
-        function toggleCollapse(header) {
-            const icon = header.querySelector('.collapse-icon');
-            const content = header.nextElementSibling;
-            
-            icon.classList.toggle('collapsed');
-            content.classList.toggle('collapsed');
-        }
         
         // Navigation functions
         function navigateStep(direction) {
