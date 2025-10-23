@@ -200,8 +200,6 @@ def execute_cryptosafe_workflow(
                     flow_input = get_resume_id_input(input, resume_art, workflow_options)
                     spec_file = input.new_spec
 
-<<<<<<< HEAD
-=======
     (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(
         llm=llm,
         fs_layer=fs_layer,
@@ -209,22 +207,14 @@ def execute_cryptosafe_workflow(
         summarization_threshold=workflow_options.summarization_threshold
     )
 
->>>>>>> d1bdd13 (checkpoint)
     if audit_db is not None:
         audit_db.register_run(
             thread_id=thread_id,
             system_doc=system_doc,
             interface_file=spec_file,
-<<<<<<< HEAD
-            spec_file=interface_file
-        )
-
-    (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(llm, fs_layer=fs_layer, summarization_threshold=workflow_options.summarization_threshold, prompt_params=prompt_params)
-=======
             spec_file=interface_file,
             vfs_init=materializer.iterate(cast(CryptoStateGen, flow_input)) #hack
         )
->>>>>>> d1bdd13 (checkpoint)
 
 
     store = get_store()

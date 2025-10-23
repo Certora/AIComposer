@@ -10,21 +10,12 @@ from langgraph.store.sqlite.base import SqliteStore
 from langgraph.graph import StateGraph
 
 from graphcore.graph import build_workflow, BoundLLM
-from graphcore.summary import SummaryConfig
 from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig
-<<<<<<< HEAD
-from graphcore.summary import SummaryConfig
-=======
->>>>>>> 6d70e77 (debug tooling, more iteration)
 
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.core.context import CryptoContext
 from verisafe.core.state import CryptoStateGen
-<<<<<<< HEAD
-=======
-
->>>>>>> d1bdd13 (checkpoint)
 from verisafe.input.types import ModelOptions
 
 from verisafe.tools import *
@@ -67,33 +58,12 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         betas=["files-api-2025-04-14"],
     )
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-class SummaryGeneration(SummaryConfig[CryptoStateGen]):
-    def get_resume_prompt(self, state: CryptoStateGen, summary: str) -> str:
-        res = super().get_resume_prompt(state, summary)
-
-        res += "\n You may use the VFS tools to query the current state of your implementation."
-        return res
-
-
-def get_cryptostate_builder(llm: BaseChatModel, summarization_threshold: int | None, fs_layer: str | None, prompt_params: PromptParams) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
-    conf : SummaryGeneration | None = None
-    if summarization_threshold is not None:
-        conf = SummaryGeneration(
-            max_messages=summarization_threshold
-        )
-=======
-def get_cryptostate_builder(llm: BaseChatModel, prompt_params: PromptParams, fs_layer: str | None) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
->>>>>>> 6d70e77 (debug tooling, more iteration)
-=======
 def get_cryptostate_builder(
     llm: BaseChatModel,
     prompt_params: PromptParams,
     fs_layer: str | None,
     summarization_threshold : int | None
 ) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
->>>>>>> d1bdd13 (checkpoint)
     (vfs_tooling, mat) = vfs_tools(VFSToolConfig(
         fs_layer=fs_layer,
         immutable=False,
@@ -111,6 +81,9 @@ add new specification files.
 
     crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
 
+    conf : SummaryGeneration | None = SummaryGeneration(
+        max_messages=summarization_threshold
+    ) if summarization_threshold else None
 
     workflow_builder: tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
         state_class=CryptoStateGen,
