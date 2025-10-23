@@ -82,22 +82,3 @@ def resume_workflow_parser() -> TypedArgumentParser[ResumeArgs]:
     _final_resume_option(resume_fs_args)
 
     return cast(TypedArgumentParser[ResumeArgs], parser)
-
-
-# def resume_id_workflow_argparser() -> TypedArgumentParser[ResumeIdArgs]:
-#     parser = argparse.ArgumentParser()
-#     _common_options(parser)
-#     # _common_resume_options(parser)
-#     parser.add_argument("new_spec", help="The path to the new spec file.")
-#     _final_resume_option(parser)
-
-#     return cast(TypedArgumentParser[ResumeIdArgs], parser)
-
-# def resume_file_workflow_argparser() -> TypedArgumentParser[ResumeFSArgs]:
-#     parser = argparse.ArgumentParser()
-#     _common_options(parser)
-#     # _common_resume_options(parser)
-#     parser.add_argument("working_dir", help="Path to the directory that is the new root of the VFS to use during the workflow")
-#     _final_resume_option(parser)
-
-#     return cast(TypedArgumentParser[ResumeFSArgs], parser)

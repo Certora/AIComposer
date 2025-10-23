@@ -43,7 +43,7 @@ def main() -> int:
                 output_path.parent.mkdir(exist_ok=True, parents=True)
                 output_path.write_bytes(cont)
             return 0
-        case "resume-dir" | "resume-dir":
+        case "resume-dir" | "resume-id":
             commentary: str | None = None
             if args.commentary is not None:
                 if args.commentary.startswith('@'):
@@ -66,9 +66,6 @@ def main() -> int:
                     comments=commentary,
                     new_system=new_system
                 )
-        case _:
-            print(f"Unrecognize sub-command: {args.command}")
-            return 1
 
     llm = create_llm(args)
 

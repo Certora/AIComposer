@@ -89,11 +89,6 @@ class CommandLineArgs(WorkflowOptions, ModelOptions):
 
     debug: bool
 
-# class CommonResumeArgs(WorkflowOptions, ModelOptions):
-#     src_thread_id: str
-#     commentary: Optional[str]
-#     updated_system: Optional[str]
-
 class ResumeArgs(WorkflowOptions, ModelOptions):
     # common
     src_thread_id: str
