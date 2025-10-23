@@ -65,6 +65,7 @@ A few options can help tweak your experience:
 * `--thinking-tokens T` how many tokens of the overall token budget should be used for thinking
 * `--model` The name of the Anthropic model to use for the task. Defaults to sonnet
 * `--thread-id` and `--checkpoint-id` are used for resuming workflows that crash or need tweaking
+* `--summarization-threshold` enables the summarization of older messages after a certain threshold.
 
 ## Development workflow
 

@@ -6,6 +6,7 @@ from verisafe.workflow.types import Input
 from verisafe.core.context import CryptoContext
 from verisafe.core.state import CryptoStateGen
 from graphcore.graph import build_workflow, BoundLLM
+from graphcore.summary import SummaryConfig
 from langgraph.graph import StateGraph
 from verisafe.input.types import ModelOptions
 from langchain_anthropic import ChatAnthropic
@@ -40,18 +41,41 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         betas=["files-api-2025-04-14"],
     )
 
-def get_cryptostate_builder(llm: BaseChatModel) -> Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM]:
+
+class SummaryGeneration(SummaryConfig[CryptoStateGen]):
+    def get_resume_prompt(self, state: CryptoStateGen, summary: str) -> str:
+        res = super().get_resume_prompt(state, summary)
+
+        res += "\n The current state of the VFS is as follows."
+
+        for (k, v) in state["virtual_fs"].items():
+            res += f"\nFilename: `{k}\n"
+            res += f"\n```\n{v}\n```\n"
+        return res
+
+
+def get_cryptostate_builder(llm: BaseChatModel, summarization_threshold: int | None) -> Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM]:
     crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, put_file]
+
+    system_prompt = get_system_prompt()
+    initial_prompt = get_initial_prompt()
+    
+    conf : SummaryGeneration | None = None
+    if summarization_threshold is not None:
+        conf = SummaryGeneration(
+            max_messages=summarization_threshold
+        )
 
     workflow_builder: Tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
         state_class=CryptoStateGen,
         input_type=Input,
         tools_list=crypto_tools,
-        sys_prompt=get_system_prompt(),
-        initial_prompt=get_initial_prompt(),
+        sys_prompt=system_prompt,
+        initial_prompt=initial_prompt,
         output_key="generated_code",
         unbound_llm=llm,
-        context_schema=CryptoContext
+        context_schema=CryptoContext,
+        summary_config=conf
     )
 
     return workflow_builder

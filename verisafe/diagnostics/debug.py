@@ -18,7 +18,8 @@ def setup_logging(debug: bool) -> None:
 
 def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
     workflow = get_cryptostate_builder(
-        llm=llm
+        llm=llm,
+        summarization_threshold=None
     )[0]
     config: RunnableConfig = {
         "configurable": {

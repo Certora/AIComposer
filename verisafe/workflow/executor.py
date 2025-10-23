@@ -1,5 +1,8 @@
-from typing import Optional, Literal, cast
+import logging
 import uuid
+import sqlite3
+
+from typing import Optional, Literal, cast
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -18,7 +21,6 @@ from verisafe.diagnostics.stream import AllUpdates
 from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
-import sqlite3
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
@@ -37,17 +39,30 @@ def execute_cryptosafe_workflow(
     workflow_options: WorkflowOptions
 ) -> int:
     """Execute the CryptoSafe workflow with interrupt handling."""
+    logger = logging.getLogger(__name__)
+
     checkpointer = get_checkpointer()
 
-    (workflow_builder, bound_llm) = get_cryptostate_builder(llm)
+    (workflow_builder, bound_llm) = get_cryptostate_builder(
+        llm,
+        workflow_options.summarization_threshold
+    )
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer)
+
+    try:
+        import grandalf # type: ignore
+        layout = workflow_exec.get_graph().draw_ascii()
+        logger.debug(f"\n{layout}")
+    except ModuleNotFoundError:
+        pass
 
     thread_id = workflow_options.thread_id
 
     if thread_id is None:
         thread_id = "crypto_session_" + str(uuid.uuid1())
         print(f"Selected thread id: {thread_id}")
+        logger.info(f"Selected thread id: {thread_id}")
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     config["recursion_limit"] = workflow_options.recursion_limit
 
@@ -89,7 +104,7 @@ def execute_cryptosafe_workflow(
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,
         keep_folder=workflow_options.prover_keep_folders
-    )
+    )   
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
     work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts)
@@ -104,6 +119,7 @@ def execute_cryptosafe_workflow(
             match event_ty:
                 case "checkpoints":
                     print("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
+                    logger.info("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
                 case "updates":
                     if "__interrupt__" in payload:
                         if "configurable" in config and "checkpoint_id" in config["configurable"]:

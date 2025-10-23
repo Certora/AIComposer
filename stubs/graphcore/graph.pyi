@@ -23,6 +23,7 @@ from langgraph.graph import StateGraph, MessagesState
 from langgraph._internal._typing import StateLike
 from langgraph.types import Command
 from pydantic import BaseModel
+from graphcore.summary import SummaryConfig
 
 # TypeVars for generic typing
 InputState = TypeVar('InputState', bound='FlowInput')
@@ -99,6 +100,7 @@ def build_workflow(
     unbound_llm: BaseChatModel,
     output_schema: Optional[Type[OutputT]] = None,
     context_schema: Optional[Type[ContextT]] = None,
+    summary_config: SummaryConfig[StateT] | None = None
 ) -> Tuple[StateGraph[StateT, ContextT, InputState, OutputT], BoundLLM]:
     """
     Build a standard workflow with initial node -> tools -> tool_result pattern.

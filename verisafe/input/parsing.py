@@ -11,7 +11,7 @@ class TypedArgumentParser(Protocol[ArgNS]):
 
 def setup_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     """Configure command line argument parser."""
-    parser = argparse.ArgumentParser(description="Certora CryptoSafe Tool for Smart Contract Security")
+    parser = argparse.ArgumentParser(description="Certora VeriSafe Tool for Smart Contract Security")
     parser.add_argument("spec_file", help="Specification file for the smart contract")
     parser.add_argument("interface_file", help="The interface file for the smart contract")
     parser.add_argument("system_doc", help="A text document describing the system")
@@ -27,6 +27,9 @@ def setup_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     parser.add_argument("--checkpoint-id", help="The checkpoint id to resume a workflow from")
 
     parser.add_argument("--debug-fs", action="store", help="Dump the virtual FS to the provided folder and exit. Requires thread-id and checkpoint-id")
+
+    # Summarization options
+    parser.add_argument("--summarization-threshold", type=int, help="The number of messages that triggers summarization")
 
     # Database configuration for CVL manual search
     parser.add_argument("--db-host", default=DEFAULT_CONNECTION["host"], help="Database host for CVL manual search")

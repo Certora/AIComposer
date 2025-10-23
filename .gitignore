@@ -1,1 +1,4 @@
 *.pyc
+.certora_internal/
+cryptosafe.db
+verisafe/scripts/cvl_manual.html
