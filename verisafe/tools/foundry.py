@@ -33,6 +33,9 @@ class FoundryTestArgs(WithToolCallId):
     - Running regression tests
     - Validating contract behavior against expected outcomes
     - Debugging contract issues through test failures
+
+    In the event the test feedback would cause an overflow of the context limit, the raw foundry output
+    will be truncated, and an executive summary/todo list extracted from these test results will be returned instead.
     """
     test_function: Optional[str] = Field(default=None, description="""
         The specific test function to run within the test file. It uses --match-test flag of foundry and support regex.
@@ -77,7 +80,7 @@ def foundry_test(
             )
             
             if build_result.returncode != 0:
-                return f"Failed to build project: {build_result.stderr}"
+                return f"Failed to build project:\nStderr\n{build_result.stderr}\nStdout:\n{build_result.stdout}"
             
             # Run the tests
             test_cmd = ["forge", "test"]

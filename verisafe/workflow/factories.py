@@ -42,7 +42,8 @@ def get_system_prompt() -> str:
 
 def get_initial_prompt(prompt: PromptParams) -> str:
     """Load and render the initial prompt from Jinja template"""
-    return load_jinja_template("synthesis_prompt.j2", **prompt)
+    to_ret = load_jinja_template("synthesis_prompt.j2", **prompt)
+    return to_ret
 
 
 def create_llm(args: ModelOptions) -> BaseChatModel:
@@ -68,6 +69,7 @@ def get_cryptostate_builder(
         fs_layer=fs_layer,
         immutable=False,
         forbidden_write="(^rules.spec$)|(^tests/)",
+        forbidden_read="^.git.*",
         put_doc_extra= \
 """
 By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library defitions.

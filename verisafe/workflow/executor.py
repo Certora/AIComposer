@@ -148,7 +148,7 @@ def _path_has_tests(path: str) -> bool:
     test_dir = root / "tests"
     if not test_dir.is_dir():
         return False
-    for (p, _, _) in test_dir.walk():
+    for p in test_dir.rglob("*"):
         if p.name.endswith(".sol"):
             return True
     return False

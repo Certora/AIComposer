@@ -21,7 +21,7 @@ def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
         llm=llm,
         fs_layer=None,
         summarization_threshold=None,
-        prompt_params={"is_resume": False, "has_project_root": False}
+        prompt_params={"is_resume": False, "has_project_root": False, "has_foundry_tests": False}
     )[0]
     config: RunnableConfig = {
         "configurable": {

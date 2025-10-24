@@ -13,7 +13,7 @@ def _final_resume_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("updated_system", help="The new system document, if any. If not provided, the original system doc is used", nargs='?')
 
 def _common_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model", default="claude-sonnet-4-20250514",
+    parser.add_argument("--model", default="claude-sonnet-4-5-20250929",
                         help="Model to use for code generation (default: claude-sonnet-4-20250514)")
     parser.add_argument("--tokens", type=int, default=10_000,
                         help="Token budget for code generation (default: 10,000)")
