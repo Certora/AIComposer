@@ -27,10 +27,34 @@ class UploadedFile:
             return f.read()
         
     @property
+    def string_contents(self) -> str:
+        return self.read()
+
+    @property
     def bytes_contents(self) -> bytes:
         with open(self.path, 'rb') as f:
             return f.read()
 
+class InMemoryFile:
+    def __init__(self, name: str, contents: str | bytes):
+        self.basname = name
+        self.bytes_contents = contents if isinstance(contents, bytes) else contents.encode("utf-8")
+
+class NativeFS:
+    def __init__(self, p: pathlib.Path):
+        self.where = p
+
+    @property
+    def bytes_contents(self) -> bytes:
+        return self.where.read_bytes()
+    
+    @property
+    def basename(self) -> str:
+        return self.where.name
+    
+    @property
+    def string_contents(self) -> str:
+        return self.where.read_text()
 
 class WorkflowOptions(Protocol):
     # database options
@@ -65,6 +89,25 @@ class CommandLineArgs(WorkflowOptions, ModelOptions):
 
     debug: bool
 
+class ResumeArgs(WorkflowOptions, ModelOptions):
+    # common
+    src_thread_id: str
+    command: Literal["materialize", "resume-dir", "resume-id"]
+
+    # materialize
+    target: str
+
+    # common resume
+    commentary: Optional[str]
+    updated_system: Optional[str]
+
+    # resume-id
+    new_spec: str
+
+    # resume-fs
+    working_dir: str
+
+
 @dataclass
 class InputData:
     """
@@ -73,3 +116,31 @@ class InputData:
     spec: UploadedFile
     system_doc: UploadedFile
     intf: UploadedFile
+
+
+class ResumeInput(Protocol):
+    @property
+    def comments(self) -> Optional[str]:
+        ...
+
+    @property
+    def new_system(self) -> Optional[NativeFS]:
+        ...
+
+    @property
+    def thread_id(self) -> str:
+        ...
+
+@dataclass
+class ResumeIdData:
+    thread_id: str
+    new_spec: NativeFS
+    comments: Optional[str]
+    new_system: Optional[NativeFS]
+
+@dataclass
+class ResumeFSData:
+    thread_id: str
+    file_path: str
+    comments: Optional[str]
+    new_system: Optional[NativeFS]

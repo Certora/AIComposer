@@ -23,3 +23,9 @@ def cached_invoke(b: Runnable[LanguageModelInput, BaseMessage], s: List[AnyMessa
     Send messages `s` to the llm `b` after adding caching instructions.
     """
     ...
+
+async def acached_invoke(b: Runnable[LanguageModelInput, BaseMessage], s: List[AnyMessage]) -> BaseMessage:
+    """
+    Send messages `s` to the llm `b` after adding caching instructions.
+    """
+    ...
