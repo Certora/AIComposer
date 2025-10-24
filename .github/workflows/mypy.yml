@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'   # change to the version(s) you want
+          python-version: '3.12'   # change to the version(s) you want
 
       - name: Cache pip
         uses: actions/cache@v4
