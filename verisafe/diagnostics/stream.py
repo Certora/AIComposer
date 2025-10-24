@@ -20,9 +20,9 @@ class ProverResult(UserUpdateData[Literal["prover_result"]]):
 class CEXAnalysis(UserUpdateData[Literal["cex_analysis"]]):
     rule_name: str
 
-AuditUpdateTy = Literal["rule_result", "manual_search", "summarization"]
+AuditUpdateTy = Literal["rule_result", "manual_search", "foundry_test", "summarization"]
 
-AuditUpdateTV = TypeVar("AuditUpdateTV", Literal["rule_result"], Literal["manual_search"])
+AuditUpdateTV = TypeVar("AuditUpdateTV", Literal["rule_result"], Literal["manual_search"], Literal["foundry_test"])
 
 class AuditResult(TypedDict, Generic[AuditUpdateTV]):
     type: AuditUpdateTV
@@ -45,16 +45,24 @@ class Summarization(TypedDict):
 class ManualSearchResult(AuditResult[Literal["manual_search"]]):
     ref: ManualRef
 
+class FoundryResult(AuditResult[Literal["foundry_test"]]):
+    test_function: Optional[str]
+    success: bool
+    return_code: int
+    stdout: str
+    stderr: str
+    error_message: Optional[str]
+
 ProgressUpdate = Annotated[
     Union[CEXAnalysis, ProverResult, ProverRun], Discriminator("type")
 ]
 
 AuditUpdate = Annotated[
-    Union[RuleAuditResult | ManualSearchResult | Summarization], Discriminator("type")
+    Union[RuleAuditResult | ManualSearchResult | Summarization | FoundryResult], Discriminator("type")
 ]
 
 PartialAuditUpdate = Annotated[
-    Union[RuleAuditResult | ManualSearchResult | SummarizationPartial], Discriminator("type")
+    Union[RuleAuditResult | ManualSearchResult | SummarizationPartial | FoundryResult], Discriminator("type")
 ]
 
 AllUpdates = ProgressUpdate | AuditUpdate

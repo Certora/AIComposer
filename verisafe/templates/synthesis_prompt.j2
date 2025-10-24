@@ -11,6 +11,12 @@ The interface and formal specification are the "normative" specification for the
 they define behaviors that your code *must* (or *must not*) have. The normative specification is
 intended to provide context for what the component does and the intention behind its design.
 
+The system document is the "informative" specification, and provides context about the component
+you are {% if is_resume %}updating{%else%}implementing{%endif%} (i.e., how it may interact with other
+components in the protocol) and/or additional requirements not explicitly covered by the formal specification.
+In addition to the normative specification, ensure your work follows the natural language specification 
+of the informative specification.
+
 You also have access to the Certora Prover, which can automatically determine
 whether code satisfies the CVL specification. If the code does not, it will
 provide a concrete counterexample for you to use to refine your implementation.
@@ -39,6 +45,10 @@ the behavior of these mocked components. When the behavior of these components i
 by the informative specification, ensure your mocks are consistent with that guidance. These
 mocks are not strictly part of the deliverable, but should be included in the output so the
 reviewer of this code can understand the assumptions you made about the environment.
+{% if is_resume or has_project_root %}
+However, the VFS you have access to may already have implementations of these other components;
+be sure to use the VFS tools to determine whether implementing these mocks are strictly necessary.
+{% endif %}
 
 As mentioned above, the code you write *must* satisfy the specifications as judged by the
 Certora prover. Thus, it is imperative that you write code that is amenable to formal
@@ -88,9 +98,17 @@ store your work. You have tools to read, modify, and query this VFS.
      vacuously true.</advice>
   <reminder>The specification file provided to you has already been put onto the VFS, and may not be modified or updated
   except via the designated "propose_spec_change" tool.</reminder>
-  {% if is_update %}
+  {% if is_resume %}
   <reminder>The VFS contains the implementation you produced according to some older version of the specification/interface/system document.
     You should use the VFS tools to query their contents to understand your work</reminder>
+  {% elif has_project_root %}
+  <reminder>The VFS contains the implementations of other components in the system besides the one you are implementing. You may use
+    the VFS tools to query these files.
+  </reminder>
+  <reminder>
+     The interface file provided as input may, or may not, already exist on the VFS. Be sure to use the VFS tools to determine this,
+     and upload the interface file if necessary
+  </reminder>
   {% else %}
   <reminder>Aside from the spec file mentioned above, the VFS starts empty, the interface file has NOT been uploaded yet.
     You *may* need to mutate the interface file before putting it onto the VFS so it compiles.

@@ -86,8 +86,8 @@ class CommandLineArgs(WorkflowOptions, ModelOptions):
     interface_file: str
     system_doc: str
     debug_fs: str
-
     debug: bool
+    project_root: str
 
 class ResumeArgs(WorkflowOptions, ModelOptions):
     # common
@@ -116,7 +116,7 @@ class InputData:
     spec: UploadedFile
     system_doc: UploadedFile
     intf: UploadedFile
-
+    project_root: str
 
 class ResumeInput(Protocol):
     @property

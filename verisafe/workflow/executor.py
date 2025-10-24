@@ -24,7 +24,6 @@ from verisafe.diagnostics.stream import AllUpdates, PartialUpdates, Summarizatio
 from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
-
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
 
@@ -174,14 +173,16 @@ def execute_cryptosafe_workflow(
 
     match input:
         case InputData():
-            prompt_params = PromptParams(is_resume=False)
             flow_input = get_fresh_input(input, workflow_options)
             system_doc = input.system_doc
             interface_file = input.intf
             spec_file = input.spec
+            fs_layer = input.project_root
+            prompt_params = PromptParams(is_resume=False, has_project_root=input.project_root is not None)
+
 
         case ResumeIdData() | ResumeFSData():
-            prompt_params = PromptParams(is_resume=True)
+            prompt_params = PromptParams(is_resume=True, has_project_root=False)
 
             if audit_db is None:
                 raise RuntimeError("Cannot do resume workflows without audit db")

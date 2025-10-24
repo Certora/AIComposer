@@ -4,6 +4,7 @@ from graphcore.graph import FlowInput
 
 class PromptParams(TypedDict):
     is_resume: bool
+    has_project_root: bool
 
 class Input(FlowInput):
     """

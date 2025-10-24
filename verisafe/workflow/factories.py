@@ -79,7 +79,7 @@ add new specification files.
 """
     ), CryptoStateGen)
 
-    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
+    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search,foundry_test, *vfs_tooling]
 
     conf : SummaryGeneration | None = SummaryGeneration(
         max_messages=summarization_threshold

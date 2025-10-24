@@ -37,4 +37,5 @@ def upload_input(i: CommandLineArgs) -> InputData:
         spec=spec_file,
         system_doc=system_doc_file,
         intf=interface_file,
+        project_root=i.project_root,
     )

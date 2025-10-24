@@ -53,6 +53,7 @@ def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     parser.add_argument("spec_file", help="Specification file for the smart contract")
     parser.add_argument("interface_file", help="The interface file for the smart contract")
     parser.add_argument("system_doc", help="A text document describing the system")
+    parser.add_argument("project_root", help="The root directory of the project", default=None, nargs='?')
     _common_options(parser)
 
     return cast(TypedArgumentParser[CommandLineArgs], parser)
