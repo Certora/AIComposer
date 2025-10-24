@@ -1,6 +1,7 @@
 
 import sqlite3
 from typing import Any
+import re
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -10,8 +11,7 @@ from langgraph.store.sqlite.base import SqliteStore
 from langgraph.graph import StateGraph
 
 from graphcore.graph import build_workflow, BoundLLM
-from graphcore.graph import build_workflow, BoundLLM
-from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig
+from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig, VFSState
 
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.core.context import CryptoContext
@@ -62,12 +62,12 @@ def get_cryptostate_builder(
     llm: BaseChatModel,
     prompt_params: PromptParams,
     fs_layer: str | None,
-    summarization_threshold : int | None
-) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[CryptoStateGen]]:
+    summarization_threshold : int | None,
+) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[VFSState]]:
     (vfs_tooling, mat) = vfs_tools(VFSToolConfig(
         fs_layer=fs_layer,
         immutable=False,
-        forbidden_write="^rules.spec$",
+        forbidden_write="(^rules.spec$)|(^tests/)",
         put_doc_extra= \
 """
 By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library defitions.
@@ -75,9 +75,9 @@ Further, the name of the contract/interface/library defined in that file should 
 For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`"
 
 IMPORTANT: You may not use this tool to update the specification, nor should you attempt to
-add new specification files.
+add new specification files. You also may not update or mutate the test files.
 """
-    ), CryptoStateGen)
+    ), VFSState)
 
     crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search,foundry_test, *vfs_tooling]
 

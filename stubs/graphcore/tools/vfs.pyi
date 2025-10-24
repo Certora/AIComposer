@@ -6,7 +6,7 @@ from typing_extensions import TypedDict
 def merge_vfs(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
     ...
 
-class VFSState(MessagesState):
+class VFSState(TypedDict):
     vfs: Annotated[dict[str, str], merge_vfs]
 
 InputType = TypeVar('InputType', bound=VFSState)

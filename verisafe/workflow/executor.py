@@ -85,7 +85,11 @@ def get_resume_prompt_common(
         other_changes=changes
     )]
 
-def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> Input:
+def get_resume_id_input(
+        input: ResumeIdData,
+        resume_art: ResumeArtifact,
+        workflow_options: WorkflowOptions
+        ) -> tuple[Input, bool]:
 
     input_messages : list[str | dict] = get_resume_prompt_common(
         art=resume_art,
@@ -98,10 +102,11 @@ def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflo
     vfs_materialize = resume_art.vfs.to_dict()
     new_vfs = { k: v.decode("utf-8") for (k, v) in vfs_materialize.items() }
     new_vfs["rules.spec"] = input.new_spec.string_contents
-    return Input(
+    has_foundry_tests = any([ s.startswith("tests/") and s.endswith(".sol") for s in vfs_materialize.keys()])
+    return (Input(
         input=input_messages,
         vfs=new_vfs
-    )
+    ), has_foundry_tests)
 
 def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[Input, InputFileLike, InputFileLike]:
     path = pathlib.Path(input.file_path)
@@ -138,6 +143,15 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
 
     return (Input(input=input_messages, vfs={}), NativeFS(intf_p), NativeFS(spec_p))
 
+def _path_has_tests(path: str) -> bool:
+    root = pathlib.Path(path)
+    test_dir = root / "tests"
+    if not test_dir.is_dir():
+        return False
+    for (p, _, _) in test_dir.walk():
+        if p.name.endswith(".sol"):
+            return True
+    return False
 
 def execute_cryptosafe_workflow(
     llm: BaseChatModel,
@@ -178,11 +192,16 @@ def execute_cryptosafe_workflow(
             interface_file = input.intf
             spec_file = input.spec
             fs_layer = input.project_root
-            prompt_params = PromptParams(is_resume=False, has_project_root=input.project_root is not None)
+            prompt_params = PromptParams(
+                is_resume=False,
+                has_project_root=input.project_root is not None,
+                has_foundry_tests=input.project_root is not None and _path_has_tests(input.project_root)
+                )
 
 
         case ResumeIdData() | ResumeFSData():
-            prompt_params = PromptParams(is_resume=True, has_project_root=False)
+            has_foundry_tests: bool
+            
 
             if audit_db is None:
                 raise RuntimeError("Cannot do resume workflows without audit db")
@@ -196,10 +215,12 @@ def execute_cryptosafe_workflow(
                 case ResumeFSData():
                     (flow_input, interface_file, spec_file) = get_resume_fs_input(input, resume_art, workflow_options)
                     fs_layer = input.file_path
+                    has_foundry_tests = _path_has_tests(input.file_path)
                 case ResumeIdData():
                     interface_file = resume_art.intf_vfs_handle
-                    flow_input = get_resume_id_input(input, resume_art, workflow_options)
+                    (flow_input, has_foundry_tests) = get_resume_id_input(input, resume_art, workflow_options)
                     spec_file = input.new_spec
+            prompt_params = PromptParams(is_resume=True, has_project_root=False, has_foundry_tests=has_foundry_tests)
 
     (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(
         llm=llm,
@@ -214,7 +235,7 @@ def execute_cryptosafe_workflow(
             system_doc=system_doc,
             interface_file=spec_file,
             spec_file=interface_file,
-            vfs_init=materializer.iterate(cast(CryptoStateGen, flow_input)) #hack
+            vfs_init=materializer.iterate(flow_input)
         )
 
 

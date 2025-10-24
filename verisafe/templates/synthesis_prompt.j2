@@ -4,22 +4,30 @@ to the system design document for this protocol, along with the interface that t
 should satisfy and some basic documentation. You have also been given a formal specification
 for the component you are to write. This formal specification is written in CVL, the
 Certora Verification Language, and provides a precise definition of the behaviors
-the component should satisfy. You are vaguely familiar with CVL, but you may search
-for specific information using the cvl_manual_search tool.
+the component should satisfy. {% if has_foundry_tests -%}
+In addition, you have been provided with foundry unit/fuzz tests for the component.
+Like the CVL specification, these tests describe the expected behavior of the resulting component.
+{%- endif %}You are vaguely familiar with CVL, but you may search
+for specific information using the `cvl_manual_search` tool.
 
-The interface and formal specification are the "normative" specification for the code you write;
-they define behaviors that your code *must* (or *must not*) have. The normative specification is
-intended to provide context for what the component does and the intention behind its design.
+The {% if has_foundry_tests %}interface, formal specification, and tests{% else %}interface and formal specification{%endif%}
+are the "normative" specification for the code you write;
+they define behaviors that your code *must* (or *must not*) have.
 
 The system document is the "informative" specification, and provides context about the component
 you are {% if is_resume %}updating{%else%}implementing{%endif%} (i.e., how it may interact with other
 components in the protocol) and/or additional requirements not explicitly covered by the formal specification.
-In addition to the normative specification, ensure your work follows the natural language specification 
-of the informative specification.
+In addition to the normative specification, ensure your work follows the natural language specification
+found in the informative specification.
 
 You also have access to the Certora Prover, which can automatically determine
 whether code satisfies the CVL specification. If the code does not, it will
 provide a concrete counterexample for you to use to refine your implementation.
+
+{%if has_foundry_tests%}
+Additionally, you have access to the foundry tool, which can test your implementation
+against the provided tests.
+{%endif%}
 
 {% if is_resume %}
 You are starting with an existing implementation you wrote that satisfied
@@ -30,7 +38,7 @@ requirements have changed; details are below.
 
 <task>
 {% if is_resume %}
-  Update your implementation to that it satisfies the (update) normative specification the component.
+Update your implementation to that it satisfies the (updated) normative specification the component.
 {% else %}
 Write one or more Solidity files that implement the normative specification for the component.
 {%endif%}
@@ -51,7 +59,8 @@ be sure to use the VFS tools to determine whether implementing these mocks are s
 {% endif %}
 
 As mentioned above, the code you write *must* satisfy the specifications as judged by the
-Certora prover. Thus, it is imperative that you write code that is amenable to formal
+Certora prover{%if has_foundry_tests%} and Foundry tests{%endif%}.
+Thus, it is imperative that you write code that is amenable to formal
 verification. Gas costs, storage cost, or algorithmic complexity are all secondary concerns
 to verification passing. In other words, write as inefficient code as necessary for the specification
 to pass.
@@ -91,6 +100,22 @@ store your work. You have tools to read, modify, and query this VFS.
     changes are necessary, consult the user using the human assistance tool. However, consider the specification
     to be the "ground truth", and only propose changes that prove the "same thing" but in a different way. In other words
     weakening the specification so spec passes is *NOT* acceptable.</hard_requirement>
+  {% if has_foundry_tests%}
+  <hard_requirement>
+   The code you deliver must ALSO pass all of the provided foundry tests. While you may run individual tests
+   during your work, you must  ensure all tests pass on the code you deliver
+  </hard_requirement>
+  <hard_requirement>
+  You may NOT unilaterally change the provided tests files in any way. If you believe the unit tests and the
+  CVL specification are in conflict, you MAY consult the user to resolve this conflict.
+  </hard_requirement>
+  {%endif%}
+  {% if has_project_root %}
+  <hard_requirement>
+    You may not change the existing implementations of other components found on the VFS. If you believe changes
+    are necessary, you may consult the user via the `human_in_the_loop` tool.
+  </hard_requirement>
+  {%endif%}
   <soft_requirement>The code should be well commented, and when you make assumptions leave comments to that effect</soft_requirement>
   <advice>Summaries are an extremely useful tool for getting verification to pass. Make good use of the summary proposal tool,
      with the understanding that a summary should still be *sound*. Do *NOT* propose summaries that trivialize
