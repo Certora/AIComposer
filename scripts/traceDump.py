@@ -303,7 +303,7 @@ def handle_next_vfs_tool(m: AIMessage, message_queue: MessageQueue) -> list[VFSI
         cont = m.content
     else:
         cont = [m.content]
-    thoughts = []
+    thoughts : list[str] = []
     to_ret : list[VFSInteraction] = []
     for c in cont:
         if isinstance(c, str):
@@ -311,10 +311,10 @@ def handle_next_vfs_tool(m: AIMessage, message_queue: MessageQueue) -> list[VFSI
             continue
         ty = c.get("type")
         if ty == "text":
-            thoughts.append(c.get("text"))
+            thoughts.append(cast(str, c.get("text")))
             continue
         elif ty == "thinking":
-            thoughts.append(c.get("thinking"))
+            thoughts.append(cast(str, c.get("thinking")))
         
         # yolo
         if ty != "tool_use":
@@ -365,8 +365,8 @@ def handle_vfs_tools(step: dict, message_queue: MessageQueue) -> list[VFSInterac
                 cmd=f"cat {which}",
                 stdout=nxt.text()
             ))
-    nxt = message_queue.peek()
-    if nxt is not None and isinstance(nxt, AIMessage) and has_vfs_tools(nxt):
+    rem_nxt = message_queue.peek()
+    if rem_nxt is not None and isinstance(rem_nxt, AIMessage) and has_vfs_tools(rem_nxt):
         commands.extend(handle_next_vfs_tool(cast(AIMessage, message_queue.take()), message_queue))
     return commands
             

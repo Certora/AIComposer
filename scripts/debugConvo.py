@@ -1,6 +1,5 @@
 import bind as _
 
-import pathlib
 import sys
 
 from langchain_core.messages import HumanMessage
@@ -9,12 +8,6 @@ from dataclasses import dataclass
 if __name__ != "__main__":
     raise RuntimeError("This is a script only module")
 
-verisafe_dir = str(pathlib.Path(__file__).parent.parent.parent.absolute())
-
-if verisafe_dir not in sys.path:
-    sys.path.append(verisafe_dir)
-
-import verisafe.certora as _
 from verisafe.workflow.factories import get_checkpointer, create_llm
 
 checkpoint = get_checkpointer()
