@@ -1,12 +1,20 @@
 from graphcore.graph import WithToolCallId
 from pydantic import Field
-from typing import List, Annotated, cast, Literal, TypedDict
+from typing import List, Annotated, cast, Literal, TypedDict, Protocol, ClassVar, Any
 from langchain_core.tools import tool, InjectedToolCallId
 from verisafe.core.context import CryptoContext
 from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 from verisafe.diagnostics.stream import ManualSearchResult
+from verisafe.rag.db import PostgreSQLRAGDatabase
+from dataclasses import Field as DField
 
+class RAGDBContext(Protocol):
+    __dataclass_fields__: ClassVar[dict[str, DField[Any]]]
+
+    @property
+    def rag_db(self) -> PostgreSQLRAGDatabase:
+        ...
 
 class SearchResultText(TypedDict):
     """
@@ -23,7 +31,6 @@ class SearchResultSchema(TypedDict):
     title: str
     source: str
     content: List[SearchResultText]
-
 
 class CVLManualSearchSchema(WithToolCallId):
     """
@@ -52,7 +59,7 @@ def cvl_manual_search(
     manual_section: List[str] = []
 ) -> str | List[dict]:
     """Search the CVL manual database for relevant documentation."""
-    runtime = get_runtime(CryptoContext)
+    runtime = get_runtime(RAGDBContext)
     writer = get_stream_writer()
 
     try:

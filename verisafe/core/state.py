@@ -1,13 +1,14 @@
 from typing import NotRequired
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from langgraph.graph import MessagesState
 
 from graphcore.tools.vfs import VFSState
 
 class ResultStateSchema(BaseModel):
-    source: list[str]
-    comments: str
+    source: list[str] = Field(description="The relative filenames in the virtual FS to present to the user. IMPORTANT: "
+              "the filenames here must have been populated by prior put_file tool calls")
+    comments: str = Field(description="Any comments or notes on the generated implementation, and a summary of your reasoning, along with any lessons "
+              "learned from iterating with the prover.")
 
 class CryptoStateGen(VFSState, MessagesState):
     generated_code: NotRequired[ResultStateSchema]
-

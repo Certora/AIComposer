@@ -23,6 +23,7 @@ from verisafe.diagnostics.stream import AllUpdates, PartialUpdates, Summarizatio
 from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
+from verisafe.extraction.extractor import get_requirements
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
@@ -215,7 +216,26 @@ def execute_cryptosafe_workflow(
 
     store = get_store()
 
+    extra_reqs = store.get((thread_id,), "requirements")
+    reqs_list : list[str]
+    if extra_reqs is None:
+        print("Analyzing requirements....")
+        reqs = get_requirements(
+            workflow_options, llm, system_doc, spec_file
+        )
+        reqs_list = reqs
+        store.put((thread_id,), "requirements", {"reqs": reqs})
+    else:
+        print("Read requirements from store")
+        reqs_list = extra_reqs.value["reqs"]
+
+    reqs_list = [ f"* {it}" for it in reqs_list ]
+
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer, store=store)
+    flow_input["input"].append(f"""
+Additionally, the implementation MUST satisfy the following requirements:
+{"\n".join(reqs_list)}
+""")
 
     try:
         import grandalf # type: ignore

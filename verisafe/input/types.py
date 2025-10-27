@@ -55,10 +55,12 @@ class NativeFS:
     @property
     def string_contents(self) -> str:
         return self.where.read_text()
-
-class WorkflowOptions(Protocol):
+    
+class RAGDBOptions(Protocol):
+    # database options
     rag_db: str
 
+class WorkflowOptions(RAGDBOptions):
     prover_capture_output: bool
     prover_keep_folders: bool
 
