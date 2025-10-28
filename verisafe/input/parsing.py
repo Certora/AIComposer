@@ -32,7 +32,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     # Database configuration for CVL manual search
     parser.add_argument("--db-host", default=DEFAULT_CONNECTION["host"], help="Database host for CVL manual search")
     parser.add_argument("--db-port", type=int, default=DEFAULT_CONNECTION["port"], help="Database port for CVL manual search")
-    parser.add_argument("--db-name", default=DEFAULT_CONNECTION["database"], help="Database name for CVL manual search")
+    parser.add_argument("--db-name", default=DEFAULT_CONNECTION["dbname"], help="Database name for CVL manual search")
     parser.add_argument("--db-user", default=DEFAULT_CONNECTION["user"], help="Database user for CVL manual search")
     parser.add_argument("--db-password", default=DEFAULT_CONNECTION["password"], help="Database password for CVL manual search")
 

@@ -241,7 +241,7 @@ def execute_cryptosafe_workflow(
     rag_connection: DatabaseConfig = {
         "host": workflow_options.db_host,
         "port": workflow_options.db_port,
-        "database": workflow_options.db_name,
+        "dbname": workflow_options.db_name,
         "user": workflow_options.db_user,
         "password": workflow_options.db_password
     }

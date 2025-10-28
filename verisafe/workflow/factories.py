@@ -1,15 +1,13 @@
+import psycopg
 
-import sqlite3
 from typing import Any
 
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph
-from langgraph.store.sqlite.base import SqliteStore
-from langgraph.graph import StateGraph
+from langgraph.store.postgres import PostgresStore
 
-from graphcore.graph import build_workflow, BoundLLM
 from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig
 
@@ -22,19 +20,20 @@ from verisafe.tools import *
 from verisafe.templates.loader import load_jinja_template
 from verisafe.workflow.summarization import SummaryGeneration
 
-def get_checkpointer() -> SqliteSaver:
-    state_db = sqlite3.connect("cryptosafe.db", check_same_thread=False)
-    checkpointer = SqliteSaver(state_db)
+
+def get_checkpointer() -> PostgresSaver:
+    conn_string = "postgresql://langgraph_checkpoint_user:langgraph_checkpoint_password@localhost:5432/langgraph_checkpoint_db"
+    conn = psycopg.connect(conn_string, autocommit=True)
+    checkpointer = PostgresSaver(conn)
+    checkpointer.setup()
     return checkpointer
 
-def get_store() -> SqliteStore:
-    store_db = sqlite3.connect("verisafe-store.db", check_same_thread=False)
-    store_db.autocommit = True
-    res = SqliteStore(
-        store_db
-    )
-    res.setup()
-    return res
+def get_store() -> PostgresStore:
+    conn_string = "postgresql://langgraph_store_user:langgraph_store_password@localhost:5432/langgraph_store_db"
+    conn = psycopg.connect(conn_string, autocommit=True)
+    store = PostgresStore(conn)
+    store.setup()
+    return store
 
 def get_system_prompt() -> str:
     """Load and render the system prompt from Jinja template"""
