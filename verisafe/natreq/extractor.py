@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from graphcore.graph import FlowInput, build_workflow
 from graphcore.tools.results import result_tool_generator
+from graphcore.tools.memory import memory_tool, MemoryBackend
 
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -20,6 +21,7 @@ from verisafe.rag.db import PostgreSQLRAGDatabase
 from verisafe.rag.models import get_model
 from verisafe.workflow.factories import get_checkpointer
 from verisafe.tools.search import cvl_manual_search
+from verisafe.templates.loader import load_jinja_template
 
 
 class ExtractionState(MessagesState):
@@ -62,60 +64,25 @@ results_tool = result_tool_generator(
     (list[str], "The list of natural language requirements you extracted during this process."),
     """
 Tool used to indicate your analysis is complete and communicate the generated requirements back to the user.
+
+REMINDER: You should call this tool only AFTER you have updated your memories.
 """
 )
 
 
-system_prompt = """
-You are an expert software systems architect. As such, you have years of experience
-reading design documents and analyzing requirements. You also know how to translate, high-level
-natural language descriptions of complex systems into individual requirements which can be
-independently evaluated. For example, you know to extract from a *description* like "the servers will exchange
-credentials" the following requirements:
-* Server A must maintain a database of encrypted and salted passwords
-* Server B must implement an HTTP endpoint secured with pub/priv encryption to receive credential requests
-etc.
+system_prompt = load_jinja_template("req_role_prompt.j2")
 
-Most of your experience is in the design and implementation of blockchain protocols, particularly DeFi.
-You thus have an understanding of the mathematics behinds securities, asset exchange, and so on.
-You have a good grasp of the economics of on-chain financial products, and how those are translated into
-"smart contract" implementations.
-"""
-
-initial_prompt = """
-You have been provided with a system document for a DeFi protocol. This document is a natural
-language description of a protocol, with varying levels of formalism/rigor. This system document
-may describe the interactions of one or more components, along with the behavior of the individual
-components.
-
-In addition, you have been provided with a *formal* specification of the behavior of one of the components
-of this protocol. This specification is written in the Certora Verification Language (CVL), a DSL for
-writing properties of smart contracts.
-
-Analyze both the system document and the specification to identify any implementation
-requirements/invariants/properties implied by the system document which are *NOT* covered by the provided specification. In other words,
-identify key "gaps" in the specification. Focus *only* on properties/invariants/requirements which
-can be stated in terms of the component that is the focus of the specification. Do *NOT* consider
-interactions between components, as they are out of scope.
-
-After your analysis, formulate these extracted requirements in natural language directives. Each such
-directive should be similar to "The implementation must ensure that ...", 
-"When X happens, the implementation must ...", etc.
-
-IMPORTANT: If you are unclear as to what component the specification is targeting, as the user for help.
-
-IMPORTANT: You *MUST* consult the user if you are uncertain about specific requirements or the meaning
-behind parts of the system document or specification. You MUST use the human_in_the_loop tool to clarify any
-uncertainties you may have or ambiguities in the specifications.
-"""
+initial_prompt = load_jinja_template("req_extraction_prompt.j2")
 
 def get_requirements(
     options: RAGDBOptions,
     llm: BaseChatModel,
     sys_doc: InputFileLike,
     spec_file: InputFileLike,
+    mem_backend: MemoryBackend
 ) -> list[str]:
     tools = [
+        memory_tool(mem_backend),
         results_tool,
         human_in_the_loop,
         cvl_manual_search

@@ -10,8 +10,10 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.types import Command
 
+from graphcore.tools.memory import memory_tool
+
 from verisafe.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
-from verisafe.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store
+from verisafe.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.workflow.meta import create_resume_commentary
 from verisafe.core.state import ResultStateSchema, CryptoStateGen
@@ -23,7 +25,8 @@ from verisafe.diagnostics.stream import AllUpdates, PartialUpdates, Summarizatio
 from verisafe.diagnostics.handlers import summarize_update, handle_custom_update
 from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
-from verisafe.extraction.extractor import get_requirements
+from verisafe.natreq.extractor import get_requirements
+from verisafe.natreq.judge import get_judge_tool
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
@@ -198,11 +201,48 @@ def execute_cryptosafe_workflow(
                     flow_input = get_resume_id_input(input, resume_art, workflow_options)
                     spec_file = input.new_spec
 
+    store = get_store()
+
+    req_memories = get_memory(
+        thread_id=thread_id,
+        ns="natreq"
+    )
+
+    extra_reqs = store.get((thread_id,), "requirements")
+    reqs_list : list[str]
+    if extra_reqs is None:
+        print("Analyzing requirements....")
+        reqs = get_requirements(
+            workflow_options, llm, system_doc, spec_file, mem_backend=req_memories
+        )
+        reqs_list = reqs
+        store.put((thread_id,), "requirements", {"reqs": reqs})
+    else:
+        print("Read requirements from store")
+        reqs_list = extra_reqs.value["reqs"]
+
+    judge_tool = get_judge_tool(
+        reqs=reqs_list,
+        mem=req_memories,
+        unbound=llm,
+        vfs_tools=get_vfs_tools(
+            fs_layer=fs_layer, immutable=True
+        )[0]
+    )
+
+    extra_tools = [judge_tool]
+
+    if "context-management-2025-06-27" in getattr(llm, "betas"):
+        memory = memory_tool(get_memory(thread_id, "verisafe"))
+        extra_tools.append(memory)
+
+
     (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(
         llm=llm,
         fs_layer=fs_layer,
         prompt_params=prompt_params,
-        summarization_threshold=workflow_options.summarization_threshold
+        summarization_threshold=workflow_options.summarization_threshold,
+        extra_tools=extra_tools
     )
 
     if audit_db is not None:
@@ -211,25 +251,8 @@ def execute_cryptosafe_workflow(
             system_doc=system_doc,
             interface_file=spec_file,
             spec_file=interface_file,
-            vfs_init=materializer.iterate(cast(CryptoStateGen, flow_input)) #hack
+            vfs_init=materializer.iterate(flow_input)
         )
-
-    store = get_store()
-
-    extra_reqs = store.get((thread_id,), "requirements")
-    reqs_list : list[str]
-    if extra_reqs is None:
-        print("Analyzing requirements....")
-        reqs = get_requirements(
-            workflow_options, llm, system_doc, spec_file
-        )
-        reqs_list = reqs
-        store.put((thread_id,), "requirements", {"reqs": reqs})
-    else:
-        print("Read requirements from store")
-        reqs_list = extra_reqs.value["reqs"]
-
-    reqs_list = [ f"* {it}" for it in reqs_list ]
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer, store=store)
     flow_input["input"].append(f"""

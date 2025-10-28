@@ -2,6 +2,8 @@ from typing import NotRequired
 from pydantic import BaseModel, Field
 from langgraph.graph import MessagesState
 
+from langgraph.graph import MessagesState
+
 from graphcore.tools.vfs import VFSState
 
 class ResultStateSchema(BaseModel):

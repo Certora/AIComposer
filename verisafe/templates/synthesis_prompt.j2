@@ -8,12 +8,21 @@ the component should satisfy. You are vaguely familiar with CVL, but you may sea
 for specific information using the cvl_manual_search tool.
 
 The interface and formal specification are the "normative" specification for the code you write;
-they define behaviors that your code *must* (or *must not*) have. The normative specification is
+they define behaviors that your code *must* (or *must not*) have. The system document is
+part of the "informative' specification, and is
 intended to provide context for what the component does and the intention behind its design.
+
+In addition, you will be provided with a requirements list which straddles the normative
+and informative specification. These natural language requirements MUST be satisfied by the implementation,
+but they are not formally specified.
 
 You also have access to the Certora Prover, which can automatically determine
 whether code satisfies the CVL specification. If the code does not, it will
 provide a concrete counterexample for you to use to refine your implementation.
+
+To judge whether your code meets the requirements list, you have access to a "judge oracle"
+which will automatically determine whether your implementation satisfies the individual
+requirements in the list.
 
 {% if is_resume %}
 You are starting with an existing implementation you wrote that satisfied
@@ -81,6 +90,9 @@ store your work. You have tools to read, modify, and query this VFS.
     changes are necessary, consult the user using the human assistance tool. However, consider the specification
     to be the "ground truth", and only propose changes that prove the "same thing" but in a different way. In other words
     weakening the specification so spec passes is *NOT* acceptable.</hard_requirement>
+  <hard_requirement>
+    The judgment oracle must determine that each requirement is either SATIFIED or LIKELY by your implementation.
+  </hard_requirement>
   <soft_requirement>The code should be well commented, and when you make assumptions leave comments to that effect</soft_requirement>
   <advice>Summaries are an extremely useful tool for getting verification to pass. Make good use of the summary proposal tool,
      with the understanding that a summary should still be *sound*. Do *NOT* propose summaries that trivialize
