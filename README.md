@@ -37,7 +37,7 @@ variable is configured to point to the output of this build (`EVMVerifier/target
 
 Install the requirements for VeriSafe via `pip3 install -r ./requirements.txt`. You may do this in
 a virtual environment, and in such case you also need to install the dependencies for the `certora-cli`:
-`pip install -r certora_cli_requirements.txt` from the CertoraProver/scripts folder, and optionally the Solidity compiler, if none is
+`pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
 available system-wide. Also be sure to activate this new virtual environment each time you want to run verisafe.
 
 # Usage
@@ -45,7 +45,7 @@ available system-wide. Also be sure to activate this new virtual environment eac
 Once you have completed the above setup, you can run verisafe via:
 
 ```
-python3 ./verisafe/main.py cvl_input.spec interface_file.sol system_doc.txt
+python3 ./main.py cvl_input.spec interface_file.sol system_doc.txt
 ```
 
 Where `cvl_input.spec` is the CVL specification which VeriSafe attempts to conform to, `interface_file.sol`

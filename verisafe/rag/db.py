@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from typing import Generator, List, cast, Any
 import logging
 
-import psycopg2
+import psycopg
 from sentence_transformers import SentenceTransformer
 from numpy import ndarray
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONNECTION: DatabaseConfig = {
     "host": "localhost",
     "port": 5432,
-    "database": "rag_db",
+    "dbname": "rag_db",
     "user": "rag_user",
     "password": "rag_password"
 }
@@ -55,11 +55,11 @@ class PostgreSQLRAGDatabase:
             raise
 
     @contextmanager
-    def _get_connection(self) -> Generator[psycopg2.extensions.connection, None, None]:
+    def _get_connection(self) -> Generator[psycopg.Connection, None, None]:
         """Get database connection with context manager"""
         conn = None
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg.connect(**self.db_config)
             yield conn
         except Exception as e:
             if conn:

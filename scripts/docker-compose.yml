@@ -4,11 +4,11 @@ version: '3.8'
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: rag_postgres
+    container_name: verisafe_postgres
     environment:
-      POSTGRES_DB: rag_db
-      POSTGRES_USER: rag_user
-      POSTGRES_PASSWORD: rag_password
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_admin_password
       # Memory-optimized settings
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     command: |
@@ -25,6 +25,7 @@ services:
       -c max_connections=50
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
       - "5432:5432"
     deploy:
