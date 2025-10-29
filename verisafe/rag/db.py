@@ -6,26 +6,19 @@ import psycopg
 from sentence_transformers import SentenceTransformer
 from numpy import ndarray
 
-from verisafe.rag.types import ManualRef, DatabaseConfig, BlockChunk
+from verisafe.rag.types import ManualRef, BlockChunk
 from verisafe.rag.text import code_ref_tag
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_CONNECTION: DatabaseConfig = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "rag_db",
-    "user": "rag_user",
-    "password": "rag_password"
-}
-
+DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
 
 class PostgreSQLRAGDatabase:
     """Handle PostgreSQL database operations for RAG"""
 
-    def __init__(self, db_config: DatabaseConfig, model: SentenceTransformer, skip_test : bool = True):
-        self.db_config = db_config
+    def __init__(self, conn_string: str, model: SentenceTransformer, skip_test : bool = True):
+        self.conn_string = conn_string
         self.tr = model
         # Test connection
         if not skip_test:
@@ -59,7 +52,7 @@ class PostgreSQLRAGDatabase:
         """Get database connection with context manager"""
         conn = None
         try:
-            conn = psycopg.connect(**self.db_config)
+            conn = psycopg.connect(self.conn_string)
             yield conn
         except Exception as e:
             if conn:

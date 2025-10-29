@@ -1,10 +1,10 @@
 from typing import Optional, Literal, cast
 import logging
 import uuid
-import sqlite3
 import logging
 from dataclasses import dataclass
 import pathlib
+import psycopg
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -16,7 +16,6 @@ from verisafe.workflow.types import Input, PromptParams
 from verisafe.workflow.meta import create_resume_commentary
 from verisafe.core.state import ResultStateSchema, CryptoStateGen
 from verisafe.core.context import CryptoContext, ProverOptions
-from verisafe.rag.types import DatabaseConfig
 from verisafe.rag.db import PostgreSQLRAGDatabase
 from verisafe.rag.models import get_model as get_rag_model
 from verisafe.audit.db import AuditDB, ResumeArtifact, InputFileLike
@@ -152,7 +151,7 @@ def execute_cryptosafe_workflow(
 
     audit_db: Optional[AuditDB] = None
     if workflow_options.audit_db is not None:
-        conn = sqlite3.connect(workflow_options.audit_db)
+        conn = psycopg.connect(workflow_options.audit_db)
         audit_db = AuditDB(conn)
 
     thread_id = workflow_options.thread_id
@@ -161,8 +160,6 @@ def execute_cryptosafe_workflow(
         thread_id = "crypto_session_" + str(uuid.uuid1())
         print(f"Selected thread id: {thread_id}")
         logger.info(f"Selected thread id: {thread_id}")
-
-
 
     prompt_params: PromptParams
     fs_layer: str | None = None
@@ -216,7 +213,6 @@ def execute_cryptosafe_workflow(
             vfs_init=materializer.iterate(cast(CryptoStateGen, flow_input)) #hack
         )
 
-
     store = get_store()
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer, store=store)
@@ -228,7 +224,6 @@ def execute_cryptosafe_workflow(
     except ModuleNotFoundError:
         pass
 
-
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     config["recursion_limit"] = workflow_options.recursion_limit
 
@@ -238,13 +233,7 @@ def execute_cryptosafe_workflow(
         config["configurable"]["checkpoint_id"] = workflow_options.checkpoint_id
         current_input = None
 
-    rag_connection: DatabaseConfig = {
-        "host": workflow_options.db_host,
-        "port": workflow_options.db_port,
-        "dbname": workflow_options.db_name,
-        "user": workflow_options.db_user,
-        "password": workflow_options.db_password
-    }
+    rag_connection = workflow_options.rag_db
 
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,
@@ -259,7 +248,6 @@ def execute_cryptosafe_workflow(
             "thread_id": thread_id
         }
     }
-
 
     while True:
         interrupted = False

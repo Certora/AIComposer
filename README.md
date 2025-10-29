@@ -40,7 +40,7 @@ a virtual environment, and in such case you also need to install the dependencie
 `pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
 available system-wide. Also be sure to activate this new virtual environment each time you want to run verisafe.
 
-# Usage
+## Usage
 
 Once you have completed the above setup, you can run verisafe via:
 
@@ -70,3 +70,16 @@ A few options can help tweak your experience:
 ## Development workflow
 
 Whenever you change any of `graphcore`'s functions (which is imported from the $CERTORA folder) you will have to re-copy the assets from your EVMVerifier repo.
+
+## Resuming a previously completed workflow with updated specification and files
+
+Resuming can be done in one of two ways:
+
+* using the materialize command of the `resume.py` to materialize the result of a prior run into a folder,
+arbitrarily changing the contents of that folder, and then using the resume-dir command of `resume.py`, OR
+* using resume-id with the thread-id and passing in an updated specification file
+
+In either case, the generation workflow will be started with an already populated VFS, pulled either from the VFS result table (resume id),
+or the materialized folder (resume dir). In addition, the generation workflow has been extended to save "resumption commentary",
+which is a version of the "final commentary" produced by the tool, but intended for future resumptions.
+Thus, when a workflow is resumed (either through resume-dir or resume-id), we pull in the "resume commentary" from the resumed run and seed the input prompt with this.
