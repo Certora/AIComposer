@@ -57,12 +57,7 @@ class NativeFS:
         return self.where.read_text()
 
 class WorkflowOptions(Protocol):
-    # database options
-    db_host: str
-    db_port: int
-    db_name: str
-    db_user: str
-    db_password: str
+    rag_db: str
 
     prover_capture_output: bool
     prover_keep_folders: bool
