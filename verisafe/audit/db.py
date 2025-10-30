@@ -185,7 +185,7 @@ class AuditDB():
     def _hash_and_compress_bytes(self, b: bytes) -> Tuple[str, bytes]:
         f_bytes = b
         f_hash = hashlib.sha256(f_bytes).hexdigest()
-        f_compress = gzip.compress(f_bytes, mtime=0)
+        f_compress = gzip.compress(f_bytes, mtime=None)
         return (f_hash, f_compress)
 
     def _hash_and_compress(self, f: InputFileLike) -> Tuple[str, bytes]:
