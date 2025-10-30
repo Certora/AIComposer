@@ -2,30 +2,23 @@ from contextlib import contextmanager
 from typing import Generator, List, cast, Any
 import logging
 
-import psycopg2
+import psycopg
 from sentence_transformers import SentenceTransformer
 from numpy import ndarray
 
-from verisafe.rag.types import ManualRef, DatabaseConfig, BlockChunk
+from verisafe.rag.types import ManualRef, BlockChunk
 from verisafe.rag.text import code_ref_tag
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_CONNECTION: DatabaseConfig = {
-    "host": "localhost",
-    "port": 5432,
-    "database": "rag_db",
-    "user": "rag_user",
-    "password": "rag_password"
-}
-
+DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
 
 class PostgreSQLRAGDatabase:
     """Handle PostgreSQL database operations for RAG"""
 
-    def __init__(self, db_config: DatabaseConfig, model: SentenceTransformer, skip_test : bool = True):
-        self.db_config = db_config
+    def __init__(self, conn_string: str, model: SentenceTransformer, skip_test : bool = True):
+        self.conn_string = conn_string
         self.tr = model
         # Test connection
         if not skip_test:
@@ -55,11 +48,11 @@ class PostgreSQLRAGDatabase:
             raise
 
     @contextmanager
-    def _get_connection(self) -> Generator[psycopg2.extensions.connection, None, None]:
+    def _get_connection(self) -> Generator[psycopg.Connection, None, None]:
         """Get database connection with context manager"""
         conn = None
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = psycopg.connect(self.conn_string)
             yield conn
         except Exception as e:
             if conn:

@@ -6,7 +6,7 @@ if __name__ != "__main__":
 
 import bind as _
 
-import sqlite3
+import psycopg
 import difflib
 import json
 
@@ -122,7 +122,7 @@ Steps = Annotated[Union[
     VFSStep
 ], Discriminator("type")]
 
-audit = sqlite3.connect(sys.argv[2])
+audit = psycopg.connect(sys.argv[2])
 db = AuditDB(audit)
 
 thread_id = sys.argv[1]

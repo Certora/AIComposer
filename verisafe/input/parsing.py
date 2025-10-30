@@ -1,6 +1,6 @@
 import argparse
 from typing import TypeVar, Protocol, cast
-from verisafe.rag.db import DEFAULT_CONNECTION
+from verisafe.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
 from verisafe.input.types import CommandLineArgs, ResumeArgs
 
 ArgNS = TypeVar("ArgNS", covariant=True)
@@ -30,13 +30,9 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--summarization-threshold", type=int, help="The number of messages that triggers summarization")
 
     # Database configuration for CVL manual search
-    parser.add_argument("--db-host", default=DEFAULT_CONNECTION["host"], help="Database host for CVL manual search")
-    parser.add_argument("--db-port", type=int, default=DEFAULT_CONNECTION["port"], help="Database port for CVL manual search")
-    parser.add_argument("--db-name", default=DEFAULT_CONNECTION["database"], help="Database name for CVL manual search")
-    parser.add_argument("--db-user", default=DEFAULT_CONNECTION["user"], help="Database user for CVL manual search")
-    parser.add_argument("--db-password", default=DEFAULT_CONNECTION["password"], help="Database password for CVL manual search")
+    parser.add_argument("--rag-db", default=RAGDB_DEFAULT_CONNECTION, help="Database connection string for CVL manual search")
 
-    parser.add_argument("--audit-db", help="Path for the Sqlite database for audit results")
+    parser.add_argument("--audit-db", help="Database connection string for audit results, given as: postgresql://user:password@localhost:5432/db_name")
 
     # prover options
     parser.add_argument("--prover-capture-output", action=argparse.BooleanOptionalAction, default=True, help="Whether to capture the stdout/stderr of the prover")

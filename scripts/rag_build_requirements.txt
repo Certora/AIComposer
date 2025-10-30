@@ -21,7 +21,7 @@ dataclasses-json==0.6.7
 diskcache==5.6.3
 einops==0.8.1
 emoji==2.14.1
-en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
 filelock==3.19.1
 filetype==1.2.0
 frozenlist==1.7.0
@@ -82,7 +82,8 @@ pillow==11.3.0
 preshed==3.0.10
 propcache==0.3.2
 psutil==7.0.0
-psycopg2-binary==2.9.10
+psycopg==3.2.12
+psycopg-binary==3.2.12
 pycparser==2.22
 pydantic==2.11.7
 pydantic-settings==2.10.1
@@ -103,6 +104,7 @@ safetensors==0.6.2
 scikit-learn==1.7.1
 scipy==1.16.1
 sentence-transformers==5.1.0
+setuptools==80.9.0
 shellingham==1.5.4
 six==1.17.0
 smart_open==7.3.0.post1
