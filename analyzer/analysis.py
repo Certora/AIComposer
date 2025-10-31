@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pathlib
 
 from langgraph.graph import MessagesState
+from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_anthropic import ChatAnthropic
 
@@ -25,7 +26,7 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
         if r.name != target.rule:
             continue
         for d in R.flatten_tree_view(context=context, path=R.RulePath(rule=r.name), r=r):
-            if d.name == target:
+            if d.path == target:
                 return d
     return None
 
@@ -108,6 +109,7 @@ def analyze(
     system_prompt = load_jinja_template("analyzer_system_prompt.j2")
 
     initial_prompt = load_jinja_template("analyzer_system_prompt.j2")
+    in_memory = InMemorySaver()
     graph = build_workflow(
         input_type=FlowInput,
         context_schema=ExplainerContext,
@@ -117,7 +119,9 @@ def analyze(
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt,
         state_class=SimpleState
-    )[0].compile()
+    )[0].compile(checkpointer=in_memory)
+
+    id = "cex-analysis"
 
     for d in graph.stream(input=FlowInput(input=[
         f"The individual rule that was checked by the prover was {args.rule}",
