@@ -1,5 +1,5 @@
 import pathlib
-import sqlite3
+import psycopg
 from typing import cast
 import verisafe.certora as _
 
@@ -23,7 +23,7 @@ def main() -> int:
         case "materialize":
             if args.audit_db is None:
                 raise RuntimeError("Need audit db")
-            conn = sqlite3.connect(args.audit_db)
+            conn = psycopg.connect(args.audit_db)
             audit = AuditDB(conn)
             res = audit.get_resume_artifact(args.src_thread_id)
             out_dir = pathlib.Path(args.target)

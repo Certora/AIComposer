@@ -13,11 +13,3 @@ class BlockChunk:
     part: int
     code_refs: List[str]
     chunk: str
-
-
-class DatabaseConfig(TypedDict):
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str
