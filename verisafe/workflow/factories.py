@@ -92,7 +92,7 @@ add new specification files.
 
     crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
 
-    if "context-management-2025-06-27" in llm.betas:
+    if "context-management-2025-06-27" in getattr(llm, "betas"):
         memory = memory_tool(get_memory())
         crypto_tools.append(memory)
 
