@@ -40,7 +40,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument("--debug-prompt-override", help="Append this text to the final prompt for debugging instructions to the LLM")
     parser.add_argument("--recursion-limit", type=int, help="The number of iterations of the graph to allow", default=50)
-
+    parser.add_argument("--memory-tool", action="store_true", help="Enable Anthropic's memory tool")
 
 
 def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
@@ -52,6 +52,7 @@ def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     _common_options(parser)
 
     return cast(TypedArgumentParser[CommandLineArgs], parser)
+
 
 def _common_resume_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--commentary", default=None, help="Commentary describing the changes to the system. If prefixed with @, assumed to be a filename from which the commentary is read")

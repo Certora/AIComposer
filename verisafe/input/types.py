@@ -75,6 +75,7 @@ class ModelOptions(Protocol):
     model: str
     tokens: int
     thinking_tokens: int
+    memory_tool: bool
 
 class CommandLineArgs(WorkflowOptions, ModelOptions):
     spec_file: str

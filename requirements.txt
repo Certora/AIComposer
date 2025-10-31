@@ -21,7 +21,7 @@ jiter==0.11.1
 joblib==1.5.2
 jsonpatch==1.33
 jsonpointer==3.0.0
-langchain-anthropic==0.3.19
+langchain-anthropic==0.3.21
 langchain-core==0.3.79
 langgraph==0.6.7
 langgraph-checkpoint==2.1.2

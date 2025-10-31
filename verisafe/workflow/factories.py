@@ -11,6 +11,7 @@ from langgraph.store.postgres import PostgresStore
 
 from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig
+from graphcore.tools.memory import PostgresMemoryBackend, memory_tool
 
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.core.context import CryptoContext
@@ -36,6 +37,11 @@ def get_store() -> PostgresStore:
     store.setup()
     return store
 
+def get_memory() -> PostgresMemoryBackend:
+    conn_string = "postgresql://memory_tool_user:memory_tool_password@localhost:5432/memory_tool_db"
+    conn = psycopg.connect(conn_string)
+    return PostgresMemoryBackend('verisafe', conn)
+
 def get_system_prompt() -> str:
     """Load and render the system prompt from Jinja template"""
     return load_jinja_template("system_prompt.j2")
@@ -55,7 +61,12 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         max_retries=2,
         stop=None,
         thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
-        betas=["files-api-2025-04-14"],
+        betas=([
+            "files-api-2025-04-14",
+            "context-management-2025-06-27"
+        ] if args.memory_tool else [
+            "files-api-2025-04-14"
+        ])
     )
 
 def get_cryptostate_builder(
@@ -70,9 +81,9 @@ def get_cryptostate_builder(
         forbidden_write="^rules.spec$",
         put_doc_extra= \
 """
-By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library defitions.
+By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library definitions.
 Further, the name of the contract/interface/library defined in that file should name the name of the solidity source file sans extension.
-For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`"
+For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`.
 
 IMPORTANT: You may not use this tool to update the specification, nor should you attempt to
 add new specification files.
@@ -80,6 +91,10 @@ add new specification files.
     ), CryptoStateGen)
 
     crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
+
+    if "context-management-2025-06-27" in llm.betas:
+        memory = memory_tool(get_memory())
+        crypto_tools.append(memory)
 
     conf : SummaryGeneration | None = SummaryGeneration(
         max_messages=summarization_threshold
