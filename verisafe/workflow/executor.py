@@ -254,6 +254,7 @@ def execute_cryptosafe_workflow(
         r = current_input
         current_input = None
         for (event_ty_raw, payload) in workflow_exec.stream(input=r, config=config, context=work_context, stream_mode=["custom", "updates", "checkpoints"]):
+            print(payload)
             event_ty = cast(StreamEvents, event_ty_raw)
             assert isinstance(payload, dict)
             match event_ty:

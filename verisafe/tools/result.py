@@ -1,10 +1,15 @@
 from typing import Annotated, List
-from graphcore.graph import WithToolCallId, tool_output
-from verisafe.core.state import CryptoStateGen, ResultStateSchema
 from pydantic import Field
+
 from langgraph.prebuilt import InjectedState
 from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.types import Command
+from langgraph.runtime import get_runtime
+
+from graphcore.graph import WithToolCallId, tool_output, tool_return
+
+from verisafe.core.context import CryptoContext, compute_state_digest
+from verisafe.core.state import CryptoStateGen, ResultStateSchema
 
 class ResultStateArgSchema(WithToolCallId):
     """
@@ -28,6 +33,15 @@ def code_result(
     tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[CryptoStateGen, InjectedState]
 ) -> Command:
+    ctxt = get_runtime(CryptoContext).context
+    digest = compute_state_digest(c=ctxt, state=state)
+    m = state.get("validation", {})
+    for req_v in ctxt.required_validations:
+        if req_v not in m or digest != m[req_v]:
+            return tool_return(
+                tool_call_id=tool_call_id,
+                content=f"Result completion REJECTED; it appears you failed to satisfy the {req_v} requirement"
+            )
     return tool_output(
         tool_call_id=tool_call_id,
         res={
