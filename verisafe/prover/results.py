@@ -1,50 +1,15 @@
 from typing import Optional, Callable, TypeVar
 from typing_extensions import Iterable
-from dataclasses import dataclass
 from pathlib import Path
 import re
 import json
 
 from pydantic import Field, BaseModel, ValidationError
 
-from verisafe.prover.ptypes import RuleResult, StatusCodes
-
-class _Missing:
-    pass
-_MISSING = _Missing()
+from verisafe.prover.ptypes import RuleResult, StatusCodes, RulePath
 
 T = TypeVar('T')
 R = TypeVar('R')
-
-def _default_or(
-    curr: T,
-    update: _Missing | T
-) -> T:
-    if isinstance(update, _Missing):
-        return curr
-    else:
-        return update
-
-@dataclass
-class RulePath:
-    rule: str
-    contract: Optional[str] = None
-    method: Optional[str] = None
-    sanity: bool = False
-
-    def copy(
-            self,
-            rule : str | _Missing = _MISSING,
-            contract : str | None | _Missing = _MISSING,
-            method : str | None | _Missing = _MISSING,
-            sanity : bool | _Missing = _MISSING
-    ) -> 'RulePath':
-        return RulePath(
-            rule=_default_or(self.rule, rule),
-            contract=_default_or(self.contract, contract),
-            method=_default_or(self.method, method),
-            sanity=_default_or(self.sanity, sanity)
-        )
 
 class RuleNodeModel(BaseModel):
     name: str = Field(description="The name of the node")
@@ -92,17 +57,6 @@ def flatten_tree_view_root(context: Path, r: RuleNodeModel) -> Iterable[RuleResu
     assert r.nodeType == "ROOT"
     return flatten_tree_view(context, r, RulePath(rule=r.name))
 
-def _path_pp(p: RulePath) -> str:
-    if p.contract is not None:
-        if p.method is None:
-            return f"{p.rule} in contract {p.contract}"
-
-    if p.method is not None:
-        return f"{p.rule} for {p.method}"
-    else:
-        return p.rule
-
-
 def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterable[RuleResult]:
     stat = _to_status_string(r.status)
     effective_path = path
@@ -116,7 +70,7 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
 
     if stat == "ERROR":
         return [RuleResult(
-            name=_path_pp(effective_path),
+            path=effective_path,
             cex_dump=None,
             status=stat
         )]
@@ -126,14 +80,14 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
             return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path))
         else:
             return [RuleResult(
-                name =_path_pp(effective_path),
+                path=effective_path,
                 cex_dump=None,
                 status=stat
             )]
     
     if stat == "TIMEOUT":
         if len(r.children) == 0:
-            return [RuleResult(name=_path_pp(effective_path), cex_dump=None,status=stat)]
+            return [RuleResult(path=effective_path, cex_dump=None,status=stat)]
     assert stat == "TIMEOUT" or stat == "VIOLATED" or stat == "SANITY_FAIL"
     violated_assert_children = any([ c.nodeType == "VIOLATED_ASSERT" for c in r.children])
     if violated_assert_children:
@@ -146,21 +100,29 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
             cex_node = CallTraceModel.model_validate(dump_model["callTrace"])
             cex_dump = "<counterexample>" + calltrace_to_xml(cex_node) + "</counterexample>"
         return [RuleResult(
-            name = _path_pp(effective_path),
+            path = effective_path,
             cex_dump=cex_dump,
             status=stat
         )]
     if r.nodeType == "SANITY":
         assert stat == "SANITY_FAIL"
         return [RuleResult(
-            name=_path_pp(effective_path),
+            path=effective_path,
             cex_dump=None,
             status=stat
         )]
     return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path))
 
+class NoTreeViewResultError(RuntimeError):
+    def __init__(self, where: Path):
+        super().__init__(f"No tree views found in {where}")
 
-def read_and_format_run_result(s: Path) -> dict[str, RuleResult] | str:
+class MalformedTreeVew(RuntimeError):
+    def __init__(self, wrapped: ValidationError):
+        super().__init__(wrapped)
+
+
+def get_final_treeview(s: Path) -> tuple[TreeViewStatus, Path]:
     tree_view_dir = s / "Reports" / "treeView"
     status_files = tree_view_dir.glob("treeViewStatus_*.json")
 
@@ -180,14 +142,26 @@ def read_and_format_run_result(s: Path) -> dict[str, RuleResult] | str:
             continue
         max_n = index
     if max_n == -1:
-        return "Certora prover returned no results: this is likely a bug"
+        raise NoTreeViewResultError(s)
 
     final_status = s / "Reports" / "treeView" / f"treeViewStatus_{max_n}.json"
     with open(final_status, "r") as result_file:
         run_status = json.load(result_file)
     try:
         loaded_data = TreeViewStatus.model_validate(run_status)
-    except ValidationError:
+        return (loaded_data, tree_view_dir)
+    except ValidationError as e:
+        raise MalformedTreeVew(e)
+
+
+def read_and_format_run_result(s: Path) -> dict[str, RuleResult] | str:
+    loaded_data : TreeViewStatus
+    tree_view_dir: Path
+    try:
+        (loaded_data, tree_view_dir) = get_final_treeview(s)
+    except NoTreeViewResultError:
+        return "Certora prover returned no results: this is likely a bug"
+    except MalformedTreeVew:
         return "Certora prover returned malformed tree view data: this is likely a bug"
 
     to_ret: dict[str, RuleResult] = {}

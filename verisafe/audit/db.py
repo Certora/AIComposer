@@ -1,6 +1,6 @@
 import psycopg
 from psycopg import Connection
-from typing import Optional, Iterable, Tuple, cast, Iterator, Literal, Callable
+from typing import Optional, Iterable, Tuple, cast, Iterator, Literal, Callable, LiteralString
 from typing_extensions import Iterable
 import hashlib
 import pathlib
@@ -11,7 +11,7 @@ from functools import cached_property
 from verisafe.rag.types import ManualRef
 from verisafe.audit.types import ManualResult, RuleResult, RunInput, InputFileLike
 
-_resume_q = """
+_resume_q : LiteralString = """
 SELECT 
  r.commentary,
  r.interface_path,
@@ -24,15 +24,6 @@ INNER JOIN vfs_result intf_id ON intf_id.path = r.interface_path AND intf_id.thr
 INNER JOIN run_info ri ON ri.thread_id = r.thread_id
 INNER JOIN vfs_result final_spec_id ON r.thread_id = final_spec_id.thread_id AND final_spec_id.path = 'rules.spec'
 WHERE r.thread_id = %s
-"""
-
-_vfs_q = """
-SELECT
-   path,
-   f.file_blob
-FROM {table} t
-INNER JOIN file_blobs f ON f.file_id = t.file_id
-WHERE thread_id = %s
 """
 
 _VFSTable = Literal["vfs_result", "vfs_initial"]
@@ -79,7 +70,14 @@ class VFSRetriever:
     def __iter__(self) -> Iterator[tuple[str, bytes]]:
         with self.conn.transaction():
             with self.conn.cursor() as cur:
-                cur.execute(_vfs_q.format(table=self._table), (self.thread_id,))
+                cur.execute(f"""
+SELECT
+   path,
+   f.file_blob
+FROM {self._table} t
+INNER JOIN file_blobs f ON f.file_id = t.file_id
+WHERE thread_id = %s
+""", (self.thread_id,))
                 for r in cur:
                     p = cast(str, r[0])
                     compressed_blob = bytes(r[1])
