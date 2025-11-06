@@ -3,6 +3,7 @@ from pydantic import Field
 
 from langgraph.prebuilt import InjectedState
 from langchain_core.tools import tool, InjectedToolCallId
+from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.types import Command
 from langgraph.runtime import get_runtime
 
@@ -38,9 +39,20 @@ def code_result(
     m = state.get("validation", {})
     for req_v in ctxt.required_validations:
         if req_v not in m or digest != m[req_v]:
-            return tool_return(
-                tool_call_id=tool_call_id,
-                content=f"Result completion REJECTED; it appears you failed to satisfy the {req_v} requirement"
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            tool_call_id=tool_call_id,
+                            content=f"Result completion REJECTED; it appears you failed to satisfy the {req_v} requirement"
+                        ),
+                        HumanMessage(
+                            content="You have apparently become confused about the status of your task. Evaluate the current "
+                            "state of your implementation, enumerate any unaddressed feedback, and create a TODO list to address "
+                            "that feedback."
+                        )
+                    ]
+                }
             )
     return tool_output(
         tool_call_id=tool_call_id,
