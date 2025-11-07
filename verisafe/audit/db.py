@@ -11,6 +11,8 @@ from functools import cached_property
 from verisafe.rag.types import ManualRef
 from verisafe.audit.types import ManualResult, RuleResult, RunInput, InputFileLike
 
+DEFAULT_CONNECTION = "postgresql://audit_db_user:audit_db_password@localhost:5432/audit_db"
+
 _resume_q : LiteralString = """
 SELECT 
  r.commentary,

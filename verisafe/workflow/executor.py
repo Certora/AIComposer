@@ -13,7 +13,7 @@ from langgraph.types import Command
 from graphcore.tools.memory import memory_tool
 
 from verisafe.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
-from verisafe.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools
+from verisafe.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools, get_memory_ns
 from verisafe.workflow.types import Input, PromptParams
 from verisafe.workflow.meta import create_resume_commentary
 from verisafe.core.state import ResultStateSchema, CryptoStateGen
@@ -152,11 +152,9 @@ def execute_cryptosafe_workflow(
     logger = logging.getLogger(__name__)
 
     checkpointer = get_checkpointer()
-
-    audit_db: Optional[AuditDB] = None
-    if workflow_options.audit_db is not None:
-        conn = psycopg.connect(workflow_options.audit_db)
-        audit_db = AuditDB(conn)
+    
+    audit_conn = psycopg.connect(workflow_options.audit_db)
+    audit_db = AuditDB(audit_conn)
 
     thread_id = workflow_options.thread_id
 
@@ -172,6 +170,7 @@ def execute_cryptosafe_workflow(
     system_doc: InputFileLike
     interface_file: InputFileLike
     spec_file: InputFileLike
+    resume_art : None | ResumeArtifact = None
 
     match input:
         case InputData():
@@ -203,17 +202,31 @@ def execute_cryptosafe_workflow(
 
     store = get_store()
 
+    from_previous_ns : str | None = None
+    match input:
+        case ResumeFSData(thread_id=src_id) | ResumeIdData(thread_id=src_id):
+            from_previous_ns = get_memory_ns(src_id, "natreq")
+        case InputData():
+            # here for completeness of matching...
+            pass
+
     req_memories = get_memory(
-        thread_id=thread_id,
-        ns="natreq"
+        get_memory_ns(thread_id, "natreq"),
+        from_previous_ns
     )
 
     extra_reqs = store.get((thread_id,), "requirements")
     reqs_list : list[str]
     if extra_reqs is None:
-        print("Analyzing requirements....")
+        print("Analyzing requirements...")
         reqs = get_requirements(
-            workflow_options, llm, system_doc, spec_file, mem_backend=req_memories
+            workflow_options,
+            llm,
+            system_doc,
+            spec_file,
+            req_memories,
+            resume_art,
+            workflow_options.requirements_oracle
         )
         reqs_list = reqs
         store.put((thread_id,), "requirements", {"reqs": reqs})

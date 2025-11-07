@@ -1,6 +1,7 @@
-from typing import NotRequired, cast
+from typing import NotRequired, cast, Callable
 from dataclasses import dataclass
 import uuid
+import pathlib
 
 from pydantic import BaseModel, Field
 
@@ -16,12 +17,14 @@ from langgraph.graph import MessagesState
 from langgraph.types import interrupt, Command
 
 from verisafe.audit.types import InputFileLike
+from verisafe.audit.db import ResumeArtifact
 from verisafe.input.types import RAGDBOptions
 from verisafe.rag.db import PostgreSQLRAGDatabase
 from verisafe.rag.models import get_model
 from verisafe.workflow.factories import get_checkpointer
 from verisafe.tools.search import cvl_manual_search
 from verisafe.templates.loader import load_jinja_template
+from verisafe.natreq.automation import requirements_oracle
 
 
 class ExtractionState(MessagesState):
@@ -79,7 +82,9 @@ def get_requirements(
     llm: BaseChatModel,
     sys_doc: InputFileLike,
     spec_file: InputFileLike,
-    mem_backend: MemoryBackend
+    mem_backend: MemoryBackend,
+    resume_artifact: ResumeArtifact | None,
+    oracle: list[str]
 ) -> list[str]:
     tools = [
         memory_tool(mem_backend),
@@ -108,11 +113,32 @@ def get_requirements(
         model=get_model(),
     )
 
+    input_text : list[str | dict]= [
+        sys_doc.string_contents,
+        spec_file.string_contents
+    ]
+
+    if resume_artifact is not None:
+        input_text.append("""
+You have previously performed this analysis on a prior version of the spec file. You have access to the
+memories you generated during that prior analysis. Be sure to consult those memories to inform your analysis
+of the system document. In addition, be sure to analyze the difference between the two specification files,
+being sure to determine which natural language requirements are no longer needed (as they are now covered by the
+spec).
+""")
+        input_text.append(
+            resume_artifact.spec_file
+        )
+
+    req_oracle : Callable[[tuple[str, str]], str] | None = None
+    if len(oracle):
+        req_oracle = requirements_oracle(
+            llm,
+            [ pathlib.Path(p) for p in oracle ]
+        )
+
     graph_input : Command | FlowInput | None = FlowInput(
-        input=[
-            sys_doc.string_contents,
-            spec_file.string_contents
-        ]
+        input=input_text
     )
     while graph_input is not None:
         to_send = graph_input
@@ -122,6 +148,12 @@ def get_requirements(
                 interrupt_data = cast(dict, payload["__interrupt__"][0].value)
                 context = interrupt_data["context"]
                 question = interrupt_data["question"]
+                if req_oracle is not None:
+                    print(f"Calling oracle...\nQuestion: {question}\nContext: {context}")
+                    resp = req_oracle((context, question))
+                    print(f"Oracle response: {resp}")
+                    graph_input = Command(resume=resp)
+                    break
                 print("=" * 80)
                 print(" HUMAN ASSISTANCE REQUESTED")
                 print("=" * 80)

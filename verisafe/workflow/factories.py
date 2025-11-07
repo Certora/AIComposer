@@ -38,10 +38,13 @@ def get_store() -> PostgresStore:
     store.setup()
     return store
 
-def get_memory(thread_id: str, ns: str) -> PostgresMemoryBackend:
+def get_memory_ns(thread_id: str, ns: str) -> str:
+    return f"verisafe-{thread_id}-{ns}"
+
+def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
     conn_string = "postgresql://memory_tool_user:memory_tool_password@localhost:5432/memory_tool_db"
     conn = psycopg.connect(conn_string)
-    return PostgresMemoryBackend(f'verisafe-{thread_id}-{ns}', conn)
+    return PostgresMemoryBackend(ns, conn, init_from)
 
 def get_system_prompt() -> str:
     """Load and render the system prompt from Jinja template"""

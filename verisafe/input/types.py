@@ -69,7 +69,8 @@ class WorkflowOptions(RAGDBOptions):
     checkpoint_id: Optional[str]
     thread_id: Optional[str]
     recursion_limit: int
-    audit_db: Optional[str]
+    audit_db: str
+    requirements_oracle: list[str]
     summarization_threshold: Optional[int]
 
 

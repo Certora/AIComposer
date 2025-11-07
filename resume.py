@@ -16,13 +16,8 @@ def main() -> int:
 
     input_data: ResumeIdData | ResumeFSData
 
-    if args.audit_db is None:
-        raise RuntimeError("Need audit db")
-
     match args.command:
         case "materialize":
-            if args.audit_db is None:
-                raise RuntimeError("Need audit db")
             conn = psycopg.connect(args.audit_db)
             audit = AuditDB(conn)
             res = audit.get_resume_artifact(args.src_thread_id)

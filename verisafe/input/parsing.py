@@ -1,6 +1,7 @@
 import argparse
 from typing import TypeVar, Protocol, cast
 from verisafe.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
+from verisafe.audit.db import DEFAULT_CONNECTION as AUDITDB_DEFAULT_CONNECTION
 from verisafe.input.types import CommandLineArgs, ResumeArgs
 
 ArgNS = TypeVar("ArgNS", covariant=True)
@@ -32,7 +33,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     # Database configuration for CVL manual search
     parser.add_argument("--rag-db", default=RAGDB_DEFAULT_CONNECTION, help="Database connection string for CVL manual search")
 
-    parser.add_argument("--audit-db", help="Database connection string for audit results, given as: postgresql://user:password@localhost:5432/db_name")
+    parser.add_argument("--audit-db", help="Database connection string for audit results, given as: postgresql://user:password@localhost:5432/db_name", default=AUDITDB_DEFAULT_CONNECTION)
 
     # prover options
     parser.add_argument("--prover-capture-output", action=argparse.BooleanOptionalAction, default=True, help="Whether to capture the stdout/stderr of the prover")
@@ -41,6 +42,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--debug-prompt-override", help="Append this text to the final prompt for debugging instructions to the LLM")
     parser.add_argument("--recursion-limit", type=int, help="The number of iterations of the graph to allow", default=50)
     parser.add_argument("--memory-tool", action="store_true", help="Enable Anthropic's memory tool")
+    parser.add_argument("--requirements-oracle", action="append")
 
 
 def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
