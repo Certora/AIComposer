@@ -1,6 +1,5 @@
 from typing import NotRequired
 from pydantic import BaseModel, Field
-from langgraph.graph import MessagesState
 
 from langgraph.graph import MessagesState
 
@@ -12,5 +11,11 @@ class ResultStateSchema(BaseModel):
     comments: str = Field(description="Any comments or notes on the generated implementation, and a summary of your reasoning, along with any lessons "
               "learned from iterating with the prover.")
 
+def merge_validation(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
+    to_ret = left.copy()
+    to_ret.update(right)
+    return to_ret
+
 class CryptoStateGen(VFSState, MessagesState):
     generated_code: NotRequired[ResultStateSchema]
+    validation: NotRequired[dict[str, str]]

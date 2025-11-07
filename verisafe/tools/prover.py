@@ -1,14 +1,18 @@
-from typing import Annotated, List, Optional
-from graphcore.graph import WithToolCallId
+from typing import Annotated, Optional
+import hashlib
 from pydantic import Field
 
 from graphcore.graph import WithToolCallId, tool_return
+
 from langchain_core.tools import tool, InjectedToolCallId
 from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
+from langgraph.runtime import get_runtime
 
 from verisafe.core.state import CryptoStateGen
+from verisafe.core.context import CryptoContext, compute_state_digest
+from verisafe.core.validation import prover as prover_key
 from verisafe.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
 
 class CertoraProverArgs(WithToolCallId):
@@ -36,7 +40,7 @@ class CertoraProverArgs(WithToolCallId):
     the prover will be provided.
     """
 
-    source_files: List[str] = Field(description="""
+    source_files: list[str] = Field(description="""
       The (relative) filenames to verify. These files MUST have been put into the virtual filesystem with
       prior invocations of the PutFile tool.
 
@@ -77,7 +81,7 @@ class CertoraProverArgs(WithToolCallId):
 
 @tool(args_schema=CertoraProverArgs)
 def certora_prover(
-    source_files: List[str],
+    source_files: list[str],
     # spec_file: str,
     target_contract: str,
     compiler_version: str,
@@ -98,6 +102,22 @@ def certora_prover(
         case str():
             return tool_return(tool_call_id=tool_call_id, content=result)
         case RawReport():
+            if result.all_verified:
+                ctxt = get_runtime(CryptoContext).context
+                state_digest = compute_state_digest(c=ctxt, state=state)
+                return Command(
+                    update={
+                        "messages": [
+                            ToolMessage(
+                                tool_call_id=tool_call_id,
+                                content=result.report
+                            )
+                        ],
+                        "validation": {
+                            prover_key: state_digest
+                        }
+                    }
+                )
             return tool_return(tool_call_id=tool_call_id, content=result.report)
         case SummarizedReport():
             return Command(

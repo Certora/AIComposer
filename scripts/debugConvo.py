@@ -31,11 +31,13 @@ class ModelOpts:
     model: str
     tokens: int
     thinking_tokens: int
+    memory_tool: bool
 
 opts = ModelOpts(
     model="claude-sonnet-4-5-20250929",
     thinking_tokens=2048,
-    tokens=4096
+    tokens=4096,
+    memory_tool=False
 )
 
 llm = create_llm(opts)
