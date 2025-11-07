@@ -72,6 +72,7 @@ class WorkflowOptions(RAGDBOptions):
     audit_db: str
     requirements_oracle: list[str]
     summarization_threshold: Optional[int]
+    set_reqs: Optional[str]
 
 
 class ModelOptions(Protocol):

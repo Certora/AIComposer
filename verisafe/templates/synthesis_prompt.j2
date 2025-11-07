@@ -55,6 +55,8 @@ verification. Gas costs, storage cost, or algorithmic complexity are all seconda
 to verification passing. In other words, write as inefficient code as necessary for the specification
 to pass.
 
+In addition, the code you write *must* also be judged to satisfy the natural language requirements.
+
 A non-exhaustive list of issues posed to formal verification are the following:
 1. Excessive use of caching, e.g., caching storage data in an in-memory structure
 2. Custom packing schemes for data in storage
@@ -92,6 +94,10 @@ store your work. You have tools to read, modify, and query this VFS.
     weakening the specification so spec passes is *NOT* acceptable.</hard_requirement>
   <hard_requirement>
     The judgment oracle must determine that each requirement is either SATIFIED or LIKELY by your implementation.
+  </hard_requirement>
+  <hard_requirement>
+    The code you deliver MUST satisfy the natural requirements. You MAY NOT make this determination yourself, each requirement
+    must be judged as SATISFIED or LIKELY by the requirements evaluator.
   </hard_requirement>
   <soft_requirement>The code should be well commented, and when you make assumptions leave comments to that effect</soft_requirement>
   <advice>Summaries are an extremely useful tool for getting verification to pass. Make good use of the summary proposal tool,

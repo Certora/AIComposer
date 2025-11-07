@@ -218,18 +218,26 @@ def execute_cryptosafe_workflow(
     extra_reqs = store.get((thread_id,), "requirements")
     reqs_list : list[str]
     if extra_reqs is None:
-        print("Analyzing requirements...")
-        reqs = get_requirements(
-            workflow_options,
-            llm,
-            system_doc,
-            spec_file,
-            req_memories,
-            resume_art,
-            workflow_options.requirements_oracle
-        )
-        reqs_list = reqs
-        store.put((thread_id,), "requirements", {"reqs": reqs})
+        if workflow_options.set_reqs is not None:
+            if workflow_options.set_reqs.startswith("@"):
+                other_reqs = store.get((workflow_options.set_reqs[1:],), "requirements")
+                assert other_reqs is not None
+                reqs_list = other_reqs.value["reqs"]
+            else:
+                reqs_list = [ l.strip() for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if l.strip() ]
+        else:
+            print("Analyzing requirements...")
+            reqs = get_requirements(
+                workflow_options,
+                llm,
+                system_doc,
+                spec_file,
+                req_memories,
+                resume_art,
+                workflow_options.requirements_oracle
+            )
+            reqs_list = reqs
+        store.put((thread_id,), "requirements", {"reqs": reqs_list})
     else:
         print("Read requirements from store")
         reqs_list = extra_reqs.value["reqs"]

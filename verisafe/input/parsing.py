@@ -42,7 +42,9 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--debug-prompt-override", help="Append this text to the final prompt for debugging instructions to the LLM")
     parser.add_argument("--recursion-limit", type=int, help="The number of iterations of the graph to allow", default=50)
     parser.add_argument("--memory-tool", action="store_true", help="Enable Anthropic's memory tool")
-    parser.add_argument("--requirements-oracle", action="append")
+    parser.add_argument("--requirements-oracle", action="append", help="Use existing files to automatically answer questions during requirement generation")
+    parser.add_argument("--set-reqs", help="The name of a file containing a list of additional requirements fed in as the implementation requirements. If " \
+    "this option starts with '@', taken to be the thread id of another run whose requirements should be copied.")
 
 
 def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:

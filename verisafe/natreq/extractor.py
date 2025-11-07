@@ -126,6 +126,7 @@ of the system document. In addition, be sure to analyze the difference between t
 being sure to determine which natural language requirements are no longer needed (as they are now covered by the
 spec).
 """)
+        input_text.append("The OLD spec file is as follows:")
         input_text.append(
             resume_artifact.spec_file
         )
