@@ -108,7 +108,7 @@ def analyze(
 
     system_prompt = load_jinja_template("analyzer_system_prompt.j2")
 
-    initial_prompt = load_jinja_template("analyzer_system_prompt.j2")
+    initial_prompt = load_jinja_template("analyzer_tool_prompt.j2")
     in_memory = InMemorySaver()
     graph = build_workflow(
         input_type=FlowInput,
