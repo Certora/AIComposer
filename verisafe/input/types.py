@@ -70,9 +70,11 @@ class WorkflowOptions(RAGDBOptions):
     thread_id: Optional[str]
     recursion_limit: int
     audit_db: str
-    requirements_oracle: list[str]
     summarization_threshold: Optional[int]
+
+    requirements_oracle: list[str]
     set_reqs: Optional[str]
+    skip_reqs: bool
 
 
 class ModelOptions(Protocol):

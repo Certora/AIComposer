@@ -20,7 +20,15 @@ class QuestionType(TypedDict):
     question: str
     code: Optional[str]
 
+class RequirementRelaxationType(TypedDict):
+    type: Literal["req_relaxation"]
+    context: str
+    req_number: int
+    req_text: str
+    judgment: str
+    explanation: str
+
 
 # Type of the interrupt payload
-HumanInteractionType = Annotated[Union[ProposalType, QuestionType], Discriminator("type")]
+HumanInteractionType = Annotated[Union[ProposalType, QuestionType, RequirementRelaxationType], Discriminator("type")]
 

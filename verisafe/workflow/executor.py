@@ -18,6 +18,7 @@ from verisafe.workflow.types import Input, PromptParams
 from verisafe.workflow.meta import create_resume_commentary
 from verisafe.core.state import ResultStateSchema, CryptoStateGen
 from verisafe.core.context import CryptoContext, ProverOptions
+from verisafe.core.validation import ValidationType, prover, reqs as req_type
 from verisafe.rag.db import PostgreSQLRAGDatabase
 from verisafe.rag.models import get_model as get_rag_model
 from verisafe.audit.db import AuditDB, ResumeArtifact, InputFileLike
@@ -183,9 +184,6 @@ def execute_cryptosafe_workflow(
         case ResumeIdData() | ResumeFSData():
             prompt_params = PromptParams(is_resume=True)
 
-            if audit_db is None:
-                raise RuntimeError("Cannot do resume workflows without audit db")
-
             resume_art = audit_db.get_resume_artifact(thread_id=input.thread_id)
             if input.new_system is None:
                 system_doc = resume_art.system_vfs_handle
@@ -216,9 +214,11 @@ def execute_cryptosafe_workflow(
     )
 
     extra_reqs = store.get((thread_id,), "requirements")
-    reqs_list : list[str]
+    reqs_list : list[str] | None
     if extra_reqs is None:
-        if workflow_options.set_reqs is not None:
+        if workflow_options.skip_reqs:
+            reqs_list = None
+        elif workflow_options.set_reqs is not None:
             if workflow_options.set_reqs.startswith("@"):
                 other_reqs = store.get((workflow_options.set_reqs[1:],), "requirements")
                 assert other_reqs is not None
@@ -242,16 +242,20 @@ def execute_cryptosafe_workflow(
         print("Read requirements from store")
         reqs_list = extra_reqs.value["reqs"]
 
-    judge_tool = get_judge_tool(
-        reqs=reqs_list,
-        mem=req_memories,
-        unbound=llm,
-        vfs_tools=get_vfs_tools(
-            fs_layer=fs_layer, immutable=True
-        )[0]
-    )
+    use_reqs = reqs_list is not None
 
-    extra_tools = [judge_tool]
+    extra_tools = []
+
+    if use_reqs:
+        judge_tool = get_judge_tool(
+            reqs=reqs_list,
+            mem=req_memories,
+            unbound=llm,
+            vfs_tools=get_vfs_tools(
+                fs_layer=fs_layer, immutable=True
+            )[0]
+        )
+        extra_tools.append(judge_tool)
 
     if "context-management-2025-06-27" in getattr(llm, "betas"):
         memory = memory_tool(get_memory(thread_id, "verisafe"))
@@ -266,20 +270,21 @@ def execute_cryptosafe_workflow(
         extra_tools=extra_tools
     )
 
-    if audit_db is not None:
-        audit_db.register_run(
-            thread_id=thread_id,
-            system_doc=system_doc,
-            interface_file=spec_file,
-            spec_file=interface_file,
-            vfs_init=materializer.iterate(flow_input)
-        )
+    audit_db.register_run(
+        thread_id=thread_id,
+        system_doc=system_doc,
+        interface_file=spec_file,
+        spec_file=interface_file,
+        vfs_init=materializer.iterate(flow_input),
+        reqs=reqs_list
+    )
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer, store=store)
-    flow_input["input"].append(f"""
-Additionally, the implementation MUST satisfy the following requirements:
-{"\n".join(reqs_list)}
-""")
+    if use_reqs:
+        flow_input["input"].append(f"""
+    Additionally, the implementation MUST satisfy the following requirements:
+    {"\n".join(f"{i}. {r}" for (i, r) in enumerate(reqs_list, start = 1))}
+    """)
 
     try:
         import grandalf # type: ignore
@@ -305,7 +310,11 @@ Additionally, the implementation MUST satisfy the following requirements:
     )   
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
-    work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer)
+    required_validations : list[ValidationType] = [prover]
+    if use_reqs:
+        required_validations.append(req_type)
+    
+    work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
 
     curr_state_config: RunnableConfig = {
         "configurable": {

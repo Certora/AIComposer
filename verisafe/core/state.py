@@ -1,4 +1,4 @@
-from typing import NotRequired
+from typing import NotRequired, Annotated
 from pydantic import BaseModel, Field
 
 from langgraph.graph import MessagesState
@@ -16,6 +16,12 @@ def merge_validation(left: dict[str, str], right: dict[str, str]) -> dict[str, s
     to_ret.update(right)
     return to_ret
 
+def merge_skips(left: set[int], right: set[int]) -> set[int]:
+    ret = left.copy()
+    ret.update(right)
+    return ret
+
 class CryptoStateGen(VFSState, MessagesState):
     generated_code: NotRequired[ResultStateSchema]
-    validation: NotRequired[dict[str, str]]
+    validation: Annotated[NotRequired[dict[str, str]], merge_validation]
+    skipped_reqs: Annotated[NotRequired[set[int]], merge_skips]

@@ -230,7 +230,8 @@ SET file_id = EXCLUDED.file_id
                      spec_file: InputFileLike,
                      interface_file: InputFileLike,
                      system_doc: InputFileLike,
-                     vfs_init: Iterable[tuple[str, bytes]]
+                     vfs_init: Iterable[tuple[str, bytes]],
+                     reqs: list[str] | None
                      ) -> None:
         (spec_hash, spec_compress) = self._hash_and_compress(spec_file)
         (interface_hash, interface_compress) = self._hash_and_compress(interface_file)
@@ -240,6 +241,7 @@ SET file_id = EXCLUDED.file_id
             table="vfs_initial",
             vfs=vfs_init
         )
+        r_list = reqs if reqs is not None else []
         with self.conn.transaction():
             with self.conn.cursor() as cur:
                 cur.executemany("""
@@ -251,14 +253,29 @@ SET file_id = EXCLUDED.file_id
                     (system_hash, system_compress)
                 ])
                 cur.execute("""
-                    INSERT INTO run_info(thread_id, spec_id, spec_name, interface_id, interface_name, system_id, system_name)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO run_info(thread_id, spec_id, spec_name, interface_id, interface_name, system_id, system_name, num_reqs)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (thread_id) DO UPDATE
                     SET spec_id = EXCLUDED.spec_id, spec_name = EXCLUDED.spec_name,
                         interface_id = EXCLUDED.interface_id, interface_name = EXCLUDED.interface_name,
-                        system_id = EXCLUDED.system_id, system_name = EXCLUDED.system_name
-                """, (thread_id, spec_hash, spec_file.basename, interface_hash, interface_file.basename, system_hash, system_doc.basename))
+                        system_id = EXCLUDED.system_id, system_name = EXCLUDED.system_name,
+                        num_reqs = EXCLUDED.num_reqs
+                """, (thread_id, 
+                      spec_hash,
+                      spec_file.basename,
+                      interface_hash,
+                      interface_file.basename,
+                      system_hash,
+                      system_doc.basename,
+                      len(reqs) if reqs is not None else None))
                 vfs_thunk(cur)
+                cur.executemany("""
+                    INSERT INTO run_requirements(thread_id, req_num, req_text) VALUES (%s, %s, %s)
+                    ON CONFLICT (thread_id,req_num) DO UPDATE
+                    SET req_text = EXCLUDED.req_text
+                """, [
+                    (thread_id, i + 1, req) for (i, req) in enumerate(r_list)
+                ])
 
     def register_complete(self, thread_id: str, vfs: Iterable[tuple[str, bytes]], intf: str, commentary: str) -> None:
         vfs_update_thunk = self._prepare_blobs(thread_id=thread_id, table="vfs_result", vfs=vfs)
@@ -342,7 +359,8 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
                         r.interface_name,
                         r.interface_id,
                         r.system_name,
-                        r.system_id
+                        r.system_id,
+                        r.num_reqs
                     FROM run_info r
                     WHERE r.thread_id = %s
                 """, (thread_id,))
@@ -358,6 +376,17 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
 
                 sys_name = r[4]
                 sys_id = r[5]
+
+                num_reqs = r[6]
+
+                reqs : list[str] | None= None
+                if num_reqs is not None:
+                    cur.execute("""
+SELECT req_text from run_requirements WHERE thread_id = %s ORDER BY req_num ASC LIMIT %s
+                                """, (thread_id, num_reqs))
+                    reqs = [ r[0] for r in cur ]
+                    assert len(reqs) == num_reqs, "Missing requirements"
+
                 return (RunInput(
                     interface=VFSFile(interface_name, interface_id, self.conn),
                     spec=VFSFile(
@@ -369,5 +398,6 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
                         sys_name,
                         sys_id,
                         self.conn
-                    )
+                    ),
+                    reqs=reqs
                 ), vfs_accessor)

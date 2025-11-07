@@ -1,20 +1,26 @@
 from typing_extensions import NotRequired, Annotated
-from typing import Literal, Any
+from typing import Literal, Any, cast, Callable
+from functools import partial
 
 from pydantic import BaseModel, Field
 
 from graphcore.tools.memory import MemoryBackend, memory_tool
-from graphcore.graph import FlowInput, build_workflow
+from graphcore.graph import FlowInput, build_workflow, WithToolCallId, tool_output
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.vfs import VFSState
 
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.prebuilt import InjectedState
-from langchain_core.tools import BaseTool, tool
+from langgraph.types import Command
+from langchain_core.tools import BaseTool, tool, InjectedToolCallId
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import ToolMessage
+from langgraph.runtime import get_runtime
 
 from verisafe.templates.loader import load_jinja_template
 from verisafe.core.state import CryptoStateGen
+from verisafe.core.validation import reqs as req_key
+from verisafe.core.context import CryptoContext, compute_state_digest
 
 class JudgeInput(FlowInput):
     vfs: dict[str, str]
@@ -26,7 +32,9 @@ class RequirementAnalysis(BaseModel):
     classification: Literal["SATISFIED", "LIKELY", "PARTIAL", "VIOLATED"] = Field(description="The final classification on whether " \
     "the implementation satisfies the requirement.")
 
-    requirement: str = Field(description="The original requirement text against which the implementation was judged.")
+    requirement: str = Field(description="The original requirement text against which the implementation was judged. Do NOT include the numeric prefix (e.g., \"1. \")")
+
+    requirement_number : int = Field(description="The requirement number.")
 
     commentary: str | None = Field(description="Any commentary or explanation for the classification of this requirement. In the case of" \
     "PARTIAL or VIOLATED classifications, do NOT suggest code changes: simply explain the deficiencies in the implementation.")
@@ -40,7 +48,8 @@ class JudgeState(MessagesState, VFSState):
 def _gen_workflow(
     vfs_tools: list[BaseTool],
     mem: MemoryBackend,
-    llm: BaseChatModel
+    llm: BaseChatModel,
+    req_checker: Callable[[JudgeResult], str | None]
 ) -> StateGraph[JudgeState, None, JudgeInput, Any]:
     mem_tool = memory_tool(mem)
     res = result_tool_generator(
@@ -52,7 +61,8 @@ and communicate it back to the user.
 
 *IMPORTANT*: Once you call this tool, this workflow will end. You MUST perform any memory operations
 BEFORE calling this tool.
-"""
+""",
+        validator=req_checker
     )
     return build_workflow(
         input_type=JudgeInput,
@@ -67,7 +77,7 @@ BEFORE calling this tool.
 
 classification_explanation = load_jinja_template("req_classifications.j2")
 
-class RequirementEvaluationSchema(BaseModel):
+class RequirementEvaluationSchema(WithToolCallId):
     state: Annotated[CryptoStateGen, InjectedState]
 
 RequirementEvaluationSchema.__doc__ = f"""
@@ -79,7 +89,6 @@ Each requirement is evaluated against the current implementation and assigned a 
 
 If any requirements are classified as PARTIAL or VIOLATED, you must address this feedback.
     """
-
 
 def _format_result(
     r: JudgeResult
@@ -95,23 +104,62 @@ def _format_result(
         res_list.append(buff)
     return "\n".join(res_list)
 
+def judge_result_formatting(
+    reqs: list[str],
+    r: JudgeResult
+) -> str | None:
+    if len(reqs) != len(r.judgement_result):
+        return f"Completion REJECTED: Incorrect number of requirement results: expected {len(reqs)} received {len(r.judgement_result)}"
+    seen_nums = set()
+    for j in r.judgement_result:
+        if j.requirement_number in seen_nums:
+            return f"Completion REJECTED: Already seen judgment for {j.requirement_number}"
+        seen_nums.add(j.requirement_number)
+        if j.requirement_number not in range(0, len(reqs)):
+            return f"Completion REJECTED: Requirement number {j.requirement_number} is not valid"
+        if j.requirement != reqs[j.requirement_number]:
+            return f"Completion REJECTED: Requirement text `{j.requirement}` does not match the original text: `{reqs[j.requirement_number]}`"
+    return None
+
 def get_judge_tool(
     reqs: list[str],
     mem: MemoryBackend,
     vfs_tools: list[BaseTool],
     unbound: BaseChatModel
 ) -> BaseTool:
-    workflow = _gen_workflow(vfs_tools, mem, unbound)
+    workflow = _gen_workflow(vfs_tools, mem, unbound, partial(judge_result_formatting, reqs))
     compiled_graph = workflow.compile()
     @tool(args_schema=RequirementEvaluationSchema)
     def requirements_evaluation(
-        state: CryptoStateGen
-    ) -> str:
-        req_list = "\n".join([f"{i} {r}" for (i, r) in enumerate(reqs)])
+        state: CryptoStateGen,
+        tool_call_id: Annotated[str, InjectedToolCallId]
+    ) -> Command | str:
+        req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
         r = compiled_graph.invoke(JudgeInput(
             input=[req_list],
             vfs=state["vfs"]
         ))
-        return _format_result(r["result"])
+        res = cast(JudgeResult, r["result"])
+        all_satisfied = True
+        for j in res.judgement_result:
+            if j.classification != "LIKELY" and j.classification != "SATISFIED":
+                if j.requirement_number not in state.get("skipped_reqs", set()):
+                    all_satisfied = False
+                    break
+        res = _format_result(r["result"])
+        if not all_satisfied:
+            return res
+        digest = compute_state_digest(
+            c=get_runtime(CryptoContext).context,
+            state=state
+        )
+        return Command(update={
+            "messages": [
+                ToolMessage(content=res, tool_call_id=tool_call_id)
+            ],
+            "validation": {
+                req_key: digest
+            }
+        })
     return requirements_evaluation
 

@@ -6,7 +6,7 @@ from graphcore.tools.vfs import VFSAccessor
 
 from verisafe.core.state import CryptoStateGen
 from verisafe.rag.db import PostgreSQLRAGDatabase
-from verisafe.core.validation import prover
+from verisafe.core.validation import ValidationType, prover
 
 @dataclass
 class ProverOptions:
@@ -19,7 +19,7 @@ class CryptoContext:
     rag_db: PostgreSQLRAGDatabase
     prover_opts: ProverOptions
     vfs_materializer: VFSAccessor[CryptoStateGen]
-    required_validations: list[str] = field(default_factory=lambda: [prover])
+    required_validations: list[ValidationType] = field(default_factory=lambda: [prover])
 
 def compute_state_digest(c: CryptoContext, state: CryptoStateGen) -> str:
     # not interested in cryptographic bulletproofing, just need *some* digest

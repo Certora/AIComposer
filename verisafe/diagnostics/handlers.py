@@ -1,4 +1,4 @@
-from typing import cast, TypedDict, List, TypeGuard, Set, Optional
+from typing import cast, TypedDict, TypeGuard, Optional
 
 from verisafe.core.state import CryptoStateGen
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, System
 known_nodes = {INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE}
 
 def normalize_content(s: str | list[str | dict]) -> list[dict]:
-    l : List[str | dict]
+    l : list[str | dict]
     if isinstance(s, str):
         l = [s]
     else:
@@ -98,7 +98,7 @@ def summarize_update(
 # Custom update handler
 # +++++++++++++++++++++++++++
 
-user_guard: Set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run"}
+user_guard: set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run"}
 
 def is_user_update(x: AllUpdates) -> TypeGuard[ProgressUpdate]:
     return x["type"] in user_guard
@@ -114,7 +114,7 @@ def print_prover_updates(payload: ProgressUpdate) -> None:
         print(f"Running prover with args: {' '.join(payload['args'])}")
 
 
-audit_guard: Set[AuditUpdateTy] = {"manual_search", "rule_result", "summarization"}
+audit_guard: set[AuditUpdateTy] = {"manual_search", "rule_result", "summarization"}
 
 def is_audit_update(x: AllUpdates) -> TypeGuard[AuditUpdate]:
     return x["type"] in audit_guard

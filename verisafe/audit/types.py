@@ -28,3 +28,4 @@ class RunInput(TypedDict):
     spec: InputFileLike
     interface: InputFileLike
     system: InputFileLike
+    reqs: list[str] | None

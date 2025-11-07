@@ -22,7 +22,10 @@ class HumanInTheLoopArg(WithToolCallId):
     6. Undocumented CVL behavior, features, or syntax
     7. To request modifying the original specification if this is considered necessary.
 
-    To emphasize, the above are just guidelines, and this is a free form method to request assistance
+    To emphasize, the above are just guidelines, and this is a free form method to request assistance.
+
+    If the human response begins with FOLLOWUP, interpret their response as a request for clarification.
+    Formulate an answer to the request, and reinvoke this tool, adjusting the question as appropriate.
     """
     question: str = Field(description="The exact question or request for assistance to pose to the human")
     context: str = \

@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS run_info(
     interface_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
     interface_name TEXT NOT NULL,
     system_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
-    system_name TEXT NOT NULL
+    system_name TEXT NOT NULL,
+    num_reqs INT CHECK (num_reqs >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS vfs_initial(
@@ -101,6 +102,15 @@ CREATE TABLE IF NOT EXISTS summarization(
     summary TEXT NOT NULL,
     CONSTRAINT summarization_pk PRIMARY KEY (thread_id, checkpoint_id)
 );
+
+CREATE TABLE IF NOT EXISTS run_requirements(
+    thread_id TEXT REFERENCES run_info(thread_id) NOT NULL,
+    req_num int NOT NULL,
+    req_text TEXT NOT NULL,
+    PRIMARY KEY(thread_id, req_num)
+);
+
+CREATE INDEX IF NOT EXISTS req_requirement_thead_idx ON run_requirements USING btree(thread_id);
 
 -- Grant permissions to audit_db_user on all tables
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO audit_db_user;
