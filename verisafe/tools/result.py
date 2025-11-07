@@ -1,38 +1,17 @@
-from typing import Annotated, List
-from pydantic import Field
-
-from langgraph.prebuilt import InjectedState
-from langchain_core.tools import tool, InjectedToolCallId
 from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.types import Command
 from langgraph.runtime import get_runtime
 
-from graphcore.graph import WithToolCallId, tool_output, tool_return
+from graphcore.tools.results import result_tool_generator
 
 from verisafe.core.context import CryptoContext, compute_state_digest
 from verisafe.core.state import CryptoStateGen, ResultStateSchema
 
-class ResultStateArgSchema(WithToolCallId):
-    """
-    Used to communicate when the generated code is complete and satisfies all of the rules in specification.
-    """
-
-    source: List[str] = \
-        Field(description="The relative filenames in the virtual FS to present to the user. IMPORTANT: "
-              "the filenames here must have been populated by prior put_file tool calls")
-    comments: str = \
-        Field(description="Any comments or notes on the generated implementation, and a summary of your reasoning, along with any lessons "
-              "learned from iterating with the prover.")
-
-    state: Annotated[CryptoStateGen, InjectedState]
-
-@tool(args_schema=ResultStateArgSchema)
-def code_result(
-    source: List[str],
-    comments: str,
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[CryptoStateGen, InjectedState]
-) -> Command:
+def check_completion(
+    state: CryptoStateGen,
+    sch: ResultStateSchema,
+    tool_call_id: str
+) -> Command | None:
     ctxt = get_runtime(CryptoContext).context
     digest = compute_state_digest(c=ctxt, state=state)
     m = state.get("validation", {})
@@ -53,12 +32,11 @@ def code_result(
                     ]
                 }
             )
-    return tool_output(
-        tool_call_id=tool_call_id,
-        res={
-            "generated_code": ResultStateSchema(
-                comments=comments,
-                source=source
-            )
-        }
-    )
+    return None
+
+code_result = result_tool_generator("generated_code", ResultStateSchema,
+"""
+Used to communicate when the generated code is complete and satisfies all of the rules in specification.
+""",
+    (CryptoStateGen, check_completion)
+)

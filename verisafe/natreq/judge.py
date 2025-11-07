@@ -24,6 +24,7 @@ from verisafe.core.context import CryptoContext, compute_state_digest
 
 class JudgeInput(FlowInput):
     vfs: dict[str, str]
+    orig_reqs: list[str]
 
 class RequirementAnalysis(BaseModel):
     """
@@ -44,12 +45,12 @@ class JudgeResult(BaseModel):
 
 class JudgeState(MessagesState, VFSState):
     result: NotRequired[JudgeResult]
+    orig_reqs: list[str]
 
 def _gen_workflow(
     vfs_tools: list[BaseTool],
     mem: MemoryBackend,
     llm: BaseChatModel,
-    req_checker: Callable[[JudgeResult], str | None]
 ) -> StateGraph[JudgeState, None, JudgeInput, Any]:
     mem_tool = memory_tool(mem)
     res = result_tool_generator(
@@ -62,7 +63,7 @@ and communicate it back to the user.
 *IMPORTANT*: Once you call this tool, this workflow will end. You MUST perform any memory operations
 BEFORE calling this tool.
 """,
-        validator=req_checker
+        validator=(JudgeState, judge_res_checker)
     )
     return build_workflow(
         input_type=JudgeInput,
@@ -104,10 +105,12 @@ def _format_result(
         res_list.append(buff)
     return "\n".join(res_list)
 
-def judge_result_formatting(
-    reqs: list[str],
-    r: JudgeResult
+def judge_res_checker(
+    st: JudgeState,
+    r: JudgeResult,
+    _: str
 ) -> str | None:
+    reqs = st["orig_reqs"]
     if len(reqs) != len(r.judgement_result):
         return f"Completion REJECTED: Incorrect number of requirement results: expected {len(reqs)} received {len(r.judgement_result)}"
     seen_nums = set()
@@ -127,7 +130,7 @@ def get_judge_tool(
     vfs_tools: list[BaseTool],
     unbound: BaseChatModel
 ) -> BaseTool:
-    workflow = _gen_workflow(vfs_tools, mem, unbound, partial(judge_result_formatting, reqs))
+    workflow = _gen_workflow(vfs_tools, mem, unbound)
     compiled_graph = workflow.compile()
     @tool(args_schema=RequirementEvaluationSchema)
     def requirements_evaluation(
@@ -137,7 +140,8 @@ def get_judge_tool(
         req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
         r = compiled_graph.invoke(JudgeInput(
             input=[req_list],
-            vfs=state["vfs"]
+            vfs=state["vfs"],
+            orig_reqs=reqs
         ))
         res = cast(JudgeResult, r["result"])
         all_satisfied = True

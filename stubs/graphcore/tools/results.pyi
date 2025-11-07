@@ -9,14 +9,12 @@ R = TypeVar("R")
 M = TypeVar("M", bound=BaseModel)
 
 ValidationResult = Command | str | None
-ResultValidator = tuple[type[ST], Callable[[ST, R], ValidationResult]] | Callable[[R], ValidationResult]
-
 @overload
 def result_tool_generator(
     outkey: str,
     result_schema: type[M],
     doc: str,
-    validator: tuple[type[ST], Callable[[ST, M], ValidationResult]]
+    validator: tuple[type[ST], Callable[[ST, M, str], ValidationResult]]
 ) -> BaseTool:
     ...
 
@@ -25,7 +23,7 @@ def result_tool_generator(
     outkey: str,
     result_schema: type[M],
     doc: str,
-    validator: Callable[[M], ValidationResult]
+    validator: Callable[[M, str], ValidationResult]
 ) -> BaseTool:
     ...
 
@@ -35,7 +33,7 @@ def result_tool_generator(
     outkey: str,
     result_schema: tuple[type[R], str],
     doc: str,
-    validator: Callable[[R], ValidationResult]
+    validator: Callable[[R, str], ValidationResult]
 ) -> BaseTool:
     ...
 
@@ -44,7 +42,7 @@ def result_tool_generator(
     outkey: str,
     result_schema: tuple[type[R], str],
     doc: str,
-    validator: tuple[type[ST], Callable[[ST, R], ValidationResult]]
+    validator: tuple[type[ST], Callable[[ST, R, str], ValidationResult]]
 ) -> BaseTool:
     ...
 
@@ -55,3 +53,4 @@ def result_tool_generator(
     doc: str,
 ) -> BaseTool:
     ...
+
