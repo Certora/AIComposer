@@ -12,8 +12,7 @@ class ResultStateSchema(BaseModel):
 
 def merge_validation(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
     to_ret = left.copy()
-    for (k, v) in right.items():
-        to_ret[k] = v
+    to_ret.update(right)
     return to_ret
 
 class CryptoStateGen(VFSState, MessagesState):

@@ -22,14 +22,8 @@ class CryptoContext:
     required_validations: list[str] = field(default_factory=lambda: [prover])
 
 def compute_state_digest(c: CryptoContext, state: CryptoStateGen) -> str:
-    files = {}
-    file_names = []
-    for (p, cont) in c.vfs_materializer.iterate(state):
-        files[p] = cont
-        file_names.append(p)
-    file_names.sort()
     # not interested in cryptographic bulletproofing, just need *some* digest
     digester = hashlib.md5()
-    for nm in file_names:
-        digester.update(files[nm])
+    for (_, cont) in sorted(c.vfs_materializer.iterate(state), key = lambda x: x[0]):
+        digester.update(cont)
     return digester.hexdigest()
