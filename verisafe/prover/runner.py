@@ -33,6 +33,7 @@ import pickle
 @dataclass
 class RawReport:
     report: str
+    all_verified: bool
 
 @dataclass
 class SummarizedReport:
@@ -209,7 +210,7 @@ def certora_prover(
                         report=rule_report,
                         todo_list=todo_list
                     )
-                return RawReport(rule_report)
+                return RawReport(rule_report, all_verified=(failed_count == 0 and rule is None))
             except Exception as e:
                 print(str(e))
                 sys.exit(1)
