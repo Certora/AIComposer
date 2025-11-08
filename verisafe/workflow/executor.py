@@ -28,6 +28,7 @@ from verisafe.human.handlers import handle_human_interrupt
 from verisafe.templates.loader import load_jinja_template
 from verisafe.natreq.extractor import get_requirements
 from verisafe.natreq.judge import get_judge_tool
+from verisafe.tools.relaxation import requirements_relaxation
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
@@ -256,6 +257,7 @@ def execute_cryptosafe_workflow(
             )[0]
         )
         extra_tools.append(judge_tool)
+        extra_tools.append(requirements_relaxation)
 
     if "context-management-2025-06-27" in getattr(llm, "betas"):
         memory = memory_tool(get_memory(thread_id, "verisafe"))
