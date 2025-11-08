@@ -113,8 +113,10 @@ def get_requirements(
         model=get_model(),
     )
 
-    input_text : list[str | dict]= [
+    input_text : list[str | dict] = [
+        "The system document is as follows:",
         sys_doc.string_contents,
+        "The spec file is as follows:",
         spec_file.string_contents
     ]
 
@@ -132,7 +134,7 @@ spec).
         )
 
     req_oracle : Callable[[tuple[str, str]], str] | None = None
-    if len(oracle):
+    if oracle is not None and len(oracle):
         req_oracle = requirements_oracle(
             llm,
             [ pathlib.Path(p) for p in oracle ]

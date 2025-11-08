@@ -92,12 +92,16 @@ If any requirements are classified as PARTIAL or VIOLATED, you must address this
     """
 
 def _format_result(
-    r: JudgeResult
+    r: JudgeResult,
+    skipped: set[int]
 ) -> str:
     res_list = []
     for req_res in r.judgement_result:
         buff = "<result>"
         buff += f"<requirement>{req_res.requirement}</requirement>\n"
+        if req_res.requirement_number in skipped:
+            buff += "<classification>IGNORED</classification></result>"
+            continue
         buff += f"<classification>{req_res.classification}</classification>\n"
         if req_res.commentary:
             buff += f"<comments>{req_res.commentary}</comments>\n"
@@ -118,10 +122,10 @@ def judge_res_checker(
         if j.requirement_number in seen_nums:
             return f"Completion REJECTED: Already seen judgment for {j.requirement_number}"
         seen_nums.add(j.requirement_number)
-        if j.requirement_number not in range(0, len(reqs)):
+        if j.requirement_number not in range(1, len(reqs) + 1):
             return f"Completion REJECTED: Requirement number {j.requirement_number} is not valid"
-        if j.requirement != reqs[j.requirement_number]:
-            return f"Completion REJECTED: Requirement text `{j.requirement}` does not match the original text: `{reqs[j.requirement_number]}`"
+        if j.requirement != reqs[j.requirement_number - 1]:
+            return f"Completion REJECTED: Requirement text `{j.requirement}` does not match the original text: `{reqs[j.requirement_number - 1]}`"
     return None
 
 def get_judge_tool(
@@ -132,25 +136,26 @@ def get_judge_tool(
 ) -> BaseTool:
     workflow = _gen_workflow(vfs_tools, mem, unbound)
     compiled_graph = workflow.compile()
+    req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
     @tool(args_schema=RequirementEvaluationSchema)
     def requirements_evaluation(
         state: CryptoStateGen,
         tool_call_id: Annotated[str, InjectedToolCallId]
     ) -> Command | str:
-        req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
         r = compiled_graph.invoke(JudgeInput(
             input=[req_list],
             vfs=state["vfs"],
             orig_reqs=reqs
         ))
+        skipped = state.get("skipped_reqs", set())
         res = cast(JudgeResult, r["result"])
         all_satisfied = True
         for j in res.judgement_result:
             if j.classification != "LIKELY" and j.classification != "SATISFIED":
-                if j.requirement_number not in state.get("skipped_reqs", set()):
+                if j.requirement_number not in skipped:
                     all_satisfied = False
                     break
-        res = _format_result(r["result"])
+        res = _format_result(r["result"], skipped)
         if not all_satisfied:
             return res
         digest = compute_state_digest(

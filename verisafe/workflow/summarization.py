@@ -15,8 +15,9 @@ class SummaryGeneration(SummaryConfig[CryptoStateGen]):
     
     def get_summarization_prompt(self, state: CryptoStateGen) -> str:
         return super().get_summarization_prompt(state) + "\n In addition, if you have a TODO " \
-            "list from prior execution of the prover, retain that TODO list in your summary. " \
-            "You should also preserve the natural language list of implementation requirements."
+            "list from prior execution of the prover, retain that TODO list in your summary. \n" \
+            "You should also preserve the natural language list of implementation requirements, including" \
+            "their order."
 
     def on_summary(self, state: CryptoStateGen, summary: str, resume: str) -> None:
         writer = get_stream_writer()
