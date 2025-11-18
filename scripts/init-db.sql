@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS prover_results(
     tool_id TEXT NOT NULL,
     rule_name TEXT NOT NULL,
     thread_id TEXT NOT NULL,
-    result TEXT NOT NULL CHECK (result in ('VIOLATED', 'ERROR', 'TIMEOUT', 'VERIFIED')),
+    result TEXT NOT NULL CHECK (result in ('VIOLATED', 'ERROR', 'TIMEOUT', 'VERIFIED', 'SANITY_FAILED')),
     analysis TEXT,
     CONSTRAINT prover_results_pk PRIMARY KEY (tool_id, rule_name, thread_id)
 );

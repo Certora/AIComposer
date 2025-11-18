@@ -1,7 +1,7 @@
 from typing import Literal, Optional, TypeVar
 from dataclasses import dataclass
 
-StatusCodes = Literal["VERIFIED", "VIOLATED", "TIMEOUT", "ERROR", "SANITY_FAIL"]
+StatusCodes = Literal["VERIFIED", "VIOLATED", "TIMEOUT", "ERROR", "SANITY_FAILED"]
 
 class _Missing:
     pass

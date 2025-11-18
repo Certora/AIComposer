@@ -47,7 +47,7 @@ def _to_status_string(s: str | None) -> StatusCodes:
     if s is None:
         return "ERROR"
     match s:
-        case "VIOLATED" | "VERIFIED" | "TIMEOUT" | "SANITY_FAIL":
+        case "VIOLATED" | "VERIFIED" | "TIMEOUT" | "SANITY_FAILED":
             return s
         case _:
             return "ERROR"
@@ -88,7 +88,7 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
     if stat == "TIMEOUT":
         if len(r.children) == 0:
             return [RuleResult(path=effective_path, cex_dump=None,status=stat)]
-    assert stat == "TIMEOUT" or stat == "VIOLATED" or stat == "SANITY_FAIL"
+    assert stat == "TIMEOUT" or stat == "VIOLATED" or stat == "SANITY_FAILED"
     violated_assert_children = any([ c.nodeType == "VIOLATED_ASSERT" for c in r.children])
     if violated_assert_children:
         assert stat == "VIOLATED" and len(r.output) > 0
@@ -105,7 +105,7 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
             status=stat
         )]
     if r.nodeType == "SANITY":
-        assert stat == "SANITY_FAIL"
+        assert stat == "SANITY_FAILED"
         return [RuleResult(
             path=effective_path,
             cex_dump=None,

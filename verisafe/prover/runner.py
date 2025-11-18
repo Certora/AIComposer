@@ -152,7 +152,9 @@ def certora_prover(
                     str(loop_iter),
                     "--solc", compiler_version,
                     "--solc_via_ir",
-                    "--strict_solc_optimizer"
+                    "--strict_solc_optimizer",
+                    "--prover_args",
+                    "-timeoutCracker true"
                 ])
                 if rule is not None:
                     args.extend([
@@ -213,6 +215,8 @@ def certora_prover(
                 return RawReport(rule_report, all_verified=(failed_count == 0 and rule is None))
             except Exception as e:
                 print(str(e))
+                import traceback
+                traceback.print_exc()
                 sys.exit(1)
 
 def report_to_todo_list(state: CryptoStateGen, report: str, tool_call_id: str) -> str:

@@ -275,8 +275,8 @@ def execute_cryptosafe_workflow(
     audit_db.register_run(
         thread_id=thread_id,
         system_doc=system_doc,
-        interface_file=spec_file,
-        spec_file=interface_file,
+        interface_file=interface_file,
+        spec_file=spec_file,
         vfs_init=materializer.iterate(flow_input),
         reqs=reqs_list
     )

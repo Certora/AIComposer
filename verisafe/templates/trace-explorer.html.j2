@@ -257,7 +257,8 @@
 
         .message-bubble.text,
         .message-bubble.question-context,
-        .message-bubble.question-code {
+        .message-bubble.question-code,
+        .message-bubble.relaxation-explanation {
             background: #f0f2f5;
             border: 1px solid #788aa5;
         }
@@ -460,26 +461,34 @@
             gap: 1rem;
         }
         
-        .prover-result {
+        .prover-result,
+        .requirement-bubble {
             border-radius: 8px;
             padding: 1rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
             border: 1px solid;
             transition: box-shadow 0.2s;
         }
         
-        .prover-result.verified {
+        .prover-result.verified,
+        .requirement-bubble.satisfied,
+        .requirement-bubble.likely {
             background: #d4edda;
             border-color: #c3e6cb;
             color: #155724;
         }
         
-        .prover-result.violated {
+        .prover-result.violated,
+        .requirement-bubble.partial,
+        .requirement-bubble.violated {
             background: #f8d7da;
             border-color: #f5c6cb;
             color: #721c24;
         }
         
-        .prover-result.timeout {
+        .prover-result.timeout,
+        .requirement-bubble.ignored {
             background: #e2e3e5;
             border-color: #d6d8db;
             color: #383d41;
@@ -502,7 +511,8 @@
             flex-shrink: 0;
         }
         
-        .prover-rule-name {
+        .prover-rule-name,
+        .requirement-text {
             font-weight: 600;
             flex: 1;
         }
@@ -586,6 +596,21 @@
         .message-bubble.search-query .message-text,
         .message-bubble.human-question .message-text {
             color: #0d47a1;
+            font-weight: 500;
+            line-height: 1.5;
+        }
+
+        .message-bubble.ai-analysis {
+            background: #f3e5f5;
+            border: 1px solid #ce93d8;
+        }
+
+        .message-bubble.ai-analysis .message-type-label {
+            color: #7b1fa2;
+        }
+
+        .message-bubble.ai-analysis .message-text {
+            color: #4a148c;
             font-weight: 500;
             line-height: 1.5;
         }
@@ -757,6 +782,180 @@
             font-size: 12px;
             color: #ffffff80;
             margin-left: 1rem;
+        }
+
+        /* Sidebar Menu Styles */
+        .sidebar-toggle {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 4px;
+            transition: background 0.2s;
+            margin-right: 1rem;
+        }
+
+        .sidebar-toggle:hover {
+            background: #34495e;
+        }
+
+        .sidebar-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 998;
+            display: none;
+        }
+
+        .sidebar-overlay.active {
+            display: block;
+        }
+
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: -300px;
+            width: 300px;
+            height: 100%;
+            background: white;
+            z-index: 999;
+            transition: left 0.3s ease;
+            box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar.active {
+            left: 0;
+        }
+
+        .sidebar-header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #34495e;
+        }
+
+        .sidebar-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .sidebar-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .sidebar-close:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem 0;
+        }
+
+        .step-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .step-item {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #e9ecef;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .step-item:hover {
+            background: #f8f9fa;
+        }
+
+        .step-item.current {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            font-weight: 600;
+            color: #1976d2;
+        }
+
+        .step-number {
+            background: #6c757d;
+            color: white;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .step-item.current .step-number {
+            background: #2196f3;
+        }
+
+        .step-title {
+            flex: 1;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        /* Initial Requirements Styles */
+        .initial-requirements {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .initial-requirement-item {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 0.75rem 1rem;
+            border-left: 4px solid #6c757d;
+            transition: border-color 0.2s;
+        }
+
+        .initial-requirement-item:hover {
+            border-left-color: #495057;
+        }
+
+        .initial-requirement-number {
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 0.5rem;
+            font-size: 14px;
+        }
+
+        .initial-requirement-text {
+            line-height: 1.6;
+            color: #333;
         }
 
         /* VFS Commands Styles */
@@ -935,6 +1134,9 @@
     <div class="header">
         <h1>Trace Explorer</h1>
         <div class="navigation">
+            <button id="sidebarToggle" class="sidebar-toggle">
+                ☰
+            </button>
             <button id="prevBtn" class="nav-button">
                 ← Previous
             </button>
@@ -945,6 +1147,20 @@
             <div class="step-indicator">
                 Step <span id="currentStep">1</span> of <span id="totalSteps">1</span>
             </div>
+        </div>
+    </div>
+    
+    <!-- Sidebar -->
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+    <div id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-title">Steps</div>
+            <button id="sidebarClose" class="sidebar-close">×</button>
+        </div>
+        <div class="sidebar-content">
+            <ul id="stepList" class="step-list">
+                <!-- Steps will be populated by JavaScript -->
+            </ul>
         </div>
     </div>
     
@@ -1005,6 +1221,16 @@
                 </div>
                 <div class="collapsible__content">
                     <div class="system-doc"></div>
+                </div>
+            </div>
+            
+            <div class="collapsible requirements-section" data-collapsible-state="expanded">
+                <div class="collapsible__trigger" data-collapsible-trigger>
+                    <span class="collapsible__icon"></span>
+                    <span class="collapsible__title">Initial Requirements</span>
+                </div>
+                <div class="collapsible__content">
+                    <div class="initial-requirements"></div>
                 </div>
             </div>
         </div>
@@ -1210,6 +1436,54 @@
             <div class="summarization-container"></div>
         </div>
     </template>
+
+    <!-- Relaxation Step Template -->
+    <template id="relaxation-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Requirement Relaxation Request</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            <div class="messages-container"></div>
+        </div>
+    </template>
+
+    <!-- Requirements Step Template -->
+    <template id="requirements-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Requirements Evaluation</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            
+            <div class="requirements-results"></div>
+        </div>
+    </template>
+
+    <!-- Requirement Bubble Template -->
+    <template id="requirement-bubble-template">
+        <div class="requirement-bubble">
+            <div class="prover-result-header">
+                <span class="prover-status-icon"></span>
+                <span class="requirement-text"></span>
+                <span class="prover-status-label"></span>
+            </div>
+            <div class="requirement-commentary-section"></div>
+        </div>
+    </template>
+
+    <!-- Requirement Commentary Template -->
+    <template id="requirement-commentary-template">
+        <div class="collapsible collapsible--violation" data-collapsible-state="collapsed">
+            <div class="collapsible__trigger" data-collapsible-trigger>
+                <span class="collapsible__icon"></span>
+                <span class="collapsible__title">View Commentary</span>
+            </div>
+            <div class="collapsible__content">
+                <div class="prover-violation-content commentary-text"></div>
+            </div>
+        </div>
+    </template>
     
     <!-- Prism.js for syntax highlighting -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
@@ -1227,13 +1501,147 @@
         let currentStepIndex = 0;
         let currentVFSSnapshot = null;
         let selectedFile = null;
+        let stepTitles = [];
         
         // Initialize the application
         function init() {
+            generateStepTitles();
+            populateSidebar();
             attachEventListeners();
+            
+            // Read initial step from URL hash
+            currentStepIndex = parseURLHash();
+            
             updateStepIndicator();
+            updateSidebarHighlight();
             renderCurrentStep();
             updateNavigationButtons();
+        }
+        
+        // Generate step titles based on step types
+        function generateStepTitles() {
+            stepTitles = steps.map(step => {
+                switch(step.type) {
+                    case 'initial':
+                        return 'Initial Configuration';
+                    case 'ai':
+                        return 'AI Execution Step';
+                    case 'prover':
+                        return 'Formal Verification';
+                    case 'search':
+                        return 'RAG Database Search';
+                    case 'put_file':
+                        return 'VFS Updates';
+                    case 'question':
+                        return 'VFS Update';
+                    case 'proposal':
+                        return 'Spec Change Proposal';
+                    case 'result':
+                        return 'Generation Complete';
+                    case 'vfs':
+                        return 'VFS Interactions';
+                    case 'summarization':
+                        return 'Context Summarization';
+                    case 'relaxation':
+                        return 'Requirement Relaxation Request';
+                    case 'judge':
+                        return 'Requirements Evaluation';
+                    default:
+                        return `Unknown Step (${step.type})`;
+                }
+            });
+        }
+        
+        // Populate the sidebar with step list
+        function populateSidebar() {
+            const stepList = document.getElementById('stepList');
+            stepList.innerHTML = '';
+            
+            stepTitles.forEach((title, index) => {
+                const listItem = document.createElement('li');
+                listItem.className = 'step-item';
+                if (index === currentStepIndex) {
+                    listItem.classList.add('current');
+                }
+                
+                listItem.innerHTML = `
+                    <div class="step-number">${index + 1}</div>
+                    <div class="step-title">${title}</div>
+                `;
+                
+                listItem.addEventListener('click', () => {
+                    navigateToStep(index);
+                    closeSidebar();
+                });
+                
+                stepList.appendChild(listItem);
+            });
+        }
+        
+        // Update sidebar current step highlight
+        function updateSidebarHighlight() {
+            document.querySelectorAll('.step-item').forEach((item, index) => {
+                item.classList.toggle('current', index === currentStepIndex);
+            });
+        }
+        
+        // Sidebar toggle functions
+        function openSidebar() {
+            document.getElementById('sidebar').classList.add('active');
+            document.getElementById('sidebarOverlay').classList.add('active');
+        }
+        
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('active');
+            document.getElementById('sidebarOverlay').classList.remove('active');
+        }
+        
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar.classList.contains('active')) {
+                closeSidebar();
+            } else {
+                openSidebar();
+            }
+        }
+        
+        // Navigate to specific step
+        function navigateToStep(index) {
+            if (index >= 0 && index < steps.length) {
+                currentStepIndex = index;
+                updateStepIndicator();
+                updateSidebarHighlight();
+                renderCurrentStep();
+                updateNavigationButtons();
+                updateURL();
+            }
+        }
+        
+        // URL hash support
+        function updateURL() {
+            if (currentStepIndex > 0) {
+                window.location.hash = `#step=${currentStepIndex + 1}`;
+            } else {
+                window.location.hash = '';
+            }
+        }
+        
+        function parseURLHash() {
+            const hash = window.location.hash;
+            if (hash.startsWith('#step=')) {
+                const stepNumber = parseInt(hash.substring(6), 10);
+                if (!isNaN(stepNumber) && stepNumber >= 1 && stepNumber <= steps.length) {
+                    return stepNumber - 1; // Convert to 0-based index
+                }
+            }
+            return 0; // Default to first step
+        }
+        
+        function handleHashChange() {
+            const newStepIndex = parseURLHash();
+            if (newStepIndex !== currentStepIndex) {
+                navigateToStep(newStepIndex);
+            }
         }
         
         // Generic collapsible system
@@ -1275,6 +1683,14 @@
             document.getElementById('nextBtn').addEventListener('click', () => {
                 navigateStep(1);
             });
+            
+            // Sidebar toggle
+            document.getElementById('sidebarToggle').addEventListener('click', toggleSidebar);
+            document.getElementById('sidebarClose').addEventListener('click', closeSidebar);
+            document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar);
+            
+            // Hash change listener
+            window.addEventListener('hashchange', handleHashChange);
             
             // Initialize unified collapsible system
             initCollapsibles();
@@ -1323,8 +1739,12 @@
                     navigateStep(-1);
                 } else if (e.key === 'ArrowRight') {
                     navigateStep(1);
-                } else if (e.key === 'Escape' && document.getElementById('vfsModal').classList.contains('active')) {
-                    closeVFSModal();
+                } else if (e.key === 'Escape') {
+                    if (document.getElementById('vfsModal').classList.contains('active')) {
+                        closeVFSModal();
+                    } else if (document.getElementById('sidebar').classList.contains('active')) {
+                        closeSidebar();
+                    }
                 }
             });
         }
@@ -1459,6 +1879,13 @@
                     break;
                 case "result":
                     renderResultStep(step, container);
+                    break;
+                case 'judge':
+                    renderRequirementsStep(step, container);
+                    break;
+                case 'relaxation':
+                    renderRelaxationStep(step, container);
+                    break;
                 default:
                     console.warn(`Unknown step type: ${step.type}`);
             }
@@ -1613,6 +2040,28 @@
             // Fill in the system doc
             clone.querySelector('.system-doc').textContent = step.system_doc;
             
+            // Handle requirements if present
+            const requirementsSection = clone.querySelector('.requirements-section');
+            const initialRequirements = clone.querySelector('.initial-requirements');
+            
+            if (step.reqs && step.reqs.length > 0) {
+                // Render each requirement
+                step.reqs.forEach((requirement, index) => {
+                    const reqItem = document.createElement('div');
+                    reqItem.className = 'initial-requirement-item';
+                    
+                    reqItem.innerHTML = `
+                        <div class="initial-requirement-number">Requirement ${index + 1}</div>
+                        <div class="initial-requirement-text">${escapeHtml(requirement)}</div>
+                    `;
+                    
+                    initialRequirements.appendChild(reqItem);
+                });
+            } else {
+                // Hide the requirements section if no requirements
+                requirementsSection.style.display = 'none';
+            }
+            
             container.appendChild(clone);
             
             // Trigger Prism syntax highlighting
@@ -1758,6 +2207,109 @@
                     return code;
                 }
             })
+        }
+
+        // Render Relaxation Step
+        function renderRelaxationStep(step, container) {
+            const template = document.getElementById('relaxation-step-template');
+            const clone = template.content.cloneNode(true);
+            const messageContainer = clone.querySelector('.messages-container');
+
+            // Show the requirement being questioned
+            messageContainer.appendChild(renderMessageBubble(
+                step.requirement,
+                "Requirement",
+                "text"
+            ));
+
+            // Show the context
+            messageContainer.appendChild(renderMessageBubble(
+                step.context,
+                "Context",
+                "relaxation-explanation"
+            ));
+
+            // Show the judgment
+            messageContainer.appendChild(renderMessageBubble(
+                `Judgment: ${step.judgment}`,
+                "AI Judgment",
+                "ai-analysis"
+            ));
+
+            // Show the explanation
+            messageContainer.appendChild(renderMessageBubble(
+                step.explanation,
+                "Explanation",
+                "relaxation-explanation"
+            ));
+
+            // Show human response
+            messageContainer.appendChild(renderMessageBubble(
+                step.response,
+                "Human Response",
+                "human-response"
+            ));
+
+            container.appendChild(clone);
+        }
+
+        // Render Requirements Step
+        function renderRequirementsStep(step, container) {
+            const template = document.getElementById('requirements-step-template');
+            const clone = template.content.cloneNode(true);
+            
+            const resultsContainer = clone.querySelector('.requirements-results');
+            const bubbleTemplate = document.getElementById('requirement-bubble-template');
+            const commentaryTemplate = document.getElementById('requirement-commentary-template');
+            
+            step.evaluation.forEach(requirement => {
+                const bubbleClone = bubbleTemplate.content.cloneNode(true);
+                const bubbleDiv = bubbleClone.querySelector('.requirement-bubble');
+                
+                // Set status class based on judgment
+                const judgment = requirement.judgment.toLowerCase();
+                bubbleDiv.classList.add(judgment);
+                
+                // Set icon and status label
+                const icon = bubbleClone.querySelector('.prover-status-icon');
+                const statusLabel = bubbleClone.querySelector('.prover-status-label');
+                
+                switch(judgment) {
+                    case 'satisfied':
+                    case 'likely':
+                        icon.textContent = '✓';
+                        break;
+                    case 'partial':
+                        icon.textContent = '⚠';
+                        break;
+                    case 'violated':
+                        icon.textContent = '✗';
+                        break;
+                    case 'ignored':
+                        icon.textContent = '⊘';
+                        break;
+                }
+                
+                statusLabel.textContent = requirement.judgment;
+                
+                // Set requirement text
+                bubbleClone.querySelector('.requirement-text').textContent = requirement.require_text;
+                
+                // Handle commentary if present
+                if (requirement.commentary) {
+                    const commentarySection = bubbleClone.querySelector('.requirement-commentary-section');
+                    const commentaryClone = commentaryTemplate.content.cloneNode(true);
+                    
+                    // Set the commentary text
+                    commentaryClone.querySelector('.commentary-text').textContent = requirement.commentary;
+                    
+                    commentarySection.appendChild(commentaryClone);
+                }
+                
+                resultsContainer.appendChild(bubbleClone);
+            });
+            
+            container.appendChild(clone);
         }
         
         // Render Search Step
@@ -1941,13 +2493,7 @@
         // Navigation functions
         function navigateStep(direction) {
             const newIndex = currentStepIndex + direction;
-            
-            if (newIndex >= 0 && newIndex < steps.length) {
-                currentStepIndex = newIndex;
-                updateStepIndicator();
-                renderCurrentStep();
-                updateNavigationButtons();
-            }
+            navigateToStep(newIndex);
         }
         
         function updateStepIndicator() {

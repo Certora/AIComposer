@@ -10,7 +10,7 @@ import psycopg
 import difflib
 import json
 
-from typing import Dict, Optional, List, cast, TypedDict, Literal, Annotated, Union, TypeVar, Generic
+from typing import Dict, Optional, List, cast, TypedDict, Literal, Annotated, Union, TypeVar, Generic, NotRequired
 from langgraph.checkpoint.base import CheckpointTuple
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMessage
 from pydantic import Discriminator
@@ -19,6 +19,7 @@ from verisafe.audit.types import ManualResult, RuleResult
 from verisafe.audit.db import AuditDB
 from verisafe.workflow.factories import get_checkpointer
 from verisafe.templates.loader import load_jinja_template
+from verisafe.natreq.judge import ClassificationType
 
 
 StepTy = TypeVar("StepTy", 
@@ -31,7 +32,9 @@ StepTy = TypeVar("StepTy",
                  Literal["proposal"],
                  Literal["result"],
                  Literal["summarization"],
-                 Literal["vfs"])
+                 Literal["vfs"],
+                 Literal["relaxation"],
+                 Literal["judge"])
 
 class AbstractStep(TypedDict, Generic[StepTy]):
     vfs_snapshot: int
@@ -42,6 +45,7 @@ class InitialStep(AbstractStep[Literal["initial"]]):
     spec: str
     interface: str
     system_doc: str
+    reqs: NotRequired[list[str]]
 
 class AIStepMessage(TypedDict):
     type: Literal["thinking", "text"]
@@ -109,6 +113,21 @@ FileUpdate = Annotated[Union[Diff, FreshFile], Discriminator("type")]
 class PutFileStep(AbstractStep[Literal["put_file"]]):
     updates: List[FileUpdate]
 
+class RelaxationStep(AbstractStep[Literal["relaxation"]]):
+    requirement: str
+    judgment: ClassificationType
+    explanation: str
+    context: str
+    response: str
+
+class ReqEval(TypedDict):
+    require_text: str
+    judgment: ClassificationType | Literal["IGNORED"]
+    commentary: NotRequired[str]
+
+class RequirementsStep(AbstractStep[Literal["judge"]]):
+    evaluation: list[ReqEval]
+
 Steps = Annotated[Union[
     AIStep,
     InitialStep,
@@ -119,7 +138,9 @@ Steps = Annotated[Union[
     ProposalStep,
     ResultStep,
     SummarizationStep,
-    VFSStep
+    VFSStep,
+    RelaxationStep,
+    RequirementsStep
 ], Discriminator("type")]
 
 audit = psycopg.connect(sys.argv[2])
@@ -295,8 +316,6 @@ def handle_code_result(step: dict) -> ResultStep:
         files=result_input["source"]
     )
 
-# def is_vfs()
-
 def handle_next_vfs_tool(m: AIMessage, message_queue: MessageQueue) -> list[VFSInteraction]:
     cont: List[dict | str]
     if isinstance(m.content, list):
@@ -369,7 +388,102 @@ def handle_vfs_tools(step: dict, message_queue: MessageQueue) -> list[VFSInterac
     if rem_nxt is not None and isinstance(rem_nxt, AIMessage) and has_vfs_tools(rem_nxt):
         commands.extend(handle_next_vfs_tool(cast(AIMessage, message_queue.take()), message_queue))
     return commands
+
+def handle_human_relaxation(step: dict, queue: MessageQueue) -> RelaxationStep:
+    req_input = step["input"]
+    response = extract_human_response(queue)
+    return RelaxationStep(
+        type="relaxation",
+        vfs_snapshot=vfs.curr_version,
+        response=response,
+        requirement=req_input["req_text"],
+        judgment=req_input["judgment"],
+        context=req_input["context"],
+        explanation=req_input["explanation"]
+    )
+
+def requirements_judge(step: dict, queue: MessageQueue) -> RequirementsStep:
+    nxt = queue.take()
+    assert isinstance(nxt, ToolMessage)
+    t = nxt.text()
+    
+    # Parse stream of XML result elements
+    import xml.etree.ElementTree as ET
+    from html import unescape
+    
+    # Since the content is not XML escaped and may contain parse errors,
+    # we need to handle it carefully. Split by </result> to get individual results
+    results = []
+    result_parts = t.split('</result>')
+    
+    for part in result_parts:
+        part = part.strip()
+        if not part:
+            continue
             
+        # Add back the closing tag
+        if not part.endswith('</result>'):
+            part += '</result>'
+            
+        # Find start of <result> tag
+        start_idx = part.find('<result>')
+        if start_idx == -1:
+            continue
+        part = part[start_idx:]
+        req_text: str
+        judgment: str
+        try:
+            # Try to parse as XML first
+            root = ET.fromstring(part)
+            requirement = root.find('requirement')
+            classification = root.find('classification')
+            comments = root.find('comments')
+            
+            req_text = requirement.text if requirement is not None and requirement.text is not None else ""
+            judgment = classification.text if classification is not None and classification.text is not None else "IGNORED"
+            commentary = comments.text if comments is not None else None
+            
+        except ET.ParseError:
+            # Fallback: manual parsing for malformed XML
+            req_text = ""
+            judgment = "IGNORED"
+            commentary = None
+            
+            # Extract requirement text
+            req_start = part.find('<requirement>') + len('<requirement>')
+            req_end = part.find('</requirement>')
+            if req_start > len('<requirement>') - 1 and req_end != -1:
+                req_text = part[req_start:req_end]
+            
+            # Extract classification
+            class_start = part.find('<classification>') + len('<classification>')
+            class_end = part.find('</classification>')
+            if class_start > len('<classification>') - 1 and class_end != -1:
+                judgment = part[class_start:class_end]
+            
+            # Extract comments if present
+            comm_start = part.find('<comments>')
+            if comm_start != -1:
+                comm_start += len('<comments>')
+                comm_end = part.find('</comments>')
+                if comm_end != -1:
+                    commentary = part[comm_start:comm_end]
+        
+        # Create ReqEval object
+        req_eval = ReqEval(
+            require_text=req_text,
+            judgment=judgment if judgment in ["SATISFIED", "PARTIAL", "VIOLATED", "IGNORED", "LIKELY"] else "IGNORED" #type: ignore
+        )
+        if commentary:
+            req_eval["commentary"] = commentary
+            
+        results.append(req_eval)
+    
+    return RequirementsStep(
+        type="judge",
+        vfs_snapshot=vfs.curr_version,
+        evaluation=results
+    )
 
 def extract_human_response(msg_queue: MessageQueue) -> str:
     answer_msg = msg_queue.take()
@@ -442,8 +556,12 @@ def parse_message(checkpoint: CheckpointTuple) -> list[Steps]:
                             events.append(handle_human_in_the_loop(step, queue))
                         case "propose_spec_change":
                             events.append(handle_propose_spec_change(step, queue))
-                        case "code_result":
+                        case "code_result" | "result":
                             events.append(handle_code_result(step))
+                        case "requirement_relaxation_request":
+                            events.append(handle_human_relaxation(step, queue))
+                        case "requirements_evaluation":
+                            events.append(requirements_judge(step, queue))
                         case "get_file" | "list_files" | "grep_files":
                             events.append(VFSStep(
                                 type="vfs",
@@ -463,14 +581,19 @@ x = checkpointer.get_tuple({
 
 assert x is not None
 
+spec_interface_swapped = run_info["spec"].basename.endswith(".sol")
+
 events : list[Steps] = []
 init = InitialStep(
     vfs_snapshot=0,
     type="initial",
-    interface=run_info["interface"].string_contents,
-    spec=run_info["spec"].string_contents,
+    interface=run_info["interface"].string_contents if not spec_interface_swapped else run_info["spec"].string_contents,
+    spec=run_info["spec"].string_contents if not spec_interface_swapped else run_info["interface"].string_contents ,
     system_doc=run_info["system"].string_contents
 )
+
+if (rq := run_info.get("reqs", None)) is not None:
+    init["reqs"] = rq
 
 events.append(
     init

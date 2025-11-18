@@ -26,11 +26,13 @@ class JudgeInput(FlowInput):
     vfs: dict[str, str]
     orig_reqs: list[str]
 
+ClassificationType = Literal["SATISFIED", "LIKELY", "PARTIAL", "VIOLATED"]
+
 class RequirementAnalysis(BaseModel):
     """
     The analysis result for one of the requirements.
     """
-    classification: Literal["SATISFIED", "LIKELY", "PARTIAL", "VIOLATED"] = Field(description="The final classification on whether " \
+    classification: ClassificationType = Field(description="The final classification on whether " \
     "the implementation satisfies the requirement.")
 
     requirement: str = Field(description="The original requirement text against which the implementation was judged. Do NOT include the numeric prefix (e.g., \"1. \")")
