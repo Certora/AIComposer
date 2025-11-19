@@ -1200,7 +1200,7 @@
                     <span class="collapsible__title">Initial Specification</span>
                 </div>
                 <div class="collapsible__content">
-                    <pre class="spec-content"></pre>
+                    <pre class="spec-content"><code class="language-cvl"></code></pre>
                 </div>
             </div>
             
@@ -1488,6 +1488,11 @@
     <!-- Prism.js for syntax highlighting -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-solidity.min.js"></script>
+    
+    <!-- CVL syntax highlighting -->
+    <script>
+{% include 'prism-cvl.js' %}
+    </script>
     
     <!-- Marked.js for markdown parsing -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/11.1.1/marked.min.js"></script>
@@ -2031,7 +2036,7 @@
             const clone = template.content.cloneNode(true);
             
             // Fill in the spec
-            clone.querySelector('.spec-content').textContent = step.spec;
+            clone.querySelector('.spec-content code').textContent = step.spec;
             
             // Fill in the interface with syntax highlighting
             const interfaceCode = clone.querySelector('.interface-content code');
@@ -2344,8 +2349,8 @@
                 
                 // Start with first result expanded, others collapsed
                 if (index > 0) {
-                    const icon = resultClone.querySelector('.collapse-icon');
-                    const content = resultClone.querySelector('.search-result-content');
+                    const icon = resultClone.querySelector('.collapsible__icon');
+                    const content = resultClone.querySelector('.collapsible__content');
                     icon.classList.add('collapsed');
                     content.classList.add('collapsed');
                 }
