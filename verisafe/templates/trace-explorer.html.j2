@@ -1827,6 +1827,14 @@
                     </div>
                 `;
                 Prism.highlightAllUnder(contentContainer);
+            } else if(path.endsWith(".spec")) {
+                contentContainer.innerHTML = `
+                    <div class="vfs-file-header">${path}</div>
+                    <div class="vfs-file-code">
+                        <pre><code class="language-cvl">${escapeHtml(content)}</code></pre>
+                    </div>
+                `;
+                Prism.highlightAllUnder(contentContainer);
             } else {
                 // Other files - display as plain text
                 contentContainer.innerHTML = `
@@ -2447,6 +2455,11 @@
                 // Solidity file - use syntax highlighting
                 fileView.innerHTML = `
                     <pre><code class="language-solidity">${escapeHtml(contents)}</code></pre>
+                `;
+                Prism.highlightAllUnder(fileView);
+            } else if(path.endsWith(".spec")) {
+                fileView.innerHTML = `
+                    <pre><code class="language-cvl">${escapeHtml(contents)}</code></pre>
                 `;
                 Prism.highlightAllUnder(fileView);
             } else {
