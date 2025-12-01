@@ -139,7 +139,7 @@ class DebugConsole(App):
                 self.vfs_files[path] = f"<Binary file: {len(content_bytes)} bytes>"
     
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True, id="header")
+        yield Header(show_clock=False, id="header")
         
         with Container(id="content"):
             with TabbedContent():
