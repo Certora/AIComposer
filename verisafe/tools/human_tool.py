@@ -1,4 +1,4 @@
-from typing import TypeVar, Callable, Literal, Annotated, get_args, get_origin
+from typing import TypeVar, Callable, Literal, Annotated, get_args, get_origin, cast, Any
 
 from pydantic import create_model, Field
 
@@ -38,7 +38,7 @@ def human_interaction_tool(
     model = create_model(
         t.__name__,
         __doc__ = t.__doc__,
-        **fields
+        **cast(dict[str, Any], fields)
     )
     @tool(args_schema=model)
     def interaction_tool(
@@ -48,7 +48,7 @@ def human_interaction_tool(
             k: v for (k, v) in kwargs.items() if k != "tool_call_id" and k != "verisafe_injected_state"
         }
         dict_args["type"] = disc
-        payload = t(**dict_args)
+        payload : T = t(**dict_args) #type: ignore
         response = interrupt(payload)
         state_update = state_updater(kwargs["verisafe_injected_state"], payload, response)
         response_update = {

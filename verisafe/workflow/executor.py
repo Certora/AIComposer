@@ -242,12 +242,9 @@ def execute_cryptosafe_workflow(
     else:
         print("Read requirements from store")
         reqs_list = extra_reqs.value["reqs"]
-
-    use_reqs = reqs_list is not None
-
     extra_tools = []
 
-    if use_reqs:
+    if reqs_list is not None:
         judge_tool = get_judge_tool(
             reqs=reqs_list,
             mem=req_memories,
@@ -282,7 +279,7 @@ def execute_cryptosafe_workflow(
     )
 
     workflow_exec = workflow_builder.compile(checkpointer=checkpointer, store=store)
-    if use_reqs:
+    if reqs_list is not None:
         flow_input["input"].append(f"""
     Additionally, the implementation MUST satisfy the following requirements:
     {"\n".join(f"{i}. {r}" for (i, r) in enumerate(reqs_list, start = 1))}
@@ -313,7 +310,7 @@ def execute_cryptosafe_workflow(
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
     required_validations : list[ValidationType] = [prover]
-    if use_reqs:
+    if reqs_list is not None:
         required_validations.append(req_type)
     
     work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)

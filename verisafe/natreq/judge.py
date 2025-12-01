@@ -157,16 +157,16 @@ def get_judge_tool(
                 if j.requirement_number not in skipped:
                     all_satisfied = False
                     break
-        res = _format_result(r["result"], skipped)
+        formatted_res = _format_result(r["result"], skipped)
         if not all_satisfied:
-            return res
+            return formatted_res
         digest = compute_state_digest(
             c=get_runtime(CryptoContext).context,
             state=state
         )
         return Command(update={
             "messages": [
-                ToolMessage(content=res, tool_call_id=tool_call_id)
+                ToolMessage(content=formatted_res, tool_call_id=tool_call_id)
             ],
             "validation": {
                 req_key: digest

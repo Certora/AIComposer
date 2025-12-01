@@ -1,4 +1,4 @@
-from typing import NotRequired, cast, Callable
+from typing import NotRequired, cast, Callable, Any
 from dataclasses import dataclass
 import uuid
 import pathlib
@@ -14,6 +14,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from langgraph.graph import MessagesState
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt, Command
 
 from verisafe.audit.types import InputFileLike
@@ -92,7 +93,7 @@ def get_requirements(
         human_in_the_loop,
         cvl_manual_search
     ]
-    built = build_workflow(
+    built : CompiledStateGraph[ExtractionState, ExtractionContext, FlowInput, Any] = build_workflow(
         state_class=ExtractionState,
         context_schema=ExtractionContext,
         input_type=FlowInput,
