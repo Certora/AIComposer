@@ -42,8 +42,8 @@ class HumanClarificationArgs(BaseModel):
     1. Ambiguities in the system document
     2. Clarifying multiple potential interpretations of the natural language text of the system doc
     3. Clarifying the intention behind the various rules in the specification
-    4. Resolving apparently conflicts between the system document and the specification
-    5. Clarifying whether passages in the system doc exposition vs. code requirements
+    4. Resolving apparent conflicts between the system document and the specification
+    5. Clarifying whether passages in the system doc are exposition vs. code requirements
 
     The above are just guidelines, you should use this tool to resolve any potential confusion or uncertainty you may have.
     """

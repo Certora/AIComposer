@@ -225,7 +225,7 @@ def execute_cryptosafe_workflow(
                 assert other_reqs is not None
                 reqs_list = other_reqs.value["reqs"]
             else:
-                reqs_list = [ l.strip() for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if l.strip() ]
+                reqs_list = [ v for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if (v := l.strip()) ]
         else:
             print("Analyzing requirements...")
             reqs = get_requirements(
