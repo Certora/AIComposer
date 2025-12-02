@@ -1388,7 +1388,7 @@
     <template id="human-question-template">
         <div class="pane">
             <div class="pane-header">
-                <span>VFS Update</span>
+                <span>Human Question</span>
                 <button class="vfs-button" data-vfs-open>View VFS</button>
             </div>
             <div class="messages-container"></div>
@@ -1484,6 +1484,11 @@
             </div>
         </div>
     </template>
+
+    <template id="vfs-file-pane-template">
+        <div class="vfs-file-header"></div>
+        <div class="vfs-file-code"></div>
+    </template>
     
     <!-- Prism.js for syntax highlighting -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
@@ -1538,7 +1543,7 @@
                     case 'put_file':
                         return 'VFS Updates';
                     case 'question':
-                        return 'VFS Update';
+                        return 'Human Question';
                     case 'proposal':
                         return 'Spec Change Proposal';
                     case 'result':
@@ -1818,32 +1823,15 @@
             // Display file content
             const contentContainer = document.getElementById('vfsFileContent');
             
-            if (path.endsWith('.sol')) {
-                // Solidity file - use syntax highlighting
-                contentContainer.innerHTML = `
-                    <div class="vfs-file-header">${path}</div>
-                    <div class="vfs-file-code">
-                        <pre><code class="language-solidity">${escapeHtml(content)}</code></pre>
-                    </div>
-                `;
-                Prism.highlightAllUnder(contentContainer);
-            } else if(path.endsWith(".spec")) {
-                contentContainer.innerHTML = `
-                    <div class="vfs-file-header">${path}</div>
-                    <div class="vfs-file-code">
-                        <pre><code class="language-cvl">${escapeHtml(content)}</code></pre>
-                    </div>
-                `;
-                Prism.highlightAllUnder(contentContainer);
-            } else {
-                // Other files - display as plain text
-                contentContainer.innerHTML = `
-                    <div class="vfs-file-header">${path}</div>
-                    <div class="vfs-file-code">
-                        <pre>${escapeHtml(content)}</pre>
-                    </div>
-                `;
-            }
+            const fileTemplate = document.getElementById("vfs-file-pane-template");
+
+            const fileInst = fileTemplate.content.cloneNode(true);
+            fileInst.querySelector(".vfs-file-header").innerText = path;
+            const codeContents = fileInst.querySelector(".vfs-file-code");
+            renderCodeSnippet(
+                codeContents, path, content
+            );
+            contentContainer.replaceChildren(fileInst);
         }
         
         // Utility function to escape HTML
@@ -2445,27 +2433,39 @@
             const diffView = renderDiffContent(diffLines, "put-diff-view");
             container.appendChild(diffView);
         }
+
+        function renderCodeSnippet(
+            container, path, contents
+        ) {
+            const preElem = document.createElement("pre");
+            var doHighlight = false;
+            function getCode(lang) {
+                const codeElem = document.createElement("code");
+                codeElem.classList.add(`language-${lang}`);
+                codeElem.textContent = contents;
+                doHighlight = true;
+                return codeElem;
+            }
+            if(path.endsWith(".sol")) {
+                preElem.appendChild(getCode("solidity"));
+            } else if(path.endsWith(".spec")) {
+                preElem.appendChild(getCode("cvl"));
+            } else {
+                preElem.innerText = contents;
+            }
+            container.appendChild(preElem);
+            if(doHighlight) {
+                Prism.highlightAllUnder(container);  
+            }
+        }
         
         // Render file content with syntax highlighting
         function renderPutFileContent(container, path, contents) {
             const fileView = document.createElement('div');
             fileView.className = 'put-file-view';
-            
-            if (path.endsWith('.sol')) {
-                // Solidity file - use syntax highlighting
-                fileView.innerHTML = `
-                    <pre><code class="language-solidity">${escapeHtml(contents)}</code></pre>
-                `;
-                Prism.highlightAllUnder(fileView);
-            } else if(path.endsWith(".spec")) {
-                fileView.innerHTML = `
-                    <pre><code class="language-cvl">${escapeHtml(contents)}</code></pre>
-                `;
-                Prism.highlightAllUnder(fileView);
-            } else {
-                // Other files - display as plain text
-                fileView.innerHTML = `<pre>${escapeHtml(contents)}</pre>`;
-            }
+            renderCodeSnippet(
+                fileView, path, contents
+            );
             
             container.appendChild(fileView);
         }
