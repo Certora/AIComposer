@@ -93,21 +93,90 @@ A few options can help tweak your experience:
 
 ### Resuming Workflows
 
+The `--thread-id` and `--checkpoint-id` options allow you to resume AI Composer execution from a specific point in time. Together, these identifiers describe a checkpoint in the execution history where the workflow can be resumed.
 
+**Thread ID**: Identifies a specific execution session of AI Composer. This is displayed early in the output when starting a workflow:
+```
+Selected thread id: crypto_session_6511ace2-cfbf-11f0-aeb6-e8cf83d12a2d
+```
 
-## Development workflow
+**Checkpoint ID**: Identifies a specific point within that session. This is displayed throughout execution as the workflow progresses:
+```
+current checkpoint: 1f0cfbf9-bbd9-6365-8001-90d0fca3dbdf
+```
 
-Whenever you change any of `graphcore`'s functions (which is imported from the $CERTORA folder) you will have to re-copy the assets from your EVMVerifier repo.
+To resume from a specific checkpoint, provide both identifiers:
+```
+python3 ./main.py --thread-id crypto_session_6511ace2-cfbf-11f0-aeb6-e8cf83d12a2d --checkpoint-id 1f0cfbf9-bbd9-6365-8001-90d0fca3dbdf cvl_input.spec interface_file.sol system_doc.txt
+```
 
-## Resuming a previously completed workflow with updated specification and files
+This will restart execution from exactly that point in the workflow. NB the checkpoint ID does *not* need to be the most recent; you can "time travel" if you decide
+you dislike a decision you made previously.
 
-Resuming can be done in one of two ways:
+## Debugging Options
 
-* using the materialize command of the `resume.py` to materialize the result of a prior run into a folder,
-arbitrarily changing the contents of that folder, and then using the resume-dir command of `resume.py`, OR
-* using resume-id with the thread-id and passing in an updated specification file
+### Debug Console
 
-In either case, the generation workflow will be started with an already populated VFS, pulled either from the VFS result table (resume id),
-or the materialized folder (resume dir). In addition, the generation workflow has been extended to save "resumption commentary",
-which is a version of the "final commentary" produced by the tool, but intended for future resumptions.
-Thus, when a workflow is resumed (either through resume-dir or resume-id), we pull in the "resume commentary" from the resumed run and seed the input prompt with this.
+During execution, you can pause the current workflow by sending SIGINT (usually by hitting Ctrl+C). Once the workflow reaches a
+point of quiescence, you will be dropped into the "Debug Console". This console allows you to explore the current state of the implementation,
+and review the entire message history. You can also use this to console to provide explicit guidance; this guidance is echoed to the LLM verbatim.
+
+The message history does NOT preserve messages across summarization boundaries.
+
+### Trace Visualizer
+
+After completion of a session, if you wish to see a visualization of the entire process you can use the `traceDump.py` script.
+
+The basic usage is:
+
+```
+python3 scripts/traceDump.py thread-id conn-string out-file
+```
+
+Where `thread-id` is the thread id for the session you wish to visualize. `conn-string` is the postgres string for connecting to the audit database, this should be
+`postgresql://audit_db_user:audit_db_password@localhost:5432/audit_db` unless you have changed where audit data is stored. `out-file` is the name of an html file into
+which the visual will be dumped.
+
+### Exporting the Output
+
+To get the final deliverable from AI Composer, use the VFS materializer like so:
+
+```
+python3 ./resume.py materialize thread-id path
+```
+
+where `thread-id` is the thread id of the session whose output you wish to view, and `path` the path to a directory into which the resulting VFS is dumped.
+
+## Meta-Iteration
+
+Once AI Composer finishes generation, you can refine/adjust the specification and resume generation, seeding the process
+with the output of a prior session. This is referred to as "meta-iteration".
+
+Meta iteration can be done in one of two ways:
+
+* use `materialize` command of `resume.py` (described above) to materialize the result of a prior run into a folder,
+arbitrarily changing the contents of that folder, and then using the `resume-dir` command of `resume.py`, OR
+* using `resume-id` with the thread id of a completed run and passing in an updated specification file
+
+In the former case, the invocation looks like this:
+
+```
+python3 resume.py resume-dir thread-id path
+```
+
+Here `thread-id` is the thread id of the workflow whose contents were materialized into `path`, the directory containing the changed
+project files.
+
+In the latter case, the invocation is:
+
+```
+python3 resume.py resume-id thread-id new-spec
+```
+
+where `thread-id` is the thread id of the workflow on which you want to iterate, and `new-path` is the path
+to the updated/refined spec file to use for the next iteration.
+
+# Disclaimer
+
+AI Composer is a research prototype released by Certora Labs. The code generated by AI Composer should **not** be
+placed into production without thorough vetting/testing/auditing.
