@@ -8,7 +8,7 @@ from dataclasses import dataclass
 if __name__ != "__main__":
     raise RuntimeError("This is a script only module")
 
-from verisafe.workflow.factories import get_checkpointer, create_llm
+from composer.workflow.factories import get_checkpointer, create_llm
 
 checkpoint = get_checkpointer()
 

@@ -15,11 +15,11 @@ from langgraph.checkpoint.base import CheckpointTuple
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMessage
 from pydantic import Discriminator
 
-from verisafe.audit.types import ManualResult, RuleResult
-from verisafe.audit.db import AuditDB
-from verisafe.workflow.factories import get_checkpointer
-from verisafe.templates.loader import load_jinja_template
-from verisafe.natreq.judge import ClassificationType
+from composer.audit.types import ManualResult, RuleResult
+from composer.audit.db import AuditDB
+from composer.workflow.factories import get_checkpointer
+from composer.templates.loader import load_jinja_template
+from composer.natreq.judge import ClassificationType
 
 
 StepTy = TypeVar("StepTy", 

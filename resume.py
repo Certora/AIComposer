@@ -1,13 +1,13 @@
 import pathlib
 import psycopg
 from typing import cast
-import verisafe.certora as _
+import composer.certora as _
 
-from verisafe.input.parsing import resume_workflow_parser
-from verisafe.workflow.factories import create_llm
-from verisafe.workflow.executor import execute_cryptosafe_workflow
-from verisafe.input.types import ResumeIdData, NativeFS, ResumeFSData
-from verisafe.audit.db import AuditDB
+from composer.input.parsing import resume_workflow_parser
+from composer.workflow.factories import create_llm
+from composer.workflow.executor import execute_cryptosafe_workflow
+from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
+from composer.audit.db import AuditDB
 
 def main() -> int:
     """Main entry point for the CryptoSafe tool."""

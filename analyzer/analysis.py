@@ -7,12 +7,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_anthropic import ChatAnthropic
 
-from verisafe.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
-from verisafe.rag.models import get_model
-import verisafe.certora as _
-from verisafe.tools.search import cvl_manual_search
-import verisafe.prover.results as R
-from verisafe.templates.loader import load_jinja_template
+from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
+from composer.rag.models import get_model
+import composer.certora as _
+from composer.tools.search import cvl_manual_search
+import composer.prover.results as R
+from composer.templates.loader import load_jinja_template
 
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
