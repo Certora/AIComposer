@@ -7,12 +7,10 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.widgets import Tree, Static, Header, Footer, TextArea, Button, ListView, ListItem, Label, TabbedContent, TabPane
 from textual.containers import Horizontal, Vertical, VerticalScroll, Container
-from textual.widgets._tree import TreeNode
 from textual.screen import ModalScreen
-from textual import events
 from rich.syntax import Syntax
 from rich.text import Text
-from rich.console import Console, RenderableType, Group
+from rich.console import RenderableType, Group
 from rich.markdown import Markdown
 
 from verisafe.core.context import CryptoContext
