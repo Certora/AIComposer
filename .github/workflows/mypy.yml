@@ -22,9 +22,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip2-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-pip2-
 
       - name: upgrade pip
         run: |
@@ -42,5 +42,4 @@ jobs:
       # If you do not use typed-stubs, this has no effect.
       - name: Run mypy
         run: |
-          # Run mypy against the folder you care about. Replace `src/` with your folder.
-          python -m mypy verisafe/ --config-file mypy.ini
+          python -m mypy composer/ --config-file mypy.ini
