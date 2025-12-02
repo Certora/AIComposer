@@ -1,9 +1,11 @@
 from typing import Callable, Optional, cast
-from verisafe.human.types import ProposalType, QuestionType, HumanInteractionType, RequirementRelaxationType
 import difflib
+
 from rich.console import Console
 
-def prompt_input(prompt_str: str, filter: Optional[Callable[[str], Optional[str]]] = None) -> str:
+from verisafe.human.types import ProposalType, QuestionType, HumanInteractionType, RequirementRelaxationType
+
+def prompt_input(prompt_str: str, debug_thunk: Callable[[], None], filter: Optional[Callable[[str], Optional[str]]] = None) -> str:
     l = input(prompt_str + " (double newlines ends): ")
     buffer = ""
     num_consecutive_blank = 0
@@ -17,19 +19,22 @@ def prompt_input(prompt_str: str, filter: Optional[Callable[[str], Optional[str]
         if num_consecutive_blank == 2:
             break
         l = input("> ")
+    if buffer.strip() == "DEBUG":
+        debug_thunk()
+        return prompt_input(prompt_str, debug_thunk, filter)
     if filter is None:
         return buffer
     filter_res = filter(buffer)
     if filter_res is None:
         return buffer
-    return prompt_input(prompt_str, filter)
+    return prompt_input(prompt_str, debug_thunk, filter)
 
 def _print_header(topic: str) -> None:
     print("\n" + "=" * 80)
     print(topic)
     print("=" * 80)
 
-def handle_proposal_interrupt(interrupt_ty: ProposalType) -> str:
+def handle_proposal_interrupt(interrupt_ty: ProposalType, debug_thunk: Callable[[], None]) -> str:
     _print_header("SPEC CHANGE PROPOSAL")
     orig = interrupt_ty["current_spec"].splitlines(keepends=True)
     proposed = interrupt_ty["proposed_spec"].splitlines(keepends=True)
@@ -68,17 +73,17 @@ def handle_proposal_interrupt(interrupt_ty: ProposalType) -> str:
             return "Response must begin with ACCEPTED/REJECTED/REFINE"
         return None
 
-    return prompt_input("Response to proposal, must start with ACCEPTED/REJECTED/REFINE", filt)
+    return prompt_input("Response to proposal, must start with ACCEPTED/REJECTED/REFINE", debug_thunk, filt)
 
-def handle_question_interrupt(interrupt_data: QuestionType) -> str:
+def handle_question_interrupt(interrupt_data: QuestionType, debug_thunk: Callable[[], None]) -> str:
     _print_header("HUMAN ASSISTANCE REQUESTED")
     print(f"Question: {interrupt_data['question']}")
     print(f"Context: {interrupt_data['context']}")
     if interrupt_data["code"]:
         print(f"Code:\n{interrupt_data['code']}")
-    return prompt_input("Enter your answer (begin response with FOLLOWUP to request clarification)")
+    return prompt_input("Enter your answer (begin response with FOLLOWUP to request clarification)", debug_thunk)
 
-def handle_req_relaxation_interrupt(interrupt: RequirementRelaxationType) -> str:
+def handle_req_relaxation_interrupt(interrupt: RequirementRelaxationType, debug_thunk: Callable[[], None]) -> str:
     _print_header("REQUIREMENTS SKIP REQUEST")
     print("The agent would like to skip satisfying one of the requirements")
     print(f"Context:\n{interrupt['context']}")
@@ -89,17 +94,17 @@ def handle_req_relaxation_interrupt(interrupt: RequirementRelaxationType) -> str
         if not r.startswith("ACCEPTED") and not r.startswith("REJECTED"):
             return "Response must begin with ACCEPTED/REJECTED"
         return None
-    return prompt_input("Response to request, must start with ACCEPTED/REJECTED", filt)
+    return prompt_input("Response to request, must start with ACCEPTED/REJECTED", debug_thunk, filt)
 
 
-def handle_human_interrupt(interrupt_data: dict) -> str:
+def handle_human_interrupt(interrupt_data: dict, debug_thunk: Callable[[], None]) -> str:
     """Handle human-in-the-loop interrupts and get user input."""
     interrupt_ty = cast(HumanInteractionType, interrupt_data)
 
     match interrupt_ty["type"]:
         case "proposal":
-            return handle_proposal_interrupt(interrupt_ty)
+            return handle_proposal_interrupt(interrupt_ty, debug_thunk)
         case "question":
-            return handle_question_interrupt(interrupt_ty)
+            return handle_question_interrupt(interrupt_ty, debug_thunk)
         case "req_relaxation":
-            return handle_req_relaxation_interrupt(interrupt_ty)
+            return handle_req_relaxation_interrupt(interrupt_ty, debug_thunk)

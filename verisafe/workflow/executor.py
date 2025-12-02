@@ -7,6 +7,7 @@ import pathlib
 import psycopg
 
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import HumanMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.types import Command
 
@@ -29,6 +30,9 @@ from verisafe.templates.loader import load_jinja_template
 from verisafe.natreq.extractor import get_requirements
 from verisafe.natreq.judge import get_judge_tool
 from verisafe.tools.relaxation import requirements_relaxation
+from verisafe.console.handler import DebugHandler
+import verisafe.console.app as A
+
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
@@ -321,6 +325,9 @@ def execute_cryptosafe_workflow(
         }
     }
 
+    handler = DebugHandler()
+    print("Debug handler installed (Ctrl+C to access)")
+
     while True:
         interrupted = False
         r = current_input
@@ -333,14 +340,35 @@ def execute_cryptosafe_workflow(
                     print("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
                     logger.info("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
                 case "updates":
+                    if handler.requested and "tools" in payload:
+                        st = workflow_exec.get_state(curr_state_config).values
+                        res = A.debug_console(
+                            work_context,
+                            st, #type: ignore
+                            True
+                        )
+                        handler.reset()
+                        if res is not None:
+                            state_res = workflow_exec.update_state(curr_state_config, {
+                                "messages": [
+                                    HumanMessage(content=res)
+                                ]
+                            }, as_node="tools")
+                            interrupted = True
+                            config["configurable"]["checkpoint_id"] = state_res.get("configurable", {})["checkpoint_id"]
+                            break
                     if "__interrupt__" in payload:
                         if "configurable" in config and "checkpoint_id" in config["configurable"]:
                             del config["configurable"]["checkpoint_id"]
                         interrupt_data = cast(dict, payload["__interrupt__"][0].value)
-                        human_response = handle_human_interrupt(interrupt_data)
+                        def debug_thunk():
+                            st = cast(CryptoStateGen, workflow_exec.get_state(curr_state_config).values)
+                            A.debug_console(work_context, st, False)
+                        human_response = handle_human_interrupt(interrupt_data, debug_thunk)
                         current_input = Command(resume=human_response)
                         interrupted = True
                         break
+
                     summarize_update(payload)
                 case "custom":
                     p = cast(PartialUpdates, payload)
