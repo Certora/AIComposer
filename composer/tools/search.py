@@ -2,7 +2,7 @@ from graphcore.graph import WithToolCallId
 from pydantic import Field
 from typing import List, Annotated, cast, Literal, TypedDict, Protocol, ClassVar, Any
 from langchain_core.tools import tool, InjectedToolCallId
-from composer.core.context import CryptoContext
+from composer.core.context import AIComposerContext
 from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 from composer.diagnostics.stream import ManualSearchResult

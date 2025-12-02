@@ -11,8 +11,8 @@ from langgraph.runtime import get_runtime
 from graphcore.graph import WithToolCallId, tool_return
 
 from composer.human.types import ProposalType
-from composer.core.state import CryptoStateGen
-from composer.core.context import CryptoContext
+from composer.core.state import AIComposerState
+from composer.core.context import AIComposerContext
 
 
 
@@ -58,7 +58,7 @@ class SpecChangeProposalArgs(WithToolCallId):
         Field(description="An explanation to the human reviewer as to why you think"
               "this change is necessary and why it is safe or sound to apply it.")
     
-    state: Annotated[CryptoStateGen, InjectedState]
+    state: Annotated[AIComposerState, InjectedState]
 
 
 @tool(args_schema=SpecChangeProposalArgs)
@@ -66,9 +66,9 @@ def propose_spec_change(
     proposed_spec: str,
     explanation: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[CryptoStateGen, InjectedState]
+    state: Annotated[AIComposerState, InjectedState]
 ) -> Command:
-    ctxt = get_runtime(CryptoContext)
+    ctxt = get_runtime(AIComposerContext)
     vfs_access = ctxt.context.vfs_materializer 
     curr_spec = vfs_access.get(state, "rules.spec")
     assert curr_spec is not None

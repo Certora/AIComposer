@@ -13,8 +13,8 @@ from rich.text import Text
 from rich.console import RenderableType, Group
 from rich.markdown import Markdown
 
-from composer.core.context import CryptoContext
-from composer.core.state import CryptoStateGen
+from composer.core.context import AIComposerContext
+from composer.core.state import AIComposerState
 from langchain_core.messages import AnyMessage, AIMessage, HumanMessage
 
 
@@ -119,8 +119,8 @@ class DebugConsole(App):
     
     def __init__(
         self, 
-        context: CryptoContext, 
-        state: CryptoStateGen, 
+        context: AIComposerContext, 
+        state: AIComposerState, 
         interrupt_mode: bool = False
     ):
         super().__init__()
@@ -446,8 +446,8 @@ class DebugConsole(App):
 
 
 def debug_console(
-    context: CryptoContext, 
-    state: CryptoStateGen, 
+    context: AIComposerContext, 
+    state: AIComposerState, 
     interrupt_mode: bool = False
 ) -> Optional[str]:
     """

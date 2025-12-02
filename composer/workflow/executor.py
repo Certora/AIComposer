@@ -17,8 +17,8 @@ from composer.input.types import WorkflowOptions, InputData, ResumeFSData, Resum
 from composer.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools, get_memory_ns
 from composer.workflow.types import Input, PromptParams
 from composer.workflow.meta import create_resume_commentary
-from composer.core.state import ResultStateSchema, CryptoStateGen
-from composer.core.context import CryptoContext, ProverOptions
+from composer.core.state import ResultStateSchema, AIComposerState
+from composer.core.context import AIComposerContext, ProverOptions
 from composer.core.validation import ValidationType, prover, reqs as req_type
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model as get_rag_model
@@ -317,7 +317,7 @@ def execute_ai_composer_workflow(
     if reqs_list is not None:
         required_validations.append(req_type)
     
-    work_context = CryptoContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
+    work_context = AIComposerContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
 
     curr_state_config: RunnableConfig = {
         "configurable": {
@@ -362,7 +362,7 @@ def execute_ai_composer_workflow(
                             del config["configurable"]["checkpoint_id"]
                         interrupt_data = cast(dict, payload["__interrupt__"][0].value)
                         def debug_thunk():
-                            st = cast(CryptoStateGen, workflow_exec.get_state(curr_state_config).values)
+                            st = cast(AIComposerState, workflow_exec.get_state(curr_state_config).values)
                             A.debug_console(work_context, st, False)
                         human_response = handle_human_interrupt(interrupt_data, debug_thunk)
                         current_input = Command(resume=human_response)
@@ -389,7 +389,7 @@ def execute_ai_composer_workflow(
         if interrupted:
             continue
         state = workflow_exec.get_state(curr_state_config)
-        final_state = cast(CryptoStateGen, state.values)
+        final_state = cast(AIComposerState, state.values)
         result = final_state.get("generated_code", None)
         if result is None:
             return 1

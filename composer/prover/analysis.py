@@ -6,12 +6,12 @@ from langgraph.config import get_store
 from graphcore.graph import BoundLLM
 from graphcore.utils import acached_invoke
 
-from composer.core.state import CryptoStateGen
+from composer.core.state import AIComposerState
 from composer.prover.ptypes import RuleResult
 from composer.templates.loader import load_jinja_template
 from composer.diagnostics.stream import ProgressUpdate
 
-async def analyze_cex(llm: BoundLLM, state: CryptoStateGen, rule: RuleResult, tool_call_id: str) -> str | None:
+async def analyze_cex(llm: BoundLLM, state: AIComposerState, rule: RuleResult, tool_call_id: str) -> str | None:
     if rule.status != "VIOLATED":
         return None
     to_copy = state["messages"]

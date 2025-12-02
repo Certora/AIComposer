@@ -15,8 +15,8 @@ from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig, VFSState
 from graphcore.tools.memory import PostgresMemoryBackend, memory_tool
 
 from composer.workflow.types import Input, PromptParams
-from composer.core.context import CryptoContext
-from composer.core.state import CryptoStateGen
+from composer.core.context import AIComposerContext
+from composer.core.state import AIComposerState
 from composer.input.types import ModelOptions
 
 from composer.tools import *
@@ -96,7 +96,7 @@ def get_vfs_tools(
     IMPORTANT: You may not use this tool to update the specification, nor should you attempt to
     add new specification files.
     """
-        ), CryptoStateGen)
+        ), AIComposerState)
 
 def get_cryptostate_builder(
     llm: BaseChatModel,
@@ -104,7 +104,7 @@ def get_cryptostate_builder(
     fs_layer: str | None,
     summarization_threshold : int | None,
     extra_tools: list[BaseTool] = []
-) -> tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM, VFSAccessor[VFSState]]:
+) -> tuple[StateGraph[AIComposerState, AIComposerContext, Input, Any], BoundLLM, VFSAccessor[VFSState]]:
     (vfs_tooling, mat) = get_vfs_tools(fs_layer=fs_layer, immutable=False)
 
     crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
@@ -114,15 +114,15 @@ def get_cryptostate_builder(
         max_messages=summarization_threshold
     ) if summarization_threshold else None
 
-    workflow_builder: tuple[StateGraph[CryptoStateGen, CryptoContext, Input, Any], BoundLLM] = build_workflow(
-        state_class=CryptoStateGen,
+    workflow_builder: tuple[StateGraph[AIComposerState, AIComposerContext, Input, Any], BoundLLM] = build_workflow(
+        state_class=AIComposerState,
         input_type=Input,
         tools_list=crypto_tools,
         sys_prompt=get_system_prompt(),
         initial_prompt=get_initial_prompt(prompt_params),
         output_key="generated_code",
         unbound_llm=llm,
-        context_schema=CryptoContext,
+        context_schema=AIComposerContext,
         summary_config=conf
     )
 

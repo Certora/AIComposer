@@ -18,9 +18,9 @@ from langchain_core.messages import ToolMessage
 from langgraph.runtime import get_runtime
 
 from composer.templates.loader import load_jinja_template
-from composer.core.state import CryptoStateGen
+from composer.core.state import AIComposerState
 from composer.core.validation import reqs as req_key
-from composer.core.context import CryptoContext, compute_state_digest
+from composer.core.context import AIComposerContext, compute_state_digest
 
 class JudgeInput(FlowInput):
     vfs: dict[str, str]
@@ -81,7 +81,7 @@ BEFORE calling this tool.
 classification_explanation = load_jinja_template("req_classifications.j2")
 
 class RequirementEvaluationSchema(WithToolCallId):
-    state: Annotated[CryptoStateGen, InjectedState]
+    state: Annotated[AIComposerState, InjectedState]
 
 RequirementEvaluationSchema.__doc__ = f"""
 Query an oracle to determine if the generated implementation meets the requirements list
@@ -141,7 +141,7 @@ def get_judge_tool(
     req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
     @tool(args_schema=RequirementEvaluationSchema)
     def requirements_evaluation(
-        state: CryptoStateGen,
+        state: AIComposerState,
         tool_call_id: Annotated[str, InjectedToolCallId]
     ) -> Command | str:
         r = compiled_graph.invoke(JudgeInput(
@@ -161,7 +161,7 @@ def get_judge_tool(
         if not all_satisfied:
             return formatted_res
         digest = compute_state_digest(
-            c=get_runtime(CryptoContext).context,
+            c=get_runtime(AIComposerContext).context,
             state=state
         )
         return Command(update={

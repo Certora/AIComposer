@@ -4,15 +4,15 @@ from langgraph.runtime import get_runtime
 
 from graphcore.tools.results import result_tool_generator
 
-from composer.core.context import CryptoContext, compute_state_digest
-from composer.core.state import CryptoStateGen, ResultStateSchema
+from composer.core.context import AIComposerContext, compute_state_digest
+from composer.core.state import AIComposerState, ResultStateSchema
 
 def check_completion(
-    state: CryptoStateGen,
+    state: AIComposerState,
     sch: ResultStateSchema,
     tool_call_id: str
 ) -> Command | None:
-    ctxt = get_runtime(CryptoContext).context
+    ctxt = get_runtime(AIComposerContext).context
     digest = compute_state_digest(c=ctxt, state=state)
     m = state.get("validation", {})
     for req_v in ctxt.required_validations:
@@ -38,5 +38,5 @@ code_result = result_tool_generator("generated_code", ResultStateSchema,
 """
 Used to communicate when the generated code is complete and satisfies all of the rules in specification.
 """,
-    (CryptoStateGen, check_completion)
+    (AIComposerState, check_completion)
 )

@@ -7,7 +7,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command, interrupt
 
-from composer.core.state import CryptoStateGen
+from composer.core.state import AIComposerState
 from composer.human.handlers import HumanInteractionType
 
 T = TypeVar("T", bound=HumanInteractionType)
@@ -17,7 +17,7 @@ _injected_state_name = "composer_injected_state"
 def human_interaction_tool(
     t: type[T],
     name: str,
-    state_updater: Callable[[CryptoStateGen, T, str], dict] = lambda x, y, z: {}
+    state_updater: Callable[[AIComposerState, T, str], dict] = lambda x, y, z: {}
 ) -> BaseTool:
     fields = {}
     disc : str | None = None
@@ -34,7 +34,7 @@ def human_interaction_tool(
             fields[k] = (a[0], Field(description=a[1]))
         else:
             raise RuntimeError(f"Illegal type annotation: {v} for {k}")
-    fields[_injected_state_name] = (Annotated[CryptoStateGen, InjectedState], Field())
+    fields[_injected_state_name] = (Annotated[AIComposerState, InjectedState], Field())
     fields["tool_call_id"] = (Annotated[str, InjectedToolCallId], Field())
 
     model = create_model(

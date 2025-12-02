@@ -5,7 +5,7 @@ from langchain_core.messages import ToolMessage, HumanMessage
 
 from pydantic import BaseModel, Field
 
-from composer.core.state import CryptoStateGen
+from composer.core.state import AIComposerState
 from composer.templates.loader import load_jinja_template
 
 class ResumeCommentary(BaseModel):
@@ -18,7 +18,7 @@ class ResumeCommentary(BaseModel):
 
     interface_path: str = Field(description="The path of the interface file on the VFS")
 
-def create_resume_commentary(state: CryptoStateGen, llm: BaseChatModel) -> ResumeCommentary:
+def create_resume_commentary(state: AIComposerState, llm: BaseChatModel) -> ResumeCommentary:
     bound = llm.with_structured_output(ResumeCommentary)
     messages = state["messages"].copy()
 

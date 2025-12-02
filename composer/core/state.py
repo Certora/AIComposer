@@ -21,7 +21,7 @@ def merge_skips(left: set[int], right: set[int]) -> set[int]:
     ret.update(right)
     return ret
 
-class CryptoStateGen(VFSState, MessagesState):
+class AIComposerState(VFSState, MessagesState):
     generated_code: NotRequired[ResultStateSchema]
     validation: Annotated[NotRequired[dict[str, str]], merge_validation]
     skipped_reqs: Annotated[NotRequired[set[int]], merge_skips]

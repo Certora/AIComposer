@@ -10,8 +10,8 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 from langgraph.runtime import get_runtime
 
-from composer.core.state import CryptoStateGen
-from composer.core.context import CryptoContext, compute_state_digest
+from composer.core.state import AIComposerState
+from composer.core.context import AIComposerContext, compute_state_digest
 from composer.core.validation import prover as prover_key
 from composer.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
 
@@ -76,7 +76,7 @@ class CertoraProverArgs(WithToolCallId):
               "up to date version of the code. However, when iteratively developing code, it may be useful to focus on a"
               "single, 'problematic' rule.")
 
-    state: Annotated[CryptoStateGen, InjectedState]
+    state: Annotated[AIComposerState, InjectedState]
 
 
 @tool(args_schema=CertoraProverArgs)
@@ -87,7 +87,7 @@ def certora_prover(
     compiler_version: str,
     loop_iter: int,
     rule: Optional[str],
-    state: Annotated[CryptoStateGen, InjectedState],
+    state: Annotated[AIComposerState, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId]
 ) -> Command:
     result = prover_impl(
@@ -103,7 +103,7 @@ def certora_prover(
             return tool_return(tool_call_id=tool_call_id, content=result)
         case RawReport():
             if result.all_verified:
-                ctxt = get_runtime(CryptoContext).context
+                ctxt = get_runtime(AIComposerContext).context
                 state_digest = compute_state_digest(c=ctxt, state=state)
                 return Command(
                     update={

@@ -1,8 +1,8 @@
-from composer.core.state import CryptoStateGen
+from composer.core.state import AIComposerState
 from composer.human.types import RequirementRelaxationType
 from composer.tools.human_tool import human_interaction_tool
 
-def _maybe_relax(s: CryptoStateGen, q: RequirementRelaxationType, resp: str) -> dict:
+def _maybe_relax(s: AIComposerState, q: RequirementRelaxationType, resp: str) -> dict:
     if resp.startswith("ACCEPTED"):
         return {
             "skipped_reqs": {q["req_number"]}

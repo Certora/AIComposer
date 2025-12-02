@@ -22,8 +22,8 @@ from composer.diagnostics.stream import ProgressUpdate, AuditUpdate
 from composer.prover.results import read_and_format_run_result
 from composer.prover.ptypes import RuleResult
 from composer.prover.analysis import analyze_cex
-from composer.core.state import CryptoStateGen
-from composer.core.context import CryptoContext, ProverOptions
+from composer.core.state import AIComposerState
+from composer.core.context import AIComposerContext, ProverOptions
 
 
 import sys
@@ -89,7 +89,7 @@ def sandboxed_certora_run(
         )
 
 async def _analyze(
-    llm: BoundLLM, state: CryptoStateGen, res: RuleResult, tool_call_id: str
+    llm: BoundLLM, state: AIComposerState, res: RuleResult, tool_call_id: str
 ) -> tuple[RuleResult, str | None]:
     cex_analysis = None
     if res.status == "VIOLATED":
@@ -133,10 +133,10 @@ def certora_prover(
     compiler_version: str,
     loop_iter: int,
     rule: Optional[str],
-    state: CryptoStateGen,
+    state: AIComposerState,
     tool_call_id: str
 ) -> SummarizedReport | RawReport | str:
-    runtime = get_runtime(CryptoContext)
+    runtime = get_runtime(AIComposerContext)
     ctxt = runtime.context
     writer = get_stream_writer()
     with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
@@ -188,7 +188,7 @@ def certora_prover(
                 }
                 writer(run_message)
 
-                runtime = get_runtime(CryptoContext)
+                runtime = get_runtime(AIComposerContext)
                 failed_count = 0
                 results_param = apply_async_parallel(
                     lambda d: _analyze(runtime.context.llm, state, d, tool_call_id=tool_call_id),
@@ -219,8 +219,8 @@ def certora_prover(
                 traceback.print_exc()
                 sys.exit(1)
 
-def report_to_todo_list(state: CryptoStateGen, report: str, tool_call_id: str) -> str:
-    runtime = get_runtime(CryptoContext)
+def report_to_todo_list(state: AIComposerState, report: str, tool_call_id: str) -> str:
+    runtime = get_runtime(AIComposerContext)
     ctxt = runtime.context
     llm = ctxt.llm
     messages = state["messages"].copy()

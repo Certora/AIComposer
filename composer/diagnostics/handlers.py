@@ -1,6 +1,6 @@
 from typing import cast, TypedDict, TypeGuard, Optional
 
-from composer.core.state import CryptoStateGen
+from composer.core.state import AIComposerState
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
 from composer.diagnostics.stream import AllUpdates, ProgressUpdate, AuditUpdate, UserUpdateTy, AuditUpdateTy
 from composer.audit.db import AuditDB
@@ -45,7 +45,7 @@ def summarize_update(
         if node_name not in known_nodes:
             continue
         # this is actually a partial state, so we need to explicitly check membership
-        state_update = cast(CryptoStateGen, v)
+        state_update = cast(AIComposerState, v)
         printed = False
 
         def print_node() -> None:
