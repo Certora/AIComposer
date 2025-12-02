@@ -270,7 +270,7 @@ class DebugConsole(App):
                 ".txt": "text",
             }
             language = language_map.get(ext, "text")
-            
+            syntax: RenderableType
             # Create syntax highlighted view
             try:
                 syntax = Syntax(
@@ -339,8 +339,8 @@ class DebugConsole(App):
 
     def _render_structured_content(self, raw_content: list, message: AnyMessage) -> RenderableType:
         """Render list content (thinking blocks, text blocks, tool use, etc.)."""
-        renderables = []
-        
+        renderables : list[RenderableType] = []
+        content: RenderableType
         for i, item in enumerate(raw_content):
             if i > 0:
                 # Add separator between items

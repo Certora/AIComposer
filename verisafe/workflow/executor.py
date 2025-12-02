@@ -349,13 +349,13 @@ def execute_cryptosafe_workflow(
                         )
                         handler.reset()
                         if res is not None:
-                            r = workflow_exec.update_state(curr_state_config, {
+                            state_res = workflow_exec.update_state(curr_state_config, {
                                 "messages": [
                                     HumanMessage(content=res)
                                 ]
                             }, as_node="tools")
                             interrupted = True
-                            config["configurable"]["checkpoint_id"] = r.get("configurable", {})["checkpoint_id"]
+                            config["configurable"]["checkpoint_id"] = state_res.get("configurable", {})["checkpoint_id"]
                             break
                     if "__interrupt__" in payload:
                         if "configurable" in config and "checkpoint_id" in config["configurable"]:
