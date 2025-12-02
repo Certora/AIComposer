@@ -149,12 +149,12 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     return (Input(input=input_messages, vfs={}), NativeFS(intf_p), NativeFS(spec_p))
 
 
-def execute_cryptosafe_workflow(
+def execute_ai_composer_workflow(
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
     workflow_options: WorkflowOptions
 ) -> int:
-    """Execute the CryptoSafe workflow with interrupt handling."""
+    """Execute the AI Composer workflow with interrupt handling."""
     logger = logging.getLogger(__name__)
 
     checkpointer = get_checkpointer()
@@ -261,7 +261,7 @@ def execute_cryptosafe_workflow(
         extra_tools.append(requirements_relaxation)
 
     if "context-management-2025-06-27" in getattr(llm, "betas"):
-        memory = memory_tool(get_memory(thread_id, "verisafe"))
+        memory = memory_tool(get_memory(thread_id, "composer"))
         extra_tools.append(memory)
 
 

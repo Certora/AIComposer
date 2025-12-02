@@ -39,7 +39,7 @@ def get_store() -> PostgresStore:
     return store
 
 def get_memory_ns(thread_id: str, ns: str) -> str:
-    return f"verisafe-{thread_id}-{ns}"
+    return f"ai-composer-{thread_id}-{ns}"
 
 def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
     conn_string = "postgresql://memory_tool_user:memory_tool_password@localhost:5432/memory_tool_db"

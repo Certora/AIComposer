@@ -12,6 +12,8 @@ from composer.human.handlers import HumanInteractionType
 
 T = TypeVar("T", bound=HumanInteractionType)
 
+_injected_state_name = "composer_injected_state"
+
 def human_interaction_tool(
     t: type[T],
     name: str,
@@ -32,7 +34,7 @@ def human_interaction_tool(
             fields[k] = (a[0], Field(description=a[1]))
         else:
             raise RuntimeError(f"Illegal type annotation: {v} for {k}")
-    fields["verisafe_injected_state"] = (Annotated[CryptoStateGen, InjectedState], Field())
+    fields[_injected_state_name] = (Annotated[CryptoStateGen, InjectedState], Field())
     fields["tool_call_id"] = (Annotated[str, InjectedToolCallId], Field())
 
     model = create_model(
@@ -45,12 +47,12 @@ def human_interaction_tool(
         **kwargs
     ) -> Command:
         dict_args = {
-            k: v for (k, v) in kwargs.items() if k != "tool_call_id" and k != "verisafe_injected_state"
+            k: v for (k, v) in kwargs.items() if k != "tool_call_id" and k != _injected_state_name
         }
         dict_args["type"] = disc
         payload : T = t(**dict_args) #type: ignore
         response = interrupt(payload)
-        state_update = state_updater(kwargs["verisafe_injected_state"], payload, response)
+        state_update = state_updater(kwargs[_injected_state_name], payload, response)
         response_update = {
             "messages": [
                 ToolMessage(content=response, tool_call_id=kwargs["tool_call_id"])

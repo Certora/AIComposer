@@ -3,11 +3,11 @@ import composer.certora as _
 from composer.input.parsing import fresh_workflow_argument_parser
 from composer.workflow.factories import create_llm
 from composer.input.files import upload_input
-from composer.workflow.executor import execute_cryptosafe_workflow
+from composer.workflow.executor import execute_ai_composer_workflow
 from composer.diagnostics.debug import setup_logging, dump_fs
 
 def main() -> int:
-    """Main entry point for the CryptoSafe tool."""
+    """Main entry point for the AI Composer tool."""
     parser = fresh_workflow_argument_parser()
     args = parser.parse_args()
 
@@ -25,8 +25,8 @@ def main() -> int:
 
     input_data = upload_input(args)
 
-    print("Starting CryptoSafe workflow...")
-    return execute_cryptosafe_workflow(
+    print("Starting AI Composer workflow...")
+    return execute_ai_composer_workflow(
         llm=llm,
         input=input_data,
         workflow_options=args

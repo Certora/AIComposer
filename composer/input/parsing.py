@@ -50,7 +50,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
 def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     """Configure command line argument parser."""
-    parser = argparse.ArgumentParser(description="Certora CryptoSafe Tool for Smart Contract Security")
+    parser = argparse.ArgumentParser(description="Certora AI Composer for Smart Contract Generation")
     parser.add_argument("spec_file", help="Specification file for the smart contract")
     parser.add_argument("interface_file", help="The interface file for the smart contract")
     parser.add_argument("system_doc", help="A text document describing the system")
