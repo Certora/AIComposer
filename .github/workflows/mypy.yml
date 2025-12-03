@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -22,9 +24,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip2-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-nodeps-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip2-
+            ${{ runner.os }}-pip-nodeps-
 
       - name: upgrade pip
         run: |
@@ -32,7 +34,10 @@ jobs:
 
       - name: Install requirements
         run: |
-            pip install -r requirements.txt
+            egrep '^(sentence-)?transformers' requirements.txt > transformer-reqs.txt
+            pip install -r ./transformer-reqs.txt --no-deps
+            egrep -v '^(nvidia-|torch|((sentence-)?transformers))' requirements.txt > mypy-reqs.txt
+            pip install -r mypy-reqs.txt
 
       - name: Ensure mypy is available
         run: |
