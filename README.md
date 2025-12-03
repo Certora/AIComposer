@@ -14,7 +14,7 @@ environment under `ANTHROPIC_API_KEY`.
 ## One-time DB setup
 
 You will need to provision the various Postgres databases used by AI Composer. Do this as follows:
-1. cd into `verisafe/scripts/`
+1. cd into `scripts/`
 2. run `docker compose create && docker compose start`. This will initialize a local postgres database. NB: no attempt has been made
    to ensure this database is secure; caveat emptor
 
@@ -44,7 +44,7 @@ variable is configured to point to the output of this build (`CertoraProver/targ
 Install the requirements for AI Composer via `pip3 install -r ./requirements.txt`. You may do this in
 a virtual environment, and in such case you also need to install the dependencies for the `certora-cli`:
 `pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
-available system-wide. Also be sure to activate this new virtual environment each time you want to run verisafe.
+available system-wide. Also be sure to activate this new virtual environment each time you want to run AI Composer.
 
 ## Solidity Compilers
 
