@@ -43,8 +43,54 @@ analysis_output_tool = result_tool_generator(
     "Tool to communicate the result of your analysis.")
 
 
+def main() -> int:
+    """CLI entry point for the analyzer."""
+    import argparse
+    import sys
+    from typing import cast
+
+    parser = argparse.ArgumentParser(
+        description='Analyze Certora Prover counterexamples and generate natural language explanations.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  cex-analyzer /path/to/report myRule
+  cex-analyzer /path/to/report myRule --method myMethod
+  cex-analyzer /path/to/report myRule --method MyContract.myMethod
+"""
+    )
+
+    parser.add_argument(
+        'folder',
+        type=str,
+        help='Path to the Certora report directory containing the counterexample data'
+    )
+
+    parser.add_argument(
+        'rule',
+        type=str,
+        help='Name of the rule to analyze'
+    )
+
+    parser.add_argument(
+        '--method',
+        type=str,
+        default=None,
+        help='Optional method identifier. Can be either "method" or "contract.method" format'
+    )
+
+    parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='Suppress intermediate output during analysis (only show final result)'
+    )
+
+    args = parser.parse_args()
+    return analyze(cast(AnalysisArgs, args))
+
+
 def analyze(
-    args: AnalysisArgs   
+    args: AnalysisArgs
 ) -> int:
     report_dir = pathlib.Path(args.folder)
     try:

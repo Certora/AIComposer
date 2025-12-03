@@ -1,3 +1,3 @@
-from analyzer.analysis import analyze
+from analyzer.analysis import analyze, main
 
-__all__ = ["analyze"]
+__all__ = ["analyze", "main"]

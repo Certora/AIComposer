@@ -31,6 +31,9 @@ dependencies = [
     "pydantic-settings==2.10.1",
 ]
 
+[project.scripts]
+cex-analyzer = "analyzer.analysis:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["analyzer*", "composer*"]
