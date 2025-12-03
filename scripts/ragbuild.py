@@ -22,18 +22,18 @@ import contextvars
 import pathlib
 import sys
 
-verisafe_dir = str(pathlib.Path(__file__).parent.parent.absolute())
+composer_dir = str(pathlib.Path(__file__).parent.parent.absolute())
 
-if verisafe_dir not in sys.path:
-    sys.path.append(verisafe_dir)
+if composer_dir not in sys.path:
+    sys.path.append(composer_dir)
 
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 import spacy #type: ignore
-from verisafe.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
-from verisafe.rag.types import BlockChunk
-from verisafe.rag.text import get_code_refs, code_ref_tag
-from verisafe.rag.models import get_model
+from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
+from composer.rag.types import BlockChunk
+from composer.rag.text import get_code_refs, code_ref_tag
+from composer.rag.models import get_model
 
 logging.basicConfig(
     level=logging.INFO,

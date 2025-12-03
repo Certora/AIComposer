@@ -1,16 +1,16 @@
 import pathlib
 import psycopg
 from typing import cast
-import verisafe.certora as _
+import composer.certora as _
 
-from verisafe.input.parsing import resume_workflow_parser
-from verisafe.workflow.factories import create_llm
-from verisafe.workflow.executor import execute_cryptosafe_workflow
-from verisafe.input.types import ResumeIdData, NativeFS, ResumeFSData
-from verisafe.audit.db import AuditDB
+from composer.input.parsing import resume_workflow_parser
+from composer.workflow.factories import create_llm
+from composer.workflow.executor import execute_ai_composer_workflow
+from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
+from composer.audit.db import AuditDB
 
 def main() -> int:
-    """Main entry point for the CryptoSafe tool."""
+    """Main entry point for the AI Composer tool."""
     parser = resume_workflow_parser()
     args = parser.parse_args()
 
@@ -64,8 +64,8 @@ def main() -> int:
 
     llm = create_llm(args)
 
-    print("Starting VeriSafe resumption workflow...")
-    return execute_cryptosafe_workflow(
+    print("Starting AI Composer resumption workflow...")
+    return execute_ai_composer_workflow(
         llm=llm,
         input=input_data,
         workflow_options=args
