@@ -15,7 +15,7 @@ environment under `ANTHROPIC_API_KEY`.
 
 You will need to provision the various Postgres databases used by AI Composer. Do this as follows:
 1. cd into `verisafe/scripts/`
-2. run `docker compose create && docker compose start`. This will initalize a local postgres database. NB: no attempt has been made
+2. run `docker compose create && docker compose start`. This will initialize a local postgres database. NB: no attempt has been made
    to ensure this database is secure; caveat emptor
 
 NB: You will need to restart this docker image each time your host computer restarts, unless you adjust the restart policy.
@@ -65,13 +65,13 @@ Once you have completed the above setup, you can run AI Composer via:
 python3 ./main.py cvl_input.spec interface_file.sol system_doc.txt
 ```
 
-Where `cvl_input.spec` is the CVL specification the implementationmust conform to, `interface_file.sol`
+Where `cvl_input.spec` is the CVL specification the implementation must conform to, `interface_file.sol`
 contains an `interface` definition which the generated contract must implement, and `system_doc.txt`
 is a text file containing a description of the overall system (defining key concepts, etc.)
 
 AI Composer will iterate some number of times while it attempts to generate code. This process is *semi* automatic;
 AI Composer may ask for help via the human in the loop tool, propose spec changes, or ask for requirement relaxation.
-It is recommended that you "babysit" the process as it run.
+It is recommended that you "babysit" the process as it runs.
 
 A basic trace of what the tool is doing is displayed to stdout. You can enable `--debug` to see *very* verbose output, but
 more friendly debugging options are described below.
@@ -84,8 +84,8 @@ A few options can help tweak your experience:
 
 * `--prover-capture-output false` will have the prover runs invoked by the AI Composer print its output to stdout/stderr instead of being captured
 * `--prover-keep-folders` will print the temporary directories used for the prover runs, and not clean them up
-* `--debug-prompt-override PROMPT` will append whatever text you provide in `PROMPT` to the inital prompt. Useful for instructing the LLM to do different things
-* `--tokens T` How many tokens to sample from the llm. This needs to be *relatively* high due to the amount of code that needs to be generated
+* `--debug-prompt-override PROMPT` will append whatever text you provide in `PROMPT` to the initial prompt. Useful for instructing the LLM to do different things
+* `--tokens T` How many tokens to sample from the LLM. This needs to be *relatively* high due to the amount of code that needs to be generated
 * `--thinking-tokens T` how many tokens of the overall token budget should be used for thinking
 * `--model` The name of the Anthropic model to use for the task. Defaults to sonnet
 * `--thread-id` and `--checkpoint-id` are used for resuming workflows that crash or need tweaking (see below)
@@ -119,7 +119,7 @@ you dislike a decision you made previously.
 
 During execution, you can pause the current workflow by sending SIGINT (usually by hitting Ctrl+C). Once the workflow reaches a
 point of quiescence, you will be dropped into the "Debug Console". This console allows you to explore the current state of the implementation,
-and review the entire message history. You can also use this to console to provide explicit guidance; this guidance is echoed to the LLM verbatim.
+and review the entire message history. You can also use this console to provide explicit guidance; this guidance is echoed to the LLM verbatim.
 
 The message history does NOT preserve messages across summarization boundaries.
 
@@ -133,8 +133,8 @@ The basic usage is:
 python3 scripts/traceDump.py thread-id conn-string out-file
 ```
 
-Where `thread-id` is the thread id for the session you wish to visualize. `conn-string` is the postgres string for connecting to the audit database, this should be
-`postgresql://audit_db_user:audit_db_password@localhost:5432/audit_db` unless you have changed where audit data is stored. `out-file` is the name of an html file into
+Where `thread-id` is the thread ID for the session you wish to visualize. `conn-string` is the PostgreSQL string for connecting to the audit database, this should be
+`postgresql://audit_db_user:audit_db_password@localhost:5432/audit_db` unless you have changed where audit data is stored. `out-file` is the name of an HTML file into
 which the visual will be dumped.
 
 ### Exporting the Output
@@ -145,7 +145,7 @@ To get the final deliverable from AI Composer, use the VFS materializer like so:
 python3 ./resume.py materialize thread-id path
 ```
 
-where `thread-id` is the thread id of the session whose output you wish to view, and `path` the path to a directory into which the resulting VFS is dumped.
+where `thread-id` is the thread ID of the session whose output you wish to view, and `path` the path to a directory into which the resulting VFS is dumped.
 
 ## Meta-Iteration
 
@@ -156,7 +156,7 @@ Meta iteration can be done in one of two ways:
 
 * use `materialize` command of `resume.py` (described above) to materialize the result of a prior run into a folder,
 arbitrarily changing the contents of that folder, and then using the `resume-dir` command of `resume.py`, OR
-* using `resume-id` with the thread id of a completed run and passing in an updated specification file
+* using `resume-id` with the thread ID of a completed run and passing in an updated specification file
 
 In the former case, the invocation looks like this:
 
@@ -164,7 +164,7 @@ In the former case, the invocation looks like this:
 python3 resume.py resume-dir thread-id path
 ```
 
-Here `thread-id` is the thread id of the workflow whose contents were materialized into `path`, the directory containing the changed
+Here `thread-id` is the thread ID of the workflow whose contents were materialized into `path`, the directory containing the changed
 project files.
 
 In the latter case, the invocation is:
@@ -173,7 +173,7 @@ In the latter case, the invocation is:
 python3 resume.py resume-id thread-id new-spec
 ```
 
-where `thread-id` is the thread id of the workflow on which you want to iterate, and `new-path` is the path
+where `thread-id` is the thread ID of the workflow on which you want to iterate, and `new-spec` is the path
 to the updated/refined spec file to use for the next iteration.
 
 # Disclaimer
