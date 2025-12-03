@@ -74,7 +74,6 @@ def resume_workflow_parser() -> TypedArgumentParser[ResumeArgs]:
 
     resume_id_args = sub_parse.add_parser("resume-id")
     _common_resume_args(resume_id_args)
-    resume_id_args.add_argument("new_spec_file", help="")
     resume_id_args.add_argument("new_spec", help="The path to the new spec file.")
     _final_resume_option(resume_id_args)
 
