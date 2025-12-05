@@ -14,13 +14,13 @@ authors = [
 ]
 
 dependencies = [
-    "langchain-core==0.3.75",
+    "langchain-core==0.3.79",
     "langchain==0.3.27",
-    "langchain-anthropic==0.3.18",
+    "langchain-anthropic==0.3.21",
     "langchain-community==0.3.29",
     "langchain-text-splitters==0.3.11",
-    "langgraph-sdk==0.2.0",
-    "langgraph==0.6.0",
+    "langgraph-sdk==0.2.6",
+    "langgraph==0.6.7",
     "psycopg==3.2.12",
     "psycopg-binary==3.2.12",
     "sentence-transformers==5.1.0",
