@@ -35,5 +35,8 @@ dependencies = [
 cex-analyzer = "analyzer.analysis:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["analyzer*", "composer*"]
+
+[tool.setuptools.package-dir]
+"" = "."
+
