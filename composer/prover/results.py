@@ -145,7 +145,24 @@ def get_final_treeview(s: Path) -> tuple[TreeViewStatus, Path]:
         raise NoTreeViewResultError(s)
 
     final_status = s / "Reports" / "treeView" / f"treeViewStatus_{max_n}.json"
-    with open(final_status, "r") as result_file:
+    return load_treeview_from_file(final_status, tree_view_dir)
+
+
+def load_treeview_from_file(tree_view_file: Path, tree_view_dir: Path) -> tuple[TreeViewStatus, Path]:
+    """
+    Load and validate a tree view status file.
+
+    Args:
+        tree_view_file: Path to the treeViewStatus_*.json file
+        tree_view_dir: Path to the treeView directory containing calltrace files
+
+    Returns:
+        Tuple of (TreeViewStatus, tree_view_dir)
+
+    Raises:
+        MalformedTreeVew: If the JSON file is malformed or fails validation
+    """
+    with open(tree_view_file, "r") as result_file:
         run_status = json.load(result_file)
     try:
         loaded_data = TreeViewStatus.model_validate(run_status)

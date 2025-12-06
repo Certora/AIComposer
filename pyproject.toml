@@ -33,6 +33,7 @@ dependencies = [
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
+cex-analyzer-file = "analyzer.analysis:main_from_file"
 
 [tool.setuptools.packages.find]
 include = ["analyzer*", "composer*"]

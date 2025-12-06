@@ -18,7 +18,7 @@ from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
 
-from analyzer.types import AnalysisArgs
+from analyzer.types import AnalysisArgs, TreeViewAnalysisArgs
 
 
 def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R.RulePath) -> R.RuleResult | None:
@@ -44,7 +44,7 @@ analysis_output_tool = result_tool_generator(
 
 
 def main() -> int:
-    """CLI entry point for the analyzer."""
+    """CLI entry point for the analyzer (directory-based)."""
     import argparse
     import sys
     from typing import cast
@@ -89,34 +89,96 @@ Examples:
     return analyze(cast(AnalysisArgs, args))
 
 
-def analyze(
-    args: AnalysisArgs
-) -> int:
-    report_dir = pathlib.Path(args.folder)
-    try:
-        (stat, treeView) = R.get_final_treeview(report_dir)
-    except (R.MalformedTreeVew, R.NoTreeViewResultError):
-        print(f"Couldn't parse tree view from {report_dir}")
-        return 1
-    
-    rule_target = args.rule
+def main_from_file() -> int:
+    """CLI entry point for the analyzer (tree view file-based)."""
+    import argparse
+    import sys
+    from typing import cast
 
+    parser = argparse.ArgumentParser(
+        description='Analyze Certora Prover counterexamples from a tree view JSON file.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  cex-analyzer-file /path/to/report/Reports/treeView/treeViewStatus_0.json /path/to/report/Reports/treeView myRule
+  cex-analyzer-file /path/to/treeViewStatus_0.json /path/to/treeView myRule --method myMethod
+  cex-analyzer-file /path/to/treeViewStatus_0.json /path/to/treeView myRule --method MyContract.myMethod
+"""
+    )
+
+    parser.add_argument(
+        'tree_view_file',
+        type=str,
+        help='Path to the treeViewStatus_*.json file'
+    )
+
+    parser.add_argument(
+        'tree_view_dir',
+        type=str,
+        help='Path to the treeView directory (containing the calltrace files)'
+    )
+
+    parser.add_argument(
+        'rule',
+        type=str,
+        help='Name of the rule to analyze'
+    )
+
+    parser.add_argument(
+        '--method',
+        type=str,
+        default=None,
+        help='Optional method identifier. Can be either "method" or "contract.method" format'
+    )
+
+    parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='Suppress intermediate output during analysis (only show final result)'
+    )
+
+    args = parser.parse_args()
+    return analyze_from_file(cast(TreeViewAnalysisArgs, args))
+
+
+def analyze_from_treeview(
+    stat: R.TreeViewStatus,
+    tree_view_dir: pathlib.Path,
+    sources_dir: pathlib.Path,
+    rule: str,
+    method: str | None,
+    quiet: bool
+) -> int:
+    """
+    Core analysis logic that works with a loaded tree view.
+
+    Args:
+        stat: The loaded tree view status
+        tree_view_dir: Path to the treeView directory
+        sources_dir: Path to the .certora_sources directory
+        rule: Name of the rule to analyze
+        method: Optional method identifier
+        quiet: Whether to suppress intermediate output
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
     contract: str | None = None
-    method: str | None = None
-    if args.method is not None:
-        parametric_name = args.method
+    method_name: str | None = None
+    if method is not None:
+        parametric_name = method
         components = parametric_name.split(".")
 
         if len(components) == 1:
-            method = components[0]
+            method_name = components[0]
         else:
             assert len(components) == 2
             contract = components[0]
-            method = parametric_name
+            method_name = parametric_name
 
-    target_path = R.RulePath(rule=rule_target, contract=contract, method=method)
+    target_path = R.RulePath(rule=rule, contract=contract, method=method_name)
 
-    m = find_tree_view_node(stat, treeView, target_path)
+    m = find_tree_view_node(stat, tree_view_dir, target_path)
 
     if m is None:
         print(f"Couldn't find {target_path.pprint()}")
@@ -135,7 +197,7 @@ def analyze(
         conf=VFSToolConfig(
             immutable=True,
             forbidden_read=r"^\..*$",
-            fs_layer=str(report_dir / "inputs" / ".certora_sources")
+            fs_layer=str(sources_dir)
         )
     )
 
@@ -170,13 +232,81 @@ def analyze(
     id = "cex-analysis"
 
     for d in graph.stream(input=FlowInput(input=[
-        f"The individual rule that was checked by the prover was {args.rule}",
+        f"The individual rule that was checked by the prover was {rule}",
         calltrace_xml
     ]), context=ExplainerContext(
         rag_db=PostgreSQLRAGDatabase(conn_string=DEFAULT_CONNECTION, model=get_model(), skip_test=True)
     ), config={"configurable": {"thread_id": id}}):
-        if not args.quiet:
+        if not quiet:
             print(d)
 
     print(graph.get_state({"configurable": {"thread_id": id}}).values["result"])
     return 0
+
+
+def analyze(
+    args: AnalysisArgs
+) -> int:
+    """
+    Analyze a counterexample from a Certora report directory.
+
+    Args:
+        args: Analysis arguments containing folder path and rule info
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    report_dir = pathlib.Path(args.folder)
+    try:
+        (stat, treeView) = R.get_final_treeview(report_dir)
+    except (R.MalformedTreeVew, R.NoTreeViewResultError):
+        print(f"Couldn't parse tree view from {report_dir}")
+        return 1
+
+    sources_dir = report_dir / "inputs" / ".certora_sources"
+
+    return analyze_from_treeview(
+        stat=stat,
+        tree_view_dir=treeView,
+        sources_dir=sources_dir,
+        rule=args.rule,
+        method=args.method,
+        quiet=args.quiet
+    )
+
+
+def analyze_from_file(
+    args: TreeViewAnalysisArgs
+) -> int:
+    """
+    Analyze a counterexample from a tree view JSON file directly.
+
+    Args:
+        args: Analysis arguments containing tree view file path and rule info
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    tree_view_file = pathlib.Path(args.tree_view_file)
+    tree_view_dir = pathlib.Path(args.tree_view_dir)
+
+    try:
+        (stat, _) = R.load_treeview_from_file(tree_view_file, tree_view_dir)
+    except R.MalformedTreeVew:
+        print(f"Couldn't parse tree view from {tree_view_file}")
+        return 1
+
+    # Assume sources are in the standard location relative to treeView directory
+    # treeView is at: report/Reports/treeView
+    # sources are at: report/inputs/.certora_sources
+    report_dir = tree_view_dir.parent.parent
+    sources_dir = report_dir / "inputs" / ".certora_sources"
+
+    return analyze_from_treeview(
+        stat=stat,
+        tree_view_dir=tree_view_dir,
+        sources_dir=sources_dir,
+        rule=args.rule,
+        method=args.method,
+        quiet=args.quiet
+    )
