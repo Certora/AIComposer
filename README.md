@@ -11,6 +11,11 @@ the documentation (see [here](https://github.com/Certora/Documentation/?tab=read
 and a working, local installation of the prover (see [here](https://github.com/certora/certoraprover)). The Claude API Key should be in your
 environment under `ANTHROPIC_API_KEY`.
 
+On Ubuntu/Debian systems, you will also need to install the `python3-venv` package:
+```bash
+sudo apt install python3.12-venv
+```
+
 ## One-time DB setup
 
 You will need to provision the various Postgres databases used by AI Composer. Do this as follows:
@@ -25,12 +30,12 @@ NB: You will need to restart this docker image each time your host computer rest
 You will need to build the local RAG database used for CVL manual searches by the LLM.
 Instructions are as follows:
 
-1. Run the base script `./gen_docs.sh`; if it completes without error, you should have `cvl_manual.html` in your directory
-2. Create a new python virtual environment for the RAG build process by running `python3 -m venv somepath` where `somepath` is some path
-   on your filesystem
+1. Run the base script `./scripts/gen_docs.sh`; if it completes without error, you should have `cvl_manual.html` in the `scripts/` directory
+2. Create a new python virtual environment for the RAG build process by running `python3.12 -m venv somepath` where `somepath` is some path
+   on your filesystem (e.g., `.venv` for a local virtual environment)
 3. Run `source somepath/bin/activate`.
-4. Run `pip3 install -r ./rag_build_requirements.txt`
-5. Run `python3 ./ragbuild.py cvl_manual.html`.
+4. Run `pip3 install -r ./scripts/rag_build_requirements.txt`
+5. Run `python3 ./scripts/ragbuild.py ./scripts/cvl_manual.html`.
 6. Run the command `deactivate`
 7. (Optional) cleanup `somepath`
 

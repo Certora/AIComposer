@@ -1,5 +1,4 @@
   {
     "stubPath": "stubs",
-    "typeshedPaths": ["stubs"],
     "reportMissingModuleSource": "none"
   }
