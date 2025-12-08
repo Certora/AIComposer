@@ -16,6 +16,13 @@ On Ubuntu/Debian systems, you will also need to install the `python3-venv` packa
 sudo apt install python3.12-venv
 ```
 
+## Git Submodules
+
+This repository uses git submodules. After cloning, you must initialize them:
+```bash
+git submodule update --init --recursive
+```
+
 ## One-time DB setup
 
 You will need to provision the various Postgres databases used by AI Composer. Do this as follows:
@@ -31,25 +38,40 @@ You will need to build the local RAG database used for CVL manual searches by th
 Instructions are as follows:
 
 1. Run the base script `./scripts/gen_docs.sh`; if it completes without error, you should have `cvl_manual.html` in the `scripts/` directory
-2. Create a new python virtual environment for the RAG build process by running `python3.12 -m venv somepath` where `somepath` is some path
-   on your filesystem (e.g., `.venv` for a local virtual environment)
-3. Run `source somepath/bin/activate`.
-4. Run `pip3 install -r ./scripts/rag_build_requirements.txt`
-5. Run `python3 ./scripts/ragbuild.py ./scripts/cvl_manual.html`.
-6. Run the command `deactivate`
-7. (Optional) cleanup `somepath`
+2. If you're using a virtual environment for AI Composer, activate it and install the RAG build requirements:
+   ```bash
+   pip3 install -r ./scripts/rag_build_requirements.txt
+   ```
+   Alternatively, create a separate virtual environment for the RAG build process by running `python3.12 -m venv somepath` where `somepath` is some path
+   on your filesystem (e.g., `.venv` for a local virtual environment), then activate it and install the requirements.
+3. Run `python3 ./scripts/ragbuild.py ./scripts/cvl_manual.html`.
+4. If you used a separate virtual environment, deactivate it and optionally cleanup the temporary virtual environment
 
 ## One-time prover setup
 
 From the root of the Certora Prover repo, run `./gradlew copy-assets`. Ensure that your `CERTORA` environment
-variable is configured to point to the output of this build (`CertoraProver/target`)
+variable is configured to point to the `installed` directory within the output of this build (e.g., `CertoraProver/target/installed` or `EVMVerifier/target/installed`).
+
+Add this to your shell configuration file (e.g., `~/.bashrc` for bash, `~/.zshrc` for zsh):
+```bash
+export CERTORA=/path/to/your/prover/target/installed
+```
+
+Then reload your shell configuration or open a new terminal.
 
 ## AI Composer Requirements
 
 Install the requirements for AI Composer via `pip3 install -r ./requirements.txt`. You may do this in
 a virtual environment, and in such case you also need to install the dependencies for the `certora-cli`:
-`pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
+`pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` (or `EVMVerifier/scripts`) folder, and optionally the Solidity compiler, if none is
 available system-wide. Also be sure to activate this new virtual environment each time you want to run AI Composer.
+
+Additionally, you need to add the Certora Prover installed directory to your PYTHONPATH (note: use the same path as CERTORA, not the scripts directory):
+```bash
+export PYTHONPATH="/path/to/your/prover/target/installed:$PYTHONPATH"
+```
+
+Add this to your shell configuration file (e.g., `~/.bashrc` for bash, `~/.zshrc` for zsh) to make it permanent.
 
 ## Solidity Compilers
 

@@ -1,5 +1,5 @@
 annotated-types==0.7.0
-anthropic==0.71.0
+anthropic==0.75.0
 anyio==4.11.0
 beautifulsoup4==4.14.2
 certifi==2025.10.5
@@ -21,13 +21,13 @@ jiter==0.11.1
 joblib==1.5.2
 jsonpatch==1.33
 jsonpointer==3.0.0
-langchain-anthropic==0.3.21
-langchain-core==0.3.79
-langgraph==0.6.7
-langgraph-checkpoint==2.1.2
-langgraph-checkpoint-postgres==3.0.0
-langgraph-prebuilt==0.6.4
-langgraph-sdk==0.2.6
+langchain-anthropic==1.2.0
+langchain-core==1.1.1
+langgraph==1.0.4
+langgraph-checkpoint==3.0.1
+langgraph-checkpoint-postgres==3.0.1
+langgraph-prebuilt==1.0.5
+langgraph-sdk==0.2.14
 langsmith==0.4.38
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
@@ -51,7 +51,7 @@ nvidia-nvjitlink-cu12==12.8.93
 nvidia-nvshmem-cu12==3.3.20
 nvidia-nvtx-cu12==12.8.90
 orjson==3.11.4
-ormsgpack==1.11.0
+ormsgpack==1.12.0
 packaging==25.0
 pillow==12.0.0
 psycopg==3.2.12
@@ -85,4 +85,4 @@ typing_extensions==4.15.0
 urllib3==2.5.0
 xxhash==3.6.0
 zstandard==0.25.0
-textual==6.5.0
+textual==6.8.0
