@@ -16,3 +16,23 @@ class AnalysisArgs(Protocol):
     @property
     def quiet(self) -> bool:
         ...
+
+    @property
+    def recursion_limit(self) -> int:
+        ...
+    
+    @property
+    def thread_id(self) -> str | None:
+        ...
+
+    @property
+    def checkpoint_id(self) -> str | None:
+        ...
+
+    @property
+    def thinking_tokens(self) -> int:
+        ...
+    
+    @property
+    def tokens(self) -> int:
+        ...

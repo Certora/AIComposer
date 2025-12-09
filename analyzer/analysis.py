@@ -2,17 +2,21 @@ from typing import NotRequired
 from dataclasses import dataclass
 import pathlib
 
+import uuid
+
 from langgraph.graph import MessagesState
 from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_anthropic import ChatAnthropic
+from langchain_core.runnables.config import RunnableConfig
 
 from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
 from composer.rag.models import get_model
-import composer.certora as _
 from composer.tools.search import cvl_manual_search
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
+
+from composer.workflow.factories import get_checkpointer
 
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
@@ -85,6 +89,37 @@ Examples:
         help='Suppress intermediate output during analysis (only show final result)'
     )
 
+    parser.add_argument(
+        '--recursion-limit',
+        type=int,
+        default=30,
+        help="The recursion limit to use for the cex analysis"
+    )
+
+    parser.add_argument(
+        "--thread-id",
+        type=str,
+        help="The thread id (for resuming halted/crashed runs)"
+    )
+
+    parser.add_argument(
+        "--checkpoint-id",
+        type=str,
+        help="The checkpoint id (for resuming halted/crashed runs)"
+    )
+
+    parser.add_argument(
+        "--thinking-tokens",
+        type=int,
+        default=2048
+    )
+
+    parser.add_argument(
+        "--tokens",
+        type=int,
+        default=4096
+    )
+
     args = parser.parse_args()
     return analyze(cast(AnalysisArgs, args))
 
@@ -143,19 +178,19 @@ def analyze(
 
     llm = ChatAnthropic(
         model_name="claude-sonnet-4-5-20250929",
-        max_tokens_to_sample=4096,
+        max_tokens_to_sample=args.tokens,
         temperature=1,
         timeout=None,
         max_retries=2,
         stop=None,
-        thinking={"type": "enabled", "budget_tokens": 2048},
+        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
         betas=["interleaved-thinking-2025-05-14", "context-management-2025-06-27"],
     )
 
     system_prompt = load_jinja_template("analyzer_system_prompt.j2")
 
     initial_prompt = load_jinja_template("analyzer_tool_prompt.j2")
-    in_memory = InMemorySaver()
+
     graph = build_workflow(
         input_type=FlowInput,
         context_schema=ExplainerContext,
@@ -165,18 +200,34 @@ def analyze(
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt,
         state_class=SimpleState
-    )[0].compile(checkpointer=in_memory)
+    )[0].compile(checkpointer=get_checkpointer())
 
-    id = "cex-analysis"
+    conf : RunnableConfig = {"configurable": {}}
+    tid : str
+    if args.thread_id is not None:
+        tid = args.thread_id
+    else:
+        tid = f"cex-analysis-{uuid.uuid1().hex}"
+        print(f"Chose thread id: {tid}")
+    
+    conf["configurable"]["thread_id"] = tid
+    if args.checkpoint_id is not None:
+        conf["configurable"]["checkpoint_id"] = args.checkpoint_id
+    
+    conf["recursion_limit"] = args.recursion_limit
 
-    for d in graph.stream(input=FlowInput(input=[
+    for (ty, d) in graph.stream(input=FlowInput(input=[
         f"The individual rule that was checked by the prover was {args.rule}",
         calltrace_xml
     ]), context=ExplainerContext(
         rag_db=PostgreSQLRAGDatabase(conn_string=DEFAULT_CONNECTION, model=get_model(), skip_test=True)
-    ), config={"configurable": {"thread_id": id}}):
-        if not args.quiet:
-            print(d)
+    ), config=conf, stream_mode=["checkpoints", "updates"]):
+        if ty == "checkpoints":
+            assert isinstance(d, dict)
+            print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
+        else:
+            if not args.quiet:
+                print(d)
 
-    print(graph.get_state({"configurable": {"thread_id": id}}).values["result"])
+    print(graph.get_state({"configurable": {"thread_id": tid}}).values["result"])
     return 0
