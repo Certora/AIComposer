@@ -11,6 +11,13 @@ the documentation (see [here](https://github.com/Certora/Documentation/?tab=read
 and a working, local installation of the prover (see [here](https://github.com/certora/certoraprover)). The Claude API Key should be in your
 environment under `ANTHROPIC_API_KEY`.
 
+## Git Submodules
+
+This repository uses git submodules. After cloning, you must initialize them:
+```bash
+git submodule update --init --recursive
+```
+
 ## One-time DB setup
 
 You will need to provision the various Postgres databases used by AI Composer. Do this as follows:
@@ -37,14 +44,28 @@ Instructions are as follows:
 ## One-time prover setup
 
 From the root of the Certora Prover repo, run `./gradlew copy-assets`. Ensure that your `CERTORA` environment
-variable is configured to point to the output of this build (`CertoraProver/target`)
+variable is configured to point to the `installed` directory within the output of this build (e.g., `CertoraProver/target/installed` or `EVMVerifier/target/installed`).
+
+Add this to your shell configuration file (e.g., `~/.bashrc` for bash, `~/.zshrc` for zsh):
+```bash
+export CERTORA=/path/to/your/prover/target/installed
+```
+
+Then reload your shell configuration or open a new terminal.
 
 ## AI Composer Requirements
 
 Install the requirements for AI Composer via `pip3 install -r ./requirements.txt`. You may do this in
 a virtual environment, and in such case you also need to install the dependencies for the `certora-cli`:
-`pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
+`pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` (or `EVMVerifier/scripts`) folder, and optionally the Solidity compiler, if none is
 available system-wide. Also be sure to activate this new virtual environment each time you want to run AI Composer.
+
+Additionally, you need to add the Certora Prover installed directory to your PYTHONPATH (use the same path as CERTORA):
+```bash
+export PYTHONPATH="/path/to/your/prover/target/installed:$PYTHONPATH"
+```
+
+Add this to your shell configuration file (e.g., `~/.bashrc` for bash, `~/.zshrc` for zsh) to make it permanent.
 
 ## Solidity Compilers
 

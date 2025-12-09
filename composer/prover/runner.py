@@ -154,7 +154,8 @@ def certora_prover(
                     "--solc_via_ir",
                     "--strict_solc_optimizer",
                     "--prover_args",
-                    "-timeoutCracker true"
+                    "-timeoutCracker true",
+                    "--prover_version", "master"
                 ])
                 if rule is not None:
                     args.extend([
