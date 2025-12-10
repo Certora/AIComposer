@@ -29,6 +29,7 @@ from composer.core.context import AIComposerContext, ProverOptions
 import sys
 import subprocess
 import pickle
+import os
 
 @dataclass
 class RawReport:
@@ -71,7 +72,17 @@ def sandboxed_certora_run(
         sub_args = [sys.executable, str(wrapper_script)]
         sub_args.append(dump.name)
         sub_args.extend(args)
-        r = subprocess.run(sub_args, encoding="utf-8", capture_output=prover_opts.capture_output)
+        
+        # Ensure CERTORA directory is in PATH for the subprocess
+        env = os.environ.copy()
+        certora_path = env.get('CERTORA')
+        if certora_path and certora_path not in env.get('PATH', ''):
+            env['PATH'] = f"{certora_path}:{env.get('PATH', '')}"
+            print(f"Added CERTORA to PATH: {certora_path}")
+        
+        print(f"Starting Certora Prover subprocess...")
+        r = subprocess.run(sub_args, encoding="utf-8", capture_output=prover_opts.capture_output, env=env)
+        print(f"Certora Prover subprocess completed with return code {r.returncode}")
         if r.returncode != 0:
             raise CertoraRunFailure(
                 return_code=r.returncode,
@@ -165,7 +176,7 @@ def certora_prover(
                     "args": args
                 }
                 writer(run_message)
-
+                
                 try:
                     res = sandboxed_certora_run(
                         args, runtime.context.prover_opts
@@ -188,8 +199,10 @@ def certora_prover(
                 }
                 writer(run_message)
 
+                print("Prover execution completed. Analyzing counterexamples...")
                 runtime = get_runtime(AIComposerContext)
                 failed_count = 0
+                print("Waiting for Anthropic API to analyze counterexamples (timeout: 2 minutes)...")
                 results_param = apply_async_parallel(
                     lambda d: _analyze(runtime.context.llm, state, d, tool_call_id=tool_call_id),
                     [ stat for (_, stat) in formatted_run_result.items() ]
