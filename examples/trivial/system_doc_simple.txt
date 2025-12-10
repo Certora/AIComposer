@@ -1,1 +1,2 @@
-The function should also return a number divisible by 5.
+The Intf contract implements a function called the_magic_function that returns a number.
+The function should return a number divisible by 4 (as specified in the rule) and also divisible by 5.
