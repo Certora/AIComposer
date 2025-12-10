@@ -60,7 +60,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         model_name=args.model,
         max_tokens_to_sample=args.tokens,
         temperature=1,
-        timeout=None,
+        timeout=120,  # 2 minute timeout
         max_retries=2,
         stop=None,
         thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
