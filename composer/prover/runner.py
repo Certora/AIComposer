@@ -71,7 +71,9 @@ def sandboxed_certora_run(
         sub_args = [sys.executable, str(wrapper_script)]
         sub_args.append(dump.name)
         sub_args.extend(args)
+        print(f"Starting Certora Prover subprocess...")
         r = subprocess.run(sub_args, encoding="utf-8", capture_output=prover_opts.capture_output)
+        print(f"Certora Prover subprocess completed with return code {r.returncode}")
         if r.returncode != 0:
             raise CertoraRunFailure(
                 return_code=r.returncode,
@@ -188,8 +190,10 @@ def certora_prover(
                 }
                 writer(run_message)
 
+                print("Prover execution completed. Analyzing counterexamples...")
                 runtime = get_runtime(AIComposerContext)
                 failed_count = 0
+                print("Waiting for Anthropic API to analyze counterexamples (timeout: 2 minutes)...")
                 results_param = apply_async_parallel(
                     lambda d: _analyze(runtime.context.llm, state, d, tool_call_id=tool_call_id),
                     [ stat for (_, stat) in formatted_run_result.items() ]
