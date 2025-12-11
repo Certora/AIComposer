@@ -40,3 +40,6 @@ include = ["analyzer*", "composer*"]
 [tool.setuptools.package-dir]
 "" = "."
 
+[tool.setuptools.package-data]
+composer = ["templates/*.j2"]
+
