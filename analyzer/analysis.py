@@ -1,18 +1,16 @@
-from typing import NotRequired
+from typing import NotRequired, TypedDict
 from dataclasses import dataclass
 import pathlib
 
 import uuid
 
 from langgraph.graph import MessagesState
-from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables.config import RunnableConfig
 
 from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
 from composer.rag.models import get_model
-from composer.tools.search import cvl_manual_search
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
 
@@ -22,7 +20,16 @@ from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
 
-from analyzer.types import AnalysisArgs
+from analyzer.types import AnalysisArgs, Ecosystem
+
+class EcosystemConfig(TypedDict):
+    spec_name: str
+    spec_name_full: str
+    spec_coda: NotRequired[str]
+    token_example: str
+    ecosystem_name: str
+    spec_description: str
+    language_name: str
 
 
 def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R.RulePath) -> R.RuleResult | None:
@@ -90,6 +97,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--ecosystem",
+        type=str,
+        default="evm"
+    )
+
+    parser.add_argument(
         '--recursion-limit',
         type=int,
         default=30,
@@ -123,6 +136,33 @@ Examples:
     args = parser.parse_args()
     return analyze(cast(AnalysisArgs, args))
 
+ecosystem_params: dict[Ecosystem, EcosystemConfig] = {
+    "evm": {
+        "spec_coda": "cvl_description.j2",
+        "spec_name": "CVL",
+        "spec_name_full": "Certora Verification Language",
+        "spec_description": "a DSL for writing specifications of smart contracts",
+        "ecosystem_name": "Solidity",
+        "token_example": "ERC20 token",
+        "language_name": "Solidity"
+    },
+    "soroban": {
+        "spec_name": "CVLR",
+        "ecosystem_name": "Soroban",
+        "spec_description": "a DSL embedded into Rust for writing specifications of smart contracts",
+        "spec_name_full": "Certora Verification Language for Rust",
+        "token_example": "token",
+        "language_name": "Rust"
+    },
+    "move": {
+        "spec_name": "CVLM",
+        "ecosystem_name": "Move",
+        "spec_description": "a DSL embedded into the Move language for writing specifications of smart contracts",
+        "spec_name_full": "Certora Verification Language for Move",
+        "token_example": "token",
+        "language_name": "Move"
+    }
+}
 
 def analyze(
     args: AnalysisArgs
@@ -174,7 +214,11 @@ def analyze(
         )
     )
 
-    tools = [cvl_manual_search, analysis_output_tool, *v_tools]
+    tools = [analysis_output_tool, *v_tools]
+    if args.ecosystem == "evm":
+        #import here to lazily load sentencetransformers
+        from composer.tools.search import cvl_manual_search
+        tools.append(cvl_manual_search)
 
     llm = ChatAnthropic(
         model_name="claude-sonnet-4-5-20250929",
@@ -189,7 +233,9 @@ def analyze(
 
     system_prompt = load_jinja_template("analyzer_system_prompt.j2")
 
-    initial_prompt = load_jinja_template("analyzer_tool_prompt.j2")
+    process = ecosystem_params[args.ecosystem]
+
+    initial_prompt = load_jinja_template("analyzer_tool_prompt.j2", **process)
 
     graph = build_workflow(
         input_type=FlowInput,
