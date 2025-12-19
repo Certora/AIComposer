@@ -193,7 +193,10 @@ def calltrace_to_xml(node: CallTraceModel) -> str:
     # Process children if they exist
     for child in node.childrenList:
         # skip this, avoid confusing the llm
-        if child.message.text == "Setup" or child.message.text == "Global State" or child.message.text == "Evaluate branch condition":
+        if child.message.text == "Setup" or \
+            child.message.text == "Global State" or \
+            child.message.text == "Evaluate branch condition" or \
+            child.message.text == "unknown loop source code":
             continue
         child_xml = calltrace_to_xml(child)
         xml_parts.append(f"<child>{child_xml}</child>")

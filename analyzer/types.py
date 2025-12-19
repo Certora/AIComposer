@@ -1,6 +1,6 @@
 from typing import Protocol, Literal
 
-Ecosystem = Literal["evm", "soroban", "move"]
+Ecosystem = Literal["evm", "soroban", "move", "solana"]
 
 class AnalysisArgs(Protocol):
     @property

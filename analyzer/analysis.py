@@ -1,6 +1,12 @@
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, Iterator
 from dataclasses import dataclass
 import pathlib
+import os
+import tempfile
+import tarfile
+import urllib.request
+import urllib.parse
+from contextlib import contextmanager
 
 import uuid
 
@@ -161,13 +167,51 @@ ecosystem_params: dict[Ecosystem, EcosystemConfig] = {
         "spec_name_full": "Certora Verification Language for Move",
         "token_example": "token",
         "language_name": "Move"
+    },
+    "solana": {
+        "spec_name": "CVLR",
+        "spec_description": "a DSL embedded into Rust for writing specifications of smart contracts",
+        "spec_name_full": "Certora Verification Language for Rust",
+        "ecosystem_name": "Solana",
+        "language_name": "Rust",
+        "token_example": "SPL token"
     }
 }
 
-def analyze(
+def _looks_like_url(path: str) -> bool:
+    """Check if a path looks like a URL using built-in Python heuristics."""
+    parsed = urllib.parse.urlparse(path)
+    return bool(parsed.scheme and parsed.netloc)
+
+@contextmanager
+def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
+    """Download tar.gz from Certora URL and extract to temporary directory."""
+    zip_url = url.replace('/output/', '/zipOutput/')
+    
+    certora_key = os.environ.get("CERTORAKEY")
+    if not certora_key:
+        raise ValueError("CERTORAKEY environment variable not set")
+    
+    with tempfile.TemporaryDirectory(prefix="certora_report_") as temp_dir:
+        request = urllib.request.Request(zip_url)
+        request.add_header('Cookie', f'certoraKey={certora_key}')
+        
+        with urllib.request.urlopen(request) as response:
+            tar_path = os.path.join(temp_dir, "report.tar.gz")
+            with open(tar_path, 'wb') as f:
+                f.write(response.read())
+        
+        with tarfile.open(tar_path, 'r:gz') as tar:
+            tar.extractall(path=temp_dir)
+        
+        os.remove(tar_path)
+        
+        yield pathlib.Path(temp_dir, "TarName")
+
+def _analyze_core(
+    report_dir: pathlib.Path,
     args: AnalysisArgs
 ) -> int:
-    report_dir = pathlib.Path(args.folder)
     try:
         (stat, treeView) = R.get_final_treeview(report_dir)
     except (R.MalformedTreeVew, R.NoTreeViewResultError):
@@ -277,3 +321,14 @@ def analyze(
 
     print(graph.get_state({"configurable": {"thread_id": tid}}).values["result"])
     return 0
+
+def analyze(
+    args: AnalysisArgs
+) -> int:
+    """Analyze counterexamples, handling both local folders and URLs."""
+    if _looks_like_url(args.folder):
+        with _download_and_extract_report(args.folder) as report_dir:
+            return _analyze_core(report_dir, args)
+    else:
+        report_dir = pathlib.Path(args.folder)
+        return _analyze_core(report_dir, args)
