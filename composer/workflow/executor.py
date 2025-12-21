@@ -24,7 +24,8 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model as get_rag_model
 from composer.audit.db import AuditDB, ResumeArtifact, InputFileLike
 from composer.diagnostics.stream import AllUpdates, PartialUpdates, Summarization
-from composer.diagnostics.handlers import summarize_update, handle_custom_update
+from composer.core.io import ComposerIO
+from composer.diagnostics.handlers import is_user_update, is_audit_update, handle_audit_update
 from composer.human.handlers import handle_human_interrupt
 from composer.templates.loader import load_jinja_template
 from composer.natreq.extractor import get_requirements
@@ -152,7 +153,8 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
 def execute_ai_composer_workflow(
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
-    workflow_options: WorkflowOptions
+    workflow_options: WorkflowOptions,
+    io: ComposerIO
 ) -> int:
     """Execute the AI Composer workflow with interrupt handling."""
     logger = logging.getLogger(__name__)
@@ -166,7 +168,7 @@ def execute_ai_composer_workflow(
 
     if thread_id is None:
         thread_id = "crypto_session_" + str(uuid.uuid1())
-        print(f"Selected thread id: {thread_id}")
+        io.log_thread_id(thread_id)
         logger.info(f"Selected thread id: {thread_id}")
 
     prompt_params: PromptParams
@@ -231,7 +233,7 @@ def execute_ai_composer_workflow(
             else:
                 reqs_list = [ v for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if (v := l.strip()) ]
         else:
-            print("Analyzing requirements...")
+            io.log_info("Analyzing requirements...")
             reqs = get_requirements(
                 workflow_options,
                 llm,
@@ -244,7 +246,7 @@ def execute_ai_composer_workflow(
             reqs_list = reqs
         store.put((thread_id,), "requirements", {"reqs": reqs_list})
     else:
-        print("Read requirements from store")
+        io.log_info("Read requirements from store")
         reqs_list = extra_reqs.value["reqs"]
     extra_tools = []
 
@@ -326,7 +328,7 @@ def execute_ai_composer_workflow(
     }
 
     handler = DebugHandler()
-    print("Debug handler installed (Ctrl+C to access)")
+    io.log_info("Debug handler installed (Ctrl+C to access)")
 
     while True:
         interrupted = False
@@ -337,7 +339,7 @@ def execute_ai_composer_workflow(
             assert isinstance(payload, dict)
             match event_ty:
                 case "checkpoints":
-                    print("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
+                    io.next_checkpoint(payload["config"]["configurable"]["checkpoint_id"])
                     logger.info("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
                 case "updates":
                     if handler.requested and "tools" in payload:
@@ -364,12 +366,12 @@ def execute_ai_composer_workflow(
                         def debug_thunk():
                             st = cast(AIComposerState, workflow_exec.get_state(curr_state_config).values)
                             A.debug_console(work_context, st, False)
-                        human_response = handle_human_interrupt(interrupt_data, debug_thunk)
+                        human_response = io.handle_human_interrupt(interrupt_data, debug_thunk)
                         current_input = Command(resume=human_response)
                         interrupted = True
                         break
 
-                    summarize_update(payload)
+                    io.summarize_update(payload)
                 case "custom":
                     p = cast(PartialUpdates, payload)
                     full_update: AllUpdates
@@ -384,7 +386,11 @@ def execute_ai_composer_workflow(
                         )
                     else:
                         full_update = p
-                    handle_custom_update(full_update, thread_id, audit_db)
+                    
+                    if is_user_update(full_update):
+                        io.handle_user_update(full_update)
+                    elif is_audit_update(full_update) and audit_db is not None:
+                        handle_audit_update(audit_db, full_update, thread_id=thread_id)
 
         if interrupted:
             continue
@@ -400,16 +406,16 @@ def execute_ai_composer_workflow(
             )
 
         assert isinstance(result, ResultStateSchema)
-        print("\n" + "=" * 80)
-        print("CODE GENERATION COMPLETED")
-        print("=" * 80)
-        print("Generated Source Files:")
+        io.log_info("\n" + "=" * 80)
+        io.log_info("CODE GENERATION COMPLETED")
+        io.log_info("=" * 80)
+        io.log_info("Generated Source Files:")
         for path in result.source:
-            print(f"\n--- {path} ---")
+            io.log_info(f"\n--- {path} ---")
             file_contents = materializer.get(final_state, path)
             assert file_contents is not None
             content = file_contents.decode("utf-8")
-            print(content)
+            io.log_info(content)
 
-        print(f"\nComments: {result.comments}")
+        io.log_info(f"\nComments: {result.comments}")
         return 0
