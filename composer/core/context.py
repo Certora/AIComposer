@@ -4,6 +4,7 @@ import hashlib
 from graphcore.graph import BoundLLM
 from graphcore.tools.vfs import VFSAccessor
 
+from composer.core.io import ComposerIO
 from composer.core.state import AIComposerState
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.core.validation import ValidationType, prover
@@ -19,6 +20,7 @@ class AIComposerContext:
     rag_db: PostgreSQLRAGDatabase
     prover_opts: ProverOptions
     vfs_materializer: VFSAccessor[AIComposerState]
+    io: ComposerIO
     required_validations: list[ValidationType] = field(default_factory=lambda: [prover])
 
 def compute_state_digest(c: AIComposerContext, state: AIComposerState) -> str:

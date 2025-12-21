@@ -4,6 +4,7 @@ from composer.input.parsing import fresh_workflow_argument_parser
 from composer.workflow.factories import create_llm
 from composer.input.files import upload_input
 from composer.workflow.executor import execute_ai_composer_workflow
+from composer.console.io import ConsoleComposerIO
 from composer.diagnostics.debug import setup_logging, dump_fs
 
 def main() -> int:
@@ -29,7 +30,8 @@ def main() -> int:
     return execute_ai_composer_workflow(
         llm=llm,
         input=input_data,
-        workflow_options=args
+        workflow_options=args,
+        io=ConsoleComposerIO()
     )
 
 if __name__ == "__main__":

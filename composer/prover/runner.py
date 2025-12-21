@@ -4,8 +4,11 @@ from typing_extensions import Iterable
 import asyncio
 from pathlib import Path
 import contextlib
-
 import tempfile
+import sys
+import subprocess
+import pickle
+import os
 from dataclasses import dataclass
 
 from langgraph.config import get_stream_writer
@@ -24,11 +27,7 @@ from composer.prover.ptypes import RuleResult
 from composer.prover.analysis import analyze_cex
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext, ProverOptions
-
-
-import sys
-import subprocess
-import pickle
+from composer.core.io import ComposerIO
 
 @dataclass
 class RawReport:
@@ -64,14 +63,23 @@ class CertoraRunException(RuntimeError):
 
 def sandboxed_certora_run(
     args: List[str],
-    prover_opts: ProverOptions
+    prover_opts: ProverOptions,
+    io: ComposerIO
 ) -> SandboxedRunResult:
     wrapper_script = Path(__file__).parent / "certoraRunWrapper.py"
     with tempfile.NamedTemporaryFile("rb") as dump:
         sub_args = [sys.executable, str(wrapper_script)]
         sub_args.append(dump.name)
         sub_args.extend(args)
-        r = subprocess.run(sub_args, encoding="utf-8", capture_output=prover_opts.capture_output)
+        
+        # Ensure environment is clean but carries PYTHONPATH if set
+        env = os.environ.copy()
+        
+        io.log_info(f"Starting Certora Prover subprocess...")
+        if prover_opts.capture_output:
+            io.log_info("[Warning] Capturing output from the prover; note that some errors may not appear in stdout.")
+        r = subprocess.run(sub_args, encoding="utf-8", capture_output=prover_opts.capture_output, env=env)
+        io.log_info(f"Certora Prover subprocess completed with return code {r.returncode}")
         if r.returncode != 0:
             raise CertoraRunFailure(
                 return_code=r.returncode,
@@ -168,7 +176,7 @@ def certora_prover(
 
                 try:
                     res = sandboxed_certora_run(
-                        args, runtime.context.prover_opts
+                        args, runtime.context.prover_opts, runtime.context.io
                     )
                 except CertoraRunFailure as e:
                     return f"Certora Prover run exited with non-zero returncode {e.return_code}.\nStdout:\n{e.stdout}.\nStderr: {e.stderr}"
@@ -188,8 +196,10 @@ def certora_prover(
                 }
                 writer(run_message)
 
+                ctxt.io.log_info("Prover execution completed. Analyzing counterexamples...")
                 runtime = get_runtime(AIComposerContext)
                 failed_count = 0
+                ctxt.io.log_info("Waiting for Anthropic API to analyze counterexamples (timeout: 2 minutes)...")
                 results_param = apply_async_parallel(
                     lambda d: _analyze(runtime.context.llm, state, d, tool_call_id=tool_call_id),
                     [ stat for (_, stat) in formatted_run_result.items() ]
@@ -214,7 +224,7 @@ def certora_prover(
                     )
                 return RawReport(rule_report, all_verified=(failed_count == 0 and rule is None))
             except Exception as e:
-                print(str(e))
+                ctxt.io.log_error(str(e))
                 import traceback
                 traceback.print_exc()
                 sys.exit(1)
