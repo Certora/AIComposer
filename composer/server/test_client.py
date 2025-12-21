@@ -2,7 +2,6 @@ import asyncio
 import json
 import websockets
 import argparse
-import sys
 import pathlib
 
 def read_file_as_payload(path: str) -> dict:
@@ -13,7 +12,11 @@ def read_file_as_payload(path: str) -> dict:
         "content": p.read_text()
     }
 
-async def test_client(port: int, auto_respond: bool = False, debug_prompt: str | None = None):
+async def test_client(
+    port: int,
+    auto_respond: bool = False,
+    debug_prompt: str | None = None
+) -> None:
     uri = f"ws://localhost:{port}"
     print(f"[CLIENT] Connecting to {uri}...")
     try:
@@ -69,7 +72,7 @@ async def test_client(port: int, auto_respond: bool = False, debug_prompt: str |
                         print(f"[CLIENT] Auto-responding: {answer}")
                     else:
                         print("[CLIENT] Enter your answer (double newline to finish):")
-                        lines = []
+                        lines: list[str] = []
                         while True:
                             try:
                                 line = input("> ")

@@ -38,7 +38,7 @@ class JsonWorkflowOptions:
     system_doc: str
     debug_fs: Optional[str]
 
-    def __init__(self, data: Dict[str, Any]):
+    def __init__(self, data: Dict[str, Any]) -> None:
         # Default values for required fields
         self.prover_capture_output = data.get("prover_capture_output", True)
         self.prover_keep_folders = data.get("prover_keep_folders", False)
@@ -62,15 +62,15 @@ class JsonWorkflowOptions:
         self.system_doc = data.get("system_doc", "")
         self.debug_fs = data.get("debug_fs")
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         # Fallback for any missing attributes
         return None
 
-async def handler(websocket):
+async def handler(websocket: Any) -> None:
     addr = websocket.remote_address
     print(f"[SERVER] New connection from {addr}", flush=True)
     workflow_thread = None
-    response_queue = asyncio.Queue()
+    response_queue: asyncio.Queue = asyncio.Queue()
     io: Optional[WebSocketComposerIO] = None
     
     try:
@@ -109,7 +109,7 @@ async def handler(websocket):
                         continue
                     current_io: WebSocketComposerIO = io
                     
-                    def run_workflow():
+                    def run_workflow() -> None:
                         try:
                             print(f"[WORKFLOW] Initializing for {addr}...", flush=True)
                             setup_logging(options.debug)
@@ -152,12 +152,12 @@ async def handler(websocket):
     finally:
         print(f"[SERVER] Connection closed for {addr}", flush=True)
 
-async def start_server(host: str, port: int):
+async def start_server(host: str, port: int) -> None:
     async with websockets.serve(handler, host, port):
         print(f"AI Composer WebSocket server started on ws://{host}:{port} (RELOADED)", flush=True)
         await asyncio.Future()  # run forever
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="AI Composer WebSocket Server")
     parser.add_argument("--host", default="localhost", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8765, help="Port to bind to")
