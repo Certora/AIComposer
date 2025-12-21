@@ -7,7 +7,7 @@ name = "ai-composer"
 version = "0.1.0"
 description = "AIComposer - a tool for generating verified implementations from documentation and CVL specifications"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Certora Ltd."}
@@ -29,10 +29,13 @@ dependencies = [
     "numpy==2.3.2",
     "pydantic==2.11.7",
     "pydantic-settings==2.10.1",
+    "websockets>=15.0.1",
+    "watchfiles>=1.1.1",
 ]
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
+composer-server = "composer.server.ws_server:main"
 
 [tool.setuptools.packages.find]
 include = ["analyzer*", "composer*"]

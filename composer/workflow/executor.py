@@ -26,12 +26,10 @@ from composer.audit.db import AuditDB, ResumeArtifact, InputFileLike
 from composer.diagnostics.stream import AllUpdates, PartialUpdates, Summarization
 from composer.core.io import ComposerIO
 from composer.diagnostics.handlers import is_user_update, is_audit_update, handle_audit_update
-from composer.human.handlers import handle_human_interrupt
 from composer.templates.loader import load_jinja_template
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.tools.relaxation import requirements_relaxation
-from composer.console.handler import DebugHandler
 import composer.console.app as A
 
 
@@ -241,7 +239,8 @@ def execute_ai_composer_workflow(
                 spec_file,
                 req_memories,
                 resume_art,
-                workflow_options.requirements_oracle
+                workflow_options.requirements_oracle,
+                io
             )
             reqs_list = reqs
         store.put((thread_id,), "requirements", {"reqs": reqs_list})
@@ -319,7 +318,14 @@ def execute_ai_composer_workflow(
     if reqs_list is not None:
         required_validations.append(req_type)
     
-    work_context = AIComposerContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
+    work_context = AIComposerContext(
+        llm=bound_llm, 
+        rag_db=rag_db, 
+        prover_opts=prover_opts, 
+        vfs_materializer=materializer, 
+        io=io, 
+        required_validations=required_validations
+    )
 
     curr_state_config: RunnableConfig = {
         "configurable": {
@@ -327,14 +333,18 @@ def execute_ai_composer_workflow(
         }
     }
 
-    handler = DebugHandler()
-    io.log_info("Debug handler installed (Ctrl+C to access)")
+    io.log_info("Workflow initialized (Interrupt feature available with Ctrl+C)")
 
     while True:
         interrupted = False
         r = current_input
         current_input = None
-        for (event_ty_raw, payload) in workflow_exec.stream(input=r, config=config, context=work_context, stream_mode=["custom", "updates", "checkpoints"]):
+        for (event_ty_raw, payload) in workflow_exec.stream(
+                input=r, 
+                config=config, 
+                context=work_context, 
+                stream_mode=["custom", "updates", "checkpoints"]
+            ):
             event_ty = cast(StreamEvents, event_ty_raw)
             assert isinstance(payload, dict)
             match event_ty:
@@ -342,14 +352,14 @@ def execute_ai_composer_workflow(
                     io.next_checkpoint(payload["config"]["configurable"]["checkpoint_id"])
                     logger.info("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
                 case "updates":
-                    if handler.requested and "tools" in payload:
+                    if io.check_for_interrupt() and "tools" in payload:
                         st = workflow_exec.get_state(curr_state_config).values
                         res = A.debug_console(
                             work_context,
                             st, #type: ignore
                             True
                         )
-                        handler.reset()
+                        io.reset_interrupt()
                         if res is not None:
                             state_res = workflow_exec.update_state(curr_state_config, {
                                 "messages": [

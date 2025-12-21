@@ -30,3 +30,11 @@ class ComposerIO(Protocol):
         """Log error information to the user."""
         ...
 
+    def check_for_interrupt(self) -> bool:
+        """Check if an out-of-band interrupt (e.g. Debug Console) has been requested."""
+        ...
+
+    def reset_interrupt(self) -> None:
+        """Reset the interrupt request state."""
+        ...
+
