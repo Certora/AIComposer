@@ -11,6 +11,7 @@ class UploadedFile:
     basename: str
 
     path: str
+    _content: Optional[str] = None
 
     def to_document_dict(self) -> dict:
         """Convert to document dictionary format for LangGraph"""
@@ -23,6 +24,8 @@ class UploadedFile:
         }
 
     def read(self) -> str:
+        if self._content is not None:
+            return self._content
         with open(self.path, 'r') as f:
             return f.read()
         
@@ -32,6 +35,8 @@ class UploadedFile:
 
     @property
     def bytes_contents(self) -> bytes:
+        if self._content is not None:
+            return self._content.encode("utf-8")
         with open(self.path, 'rb') as f:
             return f.read()
 
@@ -39,6 +44,17 @@ class InMemoryFile:
     def __init__(self, name: str, contents: str | bytes):
         self.basname = name
         self.bytes_contents = contents if isinstance(contents, bytes) else contents.encode("utf-8")
+
+class FileSource(Protocol):
+    @property
+    def basename(self) -> str:
+        ...
+    @property
+    def bytes_contents(self) -> bytes:
+        ...
+    @property
+    def string_contents(self) -> str:
+        ...
 
 class NativeFS:
     def __init__(self, p: pathlib.Path):
@@ -55,6 +71,27 @@ class NativeFS:
     @property
     def string_contents(self) -> str:
         return self.where.read_text()
+
+    @property
+    def path(self) -> str:
+        return str(self.where)
+
+class InMemorySource:
+    def __init__(self, name: str, content: str | bytes):
+        self._name = name
+        self._content = content if isinstance(content, bytes) else content.encode("utf-8")
+
+    @property
+    def basename(self) -> str:
+        return self._name
+
+    @property
+    def bytes_contents(self) -> bytes:
+        return self._content
+
+    @property
+    def string_contents(self) -> str:
+        return self._content.decode("utf-8")
     
 class RAGDBOptions(Protocol):
     # database options

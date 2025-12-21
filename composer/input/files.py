@@ -1,26 +1,48 @@
-from typing import Dict
+from typing import Dict, Callable, Union
 import os
 import zlib
 import anthropic
-from typing import Callable
-from composer.input.types import CommandLineArgs, InputData, UploadedFile
+import pathlib
+from io import BytesIO
 
-def upload_file_if_needed(client: anthropic.Anthropic, file_path: str, uploaded_files: Dict[str, str], log: Callable[[str], None] = print) -> UploadedFile:
+from composer.input.types import CommandLineArgs, InputData, UploadedFile, FileSource, NativeFS, InMemorySource
+
+def upload_file_if_needed(client: anthropic.Anthropic, source: FileSource, uploaded_files: Dict[str, str], log: Callable[[str], None] = print) -> UploadedFile:
     """Upload a file if not already uploaded, return UploadedFile."""
-    with open(file_path, 'rb') as f_bytes:
-        crc_hex = hex(zlib.crc32(f_bytes.read()))
-    basename = os.path.basename(file_path)
+    content = source.bytes_contents
+    crc_hex = hex(zlib.crc32(content))
+    basename = source.basename
     crc_basename = f"{crc_hex}_{basename}"
+    
     if crc_basename not in uploaded_files:
         log(f"Uploading {basename}... (canonical name {crc_basename})")
         uploaded_file = client.beta.files.upload(
-            file=(crc_basename, open(file_path, "rb"), "text/plain")
+            file=(crc_basename, BytesIO(content), "text/plain")
         )
         log(f"Uploaded {basename} with ID: {uploaded_file.id}")
-        return UploadedFile(file_id=uploaded_file.id, basename=basename, path=file_path)
+        return UploadedFile(
+            file_id=uploaded_file.id, 
+            basename=basename, 
+            path=getattr(source, 'path', basename),
+            _content=source.string_contents
+        )
     else:
         log(f"Found existing {basename} with ID: {uploaded_files[crc_basename]} (canonical name {crc_basename})")
-        return UploadedFile(file_id=uploaded_files[crc_basename], basename=basename, path=file_path)
+        return UploadedFile(
+            file_id=uploaded_files[crc_basename], 
+            basename=basename, 
+            path=getattr(source, 'path', basename),
+            _content=source.string_contents
+        )
+
+def resolve_file_source(val: Union[str, dict, FileSource]) -> FileSource:
+    """Resolve a path string or a JSON object into a FileSource."""
+    if isinstance(val, str):
+        return NativeFS(pathlib.Path(val))
+    if isinstance(val, dict):
+        # Expecting {"name": "...", "content": "..."}
+        return InMemorySource(val["name"], val["content"])
+    return val
 
 def upload_input(i: CommandLineArgs, log: Callable[[str], None] = print) -> InputData:
     client = anthropic.Anthropic()
@@ -28,10 +50,10 @@ def upload_input(i: CommandLineArgs, log: Callable[[str], None] = print) -> Inpu
     for f in client.beta.files.list():
         d[f.filename] = f.id
 
-    # Upload the three input files
-    interface_file = upload_file_if_needed(client, i.interface_file, d, log)
-    spec_file = upload_file_if_needed(client, i.spec_file, d, log)
-    system_doc_file = upload_file_if_needed(client, i.system_doc, d, log)
+    # Upload the three input files, resolving them first
+    interface_file = upload_file_if_needed(client, resolve_file_source(i.interface_file), d, log)
+    spec_file = upload_file_if_needed(client, resolve_file_source(i.spec_file), d, log)
+    system_doc_file = upload_file_if_needed(client, resolve_file_source(i.system_doc), d, log)
 
     return InputData(
         spec=spec_file,

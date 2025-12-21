@@ -36,6 +36,7 @@ dependencies = [
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
 composer-server = "composer.server.ws_server:main"
+composer-test-client = "composer.server.test_client:main"
 
 [tool.setuptools.packages.find]
 include = ["analyzer*", "composer*"]
