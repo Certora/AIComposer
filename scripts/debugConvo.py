@@ -8,7 +8,7 @@ from dataclasses import dataclass
 if __name__ != "__main__":
     raise RuntimeError("This is a script only module")
 
-from verisafe.workflow.factories import get_checkpointer, create_llm
+from composer.workflow.factories import get_checkpointer, create_llm
 
 checkpoint = get_checkpointer()
 
@@ -31,11 +31,13 @@ class ModelOpts:
     model: str
     tokens: int
     thinking_tokens: int
+    memory_tool: bool
 
 opts = ModelOpts(
     model="claude-sonnet-4-5-20250929",
     thinking_tokens=2048,
-    tokens=4096
+    tokens=4096,
+    memory_tool=False
 )
 
 llm = create_llm(opts)

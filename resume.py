@@ -1,28 +1,23 @@
 import pathlib
 import psycopg
 from typing import cast
-import verisafe.certora as _
+import composer.certora as _
 
-from verisafe.input.parsing import resume_workflow_parser
-from verisafe.workflow.factories import create_llm
-from verisafe.workflow.executor import execute_cryptosafe_workflow
-from verisafe.input.types import ResumeIdData, NativeFS, ResumeFSData
-from verisafe.audit.db import AuditDB
+from composer.input.parsing import resume_workflow_parser
+from composer.workflow.factories import create_llm
+from composer.workflow.executor import execute_ai_composer_workflow
+from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
+from composer.audit.db import AuditDB
 
 def main() -> int:
-    """Main entry point for the CryptoSafe tool."""
+    """Main entry point for the AI Composer tool."""
     parser = resume_workflow_parser()
     args = parser.parse_args()
 
     input_data: ResumeIdData | ResumeFSData
 
-    if args.audit_db is None:
-        raise RuntimeError("Need audit db")
-
     match args.command:
         case "materialize":
-            if args.audit_db is None:
-                raise RuntimeError("Need audit db")
             conn = psycopg.connect(args.audit_db)
             audit = AuditDB(conn)
             res = audit.get_resume_artifact(args.src_thread_id)
@@ -37,11 +32,11 @@ def main() -> int:
                 print(f"Refusing to materialize in a folder that appears to be a materialization of {curr_id}")
                 print("You can remove the .session-id file to override this behavior")
                 return 1
-            session_id_file.write_text(args.src_thread_id)
             for (p, cont) in res.vfs:
                 output_path = out_dir / p
                 output_path.parent.mkdir(exist_ok=True, parents=True)
                 output_path.write_bytes(cont)
+            session_id_file.write_text(args.src_thread_id)
             return 0
         case "resume-dir" | "resume-id":
             commentary: str | None = None
@@ -69,8 +64,8 @@ def main() -> int:
 
     llm = create_llm(args)
 
-    print("Starting VeriSafe resumption workflow...")
-    return execute_cryptosafe_workflow(
+    print("Starting AI Composer resumption workflow...")
+    return execute_ai_composer_workflow(
         llm=llm,
         input=input_data,
         workflow_options=args

@@ -21,7 +21,7 @@ jiter==0.11.1
 joblib==1.5.2
 jsonpatch==1.33
 jsonpointer==3.0.0
-langchain-anthropic==0.3.19
+langchain-anthropic==0.3.21
 langchain-core==0.3.79
 langgraph==0.6.7
 langgraph-checkpoint==2.1.2
@@ -64,7 +64,7 @@ PyYAML==6.0.3
 regex==2025.10.23
 requests==2.32.5
 requests-toolbelt==1.0.0
-rich==14.1.0
+rich==14.2.0
 safetensors==0.6.2
 scikit-learn==1.7.2
 scipy==1.16.2
@@ -85,3 +85,4 @@ typing_extensions==4.15.0
 urllib3==2.5.0
 xxhash==3.6.0
 zstandard==0.25.0
+textual==6.5.0

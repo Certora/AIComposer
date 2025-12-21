@@ -1,0 +1,559 @@
+# CCCP Pool Design Document
+## Collectively Compensated Constant Product Pool (СССР)
+
+**Version:** 1.0  
+**Date:** November 14, 2025  
+**Status:** Design Specification
+
+---
+
+## Table of Contents
+
+1. [Executive Summary](#1-executive-summary)
+2. [System Overview](#2-system-overview)
+3. [Economic Model](#3-economic-model)
+4. [Technical Architecture](#4-technical-architecture)
+5. [User Responsibilities](#5-user-responsibilities)
+6. [Security Considerations](#6-security-considerations)
+
+---
+
+## 1. Executive Summary
+
+The **CCCP Pool** (Collectively Compensated Constant Product Pool) is a novel Automated Market Maker (AMM) design that socializes the cost of large liquidity withdrawals. Unlike traditional constant product pools where anyone can exit at any size paying the same proportional fee, CCCP implements **progressive withdrawal penalties** that increase exponentially with withdrawal size. These penalties are automatically redistributed to remaining liquidity providers, compensating them for price impact and protecting the pool from rapid drainage.
+
+### Key Innovations
+
+- **Progressive Penalties**: Larger withdrawals incur exponentially higher fees (0.3% for small, up to 50%+ for massive)
+- **Automatic Redistribution**: Penalties stay in reserves, automatically increasing remaining LP token value
+- **Anti-Drainage Economics**: Makes pool drainage prohibitively expensive without governance intervention
+- **Protocol-Favoring Rounding**: Dust accumulation benefits remaining LPs
+
+### Target Use Cases
+
+- **Volatile Asset Pairs**: Where IL protection is valuable to long-term LPs
+- **Low-Float Tokens**: Where whale exits could cause cascading liquidations
+- **DAO Treasuries**: That want sticky liquidity with built-in whale resistance
+- **Community Pools**: Where long-term alignment is prioritized over pure capital efficiency
+
+---
+
+## 2. System Overview
+
+### 2.1 Constant Product Model Foundation
+
+CCCP pools implement the standard constant product invariant:
+
+```
+x × y = k
+```
+
+Where:
+- `x` = Reserve of Token A
+- `y` = Reserve of Token B  
+- `k` = Constant product (increases with fees)
+
+This invariant ensures that as one reserve decreases, the other increases proportionally to maintain the product.
+
+### 2.2 Price Discovery
+
+At any moment, the **spot price** of Token A in terms of Token B is:
+
+```
+P_A = y / x
+```
+
+This price automatically adjusts as traders swap against the pool. The pool acts as an automated market maker, always willing to quote a price based on its current reserves.
+
+### 2.3 Impermanent Loss (IL)
+
+Traditional AMMs expose LPs to **impermanent loss** - the opportunity cost of providing liquidity versus holding assets. If Token A appreciates 2x relative to Token B:
+
+- **Holding**: 1 TokenA + 1 TokenB → 2 TokenB worth + 1 TokenB = 3 TokenB equivalent
+- **LP Position**: Pool rebalances to maintain k, LP ends up with less TokenA and more TokenB, total value ~2.82 TokenB equivalent
+- **IL**: ~6% loss relative to holding
+
+CCCP's progressive penalties **partially compensate LPs for IL** when large exits occur during price movements. When a whale exits after a significant price swing (which would maximize their IL avoidance), they pay a hefty penalty that goes to remaining LPs who absorbed the IL.
+
+### 2.4 CCCP Enhancement: Progressive Socialization
+
+CCCP modifies the withdrawal process:
+
+```
+Standard AMM:  
+Withdraw 10% of pool → Pay 0.3% fee → Receive 99.7% of proportional value
+
+CCCP Pool:
+Withdraw 2% of pool   → Pay 0.3% fee   → Receive 99.7% of proportional value
+Withdraw 10% of pool  → Pay 15% fee    → Receive 85% of proportional value  
+Withdraw 30% of pool  → Pay 45% fee    → Receive 55% of proportional value
+```
+
+The escalating penalty makes large exits economically painful, creating a natural circuit breaker.
+
+---
+
+## 3. Economic Model
+
+### 3.1 Liquidity Provider Economics
+
+#### Initial Liquidity Provision
+
+The **first liquidity provider** sets the initial price by depositing both tokens:
+
+```
+LP deposits: x_0 tokens of A, y_0 tokens of B
+Initial price: P = y_0 / x_0
+LP tokens minted: L = sqrt(x_0 × y_0)
+```
+
+This uses the geometric mean to ensure the LP token supply is scale-invariant.
+
+#### Subsequent Liquidity Provision
+
+All subsequent LPs must add liquidity **proportionally** to maintain the current price:
+
+```
+Current pool: X tokens of A, Y tokens of B
+Current LP supply: L_total
+
+New LP deposits: Δx of A, Δy of B
+Constraint: Δx/X = Δy/Y (must match ratio)
+
+LP tokens minted: ΔL = L_total × (Δx/X) = L_total × (Δy/Y)
+```
+
+
+#### LP Token Value
+
+Each LP token represents a **proportional claim** on the pool:
+
+```
+Value of 1 LP token:
+  = (Total Reserve A / Total LP Supply) of Token A
+  + (Total Reserve B / Total LP Supply) of Token B
+```
+
+As fees accumulate and penalties are paid, the reserves grow while LP supply remains constant (or shrinks), increasing LP token value.
+
+### 3.2 Progressive Penalty Function
+
+The withdrawal penalty is calculated based on the size of the withdrawal as a percentage of total pool:
+
+```
+Penalty Calculation:
+  withdrawal_percent = (LP_tokens_burned / total_LP_supply) × 100
+  
+  If withdrawal_percent < 2%:
+    penalty = 0%
+  
+  If 2% ≤ withdrawal_percent < 10%:
+    excess = withdrawal_percent - 2%
+    penalty = (excess²) / 100
+    
+  If withdrawal_percent ≥ 10%:
+    excess = withdrawal_percent - 10%
+    penalty = 64% + (excess²) / 50
+```
+
+**Examples:**
+- 1% withdrawal: 0% penalty
+- 5% withdrawal: 9% penalty
+- 10% withdrawal: 64% penalty
+- 20% withdrawal: 264% penalty (economically prohibitive)
+- 50% withdrawal: 1,600%+ penalty (impossible in practice)
+
+This creates a **soft cap** on withdrawal size without hard limits or governance intervention.
+
+### 3.3 Redistribution Mechanics
+
+When a user withdraws with penalty, the math works elegantly:
+
+```
+Example: User withdraws 10% of pool with 15% penalty
+
+User burns: 100 LP tokens (10% of 1000 total)
+Proportional value: 100 TokenA + 200 TokenB
+Penalty: 15%
+Penalty amount: 15 TokenA + 30 TokenB (stays in pool)
+User receives: 85 TokenA + 170 TokenB
+
+Pool state after:
+  Reserves: 915 TokenA + 1830 TokenB (kept the penalty)
+  LP Supply: 900 LP tokens (burned the 100)
+  
+Value per remaining LP token:
+  Before: (1000/1000) = 1.000 TokenA + 2.000 TokenB per LP
+  After: (915/900) = 1.0167 TokenA + 2.0333 TokenB per LP
+  
+Increase: 1.67% value gain for all remaining LPs
+```
+
+**Key Insight**: No redistribution code needed. Simply keeping tokens in the pool while burning LP tokens automatically increases value per token. This is mathematically guaranteed by the proportional ownership model.
+
+### 3.4 Swap Fee Model
+
+Swaps also use progressive fees based on output size relative to reserves:
+
+```
+Fee Calculation:
+  depletion_percent = (amount_out / reserve_out) × 100
+  
+  base_fee = 0.3%
+  
+  If depletion_percent > 0.5%:
+    excess = depletion_percent - 0.5%
+    additional_fee = (excess²) / 100
+    total_fee = base_fee + additional_fee
+  Else:
+    total_fee = base_fee
+```
+
+This discourages large swaps that would significantly move the price, protecting LPs from outsized IL and front-running attacks.
+
+### 3.5 Economic Game Theory
+
+The progressive penalty system creates several equilibrium dynamics:
+
+**For Whales:**
+- **Exit Cost**: Large exits become prohibitively expensive
+- **Optimal Strategy**: Split exits into multiple smaller transactions over time
+- **Time Preference**: Encouraged to have longer time horizons
+
+**For Regular LPs:**
+- **Protection**: Whale exits compensate them rather than harm them
+- **Yield Enhancement**: Earn from penalties in addition to swap fees
+- **Stability**: Pool liquidity is more predictable and "sticky"
+
+**For Arbitrageurs:**
+- **Price Impact**: Progressive swap fees reduce profitability of large arb trades
+- **Frequency**: Encourages more frequent, smaller rebalancing trades
+- **Competition**: Makes MEV extraction less profitable on this pool
+
+**For the Pool:**
+- **TVL Stability**: Reduces volatility in total value locked
+- **Price Stability**: Large price movements become more expensive
+- **Long-term Capital**: Attracts LPs who value stability over max APY
+
+---
+
+## 4. Technical Architecture
+
+### 4.1 Token Requirements
+
+**CRITICAL REQUIREMENT: Both underlying tokens MUST have exactly 18 decimals (1e18 precision).**
+
+#### Rationale
+
+The pool performs mathematical operations assuming both tokens have identical decimal precision. The geometric mean calculation for LP tokens requires:
+
+```
+LP_tokens = sqrt(amount_A × amount_B)
+```
+
+If tokens have different decimals, this calculation becomes numerically unstable and can lead to:
+- Precision loss in LP token calculations
+- Rounding errors that accumulate over time
+- Potential for economic attacks exploiting precision differences
+- Complex and error-prone conversion logic throughout the codebase
+
+#### Example Problem with Mixed Decimals
+
+```
+Token A: USDC with 6 decimals
+Token B: ETH with 18 decimals
+
+Deposit: 1,000 USDC (1,000 × 10^6 = 10^9) + 0.5 ETH (0.5 × 10^18 = 5 × 10^17)
+
+LP calculation: sqrt(10^9 × 5 × 10^17) = sqrt(5 × 10^26) ≈ 7.07 × 10^13
+
+This creates inconsistent scales and makes proportional math fragile.
+```
+
+#### Enforcement
+
+The contract constructor must verify both tokens have 18 decimals:
+
+```
+Constructor:
+  Check: tokenA.decimals() == 18
+  Check: tokenB.decimals() == 18
+  Revert if either check fails
+```
+
+#### Handling Non-18 Decimal Tokens
+
+If you need to support tokens like USDC (6 decimals) or WBTC (8 decimals), you must wrap them first in an 18-decimal wrapper contract that:
+
+1. Accepts deposits of the underlying token
+2. Mints wrapped tokens with 18 decimals (scaling by 10^(18-underlying_decimals))
+3. Allows redemption back to the underlying token
+
+This wrapper layer isolates the decimal complexity from the CCCP pool logic.
+
+### 4.2 Rounding Strategy
+
+All division operations round **in favor of the protocol** (round down when giving tokens to users):
+
+```
+When minting LP tokens:
+  LP_to_mint = floor((amount_A × total_LP_supply) / reserve_A)
+  Result: User gets slightly fewer LP tokens, dust stays in pool
+
+When calculating withdrawal amounts:
+  amount_out = floor((LP_tokens × reserve_A) / total_LP_supply)
+  Result: User gets slightly fewer tokens, dust stays in pool
+
+Dust Accumulation:
+  - 1-2 wei per operation accumulates in reserves
+  - Benefits long-term LPs as value per LP token increases
+  - Creates mild deflationary pressure
+```
+
+This rounding strategy is critical for security - it prevents attackers from extracting more value than they deposited through rounding exploits.
+
+---
+
+## 5. User Responsibilities
+
+### 5.1 Deposit Responsibilities
+
+Users are responsible for the **entire calculation and approval workflow** before interacting with the pool. The pool contract does NOT perform these calculations - they must be done client-side.
+
+#### Step 1: Calculate Required Deposit Amounts
+
+**User Responsibility**: Calculate the exact amounts of both tokens needed to maintain the current pool ratio.
+
+```
+Given: User wants to deposit X amount of Token A
+
+Calculation:
+  current_reserve_A = pool.getReserveA()
+  current_reserve_B = pool.getReserveB()
+  
+  required_B = (X × current_reserve_B) / current_reserve_A
+  
+User must deposit: X of Token A AND required_B of Token B
+```
+
+**Critical**: The pool will accept as much of the provided amountA and amountB such that the pool remains balanced. If the number of LP tokens to be minted is 0, the transaction should revert. The pool does **NOT** swap the tokens
+to maintain balance.
+
+#### Step 2: Approve Token Spending
+
+**User Responsibility**: Grant the CCCP pool contract permission to spend the exact amounts of both tokens.
+
+```
+tokenA.approve(pool_address, amount_A)
+okenB.approve(pool_address, amount_B)
+Then: pool.addLiquidity(amount_A, amount_B)
+```
+
+### 5.2 Withdrawal Responsibilities
+
+**User Responsibility**: Specify the amount of LP tokens to burn.
+
+```
+Execute:
+  pool.removeLiquidity(N)
+  
+Where:
+  N = number of LP tokens to burn
+  
+The contract automatically:
+  - Calculates the withdrawal percentage
+  - Applies the appropriate progressive penalty
+  - Returns the proportional token amounts minus penalty
+  - Keeps the penalty in reserves for remaining LPs
+```
+
+### 5.3 Swap Responsibilities
+
+#### Step 1: Specify inputs
+**User Responsibility**: Calculate the input amount X and direction (A to B or B to A).
+
+#### Step 2: Approve Token Transfers
+
+**User Responsibility**: Approve transferring X tokens to the pool on A or B depending on the direction of the swap.
+
+```
+Execute:
+  pool.swap(X, is_token_A)
+  
+Where:
+  X = amount of tokens to swap in
+  is_token_A = true if swapping Token A for Token B, false otherwise
+  
+The contract automatically:
+  - Calculates output based on constant product formula
+  - Applies 0.3% base fee
+  - Applies progressive fee if swap is large relative to reserves
+  - Returns the calculated output amount to the user
+```
+
+---
+
+## 6. Security Considerations
+
+### 6.1 Reentrancy Protection
+
+All state-changing functions must implement strict reentrancy protection using the checks-effects-interactions pattern:
+
+```
+Reentrancy Guard Pattern:
+  1. Check: locked == 1, revert if not
+  2. Set: locked = 2
+  3. Execute function logic
+  4. Set: locked = 1
+
+Function Structure:
+  1. CHECKS: Validate all inputs and preconditions
+  2. EFFECTS: Update all contract state variables
+  3. INTERACTIONS: Make external calls (transfers, etc.)
+```
+
+This prevents attackers from calling back into the contract during external calls and manipulating state.
+
+### 6.2 Integer Overflow/Underflow Protection
+
+Modern Solidity (0.8+) provides automatic overflow/underflow protection:
+
+```
+All arithmetic operations automatically check:
+  - Addition: Reverts if result > type(uint256).max
+  - Subtraction: Reverts if minuend < subtrahend
+  - Multiplication: Reverts if result > type(uint256).max
+  - Division: Reverts if divisor == 0
+
+No explicit SafeMath library needed.
+```
+
+However, be aware of intentional wrapping:
+- `unchecked` blocks disable these protections
+- Only use when mathematically proven safe
+
+### 6.3 Price Oracle Manipulation
+
+CCCP is vulnerable to single-block price manipulation. Mitigations:
+
+**Short-term:**
+- Progressive fees make large swaps expensive
+- High penalties make large withdrawals expensive
+- Reduces profitability of oracle manipulation attacks
+
+### 6.4 Flash Loan Attacks
+
+Flash loan attack vectors:
+
+**Attack 1: Price Manipulation**
+```
+Attacker strategy:
+  1. Flash loan large amount of Token A
+  2. Swap for Token B (moves price)
+  3. Perform action benefiting from manipulated price
+  4. Swap back
+  5. Repay flash loan
+
+Mitigation:
+  - Progressive swap fees make this expensive
+  - K increases from fees, reducing attacker profit
+  - Larger the manipulation, higher the cost
+```
+
+**Attack 2: Liquidity Provision/Removal**
+```
+Attacker strategy:
+  1. Flash loan tokens
+  2. Add liquidity
+  3. Manipulate pool
+  4. Remove liquidity
+  5. Repay loan
+
+Mitigation:
+  - Minimum liquidity lock prevents tiny pool attacks
+  - Progressive withdrawal penalties on large exits
+  - Rounding favors protocol, attacker loses dust
+```
+
+### 6.5 Front-Running and MEV
+
+MEV attack surface:
+
+**Sandwich Attacks:**
+```
+Attack:
+  1. Detect user's pending swap transaction
+  2. Front-run: Swap in same direction (move price)
+  3. User's swap executes at worse price
+  4. Back-run: Swap in opposite direction (profit)
+
+Mitigation:
+  - Progressive fees make large front-running expensive
+  - Private mempools (Flashbots) can help
+```
+
+**Just-In-Time (JIT) Liquidity:**
+```
+Attack:
+  1. Detect large swap incoming
+  2. Front-run: Add liquidity just before swap
+  3. Earn fees from the swap
+  4. Back-run: Remove liquidity
+
+Mitigation:
+  - Progressive withdrawal penalties make JIT less profitable
+  - Minimum liquidity lock reduces tiny position profitability
+```
+
+### 6.6 Access Control
+
+The CCCP pool should have **minimal governance** to reduce trust assumptions:
+
+```
+Governance Powers (if any):
+  - Pause trading in emergency (with timelock)
+  - Update progressive penalty parameters (with limits)
+  - Recover mistakenly sent tokens (not pool reserves)
+
+Non-Governance:
+  - Cannot modify reserves directly
+  - Cannot mint/burn LP tokens arbitrarily
+  - Cannot change token addresses (immutable)
+  - Cannot modify core math (constant product)
+```
+
+Prefer immutability where possible. If governance is needed, use:
+- Multi-sig with timelock
+- On-chain voting with quorum requirements
+- Parameter bounds to prevent destructive changes
+
+### 6.7 Decimal Precision and Rounding
+
+**Critical Precision Requirements:**
+
+```
+LP Token Calculation:
+  LP = sqrt(amount_A × amount_B)
+  
+  Risk: Precision loss if inputs are too small
+  Mitigation: Minimum liquidity requirement (1000 wei)
+
+Withdrawal Calculation:
+  amount = (LP_tokens × reserve) / total_LP
+  
+  Risk: Rounding down could give 0 for small withdrawals
+  Mitigation: Revert if calculated amount is 0
+
+Penalty Calculation:
+  penalty_bps = f(withdrawal_percent)
+  actual_amount = proportional_amount × (10000 - penalty_bps) / 10000
+  
+  Risk: Integer division truncation
+  Mitigation: All division rounds down (favors protocol)
+```
+
+**Rounding Consistency:**
+- Always round down when giving tokens to users
+- Never round up in user's favor
+- 1-2 wei discrepancy per operation is acceptable
+- Accumulation benefits remaining LPs

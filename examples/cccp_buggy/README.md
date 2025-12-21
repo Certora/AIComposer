@@ -1,0 +1,1 @@
+These are the CCCP inputs with several bugs; some rules are malformed, there are syntax errors, and some rules don't make sense. Using this workflow will demonstrate AI Composer's ability to work with imperfect inputs.

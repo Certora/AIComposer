@@ -4,12 +4,14 @@ CREATE USER rag_user WITH PASSWORD 'rag_password';
 CREATE USER langgraph_store_user WITH PASSWORD 'langgraph_store_password';
 CREATE USER langgraph_checkpoint_user WITH PASSWORD 'langgraph_checkpoint_password';
 CREATE USER audit_db_user WITH PASSWORD 'audit_db_password';
+CREATE USER memory_tool_user WITH PASSWORD 'memory_tool_password';
 
 -- Create application-specific databases
 CREATE DATABASE rag_db OWNER rag_user;
 CREATE DATABASE langgraph_store_db OWNER langgraph_store_user;
 CREATE DATABASE langgraph_checkpoint_db OWNER langgraph_checkpoint_user;
 CREATE DATABASE audit_db OWNER audit_db_user;
+CREATE DATABASE memory_tool_db OWNER memory_tool_user;
 
 \c rag_db
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -29,6 +31,10 @@ GRANT ALL PRIVILEGES ON SCHEMA public TO langgraph_checkpoint_user;
 GRANT ALL PRIVILEGES ON DATABASE audit_db TO audit_db_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO audit_db_user;
 
+\c audit_db
+GRANT ALL PRIVILEGES ON DATABASE memory_tool_db TO memory_tool_user;
+GRANT ALL PRIVILEGES ON SCHEMA public TO memory_tool_user;
+
 -- Create audit_db schema
 CREATE TABLE IF NOT EXISTS file_blobs(
     file_id VARCHAR(64) PRIMARY KEY,
@@ -42,7 +48,8 @@ CREATE TABLE IF NOT EXISTS run_info(
     interface_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
     interface_name TEXT NOT NULL,
     system_id VARCHAR(64) NOT NULL REFERENCES file_blobs(file_id),
-    system_name TEXT NOT NULL
+    system_name TEXT NOT NULL,
+    num_reqs INT CHECK (num_reqs >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS vfs_initial(
@@ -74,7 +81,7 @@ CREATE TABLE IF NOT EXISTS prover_results(
     tool_id TEXT NOT NULL,
     rule_name TEXT NOT NULL,
     thread_id TEXT NOT NULL,
-    result TEXT NOT NULL CHECK (result in ('VIOLATED', 'ERROR', 'TIMEOUT', 'VERIFIED')),
+    result TEXT NOT NULL CHECK (result in ('VIOLATED', 'ERROR', 'TIMEOUT', 'VERIFIED', 'SANITY_FAILED')),
     analysis TEXT,
     CONSTRAINT prover_results_pk PRIMARY KEY (tool_id, rule_name, thread_id)
 );
@@ -95,6 +102,15 @@ CREATE TABLE IF NOT EXISTS summarization(
     summary TEXT NOT NULL,
     CONSTRAINT summarization_pk PRIMARY KEY (thread_id, checkpoint_id)
 );
+
+CREATE TABLE IF NOT EXISTS run_requirements(
+    thread_id TEXT REFERENCES run_info(thread_id) NOT NULL,
+    req_num int NOT NULL,
+    req_text TEXT NOT NULL,
+    PRIMARY KEY(thread_id, req_num)
+);
+
+CREATE INDEX IF NOT EXISTS req_requirement_thead_idx ON run_requirements USING btree(thread_id);
 
 -- Grant permissions to audit_db_user on all tables
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO audit_db_user;
