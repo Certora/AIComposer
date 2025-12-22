@@ -87,37 +87,6 @@
           "group": "inline"
         }
       ]
-    },
-    "configuration": {
-      "title": "Certora AI Composer",
-      "properties": {
-        "certora-ai-composer.serverPort": {
-          "type": "number",
-          "default": 8769,
-          "description": "The port the AI Composer WebSocket server is listening on."
-        },
-        "certora-ai-composer.model": {
-          "type": "string",
-          "enum": [
-            "claude-sonnet-4-20250514",
-            "claude-3-5-sonnet-20240620",
-            "claude-3-opus-20240229",
-            "claude-3-haiku-20240307"
-          ],
-          "default": "claude-sonnet-4-20250514",
-          "description": "The AI model to use for composer tasks."
-        },
-        "certora-ai-composer.memoryTool": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable the memory tool for the AI composer."
-        },
-        "certora-ai-composer.debugPromptOverride": {
-          "type": "string",
-          "default": "",
-          "description": "Override the default prompt with a custom one for debugging."
-        }
-      }
     }
   },
   "scripts": {

@@ -66,6 +66,7 @@ def sandboxed_certora_run(
     prover_opts: ProverOptions,
     io: ComposerIO
 ) -> SandboxedRunResult:
+    env = os.environ.copy()
     wrapper_script = Path(__file__).parent / "certoraRunWrapper.py"
     with tempfile.NamedTemporaryFile("rb") as dump:
         sub_args = [sys.executable, str(wrapper_script)]
@@ -76,7 +77,6 @@ def sandboxed_certora_run(
             io.log_info("[Warning] Capturing output from the prover; note that some errors may not appear in stdout.")
         
         # Ensure environment is clean but carries PYTHONPATH if set
-        env = os.environ.copy()
         r = subprocess.run(sub_args, encoding="utf-8", capture_output=prover_opts.capture_output, env=env)
         io.log_info(f"Certora Prover subprocess completed with return code {r.returncode}")
         if r.returncode != 0:

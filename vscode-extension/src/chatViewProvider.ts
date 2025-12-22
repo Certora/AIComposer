@@ -252,7 +252,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 <script>
                     const vscode = acquireVsCodeApi();
 
-                    // Global error handler to catch silent UI bugs
                     window.onerror = function(message, source, lineno, colno, error) {
                         const errorInfo = message + ' at ' + source + ':' + lineno + ':' + colno;
                         vscode.postMessage({ type: 'webviewError', value: errorInfo });
@@ -264,6 +263,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     const statusText = document.getElementById('status-text');
                     const connectBtn = document.getElementById('connect-btn');
                     const generateBtn = document.getElementById('generate-btn');
+
+                    let currentLogs = null;
+                    let isWaitingForResponse = false;
+                    let isCodeGenerationCompleted = false;
+                    let codeCompletionBubble = null;
+                    let codeCompletionBuffer = "";
 
                     function openSettings() {
                         vscode.postMessage({ type: 'openSettings' });
@@ -280,17 +285,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     function startInitialWorkflow() {
                         try {
                             if (generateBtn.disabled) return;
-                            
                             generateBtn.disabled = true;
                             generateBtn.textContent = 'Running...';
-                            
-                            const text = "Generate Verified Contract";
-                            // addMessage('user', text); // Remove to prevent duplication
-                            
-                            vscode.postMessage({ 
-                                type: 'sendMessage', 
-                                value: { text } 
-                            });
+                            vscode.postMessage({ type: 'sendMessage', value: { text: "Generate Verified Contract" } });
                         } catch (e) {
                             generateBtn.disabled = false;
                             generateBtn.textContent = 'Generate Verified Contract';
@@ -304,8 +301,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             if (text && isWaitingForResponse) {
                                 addMessage('user', text);
                                 vscode.postMessage({ type: 'humanResponse', value: text });
-                                
-                                // Reset state and hide input
                                 isWaitingForResponse = false;
                                 document.getElementById('input-container').style.display = 'none';
                                 userInput.value = '';
@@ -315,10 +310,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         }
                     }
 
-                    function addMessage(role, text) {
+                    function addMessage(role, text, isHtml = false) {
                         const div = document.createElement('div');
                         div.className = 'message ' + role;
-                        div.textContent = text;
+                        if (isHtml) div.innerHTML = text;
+                        else div.textContent = text;
                         chatStream.appendChild(div);
                         chatStream.scrollTop = chatStream.scrollHeight;
                         return div;
@@ -348,42 +344,43 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         \`;
                         chatStream.appendChild(div);
                         chatStream.scrollTop = chatStream.scrollHeight;
-                        
-                        // Reveal the bottom input container so the user can answer
                         document.getElementById('input-container').style.display = 'flex';
                         userInput.focus();
                     }
 
-                    window.addEventListener('message', event => {
-                        const message = event.data;
-                        switch (message.type) {
-                            case 'status':
-                                statusText.textContent = message.value;
-                                statusText.className = 'status-' + message.value.toLowerCase();
-                                connectBtn.textContent = message.value === 'Connected' ? 'Disconnect' : 'Connect';
-                                break;
-                            case 'error':
-                                addMessage('ai', 'Error: ' + message.value);
-                                break;
-                            case 'serverMessage':
-                                handleServerMessage(message.value);
-                                break;
-                        }
-                    });
-
-                    let currentLogs = null;
-                    let isWaitingForResponse = false;
-
                     function handleServerMessage(msg) {
                         switch (msg.type) {
                             case 'info':
-                                if (!currentLogs) currentLogs = createThinkingBlock();
-                                currentLogs.textContent += msg.payload.message + '\\n';
-                                currentLogs.scrollTop = currentLogs.scrollHeight;
-                                
-                                if (msg.payload.message.includes("Workflow finished successfully")) {
+                                const text = msg.payload.message;
+                                if (text.includes("= CODE GENERATION COMPLETED =")) {
+                                    isCodeGenerationCompleted = true;
+                                    currentLogs = null;
+                                }
+                                if (isCodeGenerationCompleted) {
+                                    codeCompletionBuffer += text + "\\n";
+                                    if (!codeCompletionBubble) codeCompletionBubble = addMessage('ai', '', true);
+                                    let formatted = codeCompletionBuffer
+                                        .replace(/= CODE GENERATION COMPLETED =/g, '<strong>$0</strong><br>')
+                                        .replace(/Generated Source Files:/g, '<strong>$0</strong><br>')
+                                        .replace(/--- (.*?) ---/g, '<div style="margin-top:10px; font-weight:bold; color:var(--vscode-textLink-foreground)">📄 $1</div><pre style="background:var(--vscode-editor-background); padding:8px; border-radius:4px; overflow-x:auto; border:1px solid var(--vscode-widget-border); font-size:12px; line-height:1.2; margin-top:4px"><code>')
+                                        .split('<div style="margin-top:10px').map((part, i, arr) => {
+                                            if (i === 0) return part;
+                                            return '<div style="margin-top:10px' + part + (i < arr.length - 1 ? '</code></pre>' : '');
+                                        }).join('');
+                                    if (formatted.includes('<code>') && !formatted.endsWith('</code></pre>')) formatted += '</code></pre>';
+                                    codeCompletionBubble.innerHTML = formatted;
+                                    chatStream.scrollTop = chatStream.scrollHeight;
+                                } else {
+                                    if (!currentLogs) currentLogs = createThinkingBlock();
+                                    currentLogs.textContent += text + '\\n';
+                                    currentLogs.scrollTop = currentLogs.scrollHeight;
+                                }
+                                if (text.includes("Workflow finished successfully")) {
                                     generateBtn.disabled = false;
                                     generateBtn.textContent = 'Generate Verified Contract';
+                                    isCodeGenerationCompleted = false;
+                                    codeCompletionBubble = null;
+                                    codeCompletionBuffer = "";
                                 }
                                 break;
                             case 'human_interrupt':
@@ -396,17 +393,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                                 generateBtn.textContent = 'Generate Verified Contract';
                                 addMessage('ai', 'Error: ' + msg.payload.message);
                                 break;
-                            case 'server_error': // Some servers might use this type
-                                generateBtn.disabled = false;
-                                generateBtn.textContent = 'Generate Verified Contract';
-                                addMessage('ai', 'Server Error: ' + msg.payload.message);
-                                break;
                             case 'checkpoint':
-                                currentLogs = null;
-                                addMessage('ai', 'Reached checkpoint: ' + msg.payload.checkpoint_id);
+                                if (!currentLogs) currentLogs = createThinkingBlock();
+                                currentLogs.textContent += 'Reached checkpoint: ' + msg.payload.checkpoint_id + '\\n';
+                                currentLogs.scrollTop = currentLogs.scrollHeight;
                                 break;
                         }
                     }
+
+                    window.addEventListener('message', event => {
+                        const message = event.data;
+                        switch (message.type) {
+                            case 'status':
+                                statusText.textContent = message.value;
+                                statusText.className = 'status-' + message.value.toLowerCase();
+                                connectBtn.textContent = message.value === 'Connected' ? 'Disconnect' : 'Connect';
+                                break;
+                            case 'error':
+                                if (message.value.includes('Not connected') || message.value.includes('Connection failed')) {
+                                    generateBtn.disabled = false;
+                                    generateBtn.textContent = 'Generate Verified Contract';
+                                }
+                                addMessage('ai', 'Error: ' + message.value);
+                                break;
+                            case 'serverMessage':
+                                handleServerMessage(message.value);
+                                break;
+                        }
+                    });
                 </script>
             </body>
             </html>`;

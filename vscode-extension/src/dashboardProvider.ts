@@ -10,7 +10,7 @@ export class DashboardProvider {
 
         const panel = vscode.window.createWebviewPanel(
             DashboardProvider.viewType,
-            'Prover History',
+            'Prover History (Mockup)',
             column || vscode.ViewColumn.One,
             {
                 enableScripts: true,
@@ -27,7 +27,7 @@ export class DashboardProvider {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Prover History</title>
+                <title>Prover History (Mockup)</title>
                 <style>
                     body { font-family: sans-serif; padding: 20px; }
                     .run-card { border: 1px solid #ccc; border-radius: 8px; padding: 15px; margin-bottom: 20px; background: #fafafa; }
@@ -44,7 +44,7 @@ export class DashboardProvider {
                 </style>
             </head>
             <body>
-                <h1>Prover History</h1>
+                <h1>Prover History (Mockup)</h1>
                 <div id="history-list">
                     <!-- Sample Card 1 -->
                     <div class="run-card">

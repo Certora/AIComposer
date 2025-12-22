@@ -416,9 +416,7 @@ def execute_ai_composer_workflow(
             )
 
         assert isinstance(result, ResultStateSchema)
-        io.log_info("\n" + "=" * 80)
-        io.log_info("CODE GENERATION COMPLETED")
-        io.log_info("=" * 80)
+        io.log_info("= CODE GENERATION COMPLETED =")
         io.log_info("Generated Source Files:")
         for path in result.source:
             io.log_info(f"\n--- {path} ---")

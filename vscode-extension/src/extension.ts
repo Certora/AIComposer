@@ -23,27 +23,43 @@ export function activate(context: vscode.ExtensionContext) {
         };
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) return;
-
+        
         for (const [fileName, cat] of Object.entries(categories)) {
-            // Strategy 1: Direct path relative to workspace root
-            const directPath = vscode.Uri.joinPath(workspaceFolders[0].uri, 'examples', 'trivial', fileName);
-            try {
-                await vscode.workspace.fs.stat(directPath);
-                contextManagerProvider.addFile(cat, directPath.fsPath);
-                continue; // Found it
-            } catch (e) {}
+            let foundPath: string | null = null;
 
-            // Strategy 2: findFiles as fallback
-            const found = await vscode.workspace.findFiles(`**/examples/trivial/${fileName}`, '**/node_modules/**', 1);
-            if (found.length > 0) {
-                contextManagerProvider.addFile(cat, found[0].fsPath);
+            // Strategy 1: Workspace relative
+            if (workspaceFolders && workspaceFolders.length > 0) {
+                const directPath = vscode.Uri.joinPath(workspaceFolders[0].uri, 'examples', 'trivial', fileName);
+                try {
+                    await vscode.workspace.fs.stat(directPath);
+                    foundPath = directPath.fsPath;
+                } catch (e) {}
+            }
+
+            // Strategy 2: Absolute path (for this specific environment)
+            if (!foundPath) {
+                const absPath = `/home/omer-lerinman/work/AIComposer/examples/trivial/${fileName}`;
+                try {
+                    await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
+                    foundPath = absPath;
+                } catch (e) {}
+            }
+
+            // Strategy 3: findFiles
+            if (!foundPath) {
+                const found = await vscode.workspace.findFiles(`**/examples/trivial/${fileName}`, '**/node_modules/**', 1);
+                if (found.length > 0) {
+                    foundPath = found[0].fsPath;
+                }
+            }
+
+            if (foundPath) {
+                contextManagerProvider.addFile(cat, foundPath);
             }
         }
     };
     
-    // Give the tree view a moment to initialize before adding files
-    setTimeout(loadTrivial, 1000);
+    loadTrivial();
 
     const chatViewProvider = new ChatViewProvider(context.extensionUri, contextManagerProvider);
     context.subscriptions.push(
