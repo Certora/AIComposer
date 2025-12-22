@@ -1,0 +1,143 @@
+{
+  "name": "certora-ai-composer",
+  "displayName": "Certora AI Composer",
+  "description": "Intelligent, security-aware pair programmer for web3 developers.",
+  "version": "0.1.0",
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "certora-ai-composer",
+          "title": "Certora AI Composer",
+          "icon": "resources/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "certora-ai-composer": [
+        {
+          "id": "certora-ai-composer.contextManager",
+          "name": "Context Manager"
+        },
+        {
+          "type": "webview",
+          "id": "certora-ai-composer.chatView",
+          "name": "AI Composer Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "certora-ai-composer.openDashboard",
+        "title": "Open Prover Dashboard",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "certora-ai-composer.addContext",
+        "title": "Add Context",
+        "icon": "$(add)"
+      },
+      {
+        "command": "certora-ai-composer.removeContext",
+        "title": "Remove from Context",
+        "icon": "$(x)"
+      },
+      {
+        "command": "certora-ai-composer.openSettings",
+        "title": "Settings",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "certora-ai-composer.openDashboard",
+          "when": "view == certora-ai-composer.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "certora-ai-composer.openSettings",
+          "when": "view == certora-ai-composer.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "certora-ai-composer.openSettings",
+          "when": "view == certora-ai-composer.contextManager",
+          "group": "navigation"
+        },
+        {
+          "command": "certora-ai-composer.addContext",
+          "when": "view == certora-ai-composer.contextManager",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "certora-ai-composer.removeContext",
+          "when": "view == certora-ai-composer.contextManager && viewItem == file",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Certora AI Composer",
+      "properties": {
+        "certora-ai-composer.serverPort": {
+          "type": "number",
+          "default": 8769,
+          "description": "The port the AI Composer WebSocket server is listening on."
+        },
+        "certora-ai-composer.model": {
+          "type": "string",
+          "enum": [
+            "claude-sonnet-4-20250514",
+            "claude-3-5-sonnet-20240620",
+            "claude-3-opus-20240229",
+            "claude-3-haiku-20240307"
+          ],
+          "default": "claude-sonnet-4-20250514",
+          "description": "The AI model to use for composer tasks."
+        },
+        "certora-ai-composer.memoryTool": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the memory tool for the AI composer."
+        },
+        "certora-ai-composer.debugPromptOverride": {
+          "type": "string",
+          "default": "",
+          "description": "Override the default prompt with a custom one for debugging."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^7.14.1",
+    "@typescript-eslint/parser": "^7.14.1",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "ws": "^8.17.1"
+  }
+}
+
