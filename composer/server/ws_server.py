@@ -146,7 +146,17 @@ async def handler(websocket: Any) -> None:
                     await response_queue.put(data)
 
             except Exception as e:
-                print(f"[SERVER] Error processing message from {addr}: {e}", flush=True)
+                error_msg = f"Error processing message: {str(e)}"
+                print(f"[SERVER] {error_msg} from {addr}", flush=True)
+                import traceback
+                traceback.print_exc()
+                try:
+                    await websocket.send(json.dumps({
+                        "type": "error",
+                        "payload": {"message": f"server error: {error_msg}"}
+                    }))
+                except:
+                    pass
     except Exception as e:
         print(f"[SERVER] Connection error with {addr}: {e}", flush=True)
     finally:

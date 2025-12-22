@@ -71,13 +71,12 @@ def sandboxed_certora_run(
         sub_args = [sys.executable, str(wrapper_script)]
         sub_args.append(dump.name)
         sub_args.extend(args)
-        
-        # Ensure environment is clean but carries PYTHONPATH if set
-        env = os.environ.copy()
-        
         io.log_info(f"Starting Certora Prover subprocess...")
         if prover_opts.capture_output:
             io.log_info("[Warning] Capturing output from the prover; note that some errors may not appear in stdout.")
+        
+        # Ensure environment is clean but carries PYTHONPATH if set
+        env = os.environ.copy()
         r = subprocess.run(sub_args, encoding="utf-8", capture_output=prover_opts.capture_output, env=env)
         io.log_info(f"Certora Prover subprocess completed with return code {r.returncode}")
         if r.returncode != 0:
@@ -227,7 +226,7 @@ def certora_prover(
                 ctxt.io.log_error(str(e))
                 import traceback
                 traceback.print_exc()
-                sys.exit(1)
+                raise e
 
 def report_to_todo_list(state: AIComposerState, report: str, tool_call_id: str) -> str:
     runtime = get_runtime(AIComposerContext)

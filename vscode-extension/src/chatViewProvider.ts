@@ -229,12 +229,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </style>
             </head>
             <body>
-                <div class="sidebar-header">
-                    <img src="${logoUri}" class="header-logo" alt="Certora">
-                    <span class="header-title">Certora AI Composer</span>
-                    <span class="header-gear" onclick="openSettings()">⚙️</span>
-                </div>
-
                 <div id="status-bar">
                     <span id="status-text" class="status-disconnected">Disconnected</span>
                     <button class="secondary" id="connect-btn" onclick="connect()">Connect</button>

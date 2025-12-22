@@ -31,7 +31,7 @@ class WebSocketComposerIO(ComposerIO):
         except Exception as e:
             # We don't want to crash the workflow if a message fails to send,
             # but we should probably log it.
-            print(f"Failed to send websocket message: {e}")
+            print(f"[WS_IO] Failed to send websocket message ({msg_type}): {e}")
 
     def summarize_update(self, state: dict) -> None:
         self._send("summarize_update", state)

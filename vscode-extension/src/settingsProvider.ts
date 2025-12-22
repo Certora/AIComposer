@@ -2,12 +2,53 @@ import * as vscode from 'vscode';
 
 export class SettingsProvider {
     public static readonly viewType = 'certora-ai-composer.settings';
+    public static currentPanel: SettingsProvider | undefined;
+
+    private readonly _panel: vscode.WebviewPanel;
+    private readonly _extensionUri: vscode.Uri;
+    private _disposables: vscode.Disposable[] = [];
+
+    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
+        this._panel = panel;
+        this._extensionUri = extensionUri;
+
+        this._panel.webview.html = SettingsProvider._getHtmlForWebview(this._panel.webview, this._extensionUri);
+
+        this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+
+        this._panel.webview.onDidReceiveMessage(
+            async (message) => {
+                switch (message.command) {
+                    case 'save':
+                        await SettingsProvider._saveSettings(message.settings);
+                        vscode.window.showInformationMessage('Settings saved successfully');
+                        break;
+                    case 'reset':
+                        await SettingsProvider._resetSettings();
+                        this._panel.webview.html = SettingsProvider._getHtmlForWebview(this._panel.webview, this._extensionUri);
+                        vscode.window.showInformationMessage('Settings reset to defaults');
+                        break;
+                }
+            },
+            null,
+            this._disposables
+        );
+    }
 
     public static createOrShow(extensionUri: vscode.Uri) {
+        const column = vscode.window.activeTextEditor
+            ? vscode.window.activeTextEditor.viewColumn
+            : undefined;
+
+        if (SettingsProvider.currentPanel) {
+            SettingsProvider.currentPanel._panel.reveal(column);
+            return;
+        }
+
         const panel = vscode.window.createWebviewPanel(
             SettingsProvider.viewType,
             'AI Composer Settings',
-            vscode.ViewColumn.One,
+            column || vscode.ViewColumn.One,
             {
                 enableScripts: true,
                 localResourceRoots: [extensionUri],
@@ -15,21 +56,20 @@ export class SettingsProvider {
             }
         );
 
-        panel.webview.html = this._getHtmlForWebview(panel.webview, extensionUri);
+        SettingsProvider.currentPanel = new SettingsProvider(panel, extensionUri);
+    }
 
-        panel.webview.onDidReceiveMessage(async (message) => {
-            switch (message.command) {
-                case 'save':
-                    await this._saveSettings(message.settings);
-                    vscode.window.showInformationMessage('Settings saved successfully');
-                    break;
-                case 'reset':
-                    await this._resetSettings();
-                    panel.webview.html = this._getHtmlForWebview(panel.webview, extensionUri);
-                    vscode.window.showInformationMessage('Settings reset to defaults');
-                    break;
+    public dispose() {
+        SettingsProvider.currentPanel = undefined;
+
+        this._panel.dispose();
+
+        while (this._disposables.length) {
+            const x = this._disposables.pop();
+            if (x) {
+                x.dispose();
             }
-        });
+        }
     }
 
     private static async _saveSettings(settings: any) {

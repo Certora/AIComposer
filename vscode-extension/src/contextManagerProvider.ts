@@ -43,11 +43,14 @@ export class ContextManagerProvider implements vscode.TreeDataProvider<ContextIt
     }
 
     addFile(category: string, filePath: string) {
+        console.log(`[ContextManager] Adding file to ${category}: ${filePath}`);
         if (this.items[category]) {
             if (!this.items[category].includes(filePath)) {
                 this.items[category].push(filePath);
                 this._onDidChangeTreeData.fire();
             }
+        } else {
+            console.error(`[ContextManager] Category ${category} not found!`);
         }
     }
 
