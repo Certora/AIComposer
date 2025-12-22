@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "target": "ES2022",
+    "outDir": "out",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "sourceMap": true,
+    "rootDir": "src",
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "NodeNext"
+  },
+  "exclude": [
+    "node_modules",
+    ".vscode-test"
+  ]
+}
+

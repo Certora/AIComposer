@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Certora AI Composer Mockup</title>
+    <style>
+        :root {
+            --vscode-editor-background: #1e1e1e;
+            --vscode-editor-foreground: #d4d4d4;
+            --vscode-sideBar-background: #252526;
+            --vscode-sideBar-foreground: #cccccc;
+            --vscode-button-background: #0e639c;
+            --vscode-button-foreground: #ffffff;
+            --vscode-input-background: #3c3c3c;
+            --vscode-input-foreground: #cccccc;
+            --vscode-input-border: #3c3c3c;
+            --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --vscode-textCodeBlock-background: #2d2d2d;
+            --vscode-descriptionForeground: #8b8b8b;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: var(--vscode-font-family);
+            background: #121212;
+            color: white;
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Layout */
+        .mockup-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            gap: 2px;
+            background: #000;
+        }
+
+        /* Sidebar Mockup */
+        .sidebar {
+            width: 300px;
+            background: var(--vscode-sideBar-background);
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #333;
+        }
+
+        .sidebar-header {
+            padding: 10px;
+            text-transform: uppercase;
+            font-size: 11px;
+            font-weight: bold;
+            color: var(--vscode-descriptionForeground);
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-header {
+            width: 16px;
+            height: 16px;
+        }
+
+        .header-title {
+            flex: 1;
+        }
+
+        .view-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Dashboard Mockup */
+        .editor-area {
+            flex: 1;
+            background: var(--vscode-editor-background);
+            padding: 40px;
+            overflow-y: auto;
+        }
+
+        /* UI Components - Reusing extension styles */
+        .status-bar { font-size: 12px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .status-connected { color: #4caf50; }
+        
+        .section-header {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: bold;
+            font-size: 13px;
+            padding: 8px 0;
+            color: #fff;
+        }
+
+        .context-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 15px;
+            font-size: 13px;
+            color: var(--vscode-sideBar-foreground);
+        }
+
+        .message { margin-bottom: 15px; padding: 10px; border-radius: 8px; line-height: 1.4; font-size: 13px; }
+        .user { background: var(--vscode-button-background); color: var(--vscode-button-foreground); align-self: flex-end; margin-left: 20px; }
+        .ai { background: #333; align-self: flex-start; margin-right: 20px; }
+
+        .thinking-container { margin-bottom: 10px; background: #2d2d2d; border-radius: 4px; padding: 8px; }
+        .thinking-header { display: flex; align-items: center; gap: 5px; font-weight: bold; color: var(--vscode-descriptionForeground); font-size: 12px; }
+        .thinking-logs { margin-top: 5px; padding: 8px; background: #1e1e1e; border-radius: 4px; font-family: monospace; font-size: 11px; color: #aaa; }
+
+        .human-interrupt { border: 1px solid #444; background: #1e1e1e; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        .interrupt-submit { background: var(--vscode-button-background); color: white; border: none; padding: 6px 20px; border-radius: 2px; cursor: pointer; display: block; margin: 12px auto 0 auto; }
+
+        /* Dashboard Cards */
+        .run-card { border: 1px solid #333; border-radius: 8px; padding: 20px; margin-bottom: 20px; background: #252526; max-width: 800px; }
+        .run-header { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
+        .status-icon { font-size: 24px; }
+        .run-id { font-size: 18px; font-weight: bold; }
+        .timestamp { color: #888; margin-left: auto; font-size: 14px; }
+        .metrics { font-size: 16px; margin-bottom: 10px; color: #ddd; }
+        .context-trigger { font-style: italic; color: #888; margin-bottom: 20px; font-size: 14px; }
+        .actions { display: flex; gap: 12px; }
+        .btn { padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; font-size: 13px; }
+        .btn-primary { background: var(--vscode-button-background); color: white; }
+        .btn-secondary { background: #444; color: white; }
+    </style>
+</head>
+<body>
+    <div class="mockup-container">
+        <!-- Sidebar Mockup -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <img src="vscode-extension/resources/icon.png" class="logo-header" alt="logo">
+                <span class="header-title">Certora AI Composer</span>
+                <span style="font-size: 14px; cursor: pointer;">⚙️</span>
+            </div>
+            
+            <div class="view-content">
+                <!-- Context Manager -->
+                <div class="section-header">▼ Interfaces (1)</div>
+                <div class="context-item">📄 Intf.sol</div>
+                <div class="section-header">▼ Specs (1)</div>
+                <div class="context-item">📄 simple.spec</div>
+                <div class="section-header">▼ System Docs (2)</div>
+                <div class="context-item">📄 system_doc_simple.txt</div>
+                <div class="context-item">📄 README.md</div>
+                
+                <hr style="width: 100%; border: 0.5px solid #333; margin: 15px 0;">
+
+                <!-- Chat -->
+                <div class="status-bar">
+                    <span class="status-connected">● Connected</span>
+                </div>
+
+                <div style="display: flex; justify-content: center;">
+                    <div class="message user">Generate Verified Contract</div>
+                </div>
+
+                <div class="thinking-container">
+                    <div class="thinking-header">▶ Thinking...</div>
+                    <div class="thinking-logs">
+                        Reading IContract.sol...<br>
+                        Analyzing constraints...<br>
+                        Synthesizing CVL rules...
+                    </div>
+                </div>
+
+                <div class="human-interrupt">
+                    <div style="font-weight: bold; margin-bottom: 8px; font-size: 13px;">Question</div>
+                    <div style="font-size: 12px; color: #ccc; margin-bottom: 10px;">
+                        1) Does "The function" refer to `the_magic_function` from the CVL?
+                    </div>
+                    <textarea style="width: 100%; background: #252526; border: 1px solid #444; color: white; padding: 8px; box-sizing: border-box; resize: none;" rows="3" placeholder="Please proceed in the way you believe is best."></textarea>
+                    <button class="interrupt-submit">Submit Answer</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard Mockup -->
+        <div class="editor-area">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; max-width: 800px;">
+                <h1 style="margin: 0;">Prover History</h1>
+                <button class="btn btn-secondary">Refresh History</button>
+            </div>
+
+            <!-- Run #124 (Fail) -->
+            <div class="run-card">
+                <div class="run-header">
+                    <span class="status-icon">❌</span>
+                    <span class="run-id">#124 - Today, 10:45 AM</span>
+                </div>
+                <div class="metrics">1 Failed, 11 Passed</div>
+                <div class="context-trigger">Triggered by Chat: Deposit Function</div>
+                <div class="actions">
+                    <button class="btn btn-primary">View Trace</button>
+                    <button class="btn btn-secondary">Open Run Report ↗</button>
+                </div>
+            </div>
+
+            <!-- Run #123 (Success) -->
+            <div class="run-card">
+                <div class="run-header">
+                    <span class="status-icon">✅</span>
+                    <span class="run-id">#123 - Today, 10:00 AM</span>
+                </div>
+                <div class="metrics">12/12 Properties Passed</div>
+                <div class="context-trigger">Triggered by Chat: Base Requirements</div>
+                <div class="actions">
+                    <button class="btn btn-secondary">Open Run Report ↗</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+

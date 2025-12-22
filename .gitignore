@@ -4,3 +4,5 @@ cryptosafe.db
 *.db*
 tags
 scripts/cvl_manual.html
+.venv/
+.env

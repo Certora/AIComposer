@@ -56,14 +56,20 @@ def get_initial_prompt(prompt: PromptParams) -> str:
 
 def create_llm(args: ModelOptions) -> BaseChatModel:
     """Create and configure the LLM."""
+    kwargs: dict[str, Any] = {
+        "model_name": args.model,
+        "max_tokens_to_sample": args.tokens,
+        "temperature": 1,
+        "timeout": None,
+        "max_retries": 2,
+        "stop": None,
+    }
+    
+    if args.thinking_tokens > 0:
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": args.thinking_tokens}
+        
     return ChatAnthropic(
-        model_name=args.model,
-        max_tokens_to_sample=args.tokens,
-        temperature=1,
-        timeout=None,
-        max_retries=2,
-        stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
+        **kwargs,
         betas=([
             "files-api-2025-04-14",
             "context-management-2025-06-27"

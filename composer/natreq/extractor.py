@@ -17,6 +17,7 @@ from langgraph.graph import MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt, Command
 
+from composer.core.io import ComposerIO
 from composer.audit.types import InputFileLike
 from composer.audit.db import ResumeArtifact
 from composer.input.types import RAGDBOptions
@@ -85,7 +86,8 @@ def get_requirements(
     spec_file: InputFileLike,
     mem_backend: MemoryBackend,
     resume_artifact: ResumeArtifact | None,
-    oracle: list[str]
+    oracle: list[str],
+    io: ComposerIO
 ) -> list[str]:
     tools = [
         memory_tool(mem_backend),
@@ -153,17 +155,19 @@ spec).
                 context = interrupt_data["context"]
                 question = interrupt_data["question"]
                 if req_oracle is not None:
-                    print(f"Calling oracle...\nQuestion: {question}\nContext: {context}")
+                    io.log_info(f"Calling oracle...\nQuestion: {question}\nContext: {context}")
                     resp = req_oracle((context, question))
-                    print(f"Oracle response: {resp}")
+                    io.log_info(f"Oracle response: {resp}")
                     graph_input = Command(resume=resp)
                     break
-                print("=" * 80)
-                print(" HUMAN ASSISTANCE REQUESTED")
-                print("=" * 80)
-                print(f"Context:\n{context}")
-                print(f"Question: {question}")
-                human_response = input("Enter your reponse: ")
+                
+                # We use the common format for human_interrupt
+                human_response = io.handle_human_interrupt({
+                    "type": "question",
+                    "question": question,
+                    "context": context,
+                    "code": None
+                }, lambda: None)
                 graph_input = Command(resume=human_response)
                 break
     return built.get_state(config).values["reqs"]
