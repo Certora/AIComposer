@@ -19,6 +19,7 @@ dependencies = [
     "langchain-anthropic==0.3.21",
     "langchain-community==0.3.29",
     "langchain-text-splitters==0.3.11",
+    "langgraph-checkpoint-postgres==3.0.0",
     "langgraph-sdk==0.2.6",
     "langgraph==0.6.7",
     "psycopg==3.2.12",
