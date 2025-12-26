@@ -139,6 +139,13 @@ Examples:
         default=4096
     )
 
+    parser.add_argument(
+        "--rag-db",
+        type=str,
+        default=DEFAULT_CONNECTION,
+        help="Database connection string for CVL manual search"
+    )
+
     args = parser.parse_args()
     return analyze(cast(AnalysisArgs, args))
 
@@ -310,7 +317,7 @@ def _analyze_core(
         f"The individual rule that was checked by the prover was {args.rule}",
         calltrace_xml
     ]), context=ExplainerContext(
-        rag_db=PostgreSQLRAGDatabase(conn_string=DEFAULT_CONNECTION, model=get_model(), skip_test=True)
+        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
     ), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
