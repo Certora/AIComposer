@@ -305,7 +305,8 @@ def _analyze_core(
         tid = args.thread_id
     else:
         tid = f"cex-analysis-{uuid.uuid1().hex}"
-        print(f"Chose thread id: {tid}")
+        if not args.quiet:
+            print(f"Chose thread id: {tid}")
     
     conf["configurable"]["thread_id"] = tid
     if args.checkpoint_id is not None:
@@ -321,7 +322,8 @@ def _analyze_core(
     ), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
-            print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
+            if not args.quiet:
+                print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
         else:
             if not args.quiet:
                 print(d)
