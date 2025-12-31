@@ -1,3 +1,4 @@
+import os
 import psycopg
 from psycopg.rows import dict_row
 
@@ -24,14 +25,17 @@ from composer.workflow.summarization import SummaryGeneration
 
 
 def get_checkpointer() -> PostgresSaver:
-    conn_string = "postgresql://langgraph_checkpoint_user:langgraph_checkpoint_password@localhost:5432/langgraph_checkpoint_db"
-    conn = psycopg.connect(conn_string, autocommit=True, row_factory=dict_row)
+    host = os.environ.get("PGHOST", "localhost")
+    port = os.environ.get("PGPORT", "5432")
+    conn_string = f"postgresql://langgraph_checkpoint_user:langgraph_checkpoint_password@{host}:{port}/langgraph_checkpoint_db"    conn = psycopg.connect(conn_string, autocommit=True, row_factory=dict_row)
     checkpointer = PostgresSaver(conn)
     checkpointer.setup()
     return checkpointer
 
 def get_store() -> PostgresStore:
-    conn_string = "postgresql://langgraph_store_user:langgraph_store_password@localhost:5432/langgraph_store_db"
+    host = os.environ.get("PGHOST", "localhost")
+    port = os.environ.get("PGPORT", "5432")
+    conn_string = f"postgresql://langgraph_store_user:langgraph_store_password@{host}:{port}/langgraph_store_db"
     conn = psycopg.connect(conn_string, autocommit=True, row_factory=dict_row)
     store = PostgresStore(conn)
     store.setup()
