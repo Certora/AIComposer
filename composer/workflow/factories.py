@@ -25,8 +25,8 @@ from composer.workflow.summarization import SummaryGeneration
 
 
 def get_checkpointer() -> PostgresSaver:
-    host = os.environ.get("PGHOST", "localhost")
-    port = os.environ.get("PGPORT", "5432")
+    host = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
+    port = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
     conn_string = f"postgresql://langgraph_checkpoint_user:langgraph_checkpoint_password@{host}:{port}/langgraph_checkpoint_db"   
     conn = psycopg.connect(conn_string, autocommit=True, row_factory=dict_row)
     checkpointer = PostgresSaver(conn)
@@ -34,8 +34,8 @@ def get_checkpointer() -> PostgresSaver:
     return checkpointer
 
 def get_store() -> PostgresStore:
-    host = os.environ.get("PGHOST", "localhost")
-    port = os.environ.get("PGPORT", "5432")
+    host = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
+    port = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
     conn_string = f"postgresql://langgraph_store_user:langgraph_store_password@{host}:{port}/langgraph_store_db"
     conn = psycopg.connect(conn_string, autocommit=True, row_factory=dict_row)
     store = PostgresStore(conn)
@@ -46,8 +46,8 @@ def get_memory_ns(thread_id: str, ns: str) -> str:
     return f"ai-composer-{thread_id}-{ns}"
 
 def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
-    host = os.environ.get("PGHOST", "localhost")
-    port = os.environ.get("PGPORT", "5432")
+    host = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
+    port = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
     conn_string = f"postgresql://memory_tool_user:memory_tool_password@{host}:{port}/memory_tool_db"
     conn = psycopg.connect(conn_string)
     return PostgresMemoryBackend(ns, conn, init_from)
