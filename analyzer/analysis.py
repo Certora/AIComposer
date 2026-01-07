@@ -216,6 +216,94 @@ def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
         yield pathlib.Path(temp_dir, "TarName")
 
 def _analyze_core(
+    input_messages: list[str],
+    initial_prompt: str,
+    report_dir: pathlib.Path,
+    args: AnalysisArgs
+) -> int:
+    """Run the analysis workflow with custom calltraces and prompt.
+
+    This is the lowest-level function that executes the analysis workflow.
+    It sets up tools, LLM, and runs the workflow with the provided calltraces and prompt.
+
+    Args:
+        input_messages: List of input strings including context messages and XML calltraces
+        initial_prompt: Custom initial prompt for the workflow
+        report_dir: Path to the report directory (must be a local path)
+        args: Configuration parameters
+
+    Returns:
+        Exit code (0 for success)
+    """
+    (v_tools, _) = vfs_tools(
+        ty=SimpleState,
+        conf=VFSToolConfig(
+            immutable=True,
+            forbidden_read=r"^\..*$",
+            fs_layer=str(report_dir / "inputs" / ".certora_sources")
+        )
+    )
+
+    tools = [analysis_output_tool, *v_tools]
+    if args.ecosystem == "evm":
+        #import here to lazily load sentencetransformers
+        from composer.tools.search import cvl_manual_search
+        tools.append(cvl_manual_search)
+
+    llm = ChatAnthropic(
+        model_name="claude-sonnet-4-5-20250929",
+        max_tokens_to_sample=args.tokens,
+        temperature=1,
+        timeout=None,
+        max_retries=2,
+        stop=None,
+        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
+        betas=["interleaved-thinking-2025-05-14", "context-management-2025-06-27"],
+    )
+
+    system_prompt = load_jinja_template("analyzer_system_prompt.j2")
+
+    graph = build_workflow(
+        input_type=FlowInput,
+        context_schema=ExplainerContext,
+        output_key="result",
+        tools_list=tools,
+        unbound_llm=llm,
+        sys_prompt=system_prompt,
+        initial_prompt=initial_prompt,
+        state_class=SimpleState
+    )[0].compile(checkpointer=get_checkpointer())
+
+    conf : RunnableConfig = {"configurable": {}}
+    tid : str
+    if args.thread_id is not None:
+        tid = args.thread_id
+    else:
+        tid = f"cex-analysis-{uuid.uuid1().hex}"
+        if not args.quiet:
+            print(f"Chose thread id: {tid}")
+
+    conf["configurable"]["thread_id"] = tid
+    if args.checkpoint_id is not None:
+        conf["configurable"]["checkpoint_id"] = args.checkpoint_id
+
+    conf["recursion_limit"] = args.recursion_limit
+
+    for (ty, d) in graph.stream(input=FlowInput(input=input_messages), context=ExplainerContext(
+        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
+    ), config=conf, stream_mode=["checkpoints", "updates"]):
+        if ty == "checkpoints":
+            assert isinstance(d, dict)
+            if not args.quiet:
+                print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
+        else:
+            if not args.quiet:
+                print(d)
+
+    print(graph.get_state({"configurable": {"thread_id": tid}}).values["result"])
+    return 0
+
+def _analyze_from_report(
     report_dir: pathlib.Path,
     args: AnalysisArgs
 ) -> int:
@@ -256,80 +344,17 @@ def _analyze_core(
 
     assert calltrace_xml is not None
 
-    (v_tools, _) = vfs_tools(
-        ty=SimpleState,
-        conf=VFSToolConfig(
-            immutable=True,
-            forbidden_read=r"^\..*$",
-            fs_layer=str(report_dir / "inputs" / ".certora_sources")
-        )
-    )
-
-    tools = [analysis_output_tool, *v_tools]
-    if args.ecosystem == "evm":
-        #import here to lazily load sentencetransformers
-        from composer.tools.search import cvl_manual_search
-        tools.append(cvl_manual_search)
-
-    llm = ChatAnthropic(
-        model_name="claude-sonnet-4-5-20250929",
-        max_tokens_to_sample=args.tokens,
-        temperature=1,
-        timeout=None,
-        max_retries=2,
-        stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
-        betas=["interleaved-thinking-2025-05-14", "context-management-2025-06-27"],
-    )
-
-    system_prompt = load_jinja_template("analyzer_system_prompt.j2")
-
+    # Build the initial prompt from ecosystem template
     process = ecosystem_params[args.ecosystem]
-
     initial_prompt = load_jinja_template("analyzer_tool_prompt.j2", **process)
 
-    graph = build_workflow(
-        input_type=FlowInput,
-        context_schema=ExplainerContext,
-        output_key="result",
-        tools_list=tools,
-        unbound_llm=llm,
-        sys_prompt=system_prompt,
-        initial_prompt=initial_prompt,
-        state_class=SimpleState
-    )[0].compile(checkpointer=get_checkpointer())
-
-    conf : RunnableConfig = {"configurable": {}}
-    tid : str
-    if args.thread_id is not None:
-        tid = args.thread_id
-    else:
-        tid = f"cex-analysis-{uuid.uuid1().hex}"
-        if not args.quiet:
-            print(f"Chose thread id: {tid}")
-    
-    conf["configurable"]["thread_id"] = tid
-    if args.checkpoint_id is not None:
-        conf["configurable"]["checkpoint_id"] = args.checkpoint_id
-    
-    conf["recursion_limit"] = args.recursion_limit
-
-    for (ty, d) in graph.stream(input=FlowInput(input=[
+    # Prepare the input messages with rule context and XML calltrace
+    input_messages = [
         f"The individual rule that was checked by the prover was {args.rule}",
         calltrace_xml
-    ]), context=ExplainerContext(
-        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
-    ), config=conf, stream_mode=["checkpoints", "updates"]):
-        if ty == "checkpoints":
-            assert isinstance(d, dict)
-            if not args.quiet:
-                print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
-        else:
-            if not args.quiet:
-                print(d)
+    ]
 
-    print(graph.get_state({"configurable": {"thread_id": tid}}).values["result"])
-    return 0
+    return _analyze_core(input_messages, initial_prompt, report_dir, args)
 
 def analyze(
     args: AnalysisArgs
@@ -337,7 +362,59 @@ def analyze(
     """Analyze counterexamples, handling both local folders and URLs."""
     if _looks_like_url(args.folder):
         with _download_and_extract_report(args.folder) as report_dir:
-            return _analyze_core(report_dir, args)
+            return _analyze_from_report(report_dir, args)
     else:
         report_dir = pathlib.Path(args.folder)
-        return _analyze_core(report_dir, args)
+        return _analyze_from_report(report_dir, args)
+
+def analyze_with_calltraces(
+    input_messages: list[str],
+    initial_prompt: str,
+    args: AnalysisArgs
+) -> int:
+    """Run analysis workflow with custom calltraces and prompt.
+
+    Entry point for external callers who want to run the analyzer
+    with custom counterexample XMLs and prompts, bypassing report parsing.
+
+    This is useful for:
+    - Analyzing multiple violations from the same rule
+    - Providing custom analysis prompts
+    - Integrating the analyzer into other workflows
+
+    Args:
+        input_messages: List of input strings including contextual messages and XML calltraces.
+            For example: ["Rule: myRule", "Context info...", "<calltrace>...</calltrace>"]
+        initial_prompt: Custom initial prompt for the workflow. This sets up
+            the context for the analysis (e.g., ecosystem-specific instructions).
+        args: Configuration parameters. Note that args.folder must be a local
+            folder path (not a URL) pointing to the Certora report directory.
+
+    Returns:
+        Exit code (0 for success, non-zero for errors)
+
+    Raises:
+        AssertionError: If args.folder appears to be a URL
+
+    Example:
+        >>> from analyzer import analyze_with_calltraces
+        >>> args = MyArgs(
+        ...     folder="/path/to/report",
+        ...     ecosystem="evm",
+        ...     rag_db="postgresql://...",
+        ...     tokens=4096,
+        ...     thinking_tokens=2048,
+        ...     recursion_limit=30,
+        ...     thread_id=None,
+        ...     checkpoint_id=None,
+        ...     quiet=False
+        ... )
+        >>> messages = ["Rule: myRule", "<calltrace>...</calltrace>"]
+        >>> prompt = "Analyze this counterexample..."
+        >>> result = analyze_with_calltraces(messages, prompt, args)
+    """
+    assert not _looks_like_url(args.folder), \
+        "args.folder must be a local folder path, not a URL. Use analyze() to handle URLs."
+
+    report_dir = pathlib.Path(args.folder)
+    return _analyze_core(input_messages, initial_prompt, report_dir, args)
