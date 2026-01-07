@@ -139,6 +139,13 @@ Examples:
         default=4096
     )
 
+    parser.add_argument(
+        "--rag-db",
+        type=str,
+        default=DEFAULT_CONNECTION,
+        help="Database connection string for CVL manual search"
+    )
+
     args = parser.parse_args()
     return analyze(cast(AnalysisArgs, args))
 
@@ -298,7 +305,8 @@ def _analyze_core(
         tid = args.thread_id
     else:
         tid = f"cex-analysis-{uuid.uuid1().hex}"
-        print(f"Chose thread id: {tid}")
+        if not args.quiet:
+            print(f"Chose thread id: {tid}")
     
     conf["configurable"]["thread_id"] = tid
     if args.checkpoint_id is not None:
@@ -310,11 +318,12 @@ def _analyze_core(
         f"The individual rule that was checked by the prover was {args.rule}",
         calltrace_xml
     ]), context=ExplainerContext(
-        rag_db=PostgreSQLRAGDatabase(conn_string=DEFAULT_CONNECTION, model=get_model(), skip_test=True)
+        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
     ), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
-            print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
+            if not args.quiet:
+                print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
         else:
             if not args.quiet:
                 print(d)

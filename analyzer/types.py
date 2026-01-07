@@ -42,3 +42,7 @@ class AnalysisArgs(Protocol):
     @property
     def ecosystem(self) -> Ecosystem:
         ...
+
+    @property
+    def rag_db(self) -> str:
+        ...
