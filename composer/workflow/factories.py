@@ -25,6 +25,7 @@ from composer.workflow.summarization import SummaryGeneration
 
 
 def _get_composer_connection(
+    *,
     user: str,
     password: str,
     database: str,
@@ -53,9 +54,9 @@ def _get_composer_connection(
 
 def get_checkpointer() -> PostgresSaver:
     conn = _get_composer_connection(
-        "langgraph_checkpoint_user",
-        "langgraph_checkpoint_password",
-        "langgraph_checkpoint_db",
+        user="langgraph_checkpoint_user",
+        password="langgraph_checkpoint_password",
+        database="langgraph_checkpoint_db",
         autocommit=True,
         row_factory=dict_row
     )
@@ -65,9 +66,9 @@ def get_checkpointer() -> PostgresSaver:
 
 def get_store() -> PostgresStore:
     conn = _get_composer_connection(
-        "langgraph_store_user",
-        "langgraph_store_password",
-        "langgraph_store_db",
+        user="langgraph_store_user",
+        password="langgraph_store_password",
+        database="langgraph_store_db",
         autocommit=True,
         row_factory=dict_row
     )
@@ -80,9 +81,9 @@ def get_memory_ns(thread_id: str, ns: str) -> str:
 
 def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
     conn = _get_composer_connection(
-        "memory_tool_user",
-        "memory_tool_password",
-        "memory_tool_db"
+        user="memory_tool_user",
+        password="memory_tool_password",
+        database="memory_tool_db"
     )
     return PostgresMemoryBackend(ns, conn, init_from)
 
