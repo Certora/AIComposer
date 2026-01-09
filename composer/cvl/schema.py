@@ -185,7 +185,7 @@ class FunctionApplication(BaseModel):
     Any function like application. This is used for cast operators, built in functions, CVL functions, macros, and
     contract functions.
     """
-    annotation: Literal["with_revert", "no_revert"] | None = Field(description="Annotation indicating whether the function should revert. Must be None for any application which is not a CVL function or method application.")
+    annotation: Literal["withrevert", "norevert"] | None = Field(description="Annotation indicating whether the function should revert. Must be None for any application which is not a CVL function or method application. norevert is the default, and can usually be omitted.")
     name: str = Field(description="The name of the function-like object to invoke.")
     host_contract: str | None = Field(description="The name of the contract declaring this method. None if this is not a contract application")
     params: list[Expression] = Field(description="The arguments to the function")
@@ -428,28 +428,16 @@ SlotPattern = Annotated[
 ]
 
 class StatePattern(Protocol):
-    @property
-    def slot_pattern(self) -> SlotPattern:
-        ...
-
-
-    @property
-    def type(self) -> str:
-        ...
+    slot_pattern: SlotPattern
+    type: str
 
 class LoadPattern(StatePattern):
-    @property
-    def value_param(self) -> NamedVMParam:
-        ...
+    value_param: NamedVMParam
 
 class StorePattern(StatePattern):
-    @property
-    def new_value_param(self) -> NamedVMParam:
-        ...
+    new_value_param: NamedVMParam
 
-    @property
-    def old_value_param(self) -> NamedVMParam | None:
-        ...
+    old_value_param: NamedVMParam | None
 
 
 # Hook Definitions

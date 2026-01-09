@@ -1,8 +1,7 @@
 from graphcore.graph import WithToolCallId
 from pydantic import Field
 from typing import List, Annotated, cast, Literal, TypedDict, Protocol, ClassVar, Any
-from langchain_core.tools import tool, InjectedToolCallId
-from composer.core.context import AIComposerContext
+from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 from composer.diagnostics.stream import ManualSearchResult
@@ -50,8 +49,8 @@ class CVLManualSearchSchema(WithToolCallId):
               "If specified, at least one section heading must match at least one of the values provided here")
 
 
-@tool(args_schema=CVLManualSearchSchema)
-def cvl_manual_search(
+@tool("cvl_manual_search", args_schema=CVLManualSearchSchema)
+def _cvl_manual_search(
     question: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
     similarity_cutoff: float = 0.5,
@@ -82,3 +81,6 @@ def cvl_manual_search(
         return cast(List[dict], to_ret)
     except Exception as e:
         return f"Failed to search CVL manual: {str(e)}"
+
+def cvl_manual_search(ctxt: type[RAGDBContext]) -> BaseTool:
+    return _cvl_manual_search

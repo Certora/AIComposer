@@ -1,24 +1,24 @@
 from typing import TypeVar, Callable, Literal, Annotated, get_args, get_origin, cast, Any
 
-from pydantic import create_model, Field
+from pydantic import create_model, Field, BaseModel
 
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command, interrupt
 
-from composer.core.state import AIComposerState
-from composer.human.handlers import HumanInteractionType
-
-T = TypeVar("T", bound=HumanInteractionType)
+M = TypeVar("M")
+S = TypeVar("S")
 
 _injected_state_name = "composer_injected_state"
 
 def human_interaction_tool(
-    t: type[T],
+    t: type[M],
+    state: type[S],
     name: str,
-    state_updater: Callable[[AIComposerState, T, str], dict] = lambda x, y, z: {}
+    state_updater: Callable[[S, M, str], dict] = lambda x, y, z: {}
 ) -> BaseTool:
+    assert issubclass(t, BaseModel) or issubclass(t, dict)
     fields = {}
     disc : str | None = None
     for (k, v) in t.__annotations__.items():
@@ -34,7 +34,7 @@ def human_interaction_tool(
             fields[k] = (a[0], Field(description=a[1]))
         else:
             raise RuntimeError(f"Illegal type annotation: {v} for {k}")
-    fields[_injected_state_name] = (Annotated[AIComposerState, InjectedState], Field())
+    fields[_injected_state_name] = (Annotated[state, InjectedState], Field())
     fields["tool_call_id"] = (Annotated[str, InjectedToolCallId], Field())
 
     model = create_model(
@@ -42,15 +42,20 @@ def human_interaction_tool(
         __doc__ = t.__doc__,
         **cast(dict[str, Any], fields)
     )
-    @tool(args_schema=model)
+    @tool(name, args_schema=model)
     def interaction_tool(
         **kwargs
     ) -> Command:
         dict_args = {
             k: v for (k, v) in kwargs.items() if k != "tool_call_id" and k != _injected_state_name
         }
-        dict_args["type"] = disc
-        payload : T = t(**dict_args) #type: ignore
+        if disc is not None:
+            dict_args["type"] = disc
+        payload : Any
+        if issubclass(t, BaseModel):
+            payload = t.model_validate(dict_args)
+        else:
+            payload = t(**dict_args)
         response = interrupt(payload)
         state_update = state_updater(kwargs[_injected_state_name], payload, response)
         response_update = {
@@ -60,5 +65,4 @@ def human_interaction_tool(
         }
         response_update.update(state_update)
         return Command(update=response_update)
-    interaction_tool.name = name
     return interaction_tool

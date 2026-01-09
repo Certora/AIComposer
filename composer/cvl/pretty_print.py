@@ -21,7 +21,7 @@ Precedence levels (from lowest to highest, based on the CVL grammar):
 """
 
 from typing import Callable, TypeVar, cast
-from schema import *
+from composer.cvl.schema import *
 
 T = TypeVar("T")
 
@@ -52,8 +52,6 @@ PRECEDENCE = {
     "array_access": 15,
     "field_access": 15,
     "function_call": 15,
-    "cast": 15,
-    "builtin_call": 15,
     
     # Literals and identifiers (highest precedence)
     "bool_literal": 16,
@@ -120,7 +118,7 @@ class LineBuilder:
     def __init__(self, indent_amt: int = 0, parent: "LineBuilder | None" = None):
         self.indent_amt = indent_amt
         self.parent = parent
-        self.buffer = []
+        self.buffer : list[str] = []
         self.child_line : LineInterleaver | None = None
     def indent(self) -> "LineBuilder":
         if self.child_line is not None and self.child_line.string_buff:
@@ -186,8 +184,6 @@ class CVLPrettyPrinter:
                 return self._print_function_call(expr)
             case "signature_literal":
                 return self._print_signature_literal(expr)
-            case _:
-                raise ValueError(f"Unknown expression type: {expr.type}")
 
     def _print_bool_literal(self, expr: BoolLiteral) -> str:
         return "true" if expr.value else "false"
@@ -406,7 +402,7 @@ class CVLPrettyPrinter:
         targets = [self._print_left_hand_side(target) for target in cmd.targets]
         fragment = f"havoc {', '.join(targets)}"
         if cmd.assumption:
-            fragment += f"assuming {self.print_expression(cmd.assumption)}"
+            fragment += f" assuming {self.print_expression(cmd.assumption)}"
         return fragment + ";"
     
     def _print_assume_cmd(self, cmd: AssumeCmd) -> str:
@@ -711,12 +707,12 @@ class CVLPrettyPrinter:
             lb.append("hook ")
             match pattern.type:
                 case "sstore":
-                    as_patt : StorePattern = cast(StorePattern, pattern)
-                    self._print_store_pattern(as_patt, lb)
+                    as_sstore_patt : StorePattern = cast(StorePattern, pattern)
+                    self._print_store_pattern(as_sstore_patt, lb)
                 case "tstore":
                     pat : TstoreHook = pattern
-                    as_patt : StorePattern = cast(StorePattern, pat)
-                    self._print_store_pattern(as_patt, lb)
+                    as_tstore_patt : StorePattern = cast(StorePattern, pat)
+                    self._print_store_pattern(as_tstore_patt, lb)
                 case "sload":
                     self._print_load_pattern(cast(LoadPattern, pattern), lb)
                 case "tload":
@@ -862,16 +858,6 @@ class CVLPrettyPrinter:
         return f"using {imp.contract_name} as {imp.as_name};"
 
 def pretty_print(obj: CVLFile) -> str:
-    """
-    Pretty print a CVL schema object.
-    
-    Args:
-        obj: The object to print
-        **kwargs: Options for the pretty printer
-    
-    Returns:
-        Pretty printed string representation
-    """
     printer = CVLPrettyPrinter()
     to_ret = []
     for imp in obj.import_contract:
@@ -880,66 +866,3 @@ def pretty_print(obj: CVLFile) -> str:
         to_ret.append(printer.print_basic_block(bb))
         to_ret.append("")
     return "\n".join(to_ret)
-
-if __name__ == "__main__":
-    import json
-    import tempfile
-    import os
-    from datetime import datetime
-    from langchain_anthropic import ChatAnthropic
-    from langchain_core.messages import SystemMessage, HumanMessage
-    import sys
-    
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], "r") as f:
-            print(pretty_print(CVLFile.model_validate_json(f.read())))
-            sys.exit(0)
-    
-    # Initialize Claude client with structured output
-    # print(CVLFile.model_json_schema())
-
-    llm = ChatAnthropic(
-        model_name="claude-haiku-4-5-20251001",  # TODO: Update model name as needed
-        max_tokens_to_sample=10000,
-        temperature=0.1,
-        timeout=None,
-        stop=None
-    ).with_structured_output(CVLFile.model_json_schema())
-    
-    messages = [
-        SystemMessage(content="You are an expert in the Certora Verification Language (CVL). Generate valid CVL specifications based on the user's requirements."),
-        HumanMessage(content="""Generate a simple CVL specification for an ERC20 token contract that:
-1. Has a rule to verify that transfer preserves the total supply
-2. Has an invariant that balances are always non-negative  
-3. Uses a methods block to summarize external functions
-4. Use as many expression types as possible, and nest expressions as much as possible, even if it means writing pointless code
-5. Include as many summary types as possible
-6. Uses as many features of CVL as possible""")
-    ]
-    
-    try:
-        # Generate CVL using structured output
-        print("Generating CVL specification...")
-        cvl_file_raw = llm.invoke(messages)
-        cvl_file = CVLFile.model_validate(cvl_file_raw)
-        # Pretty print the generated CVL
-        print("Generated CVL:")
-        print("=" * 50)
-        cvl_output = pretty_print(cvl_file)
-        print(cvl_output)
-        print("=" * 50)
-        
-        # Save JSON serialization to temp file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        temp_dir = tempfile.gettempdir()
-        json_file = os.path.join(temp_dir, f"cvl_generated_{timestamp}.json")
-        
-        with open(json_file, 'w') as f:
-            json.dump(cvl_file.model_dump(), f, indent=2)
-        
-        print(f"\nJSON serialization saved to: {json_file}")
-        
-    except Exception as e:
-        print(f"Error generating CVL: {e}")
-        import traceback
-        traceback.print_exc()

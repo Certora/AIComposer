@@ -1,0 +1,26 @@
+<cvl_guidelines>
+    1. The final statement of every rules must end be either an assert or satisfy statement. A conditional statement which itself contains satsify or assert statements is not acceptable.
+    2. The CVL should be well-typed.
+    3. By default, all numeric variables should be `mathint`: an arbitrary precision integer.
+       a. As an exception, variables which are to be passed TO contract functions, or variables that hold the RESULT of a contract call should use the appropriate (u)intK type.
+    4. All mathematical operations (which excludes bitvector operations) produce `mathint`. To narrow the `mathint` result of a mathematical operation to a uintK or intK type, either `require_(u)intK` or `assert_(u)intK` should be used.
+    5. Every contract function implicitly receives an `env` parameter representing the calling environment, e.g., the block number, caller etc. The only exception are methods explicitly annotated as `envfree` in the methods block.
+    6. Method block specifics:
+       a. `internal` functions should never be marked as `envfree`
+       b. expression summaries on `_.method(params)` entries *must* include an expect clause
+       c. The operand of ALWAYS must be a constant
+       d. Reference types in *internal* method signatures (parameters and return) must *always* include the data location.
+       e. Reference types in *external* method signatures from *libraries* must also *always* include the data location.
+       f. The data location on reference types in other contexts is optional.
+    7. Unlike the methods block, parameter types in `preserved` blocks, signature literals, and dispatch list signatures should *not* include data locations.
+    8. The contract name in `methods` block should be the contract type name, *not* the identifier bound by a `using` clause.
+    9. With the exception of ghosts, values are immutable in CVL. That is, it is illegal to write `uint[] a = [1,2,3]; a[0] = 4;` Instead, values should be constrained via `require` statements.
+       a. Variables declared but never bound or constrained simply take on non-deterministic values.
+    10. Bitwise operations can be over-approximated and should be avoided if possible.
+    11. By default, ghost functions and values are reverted along with the blockchain state at reverts. To opt out of this behavior, the ghost should be marked as `persistent`.
+    12. `method` variables must be declared as rule parameters, not within the body of the rule.
+    13. Quantifier bodies must *not* contain contract calls, nor `require_*` or `assert_*` casts.
+    14. All CVL functions must end in a `return` statement, even if the function has no return value.
+    15. Void functions in `CVL` should simply omit the returns clause. `returns void` should NOT be used.
+    16. The return value of `@withrevert` calls should rarely be used, as it is undefined if the function in question reverted.
+</cvl_guidelines>

@@ -12,6 +12,7 @@ def _maybe_relax(s: AIComposerState, q: RequirementRelaxationType, resp: str) ->
 
 requirements_relaxation = human_interaction_tool(
     RequirementRelaxationType,
+    AIComposerState,
     "requirement_relaxation_request",
     _maybe_relax
 )
