@@ -8,9 +8,9 @@ import uuid
 import pathlib
 
 from dataclasses import dataclass
-from typing import cast, Annotated, Literal, NotRequired, Any
+import types
+from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence
 
-from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 
 from langchain_core.tools import tool, InjectedToolCallId, BaseTool
@@ -38,9 +38,12 @@ from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import build_workflow, FlowInput, MessagesState, tool_state_update
 from graphcore.summary import SummaryConfig
 
-guidelines_validation = Literal["guidelines"]
+type ValidationToken = Literal["guidelines", "suggestion"]
 
-all_validations : list[guidelines_validation] = ["guidelines"]
+guidelines = "guidelines"
+suggestions = "suggestion"
+
+all_validations : list[ValidationToken] = [guidelines, suggestions]
 
 class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
     input_file: str
@@ -80,10 +83,100 @@ class FeedbackItem(BaseModel):
     guideline_ref: str = Field(description="The text of the guideline which is violated.")
 
 class Feedback(BaseModel):
+    """
+    Used to communicate the result of your analysis of the CVL spec against the guidelines.
+    """
     items: list[FeedbackItem]
 
 class FeedbackState(MessagesState):
     output: NotRequired[Feedback]
+
+M = TypeVar("M", bound=BaseModel)
+
+InclusionType = Literal["interface", "system_doc"]
+
+def gen_feedback_tool(
+    llm: BaseChatModel,
+    tool_name: str,
+    doc: str,
+    prompt_j2: str,
+    output_schema: type[M],
+    oracle_token: ValidationToken,
+    inclusion: Sequence[InclusionType],
+    result_handler: Callable[[M, NatSpecState], tuple[str, bool]]
+) -> BaseTool:
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    mem = memory_tool(SqliteMemoryBackend("none", conn))
+    search_tool = cvl_manual_search(NatSpecContext)
+    assert output_schema.__doc__ is not None
+    result = result_tool_generator("output", output_schema, output_schema.__doc__)
+
+    def fill_state(ns):
+        ns["__annotations__"] = {
+            "output": NotRequired[output_schema]
+        }
+
+    state_class = types.new_class(
+        f"{tool_name}State",
+        bases=(MessagesState,),
+        exec_body=fill_state
+    )
+
+    work = build_workflow(
+        state_class=state_class,
+        input_type=FlowInput,
+        tools_list=[mem, search_tool, result],
+        sys_prompt=load_jinja_template("cvl_system_prompt.j2"),
+        initial_prompt=load_jinja_template(prompt_j2),
+        output_key="output",
+        context_schema=NatSpecContext,
+        unbound_llm=llm
+    )[0].compile()
+
+    class JudgeSchema(BaseModel):
+        tool_call_id: Annotated[str, InjectedToolCallId]
+        state: Annotated[NatSpecState, InjectedState]
+
+    JudgeSchema.__doc__ = doc
+
+    @tool(tool_name, args_schema=GuidelineJudgeSchema)
+    def feedback_tool(
+        tool_call_id: Annotated[str, InjectedToolCallId],
+        state: Annotated[NatSpecState, InjectedState]
+    ) -> Command | str:
+        if state["curr_intf"] is None or state["curr_spec"] is None:
+            return "Both the interface and curr_spec must be put on the VFS before calling this tool"
+        curr_context = get_runtime(NatSpecContext).context
+        input : list[str | dict] = [
+            "The current spec file is:",
+            state["curr_spec"]
+        ]
+        for t in inclusion:
+            match t:
+                case "interface":
+                    input.extend([
+                        "For context, the interface file for the contract being verified against this spec is:",
+                        state["curr_intf"]
+                    ])
+                case "system_doc":
+                    input.extend(["For context, the system document for the spec is:", curr_context.orig_doc])
+        
+        r = work.invoke(FlowInput(input=input), context=curr_context)
+        assert "output" in r
+        feedback = r["output"]
+        assert isinstance(feedback, output_schema)
+        (res_string, validated) = result_handler(feedback, state)
+        if not validated:
+            return res_string
+        return tool_state_update(
+            tool_call_id=tool_call_id,
+            content=res_string,
+            validations = {
+                oracle_token: compute_spec_digest(state)
+            }
+        )
+    return feedback_tool
+
 
 def format_feedback(feedback: Feedback) -> str:
     buff = []
@@ -105,55 +198,63 @@ def compute_spec_digest(s: NatSpecState) -> str:
     h.update(s["curr_spec"].encode("utf-8"))
     return h.hexdigest()
 
+def handle_feedback_result(
+    feedback: Feedback,
+    st: NatSpecState
+) -> tuple[str, bool]:
+    validated = all([
+        t.severity != "Critical" for t in feedback.items
+    ])
+    formatted_feedback = format_feedback(feedback)
+    return (formatted_feedback, validated)
+
 def get_judge_tool(
     llm: BaseChatModel,
 ) -> BaseTool:
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    mem = memory_tool(SqliteMemoryBackend("none", conn))
-    search_tool = cvl_manual_search(NatSpecContext)
-    result = result_tool_generator("output", Feedback, """
-Used to communicate the result of your analysis of the CVL spec against the guidelines.
-""")
-    work = build_workflow(
-        state_class=FeedbackState,
-        input_type=FlowInput,
-        tools_list=[mem, search_tool, result],
-        sys_prompt=load_jinja_template("cvl_system_prompt.j2"),
-        initial_prompt=load_jinja_template("guidelines_judge_prompt.j2"),
-        output_key="output",
-        context_schema=NatSpecContext,
-        unbound_llm=llm
-    )[0].compile()
+    return gen_feedback_tool(
+        llm=llm,
+        oracle_token="guidelines",
+        doc="""
+Invoke an oracle to determine if the proposed spec file meets all of the guidelines for CVL authorship.
 
-    @tool(args_schema=GuidelineJudgeSchema)
-    def feedback_tool(
-        tool_call_id: Annotated[str, InjectedToolCallId],
-        state: Annotated[NatSpecState, InjectedState]
-    ) -> Command | str:
-        if state["curr_intf"] is None or state["curr_spec"] is None:
-            return "Both the interface and curr_spec must be put on the VFS before calling this tool"
-        curr_context = get_runtime(NatSpecContext).context
-        r = work.invoke(FlowInput(input=[
-            state["curr_spec"],
-            state["curr_intf"]
-        ]), context=curr_context)
-        assert "output" in r
-        feedback = r["output"]
-        assert isinstance(feedback, Feedback)
-        validated = all([
-            t.severity != "Critical" for t in feedback.items
-        ])
-        formatted_feedback = format_feedback(feedback)
-        if not validated:
-            return formatted_feedback
-        return tool_state_update(
-            tool_call_id=tool_call_id,
-            content=formatted_feedback,
-            validations = {
-                "guidelines": compute_spec_digest(state)
-            }
-        )
-    return feedback_tool
+The generation workflow is not complete until the Guidelines judge returns no critical feedback.
+""",
+        output_schema=Feedback,
+        prompt_j2="guidelines_judge_prompt.j2",
+        tool_name="guidelines_judge",
+        result_handler=handle_feedback_result,
+        inclusion=["interface"]
+    )
+
+class SuggestionSchema(BaseModel):
+    """
+    Used to communicate the suggested rules.
+    """
+    suggestsions: list[str] = Field(description="A list of concise suggestions for rules that should be implemented. Return an empty list if you are satisfied with the CVL file.")
+
+def handle_results(
+    t: SuggestionSchema,
+    st: NatSpecState
+) -> tuple[str, bool]:
+    return ("\n".join(t.suggestsions), len(t.suggestsions) == 0)
+
+def get_suggestion_tool(
+        llm: BaseChatModel
+) -> BaseTool:
+    return gen_feedback_tool(
+        llm=llm,
+        oracle_token="suggestion",
+        doc="""
+Used to ask for suggestions for rules to add to the current draft of the CVL file.
+
+This tool MUST return an empty string (i.e., no further suggestions) for the task to be complete
+""",
+        inclusion=["system_doc"],
+        output_schema=SuggestionSchema,
+        prompt_j2="cvl_suggestion_prompt.j2",
+        tool_name="suggestion_oracle",
+        result_handler=handle_results
+    )
 
 @tool
 def get_document() -> str:
@@ -227,7 +328,6 @@ def put_cvl(
         traceback.print_exc()
         return "Failed to pretty print the AST"
     return _maybe_update_cvl(tool_call_id, pp)
-    
 
 class PutCVLRaw(BaseModel):
     """
@@ -352,6 +452,10 @@ def execute(args: NatSpecArgs) -> int:
         llm
     )
 
+    suggestions = get_suggestion_tool(
+        llm
+    )
+
     thread_id : str
     if args.thread_id is None:
         thread_id = "natspec_session_" + uuid.uuid4().hex
@@ -383,7 +487,7 @@ def execute(args: NatSpecArgs) -> int:
         output_key="result",
         state_class=NatSpecState,
         unbound_llm=llm,
-        summary_config=SummaryConfig(),
+        summary_config=SummaryConfig(max_messages=50),
         tools_list=[
             manual,
             human_question_tool,
@@ -394,6 +498,7 @@ def execute(args: NatSpecArgs) -> int:
             put_cvl_raw,
             judge,
             mem_tool,
+            suggestions,
             ({"name": put_cvl.name, "description": put_cvl_description, "input_schema": PutCVLSchemaModel.model_json_schema()}, put_cvl)
         ]
     )[0].compile(checkpointer=checkpointer)
@@ -406,9 +511,7 @@ def execute(args: NatSpecArgs) -> int:
             }
         }
 
-
     runnable_conf : RunnableConfig = fresh_config()
-
 
     if args.checkpoint_id is not None:
         assert "configurable" in runnable_conf

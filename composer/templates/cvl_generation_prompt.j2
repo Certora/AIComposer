@@ -25,9 +25,11 @@ Output: A CVL specification for the application component, a Solidity interface 
 7. Consider the rules and invariants generated in steps 4 and 6. Identify significant overlap between the generated rules or invariants,
    and then consolidate them.
 8. Output your candidate specifications using the put_cvl tool. If there are syntax errors, iterate until the output is accepted.
-9. Invoke the `guidelines_judge` tool. This tool will evaluate whether the CVL spec in 8 meets the CVL guidelines below.
-10. If there are any critical feedback items in step 9, address them and return to step 9.
-11. Otherwise, output the result of your generation. Include any notes that the implementer of the specification/interface should
+9. Invoke the "suggestions_oracle" tool. This tool will identify any gaps in your proposed CVL specification.
+10. If there are ANY suggestions, implement the rules/invariants as necessary. Return to step 8.
+11. Otherwise, invoke the `guidelines_judge` tool. This tool will evaluate whether the CVL spec in 8 meets the CVL guidelines below.
+11. If there are any critical feedback items in step 9, address them and return to step 9.
+12. Otherwise, output the result of your generation. Include any notes that the implementer of the specification/interface should
     know to succesfully complete the implementation. For example, notes like "the specification assumes a storage field f is 
     defined with type T" or "there must be an internal function with the following signature ...".
 
