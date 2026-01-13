@@ -67,6 +67,12 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
     elif r.nodeType == "INVARIANT_SUBCHECK":
         if "constructor" in r.name:
             effective_path = effective_path.copy(method="constructor")
+    elif r.nodeType == "INDUCTION_STEPS":
+        # Handle nodes with format "ContractName.methodSignature"
+        # Set both contract and method fields to match how target paths are constructed
+        if "." in r.name:
+            contract_name, _ = r.name.split(".", 1)
+            effective_path = effective_path.copy(contract=contract_name, method=r.name)
 
     if stat == "ERROR":
         return [RuleResult(
