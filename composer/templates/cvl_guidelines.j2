@@ -2,7 +2,8 @@
     1. The final statement of every rules must end be either an assert or satisfy statement. A conditional statement which itself contains satsify or assert statements is not acceptable.
     2. The CVL should be well-typed.
     3. By default, all numeric variables should be `mathint`: an arbitrary precision integer.
-       a. As an exception, variables which are to be passed TO contract functions, or variables that hold the RESULT of a contract call should use the appropriate (u)intK type.
+       a. As an exception, variables which are to be passed TO contract functions, 
+          variables that hold the RESULT of a contract call, or which index into an array, should use the appropriate (u)intK type.
     4. All mathematical operations (which excludes bitvector operations) produce `mathint`. To narrow the `mathint` result of a mathematical operation to a uintK or intK type, either `require_(u)intK` or `assert_(u)intK` should be used.
     5. Every contract function implicitly receives an `env` parameter representing the calling environment, e.g., the block number, caller etc. The only exception are methods explicitly annotated as `envfree` in the methods block.
     6. Method block specifics:

@@ -6,10 +6,13 @@ import hashlib
 import sqlite3
 import uuid
 import pathlib
+import contextlib
+import sys
+import pickle
 
 from dataclasses import dataclass
 import types
-from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence
+from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any
 
 from pydantic import BaseModel, Field
 
@@ -26,24 +29,26 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.cvl.schema import CVLFile
 from composer.cvl.pretty_print import pretty_print
-from composer.spec.types import NatSpecState, Result, NatSpecInput
+from composer.spec.ptypes import NatSpecState, Result, NatSpecInput
 from composer.tools.search import cvl_manual_search
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
-from composer.tools.human_tool import human_interaction_tool
 from composer.human.handlers import prompt_input
 from composer.templates.loader import load_jinja_template
 
+from graphcore.tools.human import human_interaction_tool
+from graphcore.tools.vfs import VFSState
 from graphcore.tools.memory import memory_tool, SqliteMemoryBackend
 from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import build_workflow, FlowInput, MessagesState, tool_state_update
 from graphcore.summary import SummaryConfig
 
-type ValidationToken = Literal["guidelines", "suggestion"]
+type ValidationToken = Literal["guidelines", "suggestion", "typecheck"]
 
 guidelines = "guidelines"
 suggestions = "suggestion"
+typecheck = "typecheck"
 
-all_validations : list[ValidationToken] = [guidelines, suggestions]
+all_validations : list[ValidationToken] = [guidelines, suggestions, typecheck]
 
 class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
     input_file: str
@@ -52,6 +57,7 @@ class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
 class NatSpecContext:
     orig_doc: str
     rag_db: PostgreSQLRAGDatabase
+    unbound_llm: BaseChatModel
 
 class GuidelineJudgeSchema(BaseModel):
     """
@@ -139,7 +145,7 @@ def gen_feedback_tool(
 
     JudgeSchema.__doc__ = doc
 
-    @tool(tool_name, args_schema=GuidelineJudgeSchema)
+    @tool(tool_name, args_schema=JudgeSchema)
     def feedback_tool(
         tool_call_id: Annotated[str, InjectedToolCallId],
         state: Annotated[NatSpecState, InjectedState]
@@ -324,8 +330,6 @@ def put_cvl(
     try:
         pp = pretty_print(CVLFile.model_validate(cvl_file))
     except:
-        import traceback
-        traceback.print_exc()
         return "Failed to pretty print the AST"
     return _maybe_update_cvl(tool_call_id, pp)
 
@@ -436,14 +440,162 @@ class HumanQuestionSchema(BaseModel):
     CVL. The primary usage of this tool should be to clarify intent over ambiguities in the natural language
     specification.
     """
-    question: Annotated[str, "The question to pose to the user"]
-    context: Annotated[str, "Any additional context to the question, e.g. a citation from the natural language spec."]
+    question: str = Field(description="The question to pose to the user")
+    context: str = Field(description="Any additional context to the question, e.g. a citation from the natural language spec.")
 
 human_question_tool = human_interaction_tool(
     HumanQuestionSchema,
     NatSpecState,
     "human_in_the_loop"
 )
+
+class TypeCheckerOracle(BaseModel):
+    """
+    Attempt to verify that the spec file can be type checked against a dummy implementation.
+
+    In particular, a dummy implementation of the interface file will be generated and then the CVL typechecker invoked.
+    """
+    state: Annotated[NatSpecState, InjectedState]
+    tool_call_id: Annotated[str, InjectedToolCallId]
+
+    implementation_notes: str = Field(description="Notes relevant to the implementer of the spec/interface.")
+    expected_name: str = Field(description="The expected contract name verified by the spec.")
+    solc_version: str = Field(description="The solidity version you are using in your workflow; this must be the same used for compiling the interface")
+
+@tool(args_schema=TypeCheckerOracle)
+def typecheck_spec(
+    state: Annotated[NatSpecState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    implementation_notes: str,
+    expected_name: str,
+    solc_version: str
+) -> str | Command:
+    llm = get_runtime(NatSpecContext).context.unbound_llm
+    intf : str | None
+    spec : str | None
+    if (intf := state.get("curr_intf", None)) is None:
+        return "No interface file created"
+    elif (spec := state.get("curr_spec", None)) is None:
+        return "No spec file on VFS"
+    
+    class TypeCheckState(MessagesState, VFSState):
+        result: NotRequired[str]
+
+    solc_name = f"solc{solc_version}"
+
+    def typecheck_harness(
+        nm: str,
+        tid: str
+    ) -> ValidationResult:
+        with tempfile.TemporaryDirectory() as m:
+            with contextlib.chdir(m):
+                root = pathlib.Path(m)
+                (root / "Intf.sol").write_text(intf)
+                (root / "Impl.sol").write_text(nm)
+                proc = subprocess.run(
+                    [solc_name, "Impl.sol"],
+                    capture_output=True,
+                    text=True
+                )
+                if "Intf.sol" not in nm:
+                    return "Did not apparently import the interface."
+                if expected_name not in nm:
+                    return f"Did not call the contract {expected_name}"
+                if proc.returncode != 0:
+                    return f"""
+Stub implementation did not typecheck.
+
+stderr:
+{proc.stderr}
+
+stdout:
+{proc.stdout}
+"""
+                return None
+
+
+    result_tool = result_tool_generator(
+        "result",
+        (str, "A string consisting of the solidity source code of the dummy implementation."),
+        "Used to indicate succesful generation",
+        typecheck_harness
+    )
+
+    gen_tools = [
+        result_tool
+    ]
+
+    gen = build_workflow(
+        state_class=TypeCheckState,
+        context_schema=None,
+        input_type=FlowInput,
+        sys_prompt="You are good at following instructions and know Solidity.",
+        output_key="result",
+        tools_list=gen_tools,
+        unbound_llm=llm,
+        initial_prompt="""
+Using the provided interface file and implementation notes, 
+generate a *stub* implementation of the interface.
+That is, generate a contract which implements the interface with a name of your choosing, 
+that satisfies any of the noted implementation constraints, but otherwise has NO executable code.
+
+IMPORTANT: You can ignore any natural language requirements listed in the interface,
+the stub simply needs to be type-correct.
+
+Ensure that the implementation uses parameter names, even if they aren't used.
+
+When generating your code, you should assume that the interface file you have been provided
+exists at the path "./Intf.sol".
+"""
+    )[0].compile()
+        
+    res = gen.invoke(FlowInput(input=[
+        "The interface to implement is:",
+        intf,
+        "The implementation notes are:",
+        implementation_notes,
+        f"IMPORTANT: The generated smart contract must be called {expected_name}"
+    ]), config={
+        "callbacks": []
+    })
+
+    source : str = res["result"]
+
+    with tempfile.TemporaryDirectory() as m:
+        with contextlib.chdir(m):
+            pathlib.Path("input.spec").write_text(spec)
+            pathlib.Path("Intf.sol").write_text(intf)
+            pathlib.Path("Impl.sol").write_text(source)
+
+            p = pathlib.Path(__file__).parent / "certoraTypeCheck.py"
+
+            run_res = subprocess.run([
+                sys.executable, str(p),
+                f"Impl.sol:{expected_name}",
+                "--verify",
+                f"{expected_name}:./input.spec",
+                "--solc", solc_name,
+                "--compilation_steps_only"
+            ], text=True, capture_output=True)
+            if run_res.returncode == 0:
+                return tool_state_update(
+                    tool_call_id,
+                    "Typecheck passed",
+                    validations={
+                        typecheck: compute_spec_digest(state)
+                    }
+                )
+            return f"""
+Spec typechecking failed:
+
+stdout:
+{run_res.stdout}
+
+stderr:
+{run_res.stderr}
+"""
+                
+    
 
 def execute(args: NatSpecArgs) -> int:
     llm = create_llm(args)
@@ -477,7 +629,7 @@ def execute(args: NatSpecArgs) -> int:
 
     document = pathlib.Path(args.input_file).read_text()
 
-    ctxt = NatSpecContext(orig_doc=document, rag_db=rag_db)
+    ctxt = NatSpecContext(orig_doc=document, rag_db=rag_db, unbound_llm=llm)
 
     graph = build_workflow(
         context_schema=NatSpecContext,
@@ -499,6 +651,7 @@ def execute(args: NatSpecArgs) -> int:
             judge,
             mem_tool,
             suggestions,
+            typecheck_spec,
             ({"name": put_cvl.name, "description": put_cvl_description, "input_schema": PutCVLSchemaModel.model_json_schema()}, put_cvl)
         ]
     )[0].compile(checkpointer=checkpointer)
@@ -565,7 +718,9 @@ def execute(args: NatSpecArgs) -> int:
     print("Spec file generation complete")
     print(final_state["curr_spec"])
     print(final_state["curr_intf"])
-    print(final_state["result"])
+    print("Expected contract name: " + final_state["result"].expected_contract_name)
+    print("Expected solidity version: " + final_state["result"].expected_solc)
+    print("Notes:\n" + final_state["result"].implementation_notes)
 
     return 0
 
