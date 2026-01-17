@@ -1,4 +1,6 @@
-from typing import Protocol
+from typing import Protocol, Literal
+
+Ecosystem = Literal["evm", "soroban", "move", "solana"]
 
 class AnalysisArgs(Protocol):
     @property
@@ -35,4 +37,12 @@ class AnalysisArgs(Protocol):
     
     @property
     def tokens(self) -> int:
+        ...
+    
+    @property
+    def ecosystem(self) -> Ecosystem:
+        ...
+
+    @property
+    def rag_db(self) -> str:
         ...

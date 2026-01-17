@@ -67,6 +67,12 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
     elif r.nodeType == "INVARIANT_SUBCHECK":
         if "constructor" in r.name:
             effective_path = effective_path.copy(method="constructor")
+    elif r.nodeType == "INDUCTION_STEPS":
+        # Handle nodes with format "ContractName.methodSignature"
+        # Set both contract and method fields to match how target paths are constructed
+        if "." in r.name:
+            contract_name, _ = r.name.split(".", 1)
+            effective_path = effective_path.copy(contract=contract_name, method=r.name)
 
     if stat == "ERROR":
         return [RuleResult(
@@ -193,7 +199,10 @@ def calltrace_to_xml(node: CallTraceModel) -> str:
     # Process children if they exist
     for child in node.childrenList:
         # skip this, avoid confusing the llm
-        if child.message.text == "Setup" or child.message.text == "Global State" or child.message.text == "Evaluate branch condition":
+        if child.message.text == "Setup" or \
+            child.message.text == "Global State" or \
+            child.message.text == "Evaluate branch condition" or \
+            child.message.text == "unknown loop source code":
             continue
         child_xml = calltrace_to_xml(child)
         xml_parts.append(f"<child>{child_xml}</child>")

@@ -6,7 +6,7 @@ AI Composer is a tool for generating verified implementations from documentation
 
 ## Requirements
 
-You will need at least Python 3.11, Docker (with compose), and a Claude API key, and the ability to build
+You will need at least Python 3.12, Docker (with compose), and a Claude API key, and the ability to build
 the documentation (see [here](https://github.com/Certora/Documentation/?tab=readme-ov-file#building-the-documentation)),
 and a working, local installation of the prover (see [here](https://github.com/certora/certoraprover)). The Claude API Key should be in your
 environment under `ANTHROPIC_API_KEY`.
