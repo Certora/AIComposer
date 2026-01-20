@@ -1,0 +1,121 @@
+    <!-- ========================================
+         Shared HTML Templates
+         ========================================
+
+         These templates are used by both composer and natspec workflows.
+         Workflow-specific templates remain in their respective main template files.
+    -->
+
+    <!-- AI Step Template -->
+    <template id="ai-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>AI Execution Step</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            <div class="messages-container"></div>
+            <div class="tool-call"></div>
+        </div>
+    </template>
+
+    <!-- Message Bubble Template -->
+    <template id="message-bubble-template">
+        <div class="message-bubble">
+            <div class="message-type-label"></div>
+            <div class="message-text"></div>
+        </div>
+    </template>
+
+    <!-- Search Step Template -->
+    <template id="search-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>RAG Database Search</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+
+            <div class="search-container">
+                <!--<div class="search-query">
+                    <div class="search-query-label">Search Query</div>
+                    <div class="search-query-text"></div>
+                </div>-->
+
+                <div class="search-results"></div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Search Result Template -->
+    <template id="search-result-template">
+        <div class="collapsible collapsible--search" data-collapsible-state="expanded">
+            <div class="collapsible__trigger" data-collapsible-trigger>
+                <span class="collapsible__icon"></span>
+                <span class="collapsible__title search-result-title"></span>
+            </div>
+            <div class="collapsible__content">
+                <div class="search-result-body"></div>
+                <div class="search-result-similarity">
+                    Similarity Score: <span class="similarity-score"></span>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Human Question Template -->
+    <template id="human-question-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Human Question</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            <div class="messages-container"></div>
+        </div>
+    </template>
+
+    <!-- VFS Step Template -->
+    <template id="vfs-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>VFS Interactions</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            <div class="vfs-commands-container"></div>
+        </div>
+    </template>
+
+    <!-- VFS Thought Template -->
+    <template id="vfs-thought-template">
+        <div class="vfs-thought">
+            <div class="vfs-thought-content"></div>
+        </div>
+    </template>
+
+    <!-- VFS Command Template -->
+    <template id="vfs-cmd-template">
+        <div class="vfs-cmd">
+            <div class="vfs-cmd-header">● ● ● Terminal</div>
+            <div class="vfs-cmd-prompt">
+                <span class="vfs-cmd-prompt-symbol">></span>
+                <span class="vfs-cmd-text"></span>
+            </div>
+            <div class="vfs-cmd-output"></div>
+        </div>
+    </template>
+
+    <!-- Summarization Step Template -->
+    <template id="summarization-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Context Summarization</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+            🔄 Task state has been summarized due to context length. The state summary is as follows.
+            <div class="summarization-container"></div>
+        </div>
+    </template>
+
+    <!-- VFS File Pane Template -->
+    <template id="vfs-file-pane-template">
+        <div class="vfs-file-header"></div>
+        <div class="vfs-file-code"></div>
+    </template>
