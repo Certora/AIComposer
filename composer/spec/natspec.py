@@ -3,7 +3,6 @@ import tempfile
 import subprocess
 import os
 import hashlib
-import sqlite3
 import uuid
 import pathlib
 import contextlib
@@ -36,7 +35,7 @@ from composer.templates.loader import load_jinja_template
 
 from graphcore.tools.human import human_interaction_tool
 from graphcore.tools.vfs import VFSState
-from graphcore.tools.memory import memory_tool, SqliteMemoryBackend
+from graphcore.tools.memory import memory_tool
 from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import build_workflow, FlowInput, MessagesState, tool_state_update
 from graphcore.summary import SummaryConfig

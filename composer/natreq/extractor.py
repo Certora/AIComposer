@@ -5,7 +5,7 @@ import pathlib
 
 from pydantic import BaseModel, Field
 
-from graphcore.graph import FlowInput, build_workflow
+from graphcore.graph import FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.memory import memory_tool, MemoryBackend
 
@@ -78,7 +78,7 @@ system_prompt = load_jinja_template("req_role_prompt.j2")
 
 initial_prompt = load_jinja_template("req_extraction_prompt.j2")
 
-def get_requirements(
+async def get_requirements(
     options: RAGDBOptions,
     llm: BaseChatModel,
     sys_doc: InputFileLike,
@@ -93,7 +93,7 @@ def get_requirements(
         human_in_the_loop,
         cvl_manual_search(ExtractionContext)
     ]
-    built : CompiledStateGraph[ExtractionState, ExtractionContext, FlowInput, Any] = build_workflow(
+    built : CompiledStateGraph[ExtractionState, ExtractionContext, FlowInput, Any] = build_async_workflow(
         state_class=ExtractionState,
         context_schema=ExtractionContext,
         input_type=FlowInput,
@@ -147,7 +147,7 @@ spec).
     while graph_input is not None:
         to_send = graph_input
         graph_input = None
-        for payload in built.stream(input = to_send, context=ExtractionContext(rag_db=db), config=config):
+        async for payload in built.astream(input = to_send, context=ExtractionContext(rag_db=db), config=config):
             if "__interrupt__" in payload:
                 interrupt_data = cast(dict, payload["__interrupt__"][0].value)
                 context = interrupt_data["context"]

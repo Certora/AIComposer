@@ -1,11 +1,10 @@
 from typing_extensions import NotRequired, Annotated
-from typing import Literal, Any, cast, Callable
-from functools import partial
+from typing import Literal, Any, cast
 
 from pydantic import BaseModel, Field
 
 from graphcore.tools.memory import MemoryBackend, memory_tool
-from graphcore.graph import FlowInput, build_workflow, WithToolCallId, tool_output
+from graphcore.graph import FlowInput, build_async_workflow, WithToolCallId
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.vfs import VFSState
 
@@ -67,7 +66,7 @@ BEFORE calling this tool.
 """,
         validator=(JudgeState, judge_res_checker)
     )
-    return build_workflow(
+    return build_async_workflow(
         input_type=JudgeInput,
         output_key="result",
         context_schema=None,
@@ -140,11 +139,11 @@ def get_judge_tool(
     compiled_graph = workflow.compile()
     req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
     @tool(args_schema=RequirementEvaluationSchema)
-    def requirements_evaluation(
+    async def requirements_evaluation(
         state: AIComposerState,
         tool_call_id: Annotated[str, InjectedToolCallId]
     ) -> Command | str:
-        r = compiled_graph.invoke(JudgeInput(
+        r = await compiled_graph.ainvoke(JudgeInput(
             input=[req_list],
             vfs=state["vfs"],
             orig_reqs=reqs

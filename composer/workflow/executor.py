@@ -149,7 +149,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     return (Input(input=input_messages, vfs={}), NativeFS(intf_p), NativeFS(spec_p))
 
 
-def execute_ai_composer_workflow(
+async def execute_ai_composer_workflow(
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
     workflow_options: WorkflowOptions
@@ -232,7 +232,7 @@ def execute_ai_composer_workflow(
                 reqs_list = [ v for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if (v := l.strip()) ]
         else:
             print("Analyzing requirements...")
-            reqs = get_requirements(
+            reqs = await get_requirements(
                 workflow_options,
                 llm,
                 system_doc,
@@ -332,7 +332,7 @@ def execute_ai_composer_workflow(
         interrupted = False
         r = current_input
         current_input = None
-        for (event_ty_raw, payload) in workflow_exec.stream(input=r, config=config, context=work_context, stream_mode=["custom", "updates", "checkpoints"]):
+        async for (event_ty_raw, payload) in workflow_exec.astream(input=r, config=config, context=work_context, stream_mode=["custom", "updates", "checkpoints"]):
             event_ty = cast(StreamEvents, event_ty_raw)
             assert isinstance(payload, dict)
             match event_ty:
