@@ -11,12 +11,6 @@ from composer.workflow.types import Input, PromptParams
 from composer.core.context import AIComposerContext
 from composer.core.state import AIComposerState
 
-from composer.tools.proposal import propose_spec_change
-from composer.tools.search import cvl_manual_search
-from composer.tools.result import code_result
-from composer.tools.prover import certora_prover
-from composer.tools.question import human_in_the_loop
-
 from composer.templates.loader import load_jinja_template
 from composer.workflow.summarization import SummaryGeneration
 
@@ -67,6 +61,13 @@ def get_cryptostate_builder(
     extra_tools: list[BaseTool] = []
 ) -> tuple[StateGraph[AIComposerState, AIComposerContext, Input, Any], BoundLLM, VFSAccessor[VFSState]]:
     (vfs_tooling, mat) = get_vfs_tools(fs_layer=fs_layer, immutable=False)
+    # import here to avoid loading these for non-composer factory uses
+
+    from composer.tools.prover import certora_prover
+    from composer.tools.proposal import propose_spec_change
+    from composer.tools.question import human_in_the_loop
+    from composer.tools.result import code_result
+    from composer.tools.search import cvl_manual_search
 
     crypto_tools: list[BaseTool] = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search(AIComposerContext), *vfs_tooling]
     crypto_tools.extend(extra_tools)

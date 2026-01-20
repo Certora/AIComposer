@@ -55,9 +55,9 @@ def _to_status_string(s: str | None) -> StatusCodes:
 
 def flatten_tree_view_root(context: Path, r: RuleNodeModel) -> Iterable[RuleResult]:
     assert r.nodeType == "ROOT"
-    return flatten_tree_view(context, r, RulePath(rule=r.name))
+    return flatten_tree_view(context, r, RulePath(rule=r.name), None)
 
-def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterable[RuleResult]:
+def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath, parent_type: str | None = None) -> Iterable[RuleResult]:
     stat = _to_status_string(r.status)
     effective_path = path
     if r.nodeType == "METHOD_INSTANTIATION":
@@ -67,6 +67,14 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
     elif r.nodeType == "INVARIANT_SUBCHECK":
         if "constructor" in r.name:
             effective_path = effective_path.copy(method="constructor")
+    elif r.nodeType == "INDUCTION_STEPS" and parent_type is not None and parent_type == "CUSTOM_INDUCTION_STEP":
+        # Handle nodes with format "ContractName.methodSignature"
+        # Set both contract and method fields to match how target paths are constructed
+        if "." in r.name:
+            contract_name, _ = r.name.split(".", 1)
+            effective_path = effective_path.copy(contract=contract_name, method=r.name)
+        else:
+            effective_path = effective_path.copy(method=r.name)
 
     if stat == "ERROR":
         return [RuleResult(
@@ -77,7 +85,7 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
     if stat == "VERIFIED":
         non_sanity_children = any([ c.nodeType != "SANITY" for c in r.children ])
         if non_sanity_children:
-            return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path))
+            return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path, r.nodeType))
         else:
             return [RuleResult(
                 path=effective_path,
@@ -111,7 +119,7 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath) -> Iterab
             cex_dump=None,
             status=stat
         )]
-    return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path))
+    return _flat_yield(r.children, lambda c: flatten_tree_view(context, c, effective_path, r.nodeType))
 
 class NoTreeViewResultError(RuntimeError):
     def __init__(self, where: Path):
@@ -193,7 +201,10 @@ def calltrace_to_xml(node: CallTraceModel) -> str:
     # Process children if they exist
     for child in node.childrenList:
         # skip this, avoid confusing the llm
-        if child.message.text == "Setup" or child.message.text == "Global State" or child.message.text == "Evaluate branch condition":
+        if child.message.text == "Setup" or \
+            child.message.text == "Global State" or \
+            child.message.text == "Evaluate branch condition" or \
+            child.message.text == "unknown loop source code":
             continue
         child_xml = calltrace_to_xml(child)
         xml_parts.append(f"<child>{child_xml}</child>")

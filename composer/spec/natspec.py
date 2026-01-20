@@ -14,11 +14,13 @@ from dataclasses import dataclass
 import types
 from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any
 
+from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 
 from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
 from langgraph.prebuilt import InjectedState
@@ -52,6 +54,10 @@ all_validations : list[ValidationToken] = [guidelines, suggestions, typecheck]
 
 class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
     input_file: str
+
+class DebugHandler(BaseCallbackHandler):
+    def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]], *, run_id: uuid.UUID, parent_run_id: uuid.UUID | types.NoneType = None, tags: list[str] | types.NoneType = None, metadata: dict[str, Any] | types.NoneType = None, **kwargs: Any) -> Any:
+        print(messages)
 
 @dataclass
 class NatSpecContext:

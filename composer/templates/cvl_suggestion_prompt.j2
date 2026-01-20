@@ -1,0 +1,13 @@
+Evaluate the provided CVL specification against the system document,
+and suggest missing safety rules. Do NOT provide the text of the suggested rules,
+simply what the rule should verify.
+
+Some notes:
+1. Rules regarding immutability are generally not interesting, as an implementer can satisfy these requirements by simply using `immutable` fields.
+2. Rules describing exact cryptographic correctness (e.g., only allow valid signatures) are infeasible in practice, given the over-approximation of hashing used by the certora prover.
+3. Rules verifying something doesn't exist are likewise generally hard to write; in general it is hard to write a rule that says "function X does not exist"
+
+You may have been asked to provide suggestions on this CVL file before, check your memories for any context or prior suggestions.
+
+IMPORTANT: you must communicate your suggestions using the provided result tool
+IMPORTANT: you must update any memories before calling the result tool
