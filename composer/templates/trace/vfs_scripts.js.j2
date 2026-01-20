@@ -1,0 +1,136 @@
+        // ========================================
+        // VFS Modal & Rendering Utilities
+        // ========================================
+        //
+        // DEPENDENCIES:
+        // This script expects the following global state variables to be declared:
+        //   - currentStepIndex (Number): Current step index
+        //   - currentVFSSnapshot (Number|null): Current VFS snapshot number (null when modal closed)
+        //   - selectedFile (String|null): Currently selected file path (null when none selected)
+        //   - fs (Array): Array of VFS snapshots (objects mapping file paths to contents)
+        //   - steps (Array): Array of step objects (needs vfs_snapshot property)
+        //
+        // This script expects the following DOM elements to exist:
+        //   #vfsModal, #vfsSnapshotNumber, #vfsFileList, #vfsFileContent
+        //
+        // This script expects the following templates to exist:
+        //   #vfs-file-pane-template - Template with .vfs-file-header and .vfs-file-code elements
+        //
+        // ========================================
+
+        // Build cumulative VFS view up to a snapshot
+        function buildVFSView(snapshotIndex) {
+            const vfsView = {};
+
+            // Build cumulative view
+            for (let i = 0; i <= snapshotIndex && i < fs.length; i++) {
+                Object.assign(vfsView, fs[i]);
+            }
+
+            return vfsView;
+        }
+
+        // VFS Modal functions
+        function openVFSModal() {
+            const step = steps[currentStepIndex];
+            currentVFSSnapshot = step.vfs_snapshot;
+
+            const modal = document.getElementById('vfsModal');
+            modal.classList.add('active');
+
+            // Update snapshot number
+            document.getElementById('vfsSnapshotNumber').textContent = currentVFSSnapshot;
+
+            // Build and display file list
+            const vfsView = buildVFSView(currentVFSSnapshot);
+            const fileList = document.getElementById('vfsFileList');
+            fileList.innerHTML = '';
+
+            // Sort paths for better display
+            const paths = Object.keys(vfsView).sort();
+
+            paths.forEach(path => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'vfs-file-item';
+                fileItem.dataset.path = path;
+                fileItem.textContent = path;
+                fileList.appendChild(fileItem);
+            });
+
+            // Clear previous selection
+            selectedFile = null;
+            document.getElementById('vfsFileContent').innerHTML =
+                '<div class="vfs-empty-state">Select a file to view its contents</div>';
+        }
+
+        function closeVFSModal() {
+            document.getElementById('vfsModal').classList.remove('active');
+            currentVFSSnapshot = null;
+            selectedFile = null;
+        }
+
+        function selectVFSFile(path) {
+            selectedFile = path;
+            const vfsView = buildVFSView(currentVFSSnapshot);
+            const content = vfsView[path];
+
+            // Update active state in file list
+            document.querySelectorAll('.vfs-file-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.path === path);
+            });
+
+            // Display file content
+            const contentContainer = document.getElementById('vfsFileContent');
+
+            const fileTemplate = document.getElementById("vfs-file-pane-template");
+
+            const fileInst = fileTemplate.content.cloneNode(true);
+            fileInst.querySelector(".vfs-file-header").innerText = path;
+            const codeContents = fileInst.querySelector(".vfs-file-code");
+            renderCodeSnippet(
+                codeContents, path, content
+            );
+            contentContainer.replaceChildren(fileInst);
+        }
+
+        // Open VFS Modal with specific file selected
+        function openVFSModalWithFile(filePath) {
+            openVFSModal();
+            // After modal is open, select the file
+            setTimeout(() => {
+                selectVFSFile(filePath);
+            }, 100);
+        }
+
+        // Utility function to escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Render code snippet with syntax highlighting based on file extension
+        function renderCodeSnippet(
+            container, path, contents
+        ) {
+            const preElem = document.createElement("pre");
+            var doHighlight = false;
+            function getCode(lang) {
+                const codeElem = document.createElement("code");
+                codeElem.classList.add(`language-${lang}`);
+                codeElem.textContent = contents;
+                doHighlight = true;
+                return codeElem;
+            }
+            if(path.endsWith(".sol")) {
+                preElem.appendChild(getCode("solidity"));
+            } else if(path.endsWith(".spec")) {
+                preElem.appendChild(getCode("cvl"));
+            } else {
+                preElem.innerText = contents;
+            }
+            container.appendChild(preElem);
+            if(doHighlight) {
+                Prism.highlightAllUnder(container);
+            }
+        }

@@ -1,0 +1,249 @@
+        // ========================================
+        // Core Navigation & Sidebar Scripts
+        // ========================================
+        //
+        // DEPENDENCIES:
+        // This script expects the following global state variables to be declared:
+        //   - currentStepIndex (Number): Current step index (0-based)
+        //   - steps (Array): Array of step objects from trace data
+        //   - stepTitles (Array): Array of step title strings
+        //
+        // This script expects the following functions to be defined elsewhere:
+        //   - renderCurrentStep(): Renders current step (step-type specific, defined in main template)
+        //   - openVFSModal(): Opens VFS modal (defined in vfs_scripts.js.j2)
+        //   - closeVFSModal(): Closes VFS modal (defined in vfs_scripts.js.j2)
+        //   - selectVFSFile(path): Selects file in VFS modal (defined in vfs_scripts.js.j2)
+        //   - openVFSModalWithFile(filePath): Opens VFS modal with file (defined in vfs_scripts.js.j2)
+        //   - togglePutView(button): Toggles put step view (defined in put_rendering.js.j2)
+        //
+        // This script expects the following DOM elements to exist:
+        //   #prevBtn, #nextBtn, #sidebarToggle, #sidebarClose, #sidebarOverlay,
+        //   #sidebar, #stepList, #currentStep, #totalSteps, #paneContainer, #vfsModal
+        //
+        // ========================================
+
+        // Populate the sidebar with step list
+        function populateSidebar() {
+            const stepList = document.getElementById('stepList');
+            stepList.innerHTML = '';
+
+            stepTitles.forEach((title, index) => {
+                const listItem = document.createElement('li');
+                listItem.className = 'step-item';
+                if (index === currentStepIndex) {
+                    listItem.classList.add('current');
+                }
+
+                listItem.innerHTML = `
+                    <div class="step-number">${index + 1}</div>
+                    <div class="step-title">${title}</div>
+                `;
+
+                listItem.addEventListener('click', () => {
+                    navigateToStep(index);
+                    closeSidebar();
+                });
+
+                stepList.appendChild(listItem);
+            });
+        }
+
+        // Update sidebar current step highlight
+        function updateSidebarHighlight() {
+            document.querySelectorAll('.step-item').forEach((item, index) => {
+                item.classList.toggle('current', index === currentStepIndex);
+            });
+        }
+
+        // Sidebar toggle functions
+        function openSidebar() {
+            document.getElementById('sidebar').classList.add('active');
+            document.getElementById('sidebarOverlay').classList.add('active');
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('active');
+            document.getElementById('sidebarOverlay').classList.remove('active');
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar.classList.contains('active')) {
+                closeSidebar();
+            } else {
+                openSidebar();
+            }
+        }
+
+        // Navigate to specific step
+        function navigateToStep(index) {
+            if (index >= 0 && index < steps.length) {
+                currentStepIndex = index;
+                updateStepIndicator();
+                updateSidebarHighlight();
+                renderCurrentStep();
+                updateNavigationButtons();
+                updateURL();
+            }
+        }
+
+        // Navigate relative to current step
+        function navigateStep(direction) {
+            const newIndex = currentStepIndex + direction;
+            navigateToStep(newIndex);
+        }
+
+        // Update step indicator display
+        function updateStepIndicator() {
+            document.getElementById('currentStep').textContent = currentStepIndex + 1;
+            document.getElementById('totalSteps').textContent = steps.length;
+        }
+
+        // Update navigation button states
+        function updateNavigationButtons() {
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+
+            prevBtn.disabled = currentStepIndex === 0;
+            nextBtn.disabled = currentStepIndex === steps.length - 1;
+        }
+
+        // URL hash support
+        function updateURL() {
+            if (currentStepIndex > 0) {
+                window.location.hash = `#step=${currentStepIndex + 1}`;
+            } else {
+                window.location.hash = '';
+            }
+        }
+
+        function parseURLHash() {
+            const hash = window.location.hash;
+            if (hash.startsWith('#step=')) {
+                const stepNumber = parseInt(hash.substring(6), 10);
+                if (!isNaN(stepNumber) && stepNumber >= 1 && stepNumber <= steps.length) {
+                    return stepNumber - 1; // Convert to 0-based index
+                }
+            }
+            return 0; // Default to first step
+        }
+
+        function handleHashChange() {
+            const newStepIndex = parseURLHash();
+            if (newStepIndex !== currentStepIndex) {
+                navigateToStep(newStepIndex);
+            }
+        }
+
+        // ========================================
+        // Collapsible System
+        // ========================================
+
+        // Generic collapsible system
+        function initCollapsibles() {
+            document.addEventListener('click', (e) => {
+                const trigger = e.target.closest('[data-collapsible-trigger]');
+                if (trigger) {
+                    toggleCollapsible(trigger.closest('.collapsible'));
+                }
+            });
+        }
+
+        function toggleCollapsible(collapsibleElement) {
+            const currentState = collapsibleElement.dataset.collapsibleState || 'expanded';
+            const newState = currentState === 'expanded' ? 'collapsed' : 'expanded';
+            collapsibleElement.dataset.collapsibleState = newState;
+
+            // Emit custom event for additional handling
+            collapsibleElement.dispatchEvent(new CustomEvent('collapsible:toggle', {
+                detail: { state: newState, element: collapsibleElement }
+            }));
+        }
+
+        function expandCollapsible(element) {
+            element.dataset.collapsibleState = 'expanded';
+        }
+
+        function collapseCollapsible(element) {
+            element.dataset.collapsibleState = 'collapsed';
+        }
+
+        // ========================================
+        // Event Listeners
+        // ========================================
+
+        // Attach all event listeners
+        function attachEventListeners() {
+            // Navigation buttons
+            document.getElementById('prevBtn').addEventListener('click', () => {
+                navigateStep(-1);
+            });
+
+            document.getElementById('nextBtn').addEventListener('click', () => {
+                navigateStep(1);
+            });
+
+            // Sidebar toggle
+            document.getElementById('sidebarToggle').addEventListener('click', toggleSidebar);
+            document.getElementById('sidebarClose').addEventListener('click', closeSidebar);
+            document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar);
+
+            // Hash change listener
+            window.addEventListener('hashchange', handleHashChange);
+
+            // Initialize unified collapsible system
+            initCollapsibles();
+
+            // Event delegation for dynamically created elements
+            document.getElementById('paneContainer').addEventListener('click', (e) => {
+                // VFS open button
+                const vfsOpenButton = e.target.closest('[data-vfs-open]');
+                if (vfsOpenButton) {
+                    openVFSModal();
+                }
+
+                // Contract file link in prover step
+                const contractFileLink = e.target.closest('[data-contract-file]');
+                if (contractFileLink) {
+                    const filePath = contractFileLink.dataset.contractFile;
+                    openVFSModalWithFile(filePath);
+                }
+
+                // Put view toggle
+                const putToggle = e.target.closest('[data-toggle-view]');
+                if (putToggle) {
+                    togglePutView(putToggle);
+                }
+            });
+
+            // VFS Modal close
+            document.getElementById('vfsModal').addEventListener('click', (e) => {
+                if (e.target === document.getElementById('vfsModal') ||
+                    e.target.closest('[data-vfs-close]')) {
+                    closeVFSModal();
+                }
+            });
+
+            // VFS file selection
+            document.getElementById('vfsFileList').addEventListener('click', (e) => {
+                const fileItem = e.target.closest('.vfs-file-item');
+                if (fileItem) {
+                    selectVFSFile(fileItem.dataset.path);
+                }
+            });
+
+            // Keyboard navigation
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowLeft') {
+                    navigateStep(-1);
+                } else if (e.key === 'ArrowRight') {
+                    navigateStep(1);
+                } else if (e.key === 'Escape') {
+                    if (document.getElementById('vfsModal').classList.contains('active')) {
+                        closeVFSModal();
+                    } else if (document.getElementById('sidebar').classList.contains('active')) {
+                        closeSidebar();
+                    }
+                }
+            });
+        }

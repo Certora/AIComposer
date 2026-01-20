@@ -9,196 +9,11 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet" />
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css" rel="stylesheet" />
     
+    {% include 'trace/styles.j2' %}
+
+    <!-- Composer-specific styles -->
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: #f5f5f5;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        /* Header and Navigation */
-        .header {
-            background: #2c3e50;
-            color: white;
-            padding: 1rem 2rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .header h1 {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .navigation {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-        }
-        
-        .nav-button {
-            background: #34495e;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.2s;
-        }
-        
-        .nav-button:hover:not(:disabled) {
-            background: #4a5f7f;
-        }
-        
-        .nav-button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        .step-indicator {
-            margin-left: auto;
-            font-size: 14px;
-        }
-        
-        /* Main Content Area */
-        .main-content {
-            flex: 1;
-            padding: 2rem;
-            max-width: 1200px;
-            width: 100%;
-            margin: 0 auto;
-        }
-        
-        .pane {
-            background: white;
-            border-radius: 8px;
-            padding: 2rem;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            animation: fadeIn 0.3s ease-in;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .pane-header {
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 1.5rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 2px solid #e0e0e0;
-            color: #2c3e50;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .vfs-button {
-            background: #3498db;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.2s;
-        }
-        
-        .vfs-button:hover {
-            background: #2980b9;
-        }
-        
-        /* Generic Collapsible System */
-        .collapsible {
-            margin-bottom: 1.5rem;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        
-        .collapsible__trigger {
-            background: #f8f9fa;
-            padding: 0.75rem 1rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            user-select: none;
-            transition: background 0.2s;
-            border: none;
-            width: 100%;
-            text-align: left;
-            font-size: inherit;
-            color: inherit;
-        }
-        
-        .collapsible__trigger:hover {
-            background: #e9ecef;
-        }
-        
-        .collapsible__icon {
-            display: inline-block;
-            width: 0;
-            height: 0;
-            border-left: 6px solid transparent;
-            border-right: 6px solid transparent;
-            border-top: 6px solid #495057;
-            transition: transform 0.2s;
-            flex-shrink: 0;
-        }
-        
-        .collapsible[data-collapsible-state="collapsed"] .collapsible__icon {
-            transform: rotate(-90deg);
-        }
-        
-        .collapsible__title {
-            flex: 1;
-            font-weight: inherit;
-        }
-        
-        .collapsible__content {
-            padding: 1rem;
-            background: white;
-            max-height: 600px;
-            overflow-y: auto;
-            transition: all 0.2s ease;
-        }
-        
-        .collapsible[data-collapsible-state="collapsed"] .collapsible__content {
-            display: none;
-        }
-        
-        /* Collapsible Variants */
-        .collapsible--search {
-            background: #f5f5f5;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            margin-bottom: 0.75rem;
-        }
-        
-        .collapsible--search .collapsible__trigger {
-            background: #fafafa;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        
-        .collapsible--search .collapsible__trigger:hover {
-            background: #f0f0f0;
-        }
-        
-        .collapsible--search .collapsible__title {
-            font-weight: 600;
-            color: #333;
-        }
-        
+        /* Collapsible Variant - Prover Violation */
         .collapsible--violation .collapsible__trigger {
             background: transparent;
             border: none;
@@ -207,12 +22,12 @@
             font-weight: 500;
             margin-top: 0.75rem;
         }
-        
+
         .collapsible--violation .collapsible__trigger:hover {
             background: transparent;
             opacity: 0.8;
         }
-        
+
         .collapsible--violation .collapsible__content {
             margin-top: 1rem;
             padding-top: 1rem;
@@ -220,384 +35,11 @@
             padding-left: 0;
             padding-right: 0;
         }
-        
-        /* Pre-formatted text blocks */
-        pre {
-            background: #f8f9fa;
-            padding: 1rem;
-            border-radius: 4px;
-            overflow-x: auto;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 1.5;
-        }
-        
-        .system-doc {
-            line-height: 1.6;
-            color: #333;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        
-        /* Chat/Message Styles */
-        .messages-container, .search-container {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        .message-bubble {
-            /*background: #f0f2f5;*/
-            border-radius: 12px;
-            padding: 1rem;
-            max-width: 85%;
-            align-self: flex-start;
-        }
 
-        .message-bubble.text,
-        .message-bubble.question-context,
-        .message-bubble.question-code,
+        /* Composer-specific message bubbles */
         .message-bubble.relaxation-explanation {
             background: #f0f2f5;
             border: 1px solid #788aa5;
-        }
-
-        .message-bubble.question-code {
-            background: white;
-            border: 1px solid #788aa5;
-        }
-        
-        .message-bubble.thinking {
-            background: #fff3cd;
-            border: 1px solid #ffc107;
-        }
-        
-        .message-bubble.thinking .message-text {
-            font-style: italic;
-            color: #856404;
-        }
-        
-        .message-type-label {
-            font-size: 11px;
-            text-transform: uppercase;
-            color: #6c757d;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-        }
-        
-        .message-text {
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            line-height: 1.5;
-        }
-        
-        .tool-call {
-            background: #d4edda;
-            border: 1px solid #c3e6cb;
-            padding: 0.75rem 1rem;
-            border-radius: 6px;
-            color: #155724;
-            font-weight: 500;
-        }
-        
-        /* VFS Modal Styles */
-        .vfs-modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            animation: fadeIn 0.2s ease-in;
-        }
-        
-        .vfs-modal.active {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .vfs-modal-content {
-            background: white;
-            width: 90%;
-            height: 80%;
-            max-width: 1400px;
-            border-radius: 8px;
-            display: flex;
-            flex-direction: column;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-        }
-        
-        .vfs-modal-header {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid #e0e0e0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: #f8f9fa;
-            border-radius: 8px 8px 0 0;
-        }
-        
-        .vfs-modal-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #2c3e50;
-        }
-        
-        .vfs-close-button {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: #6c757d;
-            padding: 0;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            transition: background 0.2s;
-        }
-        
-        .vfs-close-button:hover {
-            background: #e9ecef;
-        }
-        
-        .vfs-modal-body {
-            display: flex;
-            flex: 1;
-            overflow: hidden;
-        }
-        
-        .vfs-file-list {
-            width: 300px;
-            border-right: 1px solid #e0e0e0;
-            overflow-y: auto;
-            background: #f8f9fa;
-        }
-        
-        .vfs-file-item {
-            padding: 0.75rem 1rem;
-            cursor: pointer;
-            border-bottom: 1px solid #e9ecef;
-            font-size: 14px;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            transition: background 0.2s;
-            word-break: break-all;
-        }
-        
-        .vfs-file-item:hover {
-            background: #e9ecef;
-        }
-        
-        .vfs-file-item.active {
-            background: #3498db;
-            color: white;
-        }
-        
-        .vfs-file-content {
-            flex: 1;
-            padding: 1.5rem;
-            overflow: auto;
-        }
-        
-        .vfs-file-header {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid #e0e0e0;
-            color: #2c3e50;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-        }
-        
-        .vfs-file-code {
-            background: #f8f9fa;
-            padding: 1rem;
-            border-radius: 4px;
-            overflow-x: auto;
-        }
-        
-        .vfs-empty-state {
-            color: #6c757d;
-            font-style: italic;
-            text-align: center;
-            padding: 2rem;
-        }
-        
-        /* Prover Step Styles */
-        .prover-info {
-            background: #f8f9fa;
-            padding: 1rem;
-            border-radius: 6px;
-            margin-bottom: 1.5rem;
-        }
-        
-        .prover-contract {
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            color: #3498db;
-            cursor: pointer;
-            text-decoration: underline;
-            font-size: 14px;
-        }
-        
-        .prover-contract:hover {
-            color: #2980b9;
-        }
-        
-        .prover-rule {
-            font-weight: 600;
-            color: #495057;
-            margin-top: 0.5rem;
-        }
-        
-        .prover-results {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-        
-        .prover-result,
-        .requirement-bubble {
-            border-radius: 8px;
-            padding: 1rem;
-            margin-top: 0.5rem;
-            margin-bottom: 0.5rem;
-            border: 1px solid;
-            transition: box-shadow 0.2s;
-        }
-        
-        .prover-result.verified,
-        .requirement-bubble.satisfied,
-        .requirement-bubble.likely {
-            background: #d4edda;
-            border-color: #c3e6cb;
-            color: #155724;
-        }
-        
-        .prover-result.violated,
-        .requirement-bubble.partial,
-        .requirement-bubble.violated {
-            background: #f8d7da;
-            border-color: #f5c6cb;
-            color: #721c24;
-        }
-        
-        .prover-result.timeout,
-        .requirement-bubble.ignored {
-            background: #e2e3e5;
-            border-color: #d6d8db;
-            color: #383d41;
-        }
-        
-        .prover-result.error {
-            background: #fff3cd;
-            border-color: #ffeaa7;
-            color: #856404;
-        }
-        
-        .prover-result-header {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        
-        .prover-status-icon {
-            font-size: 1.2rem;
-            flex-shrink: 0;
-        }
-        
-        .prover-rule-name,
-        .requirement-text {
-            font-weight: 600;
-            flex: 1;
-        }
-        
-        .prover-status-label {
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            background: rgba(0,0,0,0.1);
-        }
-        
-        
-        .prover-violation-content h1,
-        .prover-violation-content h2,
-        .prover-violation-content h3 {
-            margin-top: 1rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .prover-violation-content h1 { font-size: 1.5rem; }
-        .prover-violation-content h2 { font-size: 1.3rem; }
-        .prover-violation-content h3 { font-size: 1.1rem; }
-        
-        .prover-violation-content p {
-            margin-bottom: 0.75rem;
-            line-height: 1.6;
-        }
-        
-        .prover-violation-content code {
-            background: rgba(0,0,0,0.1);
-            padding: 0.2rem 0.4rem;
-            border-radius: 3px;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 0.9em;
-        }
-        
-        .prover-violation-content pre {
-            background: rgba(0,0,0,0.1);
-            padding: 1rem;
-            border-radius: 4px;
-            overflow-x: auto;
-            margin: 1rem 0;
-        }
-        
-        .prover-violation-content ul,
-        .prover-violation-content ol {
-            margin-left: 1.5rem;
-            margin-bottom: 0.75rem;
-        }
-
-        .message-bubble.human-response {
-            align-self: flex-end;
-            background: #f5f5f5;
-            border: 1px solid #e0e0e0;
-        }
-        
-        .message-bubble.search-query, .message-bubble.human-question {
-            background: #e3f2fd;
-            border: 1px solid #90caf9;
-        }
-
-        .message-bubble.search-query .message-type-label,
-        .message-bubble.human-question .message-type-label {
-            color: #1976d2;
-        }
-
-        div.llm-comments, div.summarization-container {
-            padding: 1%;
-            line-height: 1.6;
-            margin-bottom: 1rem;
-        }
-
-        ul.result-files {
-            list-style: "\1F5D2";
-            margin-top: 1rem;
-            margin-left: 1rem;
-        }
-        
-        .message-bubble.search-query .message-text,
-        .message-bubble.human-question .message-text {
-            color: #0d47a1;
-            font-weight: 500;
-            line-height: 1.5;
         }
 
         .message-bubble.ai-analysis {
@@ -614,316 +56,140 @@
             font-weight: 500;
             line-height: 1.5;
         }
-        
-        .search-results {
+
+        /* Prover Step Styles */
+        .prover-info {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+        }
+
+        .prover-contract {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            color: #3498db;
+            cursor: pointer;
+            text-decoration: underline;
+            font-size: 14px;
+        }
+
+        .prover-contract:hover {
+            color: #2980b9;
+        }
+
+        .prover-rule {
+            font-weight: 600;
+            color: #495057;
+            margin-top: 0.5rem;
+        }
+
+        .prover-results {
             display: flex;
             flex-direction: column;
-            gap: 0.75rem;
-            margin-left: 2rem;
-            align-self: flex-end;
-            width: 85%;
+            gap: 1rem;
         }
-        
-        .search-result-body {
-            line-height: 1.6;
-            color: #424242;
-            margin-bottom: 0.75rem;
+
+        .prover-result,
+        .requirement-bubble {
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+            border: 1px solid;
+            transition: box-shadow 0.2s;
         }
-        
-        .search-result-similarity {
-            font-size: 12px;
-            color: #757575;
-            font-style: italic;
-            padding-top: 0.5rem;
-            border-top: 1px solid #e8e8e8;
+
+        .prover-result.verified,
+        .requirement-bubble.satisfied,
+        .requirement-bubble.likely {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        .prover-result.violated,
+        .requirement-bubble.partial,
+        .requirement-bubble.violated {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .prover-result.timeout,
+        .requirement-bubble.ignored {
+            background: #e2e3e5;
+            border-color: #d6d8db;
+            color: #383d41;
+        }
+
+        .prover-result.error {
+            background: #fff3cd;
+            border-color: #ffeaa7;
+            color: #856404;
+        }
+
+        .prover-result-header {
             display: flex;
             align-items: center;
             gap: 0.5rem;
         }
-        
-        .similarity-score {
-            background: #e8f5e9;
-            color: #2e7d32;
-            padding: 0.15rem 0.4rem;
-            border-radius: 3px;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-style: normal;
-            font-weight: 500;
+
+        .prover-status-icon {
+            font-size: 1.2rem;
+            flex-shrink: 0;
         }
-        
-        /* Put Step Styles */
-        .put-updates {
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }
-        
-        .put-update {
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            overflow: hidden;
-            background: white;
-        }
-        
-        .put-update-header {
-            background: #f8f9fa;
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #e0e0e0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .put-file-path {
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+
+        .prover-rule-name,
+        .requirement-text {
             font-weight: 600;
-            color: #2c3e50;
-            font-size: 14px;
+            flex: 1;
         }
-        
-        .put-update-actions {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-        }
-        
-        .put-update-type {
+
+        .prover-status-label {
             font-size: 12px;
             font-weight: 600;
             text-transform: uppercase;
             padding: 0.25rem 0.5rem;
             border-radius: 4px;
-            background: #e3f2fd;
-            color: #1976d2;
+            background: rgba(0,0,0,0.1);
         }
-        
-        .put-update-type.diff {
-            background: #fff3e0;
-            color: #e65100;
+
+        .prover-violation-content h1,
+        .prover-violation-content h2,
+        .prover-violation-content h3 {
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
         }
-        
-        .put-view-toggle {
-            background: #6c757d;
-            color: white;
-            border: none;
-            padding: 0.4rem 0.8rem;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background 0.2s;
+
+        .prover-violation-content h1 { font-size: 1.5rem; }
+        .prover-violation-content h2 { font-size: 1.3rem; }
+        .prover-violation-content h3 { font-size: 1.1rem; }
+
+        .prover-violation-content p {
+            margin-bottom: 0.75rem;
+            line-height: 1.6;
         }
-        
-        .put-view-toggle:hover {
-            background: #5a6268;
-        }
-        
-        .put-update-content {
-            max-height: 600px;
-            overflow: auto;
-        }
-        
-        .diff-view {
+
+        .prover-violation-content code {
+            background: rgba(0,0,0,0.1);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 13px;
-            line-height: 1.4;
+            font-size: 0.9em;
         }
-        
-        .diff-line {
-            padding: 0.25rem 0.5rem;
-            white-space: pre;
+
+        .prover-violation-content pre {
+            background: rgba(0,0,0,0.1);
+            padding: 1rem;
+            border-radius: 4px;
             overflow-x: auto;
-        }
-        
-        .diff-line.addition {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .diff-line.deletion {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        .diff-line.context {
-            background: white;
-            color: #495057;
-        }
-        
-        .diff-line.meta {
-            background: #f0f0f0;
-            color: #6c757d;
-            font-weight: 600;
-        }
-        
-        .diff-line.file-meta {
-            background: #e9ecef;
-            color: #495057;
-            font-style: italic;
-        }
-        
-        .put-file-view {
-            padding: 1rem;
-        }
-        
-        .put-file-view pre {
-            margin: 0;
-            background: #f8f9fa;
-            padding: 1rem;
-            border-radius: 4px;
-        }
-        
-        /* Utility */
-        .hidden {
-            display: none;
-        }
-        
-        /* Keyboard navigation hint */
-        .keyboard-hint {
-            font-size: 12px;
-            color: #ffffff80;
-            margin-left: 1rem;
+            margin: 1rem 0;
         }
 
-        /* Sidebar Menu Styles */
-        .sidebar-toggle {
-            background: none;
-            border: none;
-            color: white;
-            font-size: 1.2rem;
-            cursor: pointer;
-            padding: 0.5rem;
-            border-radius: 4px;
-            transition: background 0.2s;
-            margin-right: 1rem;
-        }
-
-        .sidebar-toggle:hover {
-            background: #34495e;
-        }
-
-        .sidebar-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 998;
-            display: none;
-        }
-
-        .sidebar-overlay.active {
-            display: block;
-        }
-
-        .sidebar {
-            position: fixed;
-            top: 0;
-            left: -300px;
-            width: 300px;
-            height: 100%;
-            background: white;
-            z-index: 999;
-            transition: left 0.3s ease;
-            box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
-            display: flex;
-            flex-direction: column;
-        }
-
-        .sidebar.active {
-            left: 0;
-        }
-
-        .sidebar-header {
-            background: #2c3e50;
-            color: white;
-            padding: 1rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #34495e;
-        }
-
-        .sidebar-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-
-        .sidebar-close {
-            background: none;
-            border: none;
-            color: white;
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            transition: background 0.2s;
-        }
-
-        .sidebar-close:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .sidebar-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 1rem 0;
-        }
-
-        .step-list {
-            list-style: none;
-            margin: 0;
-            padding: 0;
-        }
-
-        .step-item {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #e9ecef;
-            cursor: pointer;
-            transition: background 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .step-item:hover {
-            background: #f8f9fa;
-        }
-
-        .step-item.current {
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            font-weight: 600;
-            color: #1976d2;
-        }
-
-        .step-number {
-            background: #6c757d;
-            color: white;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            font-weight: 600;
-            flex-shrink: 0;
-        }
-
-        .step-item.current .step-number {
-            background: #2196f3;
-        }
-
-        .step-title {
-            flex: 1;
-            font-size: 14px;
-            line-height: 1.4;
+        .prover-violation-content ul,
+        .prover-violation-content ol {
+            margin-left: 1.5rem;
+            margin-bottom: 0.75rem;
         }
 
         /* Initial Requirements Styles */
@@ -956,101 +222,6 @@
         .initial-requirement-text {
             line-height: 1.6;
             color: #333;
-        }
-
-        /* VFS Commands Styles */
-        .vfs-commands-container {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-
-        .vfs-command-item {
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid #e0e0e0;
-        }
-
-        .vfs-thought {
-            background: #fff9c4;
-            border: 1px solid #fdd835;
-            padding: 1rem 1.5rem;
-            font-style: italic;
-            color: #6d4c41;
-            line-height: 1.6;
-            border-radius: 8px;
-            position: relative;
-        }
-
-        .vfs-thought:before {
-            content: "💭";
-            position: absolute;
-            left: 0.5rem;
-            top: 0.5rem;
-            font-size: 1.2rem;
-        }
-
-        .vfs-thought .vfs-thought-content {
-            margin-left: 1.5rem;
-        }
-
-        .vfs-cmd {
-            background: #1e1e1e;
-            color: #ffffff;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            border-radius: 8px;
-        }
-
-        .vfs-cmd-header {
-            background: #2d2d2d;
-            padding: 0.5rem 1rem;
-            border-bottom: 1px solid #404040;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 12px;
-            color: #b0b0b0;
-        }
-
-        .vfs-cmd-prompt {
-            background: #1e1e1e;
-            padding: 0.75rem 1rem;
-            display: flex;
-            align-items: flex-start;
-            gap: 0.5rem;
-        }
-
-        .vfs-cmd-prompt-symbol {
-            color: #4fc3f7;
-            font-weight: bold;
-            flex-shrink: 0;
-        }
-
-        .vfs-cmd-text {
-            color: #ffffff;
-            flex: 1;
-            word-break: break-all;
-        }
-
-        .vfs-cmd-output {
-            background: #1e1e1e;
-            padding: 0 1rem 1rem 1rem;
-            white-space: pre-wrap;
-            color: #e0e0e0;
-            line-height: 1.4;
-            border-top: 1px solid #404040;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .vfs-cmd-output.solidity-highlight {
-            padding: 1rem;
-        }
-
-        .vfs-cmd-output.solidity-highlight pre {
-            margin: 0;
-            padding: 1rem;
-            border-radius: 4px;
         }
 
         /* Prover TODO List Styles */
@@ -1130,61 +301,14 @@
     </style>
 </head>
 <body>
-    <!-- Header with Navigation -->
-    <div class="header">
-        <h1>Trace Explorer</h1>
-        <div class="navigation">
-            <button id="sidebarToggle" class="sidebar-toggle">
-                ☰
-            </button>
-            <button id="prevBtn" class="nav-button">
-                ← Previous
-            </button>
-            <button id="nextBtn" class="nav-button">
-                Next →
-            </button>
-            <span class="keyboard-hint">Use arrow keys to navigate</span>
-            <div class="step-indicator">
-                Step <span id="currentStep">1</span> of <span id="totalSteps">1</span>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Sidebar -->
-    <div id="sidebarOverlay" class="sidebar-overlay"></div>
-    <div id="sidebar" class="sidebar">
-        <div class="sidebar-header">
-            <div class="sidebar-title">Steps</div>
-            <button id="sidebarClose" class="sidebar-close">×</button>
-        </div>
-        <div class="sidebar-content">
-            <ul id="stepList" class="step-list">
-                <!-- Steps will be populated by JavaScript -->
-            </ul>
-        </div>
-    </div>
-    
-    <!-- Main Content Area -->
-    <div class="main-content">
-        <div id="paneContainer"></div>
-    </div>
-    
-    <!-- VFS Modal -->
-    <div id="vfsModal" class="vfs-modal">
-        <div class="vfs-modal-content">
-            <div class="vfs-modal-header">
-                <div class="vfs-modal-title">Virtual File System - Snapshot <span id="vfsSnapshotNumber"></span></div>
-                <button class="vfs-close-button" data-vfs-close>×</button>
-            </div>
-            <div class="vfs-modal-body">
-                <div class="vfs-file-list" id="vfsFileList"></div>
-                <div class="vfs-file-content" id="vfsFileContent">
-                    <div class="vfs-empty-state">Select a file to view its contents</div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
+    {% include 'trace/navigation.j2' %}
+
+    {% include 'trace/sidebar.j2' %}
+
+    {% include 'trace/main_content.j2' %}
+
+    {% include 'trace/vfs_modal.j2' %}
+
     <!-- Templates -->
     <!-- Initial Step Template -->
     <template id="initial-step-template">
@@ -1561,285 +685,10 @@
                 }
             });
         }
-        
-        // Populate the sidebar with step list
-        function populateSidebar() {
-            const stepList = document.getElementById('stepList');
-            stepList.innerHTML = '';
-            
-            stepTitles.forEach((title, index) => {
-                const listItem = document.createElement('li');
-                listItem.className = 'step-item';
-                if (index === currentStepIndex) {
-                    listItem.classList.add('current');
-                }
-                
-                listItem.innerHTML = `
-                    <div class="step-number">${index + 1}</div>
-                    <div class="step-title">${title}</div>
-                `;
-                
-                listItem.addEventListener('click', () => {
-                    navigateToStep(index);
-                    closeSidebar();
-                });
-                
-                stepList.appendChild(listItem);
-            });
-        }
-        
-        // Update sidebar current step highlight
-        function updateSidebarHighlight() {
-            document.querySelectorAll('.step-item').forEach((item, index) => {
-                item.classList.toggle('current', index === currentStepIndex);
-            });
-        }
-        
-        // Sidebar toggle functions
-        function openSidebar() {
-            document.getElementById('sidebar').classList.add('active');
-            document.getElementById('sidebarOverlay').classList.add('active');
-        }
-        
-        function closeSidebar() {
-            document.getElementById('sidebar').classList.remove('active');
-            document.getElementById('sidebarOverlay').classList.remove('active');
-        }
-        
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar.classList.contains('active')) {
-                closeSidebar();
-            } else {
-                openSidebar();
-            }
-        }
-        
-        // Navigate to specific step
-        function navigateToStep(index) {
-            if (index >= 0 && index < steps.length) {
-                currentStepIndex = index;
-                updateStepIndicator();
-                updateSidebarHighlight();
-                renderCurrentStep();
-                updateNavigationButtons();
-                updateURL();
-            }
-        }
-        
-        // URL hash support
-        function updateURL() {
-            if (currentStepIndex > 0) {
-                window.location.hash = `#step=${currentStepIndex + 1}`;
-            } else {
-                window.location.hash = '';
-            }
-        }
-        
-        function parseURLHash() {
-            const hash = window.location.hash;
-            if (hash.startsWith('#step=')) {
-                const stepNumber = parseInt(hash.substring(6), 10);
-                if (!isNaN(stepNumber) && stepNumber >= 1 && stepNumber <= steps.length) {
-                    return stepNumber - 1; // Convert to 0-based index
-                }
-            }
-            return 0; // Default to first step
-        }
-        
-        function handleHashChange() {
-            const newStepIndex = parseURLHash();
-            if (newStepIndex !== currentStepIndex) {
-                navigateToStep(newStepIndex);
-            }
-        }
-        
-        // Generic collapsible system
-        function initCollapsibles() {
-            document.addEventListener('click', (e) => {
-                const trigger = e.target.closest('[data-collapsible-trigger]');
-                if (trigger) {
-                    toggleCollapsible(trigger.closest('.collapsible'));
-                }
-            });
-        }
-        
-        function toggleCollapsible(collapsibleElement) {
-            const currentState = collapsibleElement.dataset.collapsibleState || 'expanded';
-            const newState = currentState === 'expanded' ? 'collapsed' : 'expanded';
-            collapsibleElement.dataset.collapsibleState = newState;
-            
-            // Emit custom event for additional handling
-            collapsibleElement.dispatchEvent(new CustomEvent('collapsible:toggle', {
-                detail: { state: newState, element: collapsibleElement }
-            }));
-        }
-        
-        function expandCollapsible(element) {
-            element.dataset.collapsibleState = 'expanded';
-        }
-        
-        function collapseCollapsible(element) {
-            element.dataset.collapsibleState = 'collapsed';
-        }
-        
-        // Attach all event listeners
-        function attachEventListeners() {
-            // Navigation buttons
-            document.getElementById('prevBtn').addEventListener('click', () => {
-                navigateStep(-1);
-            });
-            
-            document.getElementById('nextBtn').addEventListener('click', () => {
-                navigateStep(1);
-            });
-            
-            // Sidebar toggle
-            document.getElementById('sidebarToggle').addEventListener('click', toggleSidebar);
-            document.getElementById('sidebarClose').addEventListener('click', closeSidebar);
-            document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar);
-            
-            // Hash change listener
-            window.addEventListener('hashchange', handleHashChange);
-            
-            // Initialize unified collapsible system
-            initCollapsibles();
-            
-            // Event delegation for dynamically created elements
-            document.getElementById('paneContainer').addEventListener('click', (e) => {
-                // VFS open button
-                const vfsOpenButton = e.target.closest('[data-vfs-open]');
-                if (vfsOpenButton) {
-                    openVFSModal();
-                }
-                
-                // Contract file link in prover step
-                const contractFileLink = e.target.closest('[data-contract-file]');
-                if (contractFileLink) {
-                    const filePath = contractFileLink.dataset.contractFile;
-                    openVFSModalWithFile(filePath);
-                }
-                
-                // Put view toggle
-                const putToggle = e.target.closest('[data-toggle-view]');
-                if (putToggle) {
-                    togglePutView(putToggle);
-                }
-            });
-            
-            // VFS Modal close
-            document.getElementById('vfsModal').addEventListener('click', (e) => {
-                if (e.target === document.getElementById('vfsModal') || 
-                    e.target.closest('[data-vfs-close]')) {
-                    closeVFSModal();
-                }
-            });
-            
-            // VFS file selection
-            document.getElementById('vfsFileList').addEventListener('click', (e) => {
-                const fileItem = e.target.closest('.vfs-file-item');
-                if (fileItem) {
-                    selectVFSFile(fileItem.dataset.path);
-                }
-            });
-            
-            // Keyboard navigation
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'ArrowLeft') {
-                    navigateStep(-1);
-                } else if (e.key === 'ArrowRight') {
-                    navigateStep(1);
-                } else if (e.key === 'Escape') {
-                    if (document.getElementById('vfsModal').classList.contains('active')) {
-                        closeVFSModal();
-                    } else if (document.getElementById('sidebar').classList.contains('active')) {
-                        closeSidebar();
-                    }
-                }
-            });
-        }
-        
-        // Build cumulative VFS view up to a snapshot
-        function buildVFSView(snapshotIndex) {
-            const vfsView = {};
-            
-            // Build cumulative view
-            for (let i = 0; i <= snapshotIndex && i < fs.length; i++) {
-                Object.assign(vfsView, fs[i]);
-            }
-            
-            return vfsView;
-        }
-        
-        // VFS Modal functions
-        function openVFSModal() {
-            const step = steps[currentStepIndex];
-            currentVFSSnapshot = step.vfs_snapshot;
-            
-            const modal = document.getElementById('vfsModal');
-            modal.classList.add('active');
-            
-            // Update snapshot number
-            document.getElementById('vfsSnapshotNumber').textContent = currentVFSSnapshot;
-            
-            // Build and display file list
-            const vfsView = buildVFSView(currentVFSSnapshot);
-            const fileList = document.getElementById('vfsFileList');
-            fileList.innerHTML = '';
-            
-            // Sort paths for better display
-            const paths = Object.keys(vfsView).sort();
-            
-            paths.forEach(path => {
-                const fileItem = document.createElement('div');
-                fileItem.className = 'vfs-file-item';
-                fileItem.dataset.path = path;
-                fileItem.textContent = path;
-                fileList.appendChild(fileItem);
-            });
-            
-            // Clear previous selection
-            selectedFile = null;
-            document.getElementById('vfsFileContent').innerHTML = 
-                '<div class="vfs-empty-state">Select a file to view its contents</div>';
-        }
-        
-        function closeVFSModal() {
-            document.getElementById('vfsModal').classList.remove('active');
-            currentVFSSnapshot = null;
-            selectedFile = null;
-        }
-        
-        function selectVFSFile(path) {
-            selectedFile = path;
-            const vfsView = buildVFSView(currentVFSSnapshot);
-            const content = vfsView[path];
-            
-            // Update active state in file list
-            document.querySelectorAll('.vfs-file-item').forEach(item => {
-                item.classList.toggle('active', item.dataset.path === path);
-            });
-            
-            // Display file content
-            const contentContainer = document.getElementById('vfsFileContent');
-            
-            const fileTemplate = document.getElementById("vfs-file-pane-template");
 
-            const fileInst = fileTemplate.content.cloneNode(true);
-            fileInst.querySelector(".vfs-file-header").innerText = path;
-            const codeContents = fileInst.querySelector(".vfs-file-code");
-            renderCodeSnippet(
-                codeContents, path, content
-            );
-            contentContainer.replaceChildren(fileInst);
-        }
-        
-        // Utility function to escape HTML
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
+{% include 'trace/core_scripts.js.j2' %}
+
+{% include 'trace/vfs_scripts.js.j2' %}
         
         // Render the current step
         function renderCurrentStep() {
@@ -2434,31 +1283,6 @@
             container.appendChild(diffView);
         }
 
-        function renderCodeSnippet(
-            container, path, contents
-        ) {
-            const preElem = document.createElement("pre");
-            var doHighlight = false;
-            function getCode(lang) {
-                const codeElem = document.createElement("code");
-                codeElem.classList.add(`language-${lang}`);
-                codeElem.textContent = contents;
-                doHighlight = true;
-                return codeElem;
-            }
-            if(path.endsWith(".sol")) {
-                preElem.appendChild(getCode("solidity"));
-            } else if(path.endsWith(".spec")) {
-                preElem.appendChild(getCode("cvl"));
-            } else {
-                preElem.innerText = contents;
-            }
-            container.appendChild(preElem);
-            if(doHighlight) {
-                Prism.highlightAllUnder(container);  
-            }
-        }
-        
         // Render file content with syntax highlighting
         function renderPutFileContent(container, path, contents) {
             const fileView = document.createElement('div');
@@ -2495,36 +1319,6 @@
                     renderPutDiffContent(contentDiv, update.diff_lines);
                 }
             }
-        }
-        
-        
-        // Open VFS Modal with specific file selected
-        function openVFSModalWithFile(filePath) {
-            openVFSModal();
-            // After modal is open, select the file
-            setTimeout(() => {
-                selectVFSFile(filePath);
-            }, 100);
-        }
-        
-        
-        // Navigation functions
-        function navigateStep(direction) {
-            const newIndex = currentStepIndex + direction;
-            navigateToStep(newIndex);
-        }
-        
-        function updateStepIndicator() {
-            document.getElementById('currentStep').textContent = currentStepIndex + 1;
-            document.getElementById('totalSteps').textContent = steps.length;
-        }
-        
-        function updateNavigationButtons() {
-            const prevBtn = document.getElementById('prevBtn');
-            const nextBtn = document.getElementById('nextBtn');
-            
-            prevBtn.disabled = currentStepIndex === 0;
-            nextBtn.disabled = currentStepIndex === steps.length - 1;
         }
         
         // Initialize on load
