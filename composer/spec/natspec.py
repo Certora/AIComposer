@@ -8,19 +8,16 @@ import uuid
 import pathlib
 import contextlib
 import sys
-import pickle
 
 from dataclasses import dataclass
 import types
-from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any
+from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence
 
-from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 
 from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
 from langgraph.prebuilt import InjectedState
@@ -54,10 +51,6 @@ all_validations : list[ValidationToken] = [guidelines, suggestions, typecheck]
 
 class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
     input_file: str
-
-class DebugHandler(BaseCallbackHandler):
-    def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]], *, run_id: uuid.UUID, parent_run_id: uuid.UUID | types.NoneType = None, tags: list[str] | types.NoneType = None, metadata: dict[str, Any] | types.NoneType = None, **kwargs: Any) -> Any:
-        print(messages)
 
 @dataclass
 class NatSpecContext:
@@ -108,6 +101,7 @@ M = TypeVar("M", bound=BaseModel)
 InclusionType = Literal["interface", "system_doc"]
 
 def gen_feedback_tool(
+    thread_id: str,
     llm: BaseChatModel,
     tool_name: str,
     doc: str,
@@ -117,8 +111,7 @@ def gen_feedback_tool(
     inclusion: Sequence[InclusionType],
     result_handler: Callable[[M, NatSpecState], tuple[str, bool]]
 ) -> BaseTool:
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    mem = memory_tool(SqliteMemoryBackend("none", conn))
+    mem = memory_tool(get_memory(f"judge-{tool_name}-{thread_id}"))
     search_tool = cvl_manual_search(NatSpecContext)
     assert output_schema.__doc__ is not None
     result = result_tool_generator("output", output_schema, output_schema.__doc__)
@@ -221,9 +214,11 @@ def handle_feedback_result(
     return (formatted_feedback, validated)
 
 def get_judge_tool(
+    thread_id: str,
     llm: BaseChatModel,
 ) -> BaseTool:
     return gen_feedback_tool(
+        thread_id=thread_id,
         llm=llm,
         oracle_token="guidelines",
         doc="""
@@ -251,9 +246,11 @@ def handle_results(
     return ("\n".join(t.suggestsions), len(t.suggestsions) == 0)
 
 def get_suggestion_tool(
-        llm: BaseChatModel
+    thread_id: str,
+    llm: BaseChatModel
 ) -> BaseTool:
     return gen_feedback_tool(
+        thread_id=thread_id,
         llm=llm,
         oracle_token="suggestion",
         doc="""
@@ -311,6 +308,8 @@ def _maybe_update_cvl(
             if res.returncode != 0:
                 return f"""
     Update rejected, the syntax checker exited with non-zero status
+
+def execute(args: NatSpecArgs) -> int:
 
     stdout:
     {res.stdout}
@@ -600,19 +599,9 @@ stdout:
 stderr:
 {run_res.stderr}
 """
-                
-    
 
 def execute(args: NatSpecArgs) -> int:
     llm = create_llm(args)
-
-    judge = get_judge_tool(
-        llm
-    )
-
-    suggestions = get_suggestion_tool(
-        llm
-    )
 
     thread_id : str
     if args.thread_id is None:
@@ -621,6 +610,16 @@ def execute(args: NatSpecArgs) -> int:
     else:
         thread_id = args.thread_id
     
+    judge = get_judge_tool(
+        thread_id=thread_id,
+        llm=llm
+    )
+
+    suggestions = get_suggestion_tool(
+        thread_id=thread_id,
+        llm=llm
+    )
+
     thread_memories = get_memory(f"natspec-{thread_id}")
 
     mem_tool = memory_tool(thread_memories)
