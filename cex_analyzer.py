@@ -44,5 +44,13 @@ if __name__ == "__main__":
         help='Suppress intermediate output during analysis (only show final result)'
     )
 
+    parser.add_argument(
+        '-o',
+        '--output',
+        type=str,
+        default=None,
+        help='Output file path for the analysis result (if not specified, prints to stdout)'
+    )
+
     args = parser.parse_args()
     sys.exit(analyze(cast(AnalysisArgs, args)))

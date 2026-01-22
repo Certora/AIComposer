@@ -146,6 +146,14 @@ Examples:
         help="Database connection string for CVL manual search"
     )
 
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Output file path for the analysis result (if not specified, prints to stdout)"
+    )
+
     args = parser.parse_args()
     return analyze(cast(AnalysisArgs, args))
 
@@ -300,7 +308,15 @@ def _analyze_core(
             if not args.quiet:
                 print(d)
 
-    print(graph.get_state({"configurable": {"thread_id": tid}}).values["result"])
+    result = graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
+
+    if args.output is not None:
+        with open(args.output, 'w') as f:
+            f.write(result)
+        print(f"Analysis written to {args.output}")
+    else:
+        print(result)
+
     return 0
 
 def _analyze_from_report(

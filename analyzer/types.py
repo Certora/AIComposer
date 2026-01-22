@@ -46,3 +46,7 @@ class AnalysisArgs(Protocol):
     @property
     def rag_db(self) -> str:
         ...
+
+    @property
+    def output(self) -> str | None:
+        ...
