@@ -1,9 +1,7 @@
 import argparse
 import tempfile
 import subprocess
-import os
 import hashlib
-import sqlite3
 import uuid
 import pathlib
 import contextlib
@@ -26,9 +24,13 @@ from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.cvl.schema import CVLFile
-from composer.cvl.pretty_print import pretty_print
 from composer.spec.ptypes import NatSpecState, Result, NatSpecInput
+from composer.spec.cvl_tools import (
+    put_cvl_description,
+    PutCVLSchemaModel,
+    put_cvl,
+    put_cvl_raw,
+)
 from composer.tools.search import cvl_manual_search
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
 from composer.human.handlers import prompt_input
@@ -36,7 +38,7 @@ from composer.templates.loader import load_jinja_template
 
 from graphcore.tools.human import human_interaction_tool
 from graphcore.tools.vfs import VFSState
-from graphcore.tools.memory import memory_tool, SqliteMemoryBackend
+from graphcore.tools.memory import memory_tool
 from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import build_workflow, FlowInput, MessagesState, tool_state_update
 from graphcore.summary import SummaryConfig
@@ -271,90 +273,6 @@ def get_document() -> str:
     Retrieves the original design document if necessary
     """
     return get_runtime(NatSpecContext).context.orig_doc
-
-put_cvl_description = """
-Put a new version of the proposed spec file onto the VFS. The tool schema constrains
-you to putting only syntactically valid CVL. However, a pretty printed version of this syntax
-is ultimately what is saved on the VFS.
-
-This pretty printed file is then run through the official CVL parser. If the code fails to parse,
-this tool will reject the update, with the reported errors.
-"""
-
-class PutCVLSchemaModel(BaseModel):
-    cvl_file: CVLFile = Field(description="The CVL AST to put in the VFS")
-
-class PutCVLSchemaLG(BaseModel):
-    cvl_file: dict = Field(description="The CVL AST to put in the VFS")
-    tool_call_id: Annotated[str, InjectedToolCallId]
-
-PutCVLSchemaLG.__doc__ = put_cvl_description
-
-def _maybe_update_cvl(
-    tool_call_id: str,
-    pp: str
-) -> str | Command:
-    try:
-        with tempfile.NamedTemporaryFile("w", suffix=".spec") as f:
-            f.write(pp)
-            certora_dir = os.environ["CERTORA"]
-            emv_jar = os.path.join(certora_dir, "emv.jar")
-            res = subprocess.run(
-                ["java", "-classpath", emv_jar, "spec.ParseCheckerKt", f.name],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            if res.returncode != 0:
-                return f"""
-    Update rejected, the syntax checker exited with non-zero status
-
-def execute(args: NatSpecArgs) -> int:
-
-    stdout:
-    {res.stdout}
-
-    stderr:
-    {res.stderr}
-    """
-    except:
-        return "Syntax checker failed"
-    return tool_state_update(
-        tool_call_id=tool_call_id,
-        content="Accepted",
-        curr_spec=pp
-    )
-
-# for deeply cursed reasons, we need to have two versions of this schema
-@tool(args_schema=PutCVLSchemaLG)
-def put_cvl(
-    cvl_file: dict,
-    tool_call_id: Annotated[str, InjectedToolCallId]
-) -> Command | str:
-    pp: str
-    try:
-        pp = pretty_print(CVLFile.model_validate(cvl_file))
-    except:
-        return "Failed to pretty print the AST"
-    return _maybe_update_cvl(tool_call_id, pp)
-
-class PutCVLRaw(BaseModel):
-    """
-    A version of put CVL which accepts the surface syntax of CVL. You should only use
-    this if you have extremely high confidence that the CVL representation you are passing in
-    is correct.
-
-    If `cvl_file` is determined to have a syntax error, this update is rejected.
-    """
-    cvl_file: str = Field(description="The raw, surface syntax of the CVL file.")
-    tool_call_id: Annotated[str, InjectedToolCallId]
-
-@tool(args_schema=PutCVLRaw)
-def put_cvl_raw(
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    cvl_file: str
-) -> str | Command:
-    return _maybe_update_cvl(tool_call_id, cvl_file)
 
 class GetCVLSchema(BaseModel):
     """

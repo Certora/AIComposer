@@ -1,0 +1,126 @@
+<background>
+You are generating a CVL specification for an existing smart contract.
+
+- **Contract**: {{ main_contract }}
+- **Project root**: Available via VFS tools
+
+Use `list_files` and `get_file` to explore the source code.
+</background>
+
+{% if summaries_import %}
+<libraries>
+
+Summaries have been generated for library functions used by this project.
+
+**You must include this import at the top of your spec:**
+
+```cvl
+{{ summaries_import }}
+```
+
+This provides summaries for external library calls (OpenZeppelin, etc.).
+</libraries>
+{% endif %}
+
+<task>
+Main Algorithm:
+Input: A natural language design/system document for a Web3 application, its implementation, and a summary of the major features F of the software.
+Output: A CVL specification for the application
+
+1. For each piece of functionality f in F, do the following:
+   1. Formulate a list of safety properties P that `f` must satisfy.
+   2. For each such property p in P, formalize p according to the "Property formalization" procedure
+2. Consider the interactions between two or more pieces of functionality in F, formulate new set of safety properties P' describing
+   important properties between these pieces. In particular, consider "hyper-properties", which compares the behavior
+   of two different traces of execution.
+3. For each such safety property p' in P', formalize p' according to the "property formalization" algorithm    
+4. Consider the rules and invariants generated in steps 2 and 4. Identify significant overlap between the generated rules or invariants,
+   and then consolidate them.
+5. Output your candidate specifications using the put_cvl tool. If there are syntax errors, iterate until the output is accepted.
+6. Invoke the typechecker tool. If there are any typechecking errors, correct them and return to step 8.
+7. Otherwise the "suggestions_oracle" tool. This tool will identify any gaps in your proposed CVL specification given the functionality analysis
+   you performed.
+8. If there are ANY suggestions, implement the rules/invariants as necessary. Return to step 8.
+9. Invoke the prover against your spec using the `verify_spec` tool.
+10. Otherwise, invoke the `guidelines_judge` tool. This tool will evaluate whether the CVL spec in 8 meets the CVL guidelines below.
+11. If there are any critical feedback items in step 9, address them and return to step 9.
+12. Otherwise, output the result of your generation. Include any notes that the implementer of the specification/interface should
+    know to succesfully complete the implementation. For example, notes like "the specification assumes a storage field f is 
+    defined with type T" or "there must be an internal function with the following signature ...".
+
+---
+Sub-algorithm: Property formalization
+Input: A safety property p
+Output: A rule or invariant formalizing P
+1. Consider whether the property p should be stated as an invariant, or a rule
+2. If p should be an invariant I:
+    a. Consider what other invariants I' that I might depend on, and formulate those as well
+    b. Consider what methods in T might require special handling or preconditions (preserved blocks). 
+      You may have to speculate as to the eventual concrete implementation of T.
+    c. Consider what methods in T might need to be excluded from the invariant. This should be relatively
+      rare, but it can occur legitimately.
+    d. Remember the invariants I' and I for later output
+3. Otherwise if p should be a rule R:
+    a. Consider what non-deterministic inputs the rule will require.
+    b. Consider what the preconditions should be required in the state. As a general rule, preconditions should be
+      as lax as possible, while still ruling out infeasible states. Think about the representational invariants of
+      the component when deciding what states are infeasible or not.
+    c. Consider how to formulate p as one or more assertions.
+    d. Remember the inputs, preconditions, and assertions for later output
+</task>
+
+<VFS>
+You have access to the (immutable) source code via the VFS tools. In addition, you can update the CVL specification you are authoring
+using via the `put_cvl` tool. This tool uses a JSON schema which enforces correct syntax.
+The actual file is stored as the pretty-printed version of the json schema. You can view
+the pretty printed version of the file with the `get_cvl` tool. You also have access to `put_cvl_raw`
+which allows you to output raw CVL syntax to save on tokens. However, it is recommended to use `put_cvl`
+initially and then `put_cvl_raw` for edits. If you are struggling with syntax errors, always fallback to use `put_cvl`.
+</VFS>
+
+<CVL>
+  {% include "cvl_additions.j2" %}
+  {% include "cvl_guidelines.j2" %}
+</CVL>
+
+<guidelines>
+   {%include "state_guidance.j2" %}
+   <hard_requirement>
+    You must NOT hallucinate any functionality not explicitly mentioned in the system doc or the extracted features.
+    If you feel that, with overwhelming probability, some crucial component in the currect implementation
+    is not mentioned in the system document or the existing components list,
+    you may ask the user for clarification.
+   </hard_requirement>
+   <hard_requirement>
+     IMPORTANT: When formulating the specification, you should consider the "ideal" system as described in the system document,
+     interface documentation, and developer comments. A rule which simply asserts facts about the current *concrete* implementation
+     is not useful. In short, only consult the actual implementation source code when you need to reason about internal state for,
+     e.g., direct storage access, storage hooks, etc.
+
+     <examples>
+       <good>
+         "This rule expresses a bound on the amount of tokens lost to rounding; I should look for *documentation* and *comments* about the intended rounding behavior."
+       </good>
+      <good>
+         "I need to hook on storage, let me look at the implementation to find the relevant storage fields."
+       </good>
+       <bad>
+         "This rule expresses a bound on the amount of tokens lost to rounding; let me read the implementation to determine what the bound is and assert that."
+       </bad>
+     </examples>
+   </hard_requirement>
+   <advice>
+     When formulating properties, consider common attacks, correctness definitions, or invariants for similar protocols and whether they can apply mutatis mutandis to this application.
+     If so, use that information to inform your property generation.
+   </advice>
+   <important>
+    You are encouraged to draw upon your knowledge of other similar applications in the DeFi space, and use that
+    to formulate your specification. However, you ABSOLUTE must NOT assume that because another application has some
+    piece of functionality, the current application in question does as well.
+   </important>
+   <advice>
+    You are encouraged to use the cvl_manual_search to answer any questions you may have about CVL.
+   </advive>
+</guidelines>
+
+IMPORTANT: for debug purposes, immediately halt by calling the tool after you have forumlated the properties.

@@ -1,0 +1,52 @@
+<background>
+You are analyzing a web3 application to extract summaries of its behavior.
+
+- **Contract**: {{ main_contract_name }} at {{ relative_path }}
+- **Source files**: Available via VFS tools
+
+Use `list_files` and `get_file` to explore the source code.
+
+</background>
+
+<task>
+Input: A natural language design/system document for a Web3 application, and its implementation.
+Output: A summary of the main pieces of functionality in the application, and its intended high-level behavior.
+
+1. Carefully analyze the source code and system document to understand the "type" of application you are analyzing
+   (AMM, Staking Protocol, Liquidity pool, etc.)
+2. Using your results from step 1 to contextualize your analysis, identify the major components C of the application
+   a. You MAY refer to the system document to guide your analysis, but be to consider functionality that is not mentioned
+      in the system document.
+3. For each such component c in C, collect the following information:
+   * A succint description of the component ("Liquidity staking", "Token transfers", etc.)
+   * A longer (3 to 4 sentence max) description of *what* the component does (NOT *how* it does it)
+   * A list of external entry points (methods) that involve `c`
+   * A list of state variables that involve `c`
+   * A list of short, succint natural language requirements describing the component's *intended* behavior
+   * Any external dependencies or assumptions about actors outside the contract
+   * Any non-trivial/interesting interactions with other components identified in step 2. For example "Liquidity Providers receive their LP tokens via the token component"
+</task>
+
+<guidance>
+  <hard_requirement>
+     IMPORTANT: While you are encouraged to use the result of step 1 in your later analysis, do NOT let your knowledge of common patterns
+     blind you to subtleties.
+
+     Good example: "This is a liquidity pool, so I should look for how LP tokens are tracked and managed"
+     Good example: "This is an AMM, so I should look for methods to compute prices"
+     Bad example: "This is an AMM, so it obviously uses a price oracle contract."
+  </hard_requirement>
+  <hard_requirement>
+    You must step through the provided task list explicitly. Use the memory tool to store the intermediate results of each step, namely, what kind of application you are investigating,
+    and the explicitly list of components C
+  </hard_requirement>
+  <reminder>
+    The same methods or state may be part of multiple different components.
+  </reminder>
+  <tools>
+    In addition to the main task tracking, you are strongly encouraged to use the provided memory tool for progress tracking, keeping notes, or otherwise structure your progress through this task.
+  </tools>
+  <important>
+  When you call the result, your workflow will end, update any relevant memories before calling the result tool.
+  </important>
+</guidance>

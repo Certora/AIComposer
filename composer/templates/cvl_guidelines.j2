@@ -13,6 +13,10 @@
        d. Reference types in *internal* method signatures (parameters and return) must *always* include the data location.
        e. Reference types in *external* method signatures from *libraries* must also *always* include the data location.
        f. The data location on reference types in other contexts is optional.
+       g. A method block entry without a specific contract identifier (e.g., `function foo() ...`) is implicitly qualified with the contract unfer verification. To refer to *any* method called `foo()`, you must use
+          the `function _.foo() ...` syntax.
+       h. A method block signature for a method which uses a user defined type alias must ALSO use the user defined type alias in the parameter/return types,
+          *NOT* the underlying type alias.
     7. Unlike the methods block, parameter types in `preserved` blocks, signature literals, and dispatch list signatures should *not* include data locations.
     8. The contract name in `methods` block should be the contract type name, *not* the identifier bound by a `using` clause.
     9. With the exception of ghosts, values are immutable in CVL. That is, it is illegal to write `uint[] a = [1,2,3]; a[0] = 4;` Instead, values should be constrained via `require` statements.
@@ -24,4 +28,6 @@
     14. All CVL functions must end in a `return` statement, even if the function has no return value.
     15. Void functions in `CVL` should simply omit the returns clause. `returns void` should NOT be used.
     16. The return value of `@withrevert` calls should rarely be used, as it is undefined if the function in question reverted.
+    17. method block entries which are neither marked `envfree` nor have a summary serve no purpose. All external methods declared in the target smart contract are automatically exposed to a CVL specification; the
+        `methods` block is only necessary for *annotating* specific methods.
 </cvl_guidelines>
