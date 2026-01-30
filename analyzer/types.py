@@ -1,6 +1,29 @@
+from dataclasses import dataclass
 from typing import Protocol, Literal
 
+from pydantic import BaseModel, Field
+
 Ecosystem = Literal["evm", "soroban", "move", "solana"]
+
+
+class DefaultAnalysisResult(BaseModel):
+    result: str = Field(
+        description="The textual analysis explaining the counterexample. "
+                    "You MAY use markdown in your output."
+    )
+
+
+@dataclass(frozen=True)
+class ResultToolConfig:
+    schema: type[BaseModel]
+    doc: str
+
+
+DEFAULT_RESULT_TOOL_CONFIG = ResultToolConfig(
+    schema=DefaultAnalysisResult,
+    doc="Tool to communicate the result of your analysis.",
+)
+
 
 class AnalysisArgs(Protocol):
     @property
@@ -49,4 +72,8 @@ class AnalysisArgs(Protocol):
 
     @property
     def output(self) -> str | None:
+        ...
+
+    @property
+    def result_tool_config(self) -> ResultToolConfig:
         ...

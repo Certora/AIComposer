@@ -1,4 +1,4 @@
-from typing import NotRequired, TypedDict, Iterator
+from typing import Any, NotRequired, TypedDict, Iterator
 from dataclasses import dataclass
 import pathlib
 import os
@@ -26,7 +26,8 @@ from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
 
-from analyzer.types import AnalysisArgs, Ecosystem
+from pydantic import BaseModel
+from analyzer.types import AnalysisArgs, Ecosystem, DefaultAnalysisResult, DEFAULT_RESULT_TOOL_CONFIG
 
 class EcosystemConfig(TypedDict):
     spec_name: str
@@ -52,12 +53,7 @@ class ExplainerContext:
     rag_db: PostgreSQLRAGDatabase
 
 class SimpleState(VFSState, MessagesState):
-    result: NotRequired[str]
-
-analysis_output_tool = result_tool_generator(
-    "result", 
-    (str, "The textual analysis explaining the counterexample. You MAY use markdown in your output."),
-    "Tool to communicate the result of your analysis.")
+    result: NotRequired[Any]
 
 
 def main() -> int:
@@ -155,6 +151,7 @@ Examples:
     )
 
     args = parser.parse_args()
+    args.result_tool_config = DEFAULT_RESULT_TOOL_CONFIG
     return analyze(cast(AnalysisArgs, args))
 
 ecosystem_params: dict[Ecosystem, EcosystemConfig] = {
@@ -252,6 +249,12 @@ def _analyze_core(
         )
     )
 
+    analysis_output_tool = result_tool_generator(
+        "result",
+        args.result_tool_config.schema,
+        args.result_tool_config.doc,
+    )
+
     tools = [analysis_output_tool, *v_tools]
     if args.ecosystem == "evm":
         #import here to lazily load sentencetransformers
@@ -308,14 +311,21 @@ def _analyze_core(
             if not args.quiet:
                 print(d)
 
-    result = graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
+    raw_result = graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
+
+    if args.result_tool_config.schema is DefaultAnalysisResult:
+        output_text = raw_result.result
+    elif isinstance(raw_result, BaseModel):
+        output_text = raw_result.model_dump_json(indent=2)
+    else:
+        output_text = str(raw_result)
 
     if args.output is not None:
         with open(args.output, 'w') as f:
-            f.write(result)
+            f.write(output_text)
         print(f"Analysis written to {args.output}")
     else:
-        print(result)
+        print(output_text)
 
     return 0
 
