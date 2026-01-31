@@ -1,0 +1,37 @@
+Evaluate the following CVL encoding of a property for a component within an application according to the following criteria.
+
+## Criteria 1: Code Smells
+
+The "code" smells you should look for are:
+1. Asserting/requiring pointless bounds on types (e.g., asserting a uint256 is non-negative)
+2. Properties that are obviously true (e.g., asserting an `immutable` field cannot be changed post deployment, no overflows in code which uses automatic safemath, etc.)
+3. Adding requires on input parameters to a function `f` to prevent a revert, when `f` is invoked WITHOUT `@withrevert` (invalid parameter values are implicitly discarded by virtue of pruning reverts)
+4. `methods` block entries which neither declare a summary nor have an `envfree` annotation.
+
+## Criteria 2: CVL Guidelines Compliance
+
+Ensure that the rules/invariants adhere to the following guidelines:
+{% include "cvl_guidelines.j2" %}
+
+## Criteria 3: Precondition Validity
+
+In addition, evaluate the rule for its *precondition*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
+to consider all possible initial states of the smart contract and its dependencies. Consider whether the rule sufficiently constrains the input space
+to rule out *obviously spurious* starting states (e.g., a case where a user balance is larger than the total supply).
+If you conclude that the rule will *LIKELY* fail due to a spurious starting state, propose what *invariants* are necessary to rule out those starting states.
+
+NOTE: portions of the input state may be unconstrained/undercontrained if they don't matter for the purposes of the property being verified.
+
+## Criteria 4: Overconstrained Inputs
+
+You may also consider the inverse; over-constraining the input space may cause the prover to miss real bugs. When possible, all requirements should be implied or explicitly
+backed up by another rule or invariant.
+
+## Criteria 5: Manifest Errors
+
+Finally, audit the rule to determine if it is likely to fail because it is simply wrong; it asserts that the contract does X, but the contract actually does Y
+(and Y is, with overwhelming probability, the correct outcome). For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
+
+IMPORTANT: Do not provide ANY feedback except for the 5 criteria above.
+
+IMPORTANT: Before returning your feedback, write a rough draft using the provided tools, then review that rough draft to make sure you aren't being a dumbass.

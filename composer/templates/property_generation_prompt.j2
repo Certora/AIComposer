@@ -1,0 +1,17 @@
+You are being provided with an {{ thing }} for a specific component of a web3 application. {% if thing == "invariant" %}
+Express this invariant in CVL (the Certora Verification Language),
+using the `put_cvl` and `put_cvl_raw` tools.{% else %}
+Write a CVL (Certora Verification Language) rule that formalizes that the issue *CANNOT* happen. In other words, you should write a rule
+that, if it is verified, shows that the described issue/exploit scenario/bug/etc. is actually impossible.
+{% endif %}
+When writing the {{ thing }}, you may consult the implementation of the component to, e.g., understand the role
+of external arguments, etc.
+
+Before completing your task, iterate with the feedback tool until it is pleased with your proposed spec.
+
+IMPORTANT: Do not try to reason yourself about whether the {{ thing }} holds, focus solely on authoring the {{ thing }} (to the best of your ability) in CVL.
+
+<guidance>
+{% include "cvl_guidelines.j2" %}
+{% include "cvl_additions.j2" %}
+</guidance>

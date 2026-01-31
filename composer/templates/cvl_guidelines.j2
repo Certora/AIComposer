@@ -30,4 +30,6 @@
     16. The return value of `@withrevert` calls should rarely be used, as it is undefined if the function in question reverted.
     17. method block entries which are neither marked `envfree` nor have a summary serve no purpose. All external methods declared in the target smart contract are automatically exposed to a CVL specification; the
         `methods` block is only necessary for *annotating* specific methods.
+    18. Preserved blocks for an invariant I add requirements to the prestate *on top* of the invariant itself. When proving an invariant I for some contract C, the prover shows the following is true for all possible methods m in C:
+        `assume I; m(); assert I`. `preserved` blocks are essentially inserted after the `assume I;` Crucially, there is NO NEED to "manually" require the invariant `I`, it is always included in the pre-state requirements.
 </cvl_guidelines>
