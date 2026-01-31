@@ -11,7 +11,7 @@ import base64
 import hashlib
 import json
 import tempfile
-import shutil
+import sqlite3
 import sys
 import subprocess
 
@@ -20,11 +20,11 @@ import composer.certora as _
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, Generic, get_args, get_origin, Any, override
+from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import ToolMessage
-from langchain_core.tools import InjectedToolCallId, tool, BaseTool
+from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
@@ -38,14 +38,14 @@ from composer.prover.results import read_and_format_run_result
 from composer.rag.db import PostgreSQLRAGDatabase
 from graphcore.graph import MessagesState, Builder
 from graphcore.tools.vfs import VFSState, VFSToolConfig, fs_tools
-from graphcore.tools.schemas import InjectAll, WithInjectedState, WithImplementation, WithInjectedId
+from graphcore.tools.schemas import WithInjectedState, WithImplementation, WithInjectedId
 
 import uuid
 from typing import cast
 
 from langchain_core.runnables import RunnableConfig
 
-from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure, SetupSuccess
+from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl
 from composer.tools.search import cvl_manual_search
 from composer.human.handlers import handle_human_interrupt
@@ -56,11 +56,10 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.templates.loader import load_jinja_template
 from graphcore.graph import build_workflow, FlowInput
-from graphcore.tools.vfs import vfs_tools, VFSInput
-from graphcore.tools.memory import memory_tool
+from graphcore.tools.vfs import vfs_tools
+from graphcore.tools.memory import memory_tool, SqliteMemoryBackend
 from langgraph._internal._typing import StateLike
 from graphcore.summary import SummaryConfig
-from graphcore.types import VMWithResult, resolve_generics
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -423,66 +422,54 @@ def _cache_key_bug_analysis(
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
 
-def format_summary_xml(summary: ApplicationSummary) -> str:
-    """Pretty print an ApplicationSummary to XML-like format for LLM consumption."""
-    lines = []
-    lines.append("<application-summary>")
-    lines.append(f"  <application-type>{summary.application_type}</application-type>")
+# def _format_component_xml(lines: list[str], component: ApplicationComponent):
+#     lines.append("  <component>")
+#     lines.append(f"    <name>{component.name}</name>")
+#     lines.append(f"    <description>{component.description}</description>")
 
-    for component in summary.components:
-        _format_component_xml(lines, component)
+#     if component.requirements:
+#         lines.append("    <requirements>")
+#         for req in component.requirements:
+#             lines.append(f"      <requirement>{req}</requirement>")
+#         lines.append("    </requirements>")
 
-    lines.append("</application-summary>")
-    return "\n".join(lines)
+#     if component.external_entry_points:
+#         lines.append("    <entry-points>")
+#         for entry in component.external_entry_points:
+#             lines.append(f"      <entry-point>{entry}</entry-point>")
+#         lines.append("    </entry-points>")
 
-def _format_component_xml(lines: list[str], component: ApplicationComponent):
-    lines.append("  <component>")
-    lines.append(f"    <name>{component.name}</name>")
-    lines.append(f"    <description>{component.description}</description>")
+#     if component.state_variables:
+#         lines.append("    <state-variables>")
+#         for var in component.state_variables:
+#             lines.append(f"      <variable>{var}</variable>")
+#         lines.append("    </state-variables>")
 
-    if component.requirements:
-        lines.append("    <requirements>")
-        for req in component.requirements:
-            lines.append(f"      <requirement>{req}</requirement>")
-        lines.append("    </requirements>")
+#     if component.interactions:
+#         lines.append("    <interactions>")
+#         for interaction in component.interactions:
+#             lines.append("      <interaction>")
+#             lines.append(f"        <other-component>{interaction.other_component}</other-component>")
+#             lines.append(f"        <description>{interaction.interaction_description}</description>")
+#             lines.append("      </interaction>")
+#         lines.append("    </interactions>")
 
-    if component.external_entry_points:
-        lines.append("    <entry-points>")
-        for entry in component.external_entry_points:
-            lines.append(f"      <entry-point>{entry}</entry-point>")
-        lines.append("    </entry-points>")
+#     if component.dependencies:
+#         lines.append("    <external-dependencies>")
+#         for dep in component.dependencies:
+#             lines.append("      <dependency>")
+#             lines.append(f"        <name>{dep.name}</name>")
+#             for req in dep.requirements:
+#                 lines.append(f"        <requirement>{req}</requirement>")
+#             lines.append("      </dependency>")
+#         lines.append("    </external-dependencies>")
 
-    if component.state_variables:
-        lines.append("    <state-variables>")
-        for var in component.state_variables:
-            lines.append(f"      <variable>{var}</variable>")
-        lines.append("    </state-variables>")
+#     lines.append("  </component>")
 
-    if component.interactions:
-        lines.append("    <interactions>")
-        for interaction in component.interactions:
-            lines.append("      <interaction>")
-            lines.append(f"        <other-component>{interaction.other_component}</other-component>")
-            lines.append(f"        <description>{interaction.interaction_description}</description>")
-            lines.append("      </interaction>")
-        lines.append("    </interactions>")
-
-    if component.dependencies:
-        lines.append("    <external-dependencies>")
-        for dep in component.dependencies:
-            lines.append("      <dependency>")
-            lines.append(f"        <name>{dep.name}</name>")
-            for req in dep.requirements:
-                lines.append(f"        <requirement>{req}</requirement>")
-            lines.append("      </dependency>")
-        lines.append("    </external-dependencies>")
-
-    lines.append("  </component>")
-
-def format_component_xml(component: ApplicationComponent) -> str:
-    l = []
-    _format_component_xml(l, component)
-    return "\n".join(l)
+# def format_component_xml(component: ApplicationComponent) -> str:
+#     l = []
+#     _format_component_xml(l, component)
+#     return "\n".join(l)
 
 
 # Common forbidden read pattern for source analysis
@@ -595,6 +582,27 @@ class PropertyFormulation(BaseModel):
     sort: Literal["attack_vector", "safety_property", "invariant"] = Field(description="The type of property you are describing.")
     description: str = Field(description="The description of the property")
 
+    def to_template_args(self) -> dict:
+        thing : str
+        what_formal : str
+        prop = self
+        match prop.sort:
+            case "attack_vector":
+                thing = "potential attack vector/exploit"
+                what_formal = f"that a {thing} is not possible"
+            case "invariant":
+                thing = "invariant"
+                what_formal = "that an invariant holds"
+            case "safety_property":
+                thing = "safety property"
+                what_formal = "that a safety property holds"
+        return {
+            "thing": thing,
+            "what_formal": what_formal,
+            "thing_tag": self.sort,
+            "thing_descr": self.description
+        }
+
 def run_bug_analysis(
     args: SourceSpecArgs,
     spec: ContractSpec,
@@ -604,7 +612,7 @@ def run_bug_analysis(
 ) -> list[PropertyFormulation] | None:
     # Check cache first
     cache_key = _cache_key_bug_analysis(args, spec, component.component, component.summ.application_type)
-    cached = store.get(("bug_analysis",), cache_key)
+    cached = store.get(("bug_analysis_2",), cache_key)
     if cached is not None:
         print(f"Using cached bug analysis (key={cache_key})")
         return [PropertyFormulation.model_validate(p) for p in cached.value["items"]]
@@ -613,13 +621,10 @@ def run_bug_analysis(
         result: NotRequired[list[PropertyFormulation]]
 
     d = bind_standard(
-        builder, ST
+        builder, ST, "The security properties you have extracted about the component"
     ).with_initial_prompt_template(
-        "property_analysis.j2",
-        application_type=component.summ.application_type,
-        contract_name = spec.contract_name,
-        relative_path=spec.relative_path,
-        component=format_component_xml(component.component)
+        "property_analysis_prompt.j2",
+        context=component
     ).with_sys_prompt(
         "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
     ).build()[0].compile()
@@ -635,13 +640,17 @@ def run_bug_analysis(
     return result
 
 @dataclass
-class ComponentInst:
+class ComponentInst(ContractSpec):
     summ: ApplicationSummary
     ind: int
 
     @property
     def component(self) -> ApplicationComponent:
         return self.summ.components[self.ind]
+    
+    @property
+    def application_type(self) -> str:
+        return self.summ.application_type
 
 class PropertyFeedback(BaseModel):
     """
@@ -684,61 +693,45 @@ def property_feedback_judge(
                 "memory": self.rough_draft,
                 "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
             })
-    
+    db = sqlite3.connect(":memory:", check_same_thread=False)
+    memory = memory_tool(SqliteMemoryBackend("dummy", db))
     workflow = bind_standard(
         builder, ST
     ).with_initial_prompt_template(
         "property_judge_prompt.j2",
-        app_type=inst.summ.application_type,
-        component=inst.component,
-        property=
+        context=inst,
+        **prop.to_template_args()
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
-    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft")]).build()[0].compile()
+    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft"), memory]).build()[0].compile()
 
     def the_tool(
-        inst: ComponentInst, prop: PropertyFormulation, cvl: str
+        cvl: str
     ) -> PropertyFeedback:
-        import yaml
         print("HIYA")
         print(cvl)
-        r = workflow.invoke(VFSInput(vfs={}, input=[
-            f"The component in question is located within an application described as {inst.summ.application_type}"
-            "The component's description is", format_component_xml(inst.component),
-            "The property is", yaml.dump(prop.model_dump()),
+        r = workflow.invoke(FlowInput(input=[
             "The proposed CVL file is",
             cvl
         ]))["result"]
-        import yaml
         print(f"Returning feedback \n{r.feedback}\nFor:{prop}")
         return r
 
     return the_tool
 
 def generate_property_cvl(
-    spec: ContractSpec,
     feat: ComponentInst,
     prop: PropertyFormulation,
     builder: Builder[None, None, FlowInput],
-    feedback: FeedbackTool
 ) -> tuple[str, str]:
+    
     class ST(MessagesState):
         curr_spec: NotRequired[str]
         result: NotRequired[str]
 
-    bind_standard(
-        builder, ST
-    ).with_tools([put_cvl, put_cvl_raw])
-
-    thing : str
-    init_message : str
-
-    if prop.methods == "invariant":
-        thing = "invariant"
-        init_message = f"The proposed invariant is: {prop.description}"
-    else:
-        thing = "rule"
-        init_message = f"The potential issue/attack/etc. is: {prop.description}"
+    feedback = property_feedback_judge(
+        builder, feat, prop
+    )
 
     class FeedbackSchema(WithInjectedState[ST], WithImplementation[str]):
         """
@@ -750,28 +743,25 @@ def generate_property_cvl(
             spec = st.get("curr_spec", None)
             if spec is None:
                 return "No spec put yet"
-            import yaml
-            return yaml.dump(feedback(feat, prop, spec).model_dump())    
+            t = feedback(spec)
+            return f"""
+Good? {str(t.good)}
+Feedback {t.feedback}
+"""
+        
+    d = bind_standard(
+        builder, ST, "A description of your generated CVL"
+    ).with_tools(
+        [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool")]
+    ).with_sys_prompt_template(
+        "cvl_system_prompt.j2"
+    ).with_initial_prompt_template(
+        "property_generation_prompt.j2",
+        context=feat,
+        **prop.to_template_args()
+    ).build()[0].compile()
 
-    d = build_workflow(
-        context_schema=None,
-        initial_prompt=load_jinja_template("property_generation_prompt.j2", thing=thing),
-        sys_prompt="You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols",
-        input_type=VFSInput,
-        state_class=ST,
-        output_key="result",
-        tools_list=[put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool")],
-        unbound_llm=m,
-        summary_config=SummaryConfig(max_messages=50)
-    )[0].compile()
-
-    r = d.invoke(input=VFSInput(vfs={}, input=[
-        f"The application in question is described as: {feat.summ.application_type}", 
-        f"The target of your analysis is contract {spec.contract_name} at {spec.relative_path}",
-        "The component description is as follows",
-        format_component_xml(feat.component),
-        init_message
-    ]), config={"recursion_limit": 100}, context=RagCtxt(rag_db=db))
+    r = d.invoke(input=FlowInput(input=[]), config={"recursion_limit": 100})
 
     return (r["result"], r["curr_spec"])
 
@@ -827,12 +817,13 @@ def execute(args: SourceSpecArgs) -> int:
         print("Oh well")
         return 1
 
-    feedback_t = property_feedback_judge(
-        cvl_builder
-    )
-
     for feature_idx in range(0, len(analysis.components)):
-        feat = ComponentInst(analysis, feature_idx)
+        feat = ComponentInst(
+            contract_name=spec.contract_name,
+            relative_path=spec.relative_path,
+            summ=analysis,
+            ind=feature_idx
+        )
         res = run_bug_analysis(args, spec, feat, b, store)
         if res is None:
             print("Didn't work")
@@ -841,7 +832,7 @@ def execute(args: SourceSpecArgs) -> int:
             import yaml
             print(yaml.dump(prop.model_dump()))
             r, cvl = generate_property_cvl(
-                args, spec, feat, prop, vfs_factory, rag_db, feedback_t
+                feat, prop, cvl_builder
             )
             print(cvl)
             print(r)

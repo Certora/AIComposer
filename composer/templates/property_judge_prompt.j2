@@ -1,19 +1,37 @@
-Evaluate the following CVL encoding of a property for a component within an application according to the following criteria.
+<background>
+You are tasked with evaluating a fellow CVL engineer's attempt to formalize {{ what_formal }} within a larger
+application.
+</background>
 
-## Criteria 1: Code Smells
+<task>
+## Step 1
+
+Consult your memory to determine if you have already been asked to evaluate a previous attempt at this formalization.
+If so, recall what your prior feedback may have been.
+
+## Step 2
+
+Understand the {{ thing }} itself
+
+## Step 3
+
+Evaluate the CVL specification against the following criteria.
+<criteria>
+### Criteria 1: Code Smells
 
 The "code" smells you should look for are:
 1. Asserting/requiring pointless bounds on types (e.g., asserting a uint256 is non-negative)
 2. Properties that are obviously true (e.g., asserting an `immutable` field cannot be changed post deployment, no overflows in code which uses automatic safemath, etc.)
 3. Adding requires on input parameters to a function `f` to prevent a revert, when `f` is invoked WITHOUT `@withrevert` (invalid parameter values are implicitly discarded by virtue of pruning reverts)
 4. `methods` block entries which neither declare a summary nor have an `envfree` annotation.
+5. Tautological/pointless assertions/requires (`assert true`, `require 1 > 0`, etc.)
 
-## Criteria 2: CVL Guidelines Compliance
+### Criteria 2: CVL Guidelines Compliance
 
-Ensure that the rules/invariants adhere to the following guidelines:
+Ensure that the CVL adheres to the following guidelines:
 {% include "cvl_guidelines.j2" %}
 
-## Criteria 3: Precondition Validity
+### Criteria 3: Precondition Validity
 
 In addition, evaluate the rule for its *precondition*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
 to consider all possible initial states of the smart contract and its dependencies. Consider whether the rule sufficiently constrains the input space
@@ -22,16 +40,49 @@ If you conclude that the rule will *LIKELY* fail due to a spurious starting stat
 
 NOTE: portions of the input state may be unconstrained/undercontrained if they don't matter for the purposes of the property being verified.
 
-## Criteria 4: Overconstrained Inputs
+### Criteria 4: Overconstrained Inputs
 
 You may also consider the inverse; over-constraining the input space may cause the prover to miss real bugs. When possible, all requirements should be implied or explicitly
 backed up by another rule or invariant.
 
-## Criteria 5: Manifest Errors
+### Criteria 5: Manifest Errors
 
-Finally, audit the rule to determine if it is likely to fail because it is simply wrong; it asserts that the contract does X, but the contract actually does Y
+Finally, audit the rule to determine if it is likely to fail because it is *OBVIOUSLY* wrong; it asserts that the contract does X, but the contract actually does Y
 (and Y is, with overwhelming probability, the correct outcome). For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
+</criteria>
 
-IMPORTANT: Do not provide ANY feedback except for the 5 criteria above.
+When formulating your feedback, be sure to consider any feedback you gave previously.
 
-IMPORTANT: Before returning your feedback, write a rough draft using the provided tools, then review that rough draft to make sure you aren't being a dumbass.
+## Step 4
+Using the write_rough_draft tool, create an initial draft of your analysis.
+
+## Step 5
+Read back your rough draft, and compare every point of feedback against the 5 criteria. If the feedback is nonsensical, not actionable, or not in relation
+to one of the criteria, discard it.
+
+## Step 6
+Update your memories, and then output the results of your feedback.
+</task>
+
+<inputs>
+<application>
+{% include "application_context.j2" %}
+</application>
+
+<{{ thing_tag }}>
+The {{ thing }} is described as: {{ thing_descr }}
+</{{thing_tag}}>
+</inputs>
+
+<guidance>
+<hard_requirement>
+Do not provide ANY feedback except for the 5 criteria above.
+</hard_requirement>
+<hard_requirement>
+Do NOT make assertions about the behavior of CVL without first checking the manual.
+</hard_requirement>
+<hard_requirement>
+*Never* give feedback that contradicts prior feedback unless, with 95% certainty, you believe your prior feedback was in fact in error.
+In other words, avoid contradicting yourself at all costs.
+</hard_requirement>
+</guidance>

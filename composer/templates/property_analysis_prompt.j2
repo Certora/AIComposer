@@ -4,13 +4,7 @@ audit effort.
 </background>
 
 <inputs>
-The Web3 application is described as: {{ application_type }}
-
-The entry point for the application is found in a smart contract called {{ contract_name }},
-located at {{ relative_path }} on the filesystem.
-
-The component you are analyzing is described as follows:
-{{ component }}
+{% include "application_context.j2" %}
 </inputs>
 
 <task>

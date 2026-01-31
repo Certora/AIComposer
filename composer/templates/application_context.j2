@@ -1,0 +1,53 @@
+{% macro tagged_for(it, tag) %}
+  {%if it %}
+   <{{tag}}>
+      {% for i in it %}
+        {{ caller(i) }}
+      {%endfor %}
+   </{{tag}}>
+  {% endif %}
+{% endmacro %}
+
+The Web3 application is described as: {{ context.application_type }}
+
+The entry point for the application is found in a smart contract called {{ context.contract_name }},
+located at {{ context.relative_path }} on the filesystem.
+
+The component you are analyzing is described as follows:
+
+{% set component = context.component %}
+
+<component>
+  Name: {{ component.name }}
+  <description>
+    {{ component.description }}
+  </description>
+
+  {%call(req) tagged_for(component.requirements, "requirements") %}
+    * {{ req }}
+  {% endcall %}
+
+  {% call(sv) tagged_for(component.state_variables, "state-variables") %}
+      * {{ sv }}
+  {%endcall%}
+
+  {%call(iv) tagged_for(component.interactions, "interactions") %}
+    <interaction>
+       With: {{ iv.other_component }}
+       Description: {{ iv.interaction_description }}
+    </interaction>
+  {% endcall %}
+
+  {% call(dep) tagged_for(component.dependencies, "external-dependencies") %}
+     <dependency>
+        Name: {{ dep.name }}
+        {% call(req) tagged_for(dep.requirements, "reqs") %}
+              * {{ req }}
+        {% endcall %}
+     </dependency>
+   {% endcall %}
+
+   {% call(ext) tagged_for(component.external_entry_points, "entry-points") %}
+      * {{ ext }}
+   {% endcall %}
+</component>
