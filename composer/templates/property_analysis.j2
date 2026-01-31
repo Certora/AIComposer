@@ -1,0 +1,68 @@
+<background>
+You are performing a review of a component of a Web3 application in the context of a larger
+audit effort.
+</background>
+
+<inputs>
+The Web3 application is described as: {{ application_type }}
+
+The entry point for the application is found in a smart contract called {{ contract_name }},
+located at {{ relative_path }} on the filesystem.
+
+The component you are analyzing is described as follows:
+{{ component }}
+</inputs>
+
+<task>
+Input: The implementation of the application, and a description of a specific component of that application
+Output: A list of "security properties"
+
+Follow these steps exactly:
+
+## Step 1
+
+Analyze the provided implementation and component description and formulate a set of security properties that are PLAUSIBLE
+for this component. Each security property must be precise and concise.
+
+Security properties fall into one of three categories:
+1. Invariants are representational invariants that should always hold from the point of construction of the smart contract.
+    Good example: "The sum of all user balances should equal the total supply"
+    Good example: "The pool's balance in backing asset should be greater than or equal to the total supply"
+    Bad example: "The state fields should be correct" (overly broad)
+    Bad example: "It should be possible to withdraw funds" (not an invariant, also overly broad)
+2. Safety properties: A safety property is a concrete statement about what should not be possible in a correctly implemented protocol
+    Good example: "A user without the admin role should not be able to approve other admins"
+    Good example: "A user should not be able to change anyone's balance but their own"
+    Bad example: "A user should not be able to hack the protocol" (overly broad)
+3. Attack vectors: These are potential issues/edge cases that could be exploited in ways detrimental to the protocol/application.
+   IMPORTANT: you do *NOT* need to find evidence that these issues actually exists, simply that they are PLAUSIBLE given the current implementation.
+   For instance, you do not need to find evidence of a rounding error in price calculation, simply that rounding is used in a price calculation, and there is a plausible
+   way for that to lead to an exploit.
+    Good example: "A malicious actor could manipulate a price oracle to unbalance the pool, allowing free minting"
+    Good example: "There could be a rounding discrepancy between the swap function and the previewSwap function which could provide arbitrage opportunities"
+    Bad example: "There could be a rounding error, and that would be bad somehow" (does not lead to a concrete issue/exploit)
+    Bad example: "The protocol could be hacked" (overly broad)
+    Bad example: "The underlying EVM consensus layer could be compromised allowing attackers to set arbitrary storage states" (implausible)
+
+## Step 2
+For each security property you identified in step 1, double check that it satisfies the criteria for its type (invariant, safety property, attack vector).
+
+## Step 3
+Output the results of your analysis using the result tool.
+</task>
+
+<guidance>
+  <hard_requirement>
+     Derive your invariants and safety properties from first principles, relying as little as possible on the actual implementation.
+     A safety property/invariant should state what the code SHOULD do, not what it CURRENTLY does.
+  </hard_requirement>
+  <hard_requirement>
+    You do NOT need to find evidence that these properties *DEFINITELY* hold, simply that they, with extreme likelihood, *SHOULD* hold for a correct
+    implementation.
+  </hard_requirement>
+  <reminder>
+     You do not need to find evidence that the attack vectors/issues actually exist in the implementation,
+     simply that these bugs/attacks/etc. are *plausible* given the feature and its implementation.
+  </reminder>
+</guidance>
+

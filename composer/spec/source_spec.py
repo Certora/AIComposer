@@ -20,7 +20,7 @@ import composer.certora as _
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, Generic
+from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, Generic, get_args, get_origin, Any, override
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import ToolMessage
@@ -36,8 +36,9 @@ from composer.prover.analysis import analyze_cex
 from composer.prover.ptypes import RuleResult
 from composer.prover.results import read_and_format_run_result
 from composer.rag.db import PostgreSQLRAGDatabase
-from graphcore.graph import MessagesState
-from graphcore.tools.vfs import VFSState, VFSToolConfig
+from graphcore.graph import MessagesState, Builder
+from graphcore.tools.vfs import VFSState, VFSToolConfig, fs_tools
+from graphcore.tools.schemas import InjectAll, WithInjectedState, WithImplementation, WithInjectedId
 
 import uuid
 from typing import cast
@@ -55,13 +56,70 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.templates.loader import load_jinja_template
 from graphcore.graph import build_workflow, FlowInput
-from graphcore.tools.vfs import vfs_tools, VFSInput, VFSAccessor
+from graphcore.tools.vfs import vfs_tools, VFSInput
 from graphcore.tools.memory import memory_tool
+from langgraph._internal._typing import StateLike
 from graphcore.summary import SummaryConfig
 from graphcore.types import VMWithResult, resolve_generics
 
 T = TypeVar('T')
 R = TypeVar('R')
+_S = TypeVar('_S', bound=MessagesState)
+_C = TypeVar('_C', bound=StateLike | None)
+_I = TypeVar('_I', bound=FlowInput | None)
+
+def bind_standard(
+    builder: Builder[Any, _C, _I],
+    state_type: type[_S],
+    doc: str | None = None
+) -> Builder[_S, _C, _I]:
+    """
+    Bind a state type to the builder and generate a result tool based on the state's `result` annotation.
+
+    Extracts the result type from the state's `result: NotRequired[T]` annotation and generates
+    a result tool using `result_tool_generator`. The tool is then attached to the builder.
+
+    Args:
+        builder: The builder to modify
+        state_type: The state type to bind, must have a `result: NotRequired[T]` annotation
+        doc: Description for the result field. Required if the result type is not a BaseModel.
+
+    Returns:
+        Builder with state bound and result tool attached, preserving context and input types
+
+    Raises:
+        ValueError: If state_type has no 'result' annotation, or if doc is missing for non-BaseModel result types
+    """
+    annotations = getattr(state_type, '__annotations__', {})
+    if 'result' not in annotations:
+        raise ValueError(f"State type {state_type.__name__} must have a 'result' annotation")
+
+    result_annotation = annotations['result']
+
+    # Extract inner type from NotRequired[T]
+    origin = get_origin(result_annotation)
+    if origin is NotRequired:
+        result_type = get_args(result_annotation)[0]
+    else:
+        result_type = result_annotation
+
+    # Check if result_type is a BaseModel
+    is_basemodel = isinstance(result_type, type) and issubclass(result_type, BaseModel)
+
+    if not is_basemodel and doc is None:
+        raise ValueError(f"doc parameter is required when result type {result_type} is not a BaseModel")
+
+    tool_doc = "Used to indicate successful completion with result."
+    # Generate the result tool
+    if is_basemodel:
+        result_tool = result_tool_generator("result", result_type, tool_doc)
+    else:
+        result_tool = result_tool_generator("result", (result_type, doc), tool_doc)  # type: ignore
+
+    # Bind state and add tool
+    return builder.with_state(state_type).with_tools([result_tool]).with_output_key("result").with_default_summarizer(
+        max_messages=50
+    )
 
 
 @dataclass
@@ -426,12 +484,17 @@ def format_component_xml(component: ApplicationComponent) -> str:
     _format_component_xml(l, component)
     return "\n".join(l)
 
+
+# Common forbidden read pattern for source analysis
+FS_FORBIDDEN_READ = "(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)"
+
+
 def run_source_analysis(
     args: SourceSpecArgs,
     thread_id: str,
     spec: ContractSpec,
     store: PostgresStore,
-    vfs: "VFSFactory"
+    builder: Builder[None, None, FlowInput]
 ) -> ApplicationSummary | None:
     # Check cache first
     cache_key = _cache_key_source_analysis(args, spec)
@@ -439,53 +502,33 @@ def run_source_analysis(
     if cached is not None:
         print(f"Using cached source analysis (key={cache_key})")
         return ApplicationSummary.model_validate(cached.value)
-
-    llm = create_llm(args)
-
-    memory = memory_tool(get_memory(f"source-summary-{thread_id}"))
-
-    generation_complete = result_tool_generator(
-        outkey="result",
-        result_schema=ApplicationSummary,
-        doc="Used to indicate successful result of your analysis."
-    )
-
-    @resolve_generics
-    class AnalysisState(VMWithResult[ApplicationSummary]):
-        pass
-
-    v_tools = vfs(AnalysisState)
-
-    task_thread_id = "summary-extraction-" + thread_id
-
-    graph = build_workflow(
-        initial_prompt=load_jinja_template(
-            "source_summarization.j2",
-            main_contract_name=spec.contract_name,
-            relative_path=spec.relative_path
-
-        ),
-        sys_prompt="You are an expert software analyst, who is very methodical in their work.",
-        input_type=VFSInput,
-        output_key="result",
-        state_class=AnalysisState,
     
-        unbound_llm=llm,
-        summary_config=SummaryConfig(max_messages=50),
-        tools_list=[
-            *v_tools,
-            memory,
-            generation_complete
-        ]
-    )[0].compile(checkpointer=get_checkpointer())
-
     system_doc = get_system_doc(Path(args.system_doc))
     if system_doc is None:
         return None
 
+    memory = memory_tool(get_memory(f"source-summary-{thread_id}"))
 
-    input : VFSInput = VFSInput(
-        vfs={},
+    class AnalysisState(MessagesState):
+        result: NotRequired[ApplicationSummary]
+
+    graph = bind_standard(
+        builder=builder,
+        state_type=AnalysisState
+    ).with_sys_prompt(
+        "You are an expert software analyst, who is very methodical in their work."
+    ).with_tools(
+        [memory]
+    ).with_initial_prompt_template(
+        "source_summarization.j2",
+        main_contract_name=spec.contract_name,
+        relative_path=spec.relative_path
+    ).build()[0].compile(
+        checkpointer=get_checkpointer()
+    )
+    task_thread_id = "summary-extraction-" + thread_id
+
+    input: FlowInput = FlowInput(
         input=[
             "The system document is as follows",
             system_doc
@@ -549,15 +592,14 @@ class PropertyFormulation(BaseModel):
     A property or invariant that must hold for the component
     """
     methods: list[str] | Literal["invariant"] = Field(description="A list of external methods involved in the property, or 'invariant' if the property is an invariant on the contract state")
-    description: str = Field(description="A description of the property/invariant. " \
-    "In the case of a 'negative' property (something that should nto be possible), the statement could look like: 'a user should not be able to ...'. " \
-    "For an invariant, the statement could look like: 'the sum of all balances in X should always be ...'.")
+    sort: Literal["attack_vector", "safety_property", "invariant"] = Field(description="The type of property you are describing.")
+    description: str = Field(description="The description of the property")
 
 def run_bug_analysis(
     args: SourceSpecArgs,
     spec: ContractSpec,
     component: "ComponentInst",
-    vfs_f: "VFSFactory",
+    builder: Builder[None, None, FlowInput],
     store: PostgresStore,
 ) -> list[PropertyFormulation] | None:
     # Check cache first
@@ -567,43 +609,22 @@ def run_bug_analysis(
         print(f"Using cached bug analysis (key={cache_key})")
         return [PropertyFormulation.model_validate(p) for p in cached.value["items"]]
 
-    m = create_llm(args)
+    class ST(MessagesState):
+        result: NotRequired[list[PropertyFormulation]]
 
-    @resolve_generics
-    class ST(VMWithResult[list[PropertyFormulation]]):
-        pass
+    d = bind_standard(
+        builder, ST
+    ).with_initial_prompt_template(
+        "property_analysis.j2",
+        application_type=component.summ.application_type,
+        contract_name = spec.contract_name,
+        relative_path=spec.relative_path,
+        component=format_component_xml(component.component)
+    ).with_sys_prompt(
+        "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
+    ).build()[0].compile()
 
-    result_tool = result_tool_generator("result", (list[PropertyFormulation], "The list of properties you have formulated"), "Used to indicate the success of your analysis")
-
-    vfs = vfs_f(ST)
-
-    d = build_workflow(
-        context_schema=None,
-        initial_prompt="""
-Analyze the implementation and documentation of the following component and formulate potential issues that the implementation might suffer from.
-
-DO NOT try to find the actual issues, but focus your analysis on determining the types of errors, security vulnerabilities, or bugs the component (and its implementation) might suffer from.
-
-For example, if you determine that the implementation relies on some sort of rounding for converting prices, you might conclude that an attack involving incorrect rounding *could* be an issue.
-
-When formulating your scenarios, try to be as specific as possible. An attack like "a user could steal all funds" is NOT helpful, but "A user might manipulate an oracle to unbalance the pool, forcing one of the
-token prices to 0, letting them mint tokens for free." Again, it is important to stress you do not need to find evidence that this is an actual error in the implementation, simply that these bugs/attacks/etc. are *plausible*
-given the feature and its implementation.
-""",
-        sys_prompt="You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols",
-        input_type=VFSInput,
-        state_class=ST,
-        output_key="result",
-        tools_list=[*vfs, result_tool],
-        unbound_llm=m
-    )[0].compile()
-
-    r = d.invoke(input=VFSInput(vfs={}, input=[
-        f"The application in question is described as: {component.summ.application_type}",
-        f"The target of your analysis is contract {spec.contract_name} at {spec.relative_path}",
-        "The component description is as follows",
-        format_component_xml(component.component)
-    ]))
+    r = d.invoke(input=FlowInput(input=[]))
 
     result: list[PropertyFormulation] = r["result"]
 
@@ -612,10 +633,6 @@ given the feature and its implementation.
     print(f"Cached bug analysis (key={cache_key})")
 
     return result
-
-B = TypeVar("B", bound=VFSState)
-
-type VFSFactory = Callable[[type[VFSState]], list[BaseTool]]
 
 @dataclass
 class ComponentInst:
@@ -626,16 +643,6 @@ class ComponentInst:
     def component(self) -> ApplicationComponent:
         return self.summ.components[self.ind]
 
-def vfs_factory(
-    args: SourceSpecArgs,
-) -> Callable[[type[VFSState]], list[BaseTool]]:
-    def to_ret(
-        b: type[B]
-    ) -> list[BaseTool]:
-        vfs, _ = vfs_tools(VFSToolConfig(immutable=True, fs_layer=args.project_root, forbidden_read="(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)"), b)
-        return vfs
-    return to_ret
-
 class PropertyFeedback(BaseModel):
     """
     The feedback on the properties
@@ -643,60 +650,53 @@ class PropertyFeedback(BaseModel):
     good: bool = Field(description="Whether the properties are good as is, or if there is room for improvement")
     feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
     
-type FeedbackTool = Callable[[PostgreSQLRAGDatabase, ComponentInst, PropertyFormulation, str], PropertyFeedback]
+type FeedbackTool = Callable[[str], PropertyFeedback]
 
 def property_feedback_judge(
-    args: SourceSpecArgs,
-    vfs: VFSFactory
+    builder: Builder[None, None, FlowInput],
+    inst: ComponentInst, prop: PropertyFormulation
 ) -> FeedbackTool:
-    result_tool = result_tool_generator("result", PropertyFeedback, "Used to output your feedback on the rule(s)/invariant(s)")
-
-    @resolve_generics
-    class ST(VMWithResult[PropertyFeedback]):
+    
+    class ST(MessagesState):
         memory: NotRequired[str]
+        result: NotRequired[PropertyFeedback]
 
-    @dataclass
-    class Ctxt:
-        rag_db: PostgreSQLRAGDatabase
-
-    class GetMemory(BaseModel):
+    class GetMemory(WithInjectedState[ST], WithImplementation[str]):
         """
         Retrieve the rough draft of the feedback
         """
         st: Annotated[ST, InjectedState]
 
-    @tool(args_schema=GetMemory)
-    def get_rough_draft(st: Annotated[ST, InjectedState]) -> str:
-        return st.get("memory", "Rough draft not yet written")
-    
-    class SetMemory(BaseModel):
+        @override
+        def run(self) -> str:
+            return self.state.get("memory", "Rough draft not yet written")
+
+    class SetMemory(WithInjectedId, WithImplementation[Command]):
         """
         Write your rough draft for review
         """
         rough_draft : str = Field(description="The new rough draft of your feedback")
         tool_call_id: Annotated[str, InjectedToolCallId]
-    
-    @tool(args_schema=SetMemory)
-    def write_rough_draft(rough_draft: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
-        return Command(update={
-            "memory": rough_draft,
-            "messages": [ToolMessage(tool_call_id=tool_call_id, content="Success")]
-        })
 
-    workflow = build_workflow(
-        state_class=ST,
-        input_type=VFSInput,
-        context_schema=Ctxt,
-        initial_prompt=load_jinja_template("property_judge_prompt.j2"),
-        sys_prompt=load_jinja_template("cvl_system_prompt.j2"),
-        output_key="result",
-        summary_config=SummaryConfig(max_messages=50),
-        tools_list=[result_tool, *vfs(ST), cvl_manual_search(Ctxt), write_rough_draft, get_rough_draft],
-        unbound_llm=create_llm(args)
-    )[0].compile()
+        @override
+        def run(self) -> Command:
+            return Command(update={
+                "memory": self.rough_draft,
+                "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
+            })
+    
+    workflow = bind_standard(
+        builder, ST
+    ).with_initial_prompt_template(
+        "property_judge_prompt.j2",
+        app_type=inst.summ.application_type,
+        component=inst.component,
+        property=
+    ).with_sys_prompt_template(
+        "cvl_system_prompt.j2"
+    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft")]).build()[0].compile()
 
     def the_tool(
-        db: PostgreSQLRAGDatabase,
         inst: ComponentInst, prop: PropertyFormulation, cvl: str
     ) -> PropertyFeedback:
         import yaml
@@ -708,31 +708,27 @@ def property_feedback_judge(
             "The property is", yaml.dump(prop.model_dump()),
             "The proposed CVL file is",
             cvl
-        ]), context=Ctxt(rag_db=db))["result"]
+        ]))["result"]
         import yaml
-        print(f"Returning feedback \n{r.feedback}\nOn:\n{cvl}\nFor:{prop}")
+        print(f"Returning feedback \n{r.feedback}\nFor:{prop}")
         return r
 
     return the_tool
 
 def generate_property_cvl(
-    args: SourceSpecArgs,
     spec: ContractSpec,
     feat: ComponentInst,
     prop: PropertyFormulation,
-    vfs_fact: VFSFactory,
-    db: PostgreSQLRAGDatabase,
+    builder: Builder[None, None, FlowInput],
     feedback: FeedbackTool
 ) -> tuple[str, str]:
-    m = create_llm(args)
-
-    @resolve_generics
-    class ST(VMWithResult[str]):
+    class ST(MessagesState):
         curr_spec: NotRequired[str]
+        result: NotRequired[str]
 
-    result_tool = result_tool_generator("result", (str, "An explanation of the CVL rule/invariant you have written"), "Used to indicate the succesful generation of the rule.")
-
-    vfs = vfs_fact(ST)
+    bind_standard(
+        builder, ST
+    ).with_tools([put_cvl, put_cvl_raw])
 
     thing : str
     init_message : str
@@ -744,28 +740,19 @@ def generate_property_cvl(
         thing = "rule"
         init_message = f"The potential issue/attack/etc. is: {prop.description}"
 
-    @dataclass
-    class RagCtxt:
-        rag_db: PostgreSQLRAGDatabase
-
-    class FeedbackSchema(BaseModel):
+    class FeedbackSchema(WithInjectedState[ST], WithImplementation[str]):
         """
         Receive feedback on your CVL
         """
-        st: Annotated[ST, InjectedState]
-        tool_call_id: Annotated[str, InjectedToolCallId]
+        @override
+        def run(self) -> str:
+            st = self.state
+            spec = st.get("curr_spec", None)
+            if spec is None:
+                return "No spec put yet"
+            import yaml
+            return yaml.dump(feedback(feat, prop, spec).model_dump())    
 
-    @tool(args_schema=FeedbackSchema)    
-    def feedback_tool(
-        st: Annotated[ST, InjectedState],
-        tool_call_id: Annotated[str, InjectedToolCallId]
-    ) -> str:
-        spec = st.get("curr_spec", None)
-        if spec is None:
-            return "No spec put yet"
-        import yaml
-        return yaml.dump(feedback(db, feat, prop, spec).model_dump())
-    
     d = build_workflow(
         context_schema=None,
         initial_prompt=load_jinja_template("property_generation_prompt.j2", thing=thing),
@@ -773,7 +760,7 @@ def generate_property_cvl(
         input_type=VFSInput,
         state_class=ST,
         output_key="result",
-        tools_list=[*vfs, result_tool, put_cvl, put_cvl_raw, feedback_tool, cvl_manual_search(RagCtxt)],
+        tools_list=[put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool")],
         unbound_llm=m,
         summary_config=SummaryConfig(max_messages=50)
     )[0].compile()
@@ -795,8 +782,6 @@ def execute(args: SourceSpecArgs) -> int:
     thread_id = args.thread_id if args.thread_id else f"source_spec_{uuid.uuid4().hex}"
     print(f"Thread ID: {thread_id}")
 
-    store = get_store()
-
     project_root = Path(args.project_root)
 
     main_contract_path, main_contract_name = args.main_contract.split(":", 1)
@@ -811,33 +796,44 @@ def execute(args: SourceSpecArgs) -> int:
 
     spec = ContractSpec(str(relativized_main), main_contract_name)
 
+
+    store = get_store()
+
+    llm = create_llm(args)
+
+    b : Builder[None, None, FlowInput] = Builder().with_llm(
+        llm
+    ).with_input(
+        FlowInput
+    ).with_loader(
+        load_jinja_template
+    ).with_tools(
+        fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)
+    )
+    
     rag_db = PostgreSQLRAGDatabase(
         conn_string=args.rag_db,
         model=get_model(),
         skip_test=True
     )
 
-    def vfs_factory(
-        ty: type[VFSState]
-    ) -> list[BaseTool]:
-        return vfs_tools(
-            conf=VFSToolConfig(immutable=True, fs_layer=args.project_root, forbidden_read="(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)"),
-            ty=ty
-        )[0]
+    analysis = run_source_analysis(args, thread_id, spec, store, b)
 
-    analysis = run_source_analysis(args, thread_id, spec, store, vfs_factory)
+    cvl_builder = b.with_tools(
+        [cvl_manual_search(rag_db)]
+    )
 
     if analysis is None:
         print("Oh well")
         return 1
 
     feedback_t = property_feedback_judge(
-        args, vfs_factory
+        cvl_builder
     )
 
     for feature_idx in range(0, len(analysis.components)):
         feat = ComponentInst(analysis, feature_idx)
-        res = run_bug_analysis(args, spec, feat, vfs_factory, store)
+        res = run_bug_analysis(args, spec, feat, b, store)
         if res is None:
             print("Didn't work")
             continue
