@@ -1,4 +1,4 @@
-from typing import NotRequired, TypedDict, Iterator
+from typing import NotRequired, TypedDict, Iterator, Iterable, TypeVar, overload, Any, Generic
 from dataclasses import dataclass
 import pathlib
 import os
@@ -14,6 +14,7 @@ from langgraph.graph import MessagesState
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables.config import RunnableConfig
+from langchain_core.tools import BaseTool
 
 from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
 from composer.rag.models import get_model
@@ -26,7 +27,8 @@ from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
 
-from analyzer.types import AnalysisArgs, Ecosystem
+from analyzer.types import Ecosystem, AnalysisArgs
+from pydantic import BaseModel
 
 class EcosystemConfig(TypedDict):
     spec_name: str
@@ -37,6 +39,11 @@ class EcosystemConfig(TypedDict):
     spec_description: str
     language_name: str
 
+T = TypeVar("T")
+
+
+class SimpleState(VFSState, MessagesState, Generic[T]):
+    result: NotRequired[T]
 
 def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R.RulePath) -> R.RuleResult | None:
     for r in stat.rules:
@@ -51,19 +58,15 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
 class ExplainerContext:
     rag_db: PostgreSQLRAGDatabase
 
-class SimpleState(VFSState, MessagesState):
-    result: NotRequired[str]
+_analysis_doc = "Tool to communicate the result of your analysis."
 
-analysis_output_tool = result_tool_generator(
-    "result", 
-    (str, "The textual analysis explaining the counterexample. You MAY use markdown in your output."),
-    "Tool to communicate the result of your analysis.")
+_default_text = "The textual analysis explaining the counterexample. You MAY use markdown in your output."
 
+_default_format = (str, _default_text)
 
 def main() -> int:
     """CLI entry point for the analyzer."""
     import argparse
-    import sys
     from typing import cast
 
     parser = argparse.ArgumentParser(
@@ -216,11 +219,12 @@ def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
         yield pathlib.Path(temp_dir, "TarName")
 
 def _analyze_core(
-    input_messages: list[str],
+    input_messages: Iterable[str],
     initial_prompt: str,
     report_dir: pathlib.Path,
-    args: AnalysisArgs
-) -> int:
+    args: AnalysisArgs,
+    out_type: tuple[type[T], str] | type[T]
+) -> T:
     """Run the analysis workflow with custom calltraces and prompt.
 
     This is the lowest-level function that executes the analysis workflow.
@@ -235,8 +239,26 @@ def _analyze_core(
     Returns:
         Exit code (0 for success)
     """
+
+    d = out_type
+    result_tool : BaseTool
+    if isinstance(d, tuple):
+        result_tool = result_tool_generator(
+            "result",
+            d,
+            _analysis_doc
+        )
+    elif issubclass(d, BaseModel):
+        result_tool = result_tool_generator(
+            "result",
+            d,
+            _analysis_doc
+        )
+    else:
+        raise ValueError(f"Invalid type parameter: {d}")
+
     (v_tools, _) = vfs_tools(
-        ty=SimpleState,
+        ty=SimpleState[T],
         conf=VFSToolConfig(
             immutable=True,
             forbidden_read=r"^\..*$",
@@ -244,7 +266,7 @@ def _analyze_core(
         )
     )
 
-    tools = [analysis_output_tool, *v_tools]
+    tools = [result_tool, *v_tools]
     if args.ecosystem == "evm":
         #import here to lazily load sentencetransformers
         from composer.tools.search import cvl_manual_search
@@ -271,7 +293,7 @@ def _analyze_core(
         unbound_llm=llm,
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt,
-        state_class=SimpleState
+        state_class=SimpleState[T]
     )[0].compile(checkpointer=get_checkpointer())
 
     conf : RunnableConfig = {"configurable": {}}
@@ -289,7 +311,7 @@ def _analyze_core(
 
     conf["recursion_limit"] = args.recursion_limit
 
-    for (ty, d) in graph.stream(input=FlowInput(input=input_messages), context=ExplainerContext(
+    for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
         rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
     ), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
@@ -300,8 +322,7 @@ def _analyze_core(
             if not args.quiet:
                 print(d)
 
-    print(graph.get_state({"configurable": {"thread_id": tid}}).values["result"])
-    return 0
+    return graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
 
 def _analyze_from_report(
     report_dir: pathlib.Path,
@@ -354,7 +375,9 @@ def _analyze_from_report(
         calltrace_xml
     ]
 
-    return _analyze_core(input_messages, initial_prompt, report_dir, args)
+    msg = _analyze_core(input_messages, initial_prompt, report_dir, args, _default_format)
+    print(msg)
+    return 0
 
 def analyze(
     args: AnalysisArgs
@@ -367,11 +390,40 @@ def analyze(
         report_dir = pathlib.Path(args.folder)
         return _analyze_from_report(report_dir, args)
 
+B = TypeVar("B", bound=BaseModel)
+
+@overload
 def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs
-) -> int:
+) -> str:
+    ...
+
+@overload
+def analyze_with_calltraces(
+    input_messages: list[str],
+    initial_prompt: str,
+    args: AnalysisArgs,
+    output: tuple[type[T], str]
+) -> T:
+    ...
+
+@overload
+def analyze_with_calltraces(
+    input_messages: list[str],
+    initial_prompt: str,
+    args: AnalysisArgs,
+    output: type[B]
+) -> B:
+    ...
+
+def analyze_with_calltraces(
+    input_messages: list[str],
+    initial_prompt: str,
+    args: AnalysisArgs,
+    output: tuple[type, str] | type | None = None
+) -> Any:
     """Run analysis workflow with custom calltraces and prompt.
 
     Entry point for external callers who want to run the analyzer
@@ -417,4 +469,4 @@ def analyze_with_calltraces(
         "args.folder must be a local folder path, not a URL. Use analyze() to handle URLs."
 
     report_dir = pathlib.Path(args.folder)
-    return _analyze_core(input_messages, initial_prompt, report_dir, args)
+    return _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)
