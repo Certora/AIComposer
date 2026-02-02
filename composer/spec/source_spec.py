@@ -674,8 +674,6 @@ def property_feedback_judge(
         """
         Retrieve the rough draft of the feedback
         """
-        st: Annotated[ST, InjectedState]
-
         @override
         def run(self) -> str:
             return self.state.get("memory", "Rough draft not yet written")
@@ -685,7 +683,6 @@ def property_feedback_judge(
         Write your rough draft for review
         """
         rough_draft : str = Field(description="The new rough draft of your feedback")
-        tool_call_id: Annotated[str, InjectedToolCallId]
 
         @override
         def run(self) -> Command:
@@ -693,6 +690,7 @@ def property_feedback_judge(
                 "memory": self.rough_draft,
                 "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
             })
+
     db = sqlite3.connect(":memory:", check_same_thread=False)
     memory = memory_tool(SqliteMemoryBackend("dummy", db))
     workflow = bind_standard(
@@ -748,7 +746,7 @@ def generate_property_cvl(
 Good? {str(t.good)}
 Feedback {t.feedback}
 """
-        
+
     d = bind_standard(
         builder, ST, "A description of your generated CVL"
     ).with_tools(

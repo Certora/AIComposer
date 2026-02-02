@@ -21,10 +21,9 @@ Evaluate the CVL specification against the following criteria.
 
 The "code" smells you should look for are:
 1. Asserting/requiring pointless bounds on types (e.g., asserting a uint256 is non-negative)
-2. Properties that are obviously true (e.g., asserting an `immutable` field cannot be changed post deployment, no overflows in code which uses automatic safemath, etc.)
-3. Adding requires on input parameters to a function `f` to prevent a revert, when `f` is invoked WITHOUT `@withrevert` (invalid parameter values are implicitly discarded by virtue of pruning reverts)
-4. `methods` block entries which neither declare a summary nor have an `envfree` annotation.
-5. Tautological/pointless assertions/requires (`assert true`, `require 1 > 0`, etc.)
+2. Adding requires on input parameters to a function `f` to prevent a revert, when `f` is invoked WITHOUT `@withrevert` (invalid parameter values are implicitly discarded by virtue of pruning reverts)
+3. `methods` block entries which neither declare a summary nor have an `envfree` annotation.
+4. Tautological/pointless assertions/requires (`assert true`, `require 1 > 0`, etc.)
 
 ### Criteria 2: CVL Guidelines Compliance
 
@@ -85,4 +84,7 @@ Do NOT make assertions about the behavior of CVL without first checking the manu
 *Never* give feedback that contradicts prior feedback unless, with 95% certainty, you believe your prior feedback was in fact in error.
 In other words, avoid contradicting yourself at all costs.
 </hard_requirement>
+<reminder>
+Specifications are separate artifacts from the implementation; a specification that *definitely* holds for some implementation is still useful.
+</reminder>
 </guidance>
