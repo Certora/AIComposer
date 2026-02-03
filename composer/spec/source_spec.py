@@ -20,7 +20,7 @@ import composer.certora as _
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override
+from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override, Coroutine, Awaitable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import ToolMessage
@@ -49,7 +49,7 @@ from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl
 from composer.tools.search import cvl_manual_search
 from composer.human.handlers import handle_human_interrupt
-from graphcore.tools.results import result_tool_generator
+from graphcore.tools.results import result_tool_generator, ValidationResult
 from langgraph.store.postgres import PostgresStore
 from composer.workflow.services import create_llm, get_checkpointer, get_memory, get_store
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -70,7 +70,8 @@ _I = TypeVar('_I', bound=FlowInput | None)
 def bind_standard(
     builder: Builder[Any, _C, _I],
     state_type: type[_S],
-    doc: str | None = None
+    doc: str | None = None,
+    validator: Callable[[_S], str | None] | None = None
 ) -> Builder[_S, _C, _I]:
     """
     Bind a state type to the builder and generate a result tool based on the state's `result` annotation.
@@ -109,11 +110,17 @@ def bind_standard(
         raise ValueError(f"doc parameter is required when result type {result_type} is not a BaseModel")
 
     tool_doc = "Used to indicate successful completion with result."
+
+    valid : tuple[type[_S], Callable[[_S, Any, str], ValidationResult]] | None = None
+    if validator:
+        valid = (state_type, lambda s, r, id: validator(s))
+
     # Generate the result tool
     if is_basemodel:
-        result_tool = result_tool_generator("result", result_type, tool_doc)
+        result_tool = result_tool_generator("result", result_type, tool_doc, valid)
     else:
-        result_tool = result_tool_generator("result", (result_type, doc), tool_doc)  # type: ignore
+        assert doc is not None
+        result_tool = result_tool_generator("result", (result_type, doc), tool_doc, valid)
 
     # Bind state and add tool
     return builder.with_state(state_type).with_tools([result_tool]).with_output_key("result").with_default_summarizer(
@@ -421,60 +428,8 @@ def _cache_key_bug_analysis(
     combined = "|".join(str(c) for c in components)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
-
-# def _format_component_xml(lines: list[str], component: ApplicationComponent):
-#     lines.append("  <component>")
-#     lines.append(f"    <name>{component.name}</name>")
-#     lines.append(f"    <description>{component.description}</description>")
-
-#     if component.requirements:
-#         lines.append("    <requirements>")
-#         for req in component.requirements:
-#             lines.append(f"      <requirement>{req}</requirement>")
-#         lines.append("    </requirements>")
-
-#     if component.external_entry_points:
-#         lines.append("    <entry-points>")
-#         for entry in component.external_entry_points:
-#             lines.append(f"      <entry-point>{entry}</entry-point>")
-#         lines.append("    </entry-points>")
-
-#     if component.state_variables:
-#         lines.append("    <state-variables>")
-#         for var in component.state_variables:
-#             lines.append(f"      <variable>{var}</variable>")
-#         lines.append("    </state-variables>")
-
-#     if component.interactions:
-#         lines.append("    <interactions>")
-#         for interaction in component.interactions:
-#             lines.append("      <interaction>")
-#             lines.append(f"        <other-component>{interaction.other_component}</other-component>")
-#             lines.append(f"        <description>{interaction.interaction_description}</description>")
-#             lines.append("      </interaction>")
-#         lines.append("    </interactions>")
-
-#     if component.dependencies:
-#         lines.append("    <external-dependencies>")
-#         for dep in component.dependencies:
-#             lines.append("      <dependency>")
-#             lines.append(f"        <name>{dep.name}</name>")
-#             for req in dep.requirements:
-#                 lines.append(f"        <requirement>{req}</requirement>")
-#             lines.append("      </dependency>")
-#         lines.append("    </external-dependencies>")
-
-#     lines.append("  </component>")
-
-# def format_component_xml(component: ApplicationComponent) -> str:
-#     l = []
-#     _format_component_xml(l, component)
-#     return "\n".join(l)
-
-
 # Common forbidden read pattern for source analysis
 FS_FORBIDDEN_READ = "(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)"
-
 
 def run_source_analysis(
     args: SourceSpecArgs,
@@ -605,13 +560,12 @@ class PropertyFormulation(BaseModel):
 
 def run_bug_analysis(
     args: SourceSpecArgs,
-    spec: ContractSpec,
     component: "ComponentInst",
     builder: Builder[None, None, FlowInput],
     store: PostgresStore,
 ) -> list[PropertyFormulation] | None:
     # Check cache first
-    cache_key = _cache_key_bug_analysis(args, spec, component.component, component.summ.application_type)
+    cache_key = _cache_key_bug_analysis(args, component, component.component, component.summ.application_type)
     cached = store.get(("bug_analysis_2",), cache_key)
     if cached is not None:
         print(f"Using cached bug analysis (key={cache_key})")
@@ -634,7 +588,7 @@ def run_bug_analysis(
     result: list[PropertyFormulation] = r["result"]
 
     # Cache the result
-    store.put(("bug_analysis",), cache_key, {"items": [p.model_dump() for p in result]})
+    store.put(("bug_analysis_2",), cache_key, {"items": [p.model_dump() for p in result]})
     print(f"Cached bug analysis (key={cache_key})")
 
     return result
@@ -658,7 +612,7 @@ class PropertyFeedback(BaseModel):
     """
     good: bool = Field(description="Whether the properties are good as is, or if there is room for improvement")
     feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
-    
+
 type FeedbackTool = Callable[[str], PropertyFeedback]
 
 def property_feedback_judge(
@@ -669,14 +623,21 @@ def property_feedback_judge(
     class ST(MessagesState):
         memory: NotRequired[str]
         result: NotRequired[PropertyFeedback]
+        did_read: NotRequired[bool]
 
-    class GetMemory(WithInjectedState[ST], WithImplementation[str]):
+    class GetMemory(WithInjectedState[ST], WithImplementation[Command | str], WithInjectedId):
         """
         Retrieve the rough draft of the feedback
         """
         @override
-        def run(self) -> str:
-            return self.state.get("memory", "Rough draft not yet written")
+        def run(self) -> str | Command:
+            mem = self.state.get("memory", None)
+            if mem is None:
+                return "Rough draft not yet written"
+            return Command(update={
+                "messages": [ToolMessage(tool_call_id=self.tool_call_id, content=mem)],
+                "did_read": True
+            })
 
     class SetMemory(WithInjectedId, WithImplementation[Command]):
         """
@@ -690,11 +651,17 @@ def property_feedback_judge(
                 "memory": self.rough_draft,
                 "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
             })
+        
+    def did_rough_draft_read(s: ST) -> str | None:
+        h = s.get("did_read", None) is None
+        if h is None:
+            return "Completion REJECTED: never read rough draft for review"
+        return None
 
     db = sqlite3.connect(":memory:", check_same_thread=False)
     memory = memory_tool(SqliteMemoryBackend("dummy", db))
     workflow = bind_standard(
-        builder, ST
+        builder, ST, validator=did_rough_draft_read
     ).with_initial_prompt_template(
         "property_judge_prompt.j2",
         context=inst,
@@ -708,10 +675,11 @@ def property_feedback_judge(
     ) -> PropertyFeedback:
         print("HIYA")
         print(cvl)
-        r = workflow.invoke(FlowInput(input=[
+        res = workflow.invoke(FlowInput(input=[
             "The proposed CVL file is",
             cvl
-        ]))["result"]
+        ]))
+        r = res["result"]
         print(f"Returning feedback \n{r.feedback}\nFor:{prop}")
         return r
 
@@ -721,6 +689,7 @@ def generate_property_cvl(
     feat: ComponentInst,
     prop: PropertyFormulation,
     builder: Builder[None, None, FlowInput],
+    store: PostgresStore
 ) -> tuple[str, str]:
     
     class ST(MessagesState):
@@ -762,6 +731,30 @@ Feedback {t.feedback}
     r = d.invoke(input=FlowInput(input=[]), config={"recursion_limit": 100})
 
     return (r["result"], r["curr_spec"])
+
+type PropertyFormalization = tuple[PropertyFormulation, str, str]
+
+def _analyze_component(
+    args: SourceSpecArgs,
+    feat: ComponentInst,
+    b: Builder[None, None, FlowInput],
+    cvl_builder: Builder[None, None, FlowInput],
+    store: PostgresStore
+) -> None | list[tuple[PropertyFormulation, str, str]]:
+    res = run_bug_analysis(args, feat, b, store)
+    if res is None:
+        print("Didn't work")
+        return None
+    work : list[tuple[PropertyFormulation, str, str]] = []
+    for prop in res:
+        print(prop)
+        r, cvl = generate_property_cvl(
+            feat, prop, cvl_builder, store
+        )
+        print(cvl)
+        print(r)
+        work.append((prop, r, cvl))
+    return work
 
 
 def execute(args: SourceSpecArgs) -> int:
@@ -815,25 +808,23 @@ def execute(args: SourceSpecArgs) -> int:
         print("Oh well")
         return 1
 
+
+    work : list[tuple[ComponentInst, None | list[PropertyFormalization]]] = []
     for feature_idx in range(0, len(analysis.components)):
-        feat = ComponentInst(
-            contract_name=spec.contract_name,
-            relative_path=spec.relative_path,
-            summ=analysis,
-            ind=feature_idx
-        )
-        res = run_bug_analysis(args, spec, feat, b, store)
-        if res is None:
-            print("Didn't work")
-            continue
-        for prop in res:
-            import yaml
-            print(yaml.dump(prop.model_dump()))
-            r, cvl = generate_property_cvl(
-                feat, prop, cvl_builder
+        def thunk() -> tuple[ComponentInst, None | list[PropertyFormalization]]:
+            feat = ComponentInst(
+                contract_name=spec.contract_name,
+                relative_path=spec.relative_path,
+                summ=analysis,
+                ind=feature_idx
             )
-            print(cvl)
-            print(r)
+            l = _analyze_component(
+                args, feat, b, cvl_builder, store
+            )
+            return (feat, l)
+        work.append(thunk())
+
+
 
     sys.exit(1)
 
