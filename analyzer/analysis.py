@@ -293,7 +293,7 @@ def _analyze_core(
         unbound_llm=llm,
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt,
-        state_class=SimpleState[T]
+        state_class=SimpleState
     )[0].compile(checkpointer=get_checkpointer())
 
     conf : RunnableConfig = {"configurable": {}}
