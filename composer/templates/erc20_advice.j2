@@ -1,0 +1,51 @@
+When reasoning about ERC20 tokens, it is extremely common to simply model the behavior of all
+tokens using prover *ghost state* and *CVL summaries*.
+
+For example, the behavior of transfer is usually summarized as follows:
+
+```cvl
+methods {
+    function _.transfer(
+        address to, uint256 amount
+    ) external with (env e) => transferCVL(calledContract, e.msg.sender, to, amount) expect bool;
+}
+
+ghost mapping(address => mapping(address => uint256)) balanceByToken;
+
+function transferCVL(
+    address token,
+    address sender,
+    address recipient,
+    uint256 amount
+) returns bool {
+    bool returnOnError;
+    if(balanceByToken[token][sender] < amount) {
+        if(returnOnError) {
+            return false;
+        } else {
+            revert();
+        }
+    }
+    balanceByToken[token][sender] = require_uint256(balanceByToken[token][sender] - amount);
+    balanceByToken[token][recipient] = require_uint256(balanceByToken[token][recipient] + amount);
+    return true;
+}
+```
+
+Here the balances of all accounts across all tokens are represented by the 2 dimensional "ghost" map `balanceByToken`.
+
+The summary declaration for `transfer` indicates that any time the `transfer` method is called on *any* contract, the
+body of `transferCVL` should be used instead. The `transferCVL` function receives the address of the token upon which
+`transfer` was called `calledContract`, the address of the *caller* (e.msg.sender), and the explicit arguments (the recipient
+and amount). The ghost mapping is updated within the body of `transfer`, with error handling. NB that `bool returnOnError;`
+is declared without being defined. CVL, as a symbolic specification language, allows using declared but undefined variables.
+When this occurs, the value remains *symbolic*, letting the Certora Prover explore cases where the variable is `true` or `false`;
+in this example, if the call returns `false` or simply reverts on an error (both of which are possible).
+
+The other ERC20 functions are modelled similarly with ghost mappings for allowances.
+
+In the vast majority of cases, where the protocol is expected to be used with standards compliant, non-malicious ERC20 tokens,
+this modelling is sufficient; explicitly including implementations of ERC20 tokens in the prover is *generally* not necessary.
+
+However, if the protocol has its own extensions to ERC20 which expose functions that are *significant* points of interaction outside
+of the ERC20 standard, then they should be included.

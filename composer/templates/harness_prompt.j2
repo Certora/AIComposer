@@ -1,0 +1,149 @@
+<background>
+You have been tasked with assisting in the setup for a formal verification project using the Certora Prover on a Web3 protocol.
+
+The main entrypoint of the protocl being verified is {{ contract_spec.contract_name }} located at {{ contract_spec.relative_path }}.
+
+As part of this setup, you need to construct any harness or mocks needed to faithfully model the protocol in which {{ contract_spec.contract_name }}
+resides.
+
+**IMPORTANT**: This process MAY require multiple judgment calls; before any making decisions, be certain to carefully consider your reasoning
+and justification. Correct results are more important than reaching results quickly.
+
+Before describing the task in detail, it is important to understand how the Certora Prover works.
+
+<certora_prover>
+The Certora Prover processes one or more contract instances and proves properties about these contracts. This processing
+and proving is done within some (abstract) model of the blockchain. Each contract instance roughly corresponds to a deploy
+contract on chain, in that each such instance has its own storage, code, methods, ets.
+
+With limited exceptions beyond the scope of this document,
+the Prover must be given the set of contract instances ahead of time; the CVL (Certora Verification Language)
+specification for these contract instances is likewise written with a static set of contract instances in mind.
+If any of these contract instances "interact" (via external calls) with contracts outside of this static model,
+the Prover will (by default) make pessimistic assumptions about these unknown actors' behavior.
+In summary, the prover models the blockchain as consisting of a static set of known
+contract instances, and "everything else" which is modelled imprecisely.
+
+As an alternative to this imprecise modelling, the user may provide "summary" annotations which specify the symbolic behavior of 
+these external calls. These summaries may apply to a specific method on a specific contract, or on any
+external call which matches a specific signature. The actual language used to express these summaries is out of scope,
+but is generally restricted simple computations with minimal data structures.
+
+Thus, when providing inputs to the Prover, it is important to identify the set of contract instances
+with which the contracts under verification interacts or a reasonable model of the unknown external contracts'
+behavior.
+
+When constructing this static model, every (non-abstract) `contract` or `library` declaration in the input to the prover becomes an contract
+instance in the prover's model. In other words, every contract instance corresponds one to one with a `contract` or `library` declaration
+in the Solidity source code. For example, if the input to the prover contains a declaration for `contract C`, then the prover's model
+will have a contract instance called `C`, roughly corresponding to a instantiation of `C`.
+
+As a corollary of this approach, it is NOT possible to have two independent instances derived from the same contract declaration.
+This limitation is worked around by having "harnesses" which extend the contract in question with two different identifiers.
+For example, if two instances of `C` are required, two harness contracts `CInstance1` and `CInstance2` might be declared as
+`contract CInstance1 is C` and `contract CInstance2 is C` respectively.
+</certora_prover>
+</background>
+
+<definition>
+The following defines a "non-trivial state" for a Web3 protocol/application.
+
+Generally speaking a smart contract manages some "primary entity". Some examples follow:
+1. A MakerDAO vault manages multiple vaults, each of which records user collateral
+2. Synthetix manages user positions for synthetic assets
+3. EigenLayer tracks restaking positions, each position records which operators the staker has delegated to
+4. SeaPort/OpenSea tracks open orders for NFTs
+
+The smart contract/protocol will often include other state (admin whitelists, etc.) in addition to the primary entity.
+
+The "primary entity" may itself have nested state within it. For example, an on-chain auction contract may have multiple
+on-going auctions, each of which has a collection of bidders participating in the auction.
+
+Often the protocol when deployed is in a "trivial state"; there may be some basic configuration (e.g.,
+what underlying token assets a swap pool facilitates), but without any primary entities (e.g., no positions).
+
+By contrast, a "non-trivial state" refers to a state where there are *at least* two primary entities in the contract.
+(As an exception, if the contract only allows for a single primary entity, that singleton primary entity is the non-trivial state).
+Further, a "non-trivial state" must ALLOW the primary entities to be "sufficiently disjoint". The definition of "disjoint" for a primary
+entity depends on the shape of that entity; however, two positions could be "disjoint" if they are held by different accounts, two
+auctions might be disjoint if the auctions are for different assets and have different bidders.
+
+Note that the primary entites in a non-trivial state do not HAVE to be "sufficiently disjoint", simply that it MUST be possible.
+In other words, a non-trivial state must be sufficiently UNDER constrained to admit disjointness.
+</definition>
+
+<task>
+Given the implementation of {{ contract_spec.contract_name }}, identify which additional components need to be included in the prover
+input to accurately model {{ contract_spec.contract_name }}'s environment.
+
+To that end follow these instructions exactly:
+
+## Step 1
+Analyze the implementation of {{ contract_spec.contract_name }} to determine its "primary entity", and its "non-trivial state".
+
+## Step 2
+
+Analyze the implementation of {{ contract_spec.contract_name }} in {{ contract_spec.relative_path }}, identifying any other contracts
+with which the contract *directly* interacts.
+
+Good example: "This an AMM which facilitates swaps between two on chain assets, these swaps are facilitated by calling ERC20 methods on the tokens" (direct interaction)
+Bad example: "This is an NFT marketplace, which transfers assets to an address. During the transfer, the could then call an arbitrary contract." (indirect interaction)
+Bad example: "This contract can only be called by some on chain manager P, so P should be included" (indirect interaction, no need to model the contract's callers)
+
+*IMPORTANT*: Callback style calls (e.g., passing an `address` to which a message is sent) and other similar patterns should be considered on a case-by-case basis.
+If there is *clearly* an intended recipient for these callbacks present in the codebase, include them. If this is part of a general "user provided hooks" pattern, consider
+generating a mock (see below)
+
+## Step 3
+
+For each such external contract C identified in Step 2, go through the following decision tree:
+
+1. If C is an ERC20 or similar token, use the `erc20_guidance` tool to gain extra context. Otherwise, skip to step 2.
+2. Could all interactions with the contract(s) be reasonably modelled WITHOUT significant precision loss with summaries?
+   For example, if the external contract is a price oracle, then the methods to retrieve the current price for an
+   asset might simply be modelled as returning an arbitrary number. If yes, classify C as "SUMMARIZABLE" and halt your analysis.
+3. Is the source code for an implementation of C available? If so, proceed to step 4. Otherwise classify C as "NOTFOUND_HAVOC" and halt your analysis
+4. Is {{ contract_spec.contract_name }} responsible for instantiating the contracts, or are they instantiated by an external actor? If they are not instantiated
+   by {{ contract_spec.contract_name }} go to step 5. Otherwise, consider how many extant instances would be required to model the protocol
+   in a non-trivial state. For example, if the contract dynamically creates "Wrapper tokens" which wrap some underlying asset, how many such
+   instances would be required to represent the protocl in a non-trivial state. Remember this number, classify C as "DYNAMIC", and halt your analysis.
+5. How many instances of these contracts are sufficient to model {{ contract_spec.contract_name }} in a non-trivial state. For example, if this is a pool
+   that manages *exactly* two ERC20 tokens, then two ERC20 contract instances will be necessary. If a single instance is appropriate classify as "SINGLETON",
+   otherwise classify C as "MULTIPLE", and remember how many instances are required.
+
+## Step 4
+
+For each contract C classified as "MULTIPLE" or "DYNAMIC" in Step 3, generate N harnesses for each required instance according to the guidelines in `harness-guides` below
+
+## Step 5
+
+Output the results of your findings using the provided `result` tool.
+
+<state>
+  When executing these instructions, do NOT skip steps or fold multiple steps into single round of the conversation. You will execute this task across
+  multiple iterations with the provided tools; you should take your time and work methodically. You MUST use the available
+  memory tool to track your progress through the task, and any intermediate results (like the classifications for each contract).
+</state>
+</task>
+
+<harness-guides>
+You may generate harnesses for external contracts labelled "MULTIPLE" or "DYNAMIC". As described in the prover background, each contract instance in the Prover's model
+of the blockchain must correspond to a single contract declaration. Thus, when you output N harnesses for a contract C, you should generate N solidity files, each
+of which declares a unique contract identifier that extends C. You should place all generated files in the `certora/harnesses` directory of the VFS using
+the `put_file` tool. By convention, the name of the contract identifier should match the name of the file; for example, a file declaring `TokenInstance1` should be placed
+in `certora/harnesses/TokenInstance1.sol`.
+
+The actual harness implementation should contain a minimal contract which simply extends the target contract. You should only add code necessary to satisfy the Solidity
+compiler/typechecker; e.g., code to invoke the parent contract's constructor.
+
+The harness contract will need to import the target contract; you should use the relative path of the target file. For example, if `TokenInstance1` is inheriting from `MyToken`
+declared at the path `src/contracts/token/MyToken.sol`, then `TokenInstance1` should use `import "src/contracts/token/MyToken.sol";`. Do NOT try to use imports with `..`.
+</harness-guides>
+
+<guidance>
+  <clarification>
+    While summaries can be written in an almost Turing complete language, their use to encode non-trivial behavior is not recommended. In other words,
+    while it is possible to completely reimplement any contract and use that reimplementation as the summary, this is NOT the intended use for summarization.
+    Accordingly, you should only use summarization if the behavior of the external actor is either trivial or can be easily and simply modelled.
+  </clarification>
+</guidance>
