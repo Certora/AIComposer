@@ -23,12 +23,12 @@ from pathlib import Path
 from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override, Coroutine, Awaitable
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, Discriminator
 
 from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
@@ -37,15 +37,15 @@ from composer.prover.ptypes import RuleResult
 from composer.prover.results import read_and_format_run_result
 from composer.rag.db import PostgreSQLRAGDatabase
 from graphcore.graph import MessagesState, Builder
-from graphcore.tools.vfs import VFSState, VFSToolConfig, fs_tools
-from graphcore.tools.schemas import WithInjectedState, WithImplementation, WithInjectedId
+from graphcore.tools.vfs import VFSState, VFSToolConfig, fs_tools, VFSInput
+from graphcore.tools.schemas import WithInjectedState, WithImplementation, WithInjectedId, WithImplementation
 
 import uuid
 from typing import cast
 
 from langchain_core.runnables import RunnableConfig
 
-from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
+from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure, SetupSuccess
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl
 from composer.tools.search import cvl_manual_search
 from composer.human.handlers import handle_human_interrupt
@@ -756,6 +756,136 @@ def _analyze_component(
         work.append((prop, r, cvl))
     return work
 
+@dataclass
+class Configuration(SetupSuccess):
+    vfs_diff: dict[str, str]
+
+class ExternalActor(BaseModel):
+    name: str = Field(description="A short, descriptive name of the external contract being interacted with")
+    description: str = Field(description="A short, precise description of what the external actor does and its interaction with the main contract")
+
+class Summarizable(ExternalActor):
+    l: Literal["SUMMARIZABLE"]
+    suggested_summaries: str = Field(description="A natural language description of the suggested summaries to use for this contract")
+    path: str | None = Field(description="The relative path to the source of the contract to be summarized; null if the implementation isn't available")
+
+class SourceAvailable(ExternalActor):
+    path: str = Field(description="The relative path to the source of the contract being described")
+
+class NotFoundHavoc(ExternalActor):
+    l: Literal["NOTFOUND_HAVOC"]
+
+
+class Singleton(SourceAvailable):
+    l: Literal["SINGLETON"]
+
+class HarnessDef(BaseModel):
+    path: str = Field(description="Path to the harness definition")
+    harness_name: str = Field(description="The name of the contract defined in the harness file")
+    suggested_role: str = Field(description="The suggested role of this harness; e.g., 'the first token' of the pool, etc.")
+
+
+class WithHarnesses(BaseModel):
+    harnesses: list[HarnessDef] = Field(description="The harnesses created to model this contract.")
+
+class Dynamic(SourceAvailable, WithHarnesses):
+    l: Literal["DYNAMIC"]
+
+class Multiple(SourceAvailable, WithHarnesses):
+    l: Literal["MULTIPLE"]
+
+type ContractClassification = Annotated[
+    Summarizable |
+    NotFoundHavoc |
+    Dynamic |
+    Singleton |
+    Multiple,
+    Discriminator("l")
+]
+
+def _preaudit_agent(
+    args: SourceSpecArgs,
+    contract_spec: ContractSpec,
+    b: Builder[None, None, None],
+) -> Configuration:
+    class ST(VFSState, MessagesState):
+        result: NotRequired[list[str]]
+
+    fs_tools, mat = vfs_tools(conf=VFSToolConfig(
+        immutable=False,
+        forbidden_read=FS_FORBIDDEN_READ,
+        fs_layer=args.project_root,
+        forbidden_write=r"^(?!certora/)",
+        put_doc_extra="You may only write files in the certora/ subdirectory"
+    ), ty=ST)
+
+    def validate_mocks(
+        s: ST,
+        r: list[ContractClassification],
+        tid: str
+    ) -> ValidationResult:
+        errors = []
+        for m in r:
+            if m.l == "DYNAMIC" or m.l == "MULTIPLE":
+                for h in m.harnesses:
+                    path = h.path
+                    if path not in s["vfs"]:
+                        errors.append(f"Harness {path} for {m.path} not found on the VFS")
+        if errors:
+            return "Update rejected:\n" + "\n".join(errors)
+        return None
+
+    result = result_tool_generator(
+        "result",
+        (list[ContractClassification], "The external actors classified by your analysis"),
+        "Tool to communicate the result of your analysis",
+        validator=(ST, validate_mocks)
+    )
+
+    memory_back = sqlite3.connect(":memory:", check_same_thread=False)
+    mem = memory_tool(SqliteMemoryBackend("ns", memory_back))
+
+    graph = b.with_input(
+        VFSInput
+    ).with_output_key(
+        "result"
+    ).with_state(
+        ST
+    ).with_default_summarizer(
+        max_messages=50
+    ).with_sys_prompt(
+        "You are an expert Solidity developer who is very good at following instructions who works at Certora, Inc."
+    ).with_tools(
+        [*fs_tools, result, mem]
+    ).with_initial_prompt_template(
+        "harness_prompt.j2",
+        contract_spec=contract_spec
+    ).build()[0].compile()
+
+    st : ST = graph.invoke(VFSInput(vfs={}, input=[]), config={"recursion_limit": 100}) #type: ignore
+    
+    res : list[ContractClassification] = st["result"] #type: ignore
+    for r in res:
+        print("=" * 80)
+        print("Name: " + r.name)
+        print("> " + r.description)
+        print("Sort: " + r.l)
+        print("-" * 80)
+        if r.l != "NOTFOUND_HAVOC":
+            print(f"path = {r.path}")
+        match r.l:
+            case "MULTIPLE" | "DYNAMIC":
+                for h in r.harnesses:
+                    print(f"Harness of {r.path}")
+                    print(st["vfs"].keys())
+                    print(h.path)
+                    print(st["vfs"][h.path])
+            case "SUMMARIZABLE":
+                print(r.suggested_summaries)
+
+
+
+    sys.exit(10)
 
 def execute(args: SourceSpecArgs) -> int:
     """Execute source-based spec generation workflow."""
@@ -781,6 +911,12 @@ def execute(args: SourceSpecArgs) -> int:
     store = get_store()
 
     llm = create_llm(args)
+
+    basic_builder = Builder().with_llm(llm).with_loader(load_jinja_template)
+
+    _preaudit_agent(
+        args, spec, basic_builder
+    )
 
     b : Builder[None, None, FlowInput] = Builder().with_llm(
         llm
