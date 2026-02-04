@@ -23,8 +23,16 @@ from pathlib import Path
 from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override, Coroutine, Awaitable
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.messages import BaseMessage, ToolMessage, AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import InjectedToolCallId, tool
+from textual.app import App, ComposeResult
+from textual.containers import ScrollableContainer, Horizontal, Vertical
+from textual.widgets import Button, Static, Header, Footer, Collapsible
+from textual.reactive import reactive
+from rich.text import Text
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.markdown import Markdown
 from langgraph.prebuilt import InjectedState
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
@@ -59,9 +67,373 @@ from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.vfs import vfs_tools
 from graphcore.tools.memory import memory_tool, SqliteMemoryBackend
 from langgraph._internal._typing import StateLike
+from langgraph.graph.state import CompiledStateGraph
 from graphcore.summary import SummaryConfig
 
 T = TypeVar('T')
+
+
+MAX_TOOL_CONTENT_LENGTH = 500
+
+
+def _normalize_content(s: str | list[str | dict]) -> list[dict]:
+    """Normalize message content to a list of typed blocks."""
+    l: list[str | dict]
+    if isinstance(s, str):
+        l = [s]
+    else:
+        l = s
+    to_ret = []
+    for r in l:
+        if isinstance(r, str):
+            to_ret.append({"type": "text", "text": r})
+        else:
+            to_ret.append(r)
+    return to_ret
+
+
+def _format_text_content(content: str) -> Text | Markdown:
+    """Format string content with markdown if appropriate."""
+    import re
+    html_tag_pattern = r'<[^>]+>'
+    if re.search(html_tag_pattern, content):
+        return Text(content)
+
+    markdown_markers = ['#', '*', '`', '```', '- ', '* ', '1. ', '## ', '### ']
+    if any(marker in content for marker in markdown_markers):
+        return Markdown(content)
+    else:
+        return Text(content)
+
+
+class MessageWidget(Static):
+    """Widget for displaying a single message."""
+
+    def __init__(self, message: BaseMessage, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        match self.message:
+            case AIMessage():
+                yield from self._render_ai_message(self.message)
+            case ToolMessage():
+                yield from self._render_tool_message(self.message)
+            case HumanMessage():
+                yield from self._render_human_message(self.message)
+            case SystemMessage():
+                yield from self._render_system_message(self.message)
+            case _:
+                content = _normalize_content(self.message.content)
+                text = "\n".join(c.get("text", str(c)) for c in content)
+                yield Static(Panel(text, title=type(self.message).__name__))
+
+    def _render_ai_message(self, msg: AIMessage) -> Iterable[Static | Collapsible]:
+        content_parts: list[str] = []
+
+        for block in _normalize_content(msg.content):
+            block_type = block.get("type", "unknown")
+
+            if block_type == "thinking":
+                thinking_text = block.get("thinking", "")
+                if thinking_text:
+                    yield Collapsible(
+                        Static(_format_text_content(thinking_text)),
+                        title="Thinking",
+                        collapsed=True
+                    )
+            elif block_type == "text":
+                text = block.get("text", "")
+                if text:
+                    content_parts.append(text)
+            elif block_type == "tool_use":
+                tool_name = block.get("name", "unknown")
+                tool_input = block.get("input", {})
+                args_str = json.dumps(tool_input, indent=2) if tool_input else ""
+                yield Static(Panel(
+                    f"[bold]{tool_name}[/bold]\n{args_str}",
+                    title="Tool Call",
+                    border_style="yellow"
+                ))
+
+        if content_parts:
+            yield Static(Panel(
+                _format_text_content("\n".join(content_parts)),
+                title="Assistant",
+                border_style="magenta"
+            ))
+
+    def _render_tool_message(self, msg: ToolMessage) -> Iterable[Static]:
+        content = str(msg.content)
+        tool_name = getattr(msg, 'name', 'Tool Result')
+
+        if len(content) > MAX_TOOL_CONTENT_LENGTH:
+            truncated = content[:MAX_TOOL_CONTENT_LENGTH] + f"\n... [truncated {len(content) - MAX_TOOL_CONTENT_LENGTH} chars]"
+            yield Static(Panel(truncated, title=tool_name, border_style="cyan"))
+        else:
+            yield Static(Panel(content, title=tool_name, border_style="cyan"))
+
+    def _render_human_message(self, msg: HumanMessage) -> Iterable[Static]:
+        content_parts: list[str] = []
+
+        for block in _normalize_content(msg.content):
+            block_type = block.get("type", "unknown")
+
+            if block_type == "text":
+                text = block.get("text", "")
+                if text:
+                    content_parts.append(text)
+            elif block_type == "image" or block_type == "image_url":
+                content_parts.append("[Image content]")
+            elif block_type == "document":
+                content_parts.append("[Document content]")
+            else:
+                content_parts.append(f"[{block_type}]")
+
+        if content_parts:
+            combined = "\n".join(content_parts)
+            if len(combined) > MAX_TOOL_CONTENT_LENGTH:
+                truncated = combined[:MAX_TOOL_CONTENT_LENGTH] + f"\n... [truncated {len(combined) - MAX_TOOL_CONTENT_LENGTH} chars]"
+                yield Static(Panel(truncated, title="Human", border_style="green"))
+            else:
+                yield Static(Panel(_format_text_content(combined), title="Human", border_style="green"))
+
+    def _render_system_message(self, msg: SystemMessage) -> Iterable[Static]:
+        content_parts: list[str] = []
+
+        for block in _normalize_content(msg.content):
+            block_type = block.get("type", "unknown")
+
+            if block_type == "text":
+                text = block.get("text", "")
+                if text:
+                    content_parts.append(text)
+            else:
+                content_parts.append(f"[{block_type}]")
+
+        if content_parts:
+            combined = "\n".join(content_parts)
+            if len(combined) > MAX_TOOL_CONTENT_LENGTH:
+                truncated = combined[:MAX_TOOL_CONTENT_LENGTH] + f"\n... [truncated {len(combined) - MAX_TOOL_CONTENT_LENGTH} chars]"
+                yield Static(Panel(truncated, title="System", border_style="blue"))
+            else:
+                yield Static(Panel(_format_text_content(combined), title="System", border_style="blue"))
+
+
+class UpdateWidget(Static):
+    """Widget for displaying a state update."""
+
+    def __init__(self, node_name: str, state_update: dict, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.node_name = node_name
+        self.state_update = state_update
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"[bold]Node: {self.node_name}[/bold]", classes="update-header")
+
+        if "messages" in self.state_update:
+            for msg in self.state_update["messages"]:
+                if isinstance(msg, BaseMessage):
+                    yield MessageWidget(msg)
+
+        other_keys = {k: v for k, v in self.state_update.items() if k != "messages"}
+        if other_keys:
+            summary = ", ".join(f"{k}={type(v).__name__}" for k, v in other_keys.items())
+            yield Static(f"[dim]State updates: {summary}[/dim]")
+
+
+class GraphRunnerApp(App):
+    """TUI for running a LangGraph to completion with pause/resume."""
+
+    CSS = """
+    #status-bar {
+        dock: top;
+        height: 3;
+        background: $surface;
+        padding: 0 1;
+    }
+
+    #status-bar Static {
+        width: auto;
+    }
+
+    #message-area {
+        height: 1fr;
+        border: solid $primary;
+        padding: 1;
+    }
+
+    #controls {
+        dock: bottom;
+        height: 3;
+        align: center middle;
+    }
+
+    .update-header {
+        background: $boost;
+        padding: 0 1;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        ("p", "toggle_pause", "Pause/Resume"),
+        ("q", "quit", "Quit"),
+    ]
+
+    is_paused: reactive[bool] = reactive(False)
+    is_complete: reactive[bool] = reactive(False)
+
+    def __init__(
+        self,
+        graph: CompiledStateGraph,
+        input: Any,
+        thread_id: str,
+        initial_checkpoint_id: str | None,
+        recursion_limit: int,
+        **kwargs
+    ) -> None:
+        super().__init__(**kwargs)
+        self.graph = graph
+        self.graph_input = input
+        self.thread_id = thread_id
+        self.checkpoint_id = initial_checkpoint_id
+        self.recursion_limit = recursion_limit
+        self._stream_task: asyncio.Task | None = None
+        self._error: Exception | None = None
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Horizontal(id="status-bar"):
+            yield Static(f"Thread: {self.thread_id}", id="thread-display")
+            yield Static(" | ", classes="separator")
+            yield Static("Checkpoint: -", id="checkpoint-display")
+            yield Static(" | ", classes="separator")
+            yield Static("Node: -", id="node-display")
+        yield ScrollableContainer(id="message-area")
+        with Horizontal(id="controls"):
+            yield Button("Pause", id="pause-btn", variant="primary")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._start_streaming()
+
+    def _start_streaming(self) -> None:
+        self._stream_task = asyncio.create_task(self._run_stream())
+
+    async def _run_stream(self) -> None:
+        config: RunnableConfig = {
+            "configurable": {"thread_id": self.thread_id},
+            "recursion_limit": self.recursion_limit,
+        }
+
+        if self.checkpoint_id is not None:
+            config["configurable"]["checkpoint_id"] = self.checkpoint_id
+
+        stream_input = None if self.checkpoint_id is not None else self.graph_input
+
+        try:
+            async for (tag, payload) in self.graph.astream(
+                input=stream_input,
+                config=config,
+                stream_mode=["checkpoints", "updates"]
+            ):
+                if self.is_paused:
+                    break
+
+                assert isinstance(payload, dict)
+
+                if tag == "checkpoints":
+                    new_checkpoint = payload["config"]["configurable"]["checkpoint_id"]
+                    self.checkpoint_id = new_checkpoint
+                    self.query_one("#checkpoint-display", Static).update(f"Checkpoint: {new_checkpoint[:12]}...")
+                else:
+                    for node_name, update in payload.items():
+                        if node_name == "__interrupt__":
+                            continue
+                        self.query_one("#node-display", Static).update(f"Node: {node_name}")
+
+                        if isinstance(update, dict):
+                            message_area = self.query_one("#message-area", ScrollableContainer)
+                            widget = UpdateWidget(node_name, update)
+                            await message_area.mount(widget)
+                            message_area.scroll_end(animate=False)
+
+            if not self.is_paused:
+                self.is_complete = True
+                self.query_one("#pause-btn", Button).label = "Complete"
+                self.query_one("#pause-btn", Button).disabled = True
+
+        except Exception as e:
+            self._error = e
+            self.exit()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "pause-btn":
+            self.action_toggle_pause()
+
+    def action_toggle_pause(self) -> None:
+        if self.is_complete:
+            return
+
+        self.is_paused = not self.is_paused
+        btn = self.query_one("#pause-btn", Button)
+
+        if self.is_paused:
+            btn.label = "Resume"
+            btn.variant = "success"
+        else:
+            btn.label = "Pause"
+            btn.variant = "primary"
+            self._start_streaming()
+
+    async def action_quit(self) -> None:
+        if self.is_complete:
+            self.exit()
+
+
+def run_to_completion[I: StateLike, S: StateLike](
+    graph: CompiledStateGraph[S, None, I, Any],
+    input: I,
+    thread_prefix: str,
+    *,
+    thread_id: str | None = None,
+    checkpoint_id: str | None = None,
+    recursion_limit: int = 100,
+) -> S:
+    """
+    Run a compiled state graph to completion using a TUI with pause/resume support.
+
+    Args:
+        graph: The compiled state graph to execute
+        input: The input to the graph (ignored if checkpoint_id is set)
+        thread_prefix: Prefix for auto-generated thread IDs.
+        thread_id: Optional thread ID for checkpointing. Auto-generated if None.
+        checkpoint_id: Optional checkpoint ID to resume from.
+        recursion_limit: Maximum recursion depth (default 100).
+
+    Returns:
+        The final state after graph completion.
+    """
+    if thread_id is None:
+        thread_id = f"{thread_prefix}{uuid.uuid1().hex}"
+        print(f"Chose thread id {thread_id}")
+
+    app = GraphRunnerApp(
+        graph=graph,
+        input=input,
+        thread_id=thread_id,
+        initial_checkpoint_id=checkpoint_id,
+        recursion_limit=recursion_limit,
+    )
+
+    app.run()
+
+    if app._error is not None:
+        raise app._error
+
+    return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
+
 R = TypeVar('R')
 _S = TypeVar('_S', bound=MessagesState)
 _C = TypeVar('_C', bound=StateLike | None)
@@ -651,7 +1023,7 @@ def property_feedback_judge(
                 "memory": self.rough_draft,
                 "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
             })
-        
+
     def did_rough_draft_read(s: ST) -> str | None:
         h = s.get("did_read", None) is None
         if h is None:
@@ -803,13 +1175,41 @@ type ContractClassification = Annotated[
     Discriminator("l")
 ]
 
+class ERC20TokenGuidance(WithImplementation[Command], WithInjectedId):
+    """
+    Invoke this tool to receive guidance on how ERC20 is usually modelled using the prover.
+
+    You MUST NOT invoke this tool in parallel with other tools.
+    """
+    @override
+    def run(self) -> Command:
+        return Command(update={
+            "messages": [ToolMessage(
+                tool_call_id=self.tool_call_id,
+                content="Advice is as follows..."
+            ), HumanMessage(
+                content=[load_jinja_template(
+                    "erc20_advice.j2"
+                ), "Carefully consider if explicit ERC20 contract instances are necessary for this protocol, or if the 'standard summarization' is sufficient."]
+            )]
+        })
+
+class ContractSetup(BaseModel):
+    """
+    The result of your analysis
+    """
+    external_contracts: list[ContractClassification] = Field(description="The external actors classified by your analysis")
+    primary_entity: str = Field(description="A description of the primary entity managed by this contract")
+    non_trivial_state: str = Field(description="A semi-formal description of a `non-trivial state`. Reference the external " \
+    "contracts you identified during the harnessing step as necessary.")
+
 def _preaudit_agent(
     args: SourceSpecArgs,
     contract_spec: ContractSpec,
     b: Builder[None, None, None],
 ) -> Configuration:
     class ST(VFSState, MessagesState):
-        result: NotRequired[list[str]]
+        result: NotRequired[ContractSetup]
 
     fs_tools, mat = vfs_tools(conf=VFSToolConfig(
         immutable=False,
@@ -821,11 +1221,11 @@ def _preaudit_agent(
 
     def validate_mocks(
         s: ST,
-        r: list[ContractClassification],
+        r: ContractSetup,
         tid: str
     ) -> ValidationResult:
         errors = []
-        for m in r:
+        for m in r.external_contracts:
             if m.l == "DYNAMIC" or m.l == "MULTIPLE":
                 for h in m.harnesses:
                     path = h.path
@@ -837,7 +1237,7 @@ def _preaudit_agent(
 
     result = result_tool_generator(
         "result",
-        (list[ContractClassification], "The external actors classified by your analysis"),
+        ContractSetup,
         "Tool to communicate the result of your analysis",
         validator=(ST, validate_mocks)
     )
@@ -856,16 +1256,21 @@ def _preaudit_agent(
     ).with_sys_prompt(
         "You are an expert Solidity developer who is very good at following instructions who works at Certora, Inc."
     ).with_tools(
-        [*fs_tools, result, mem]
+        [*fs_tools, result, mem, ERC20TokenGuidance.as_tool("erc20_guidance")]
     ).with_initial_prompt_template(
         "harness_prompt.j2",
         contract_spec=contract_spec
-    ).build()[0].compile()
+    ).build_async()[0].compile(checkpointer=get_checkpointer())
 
-    st : ST = graph.invoke(VFSInput(vfs={}, input=[]), config={"recursion_limit": 100}) #type: ignore
-    
-    res : list[ContractClassification] = st["result"] #type: ignore
-    for r in res:
+    st = run_to_completion(
+        graph,
+        input=VFSInput(vfs={}, input=[]),
+        recursion_limit=100,
+        thread_prefix="harness-setup-"
+    )
+
+    res : ContractSetup = st["result"] # pyright: ignore[reportTypedDictNotRequiredAccess]
+    for r in res.external_contracts:
         print("=" * 80)
         print("Name: " + r.name)
         print("> " + r.description)
