@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override, Coroutine, Awaitable
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from langchain_core.messages import BaseMessage, ToolMessage, AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from textual.app import App, ComposeResult
@@ -71,6 +72,21 @@ from langgraph.graph.state import CompiledStateGraph
 from graphcore.summary import SummaryConfig
 
 T = TypeVar('T')
+
+
+class ThreadIdFactory:
+    """Deterministically derive child thread IDs from a root thread ID."""
+
+    def __init__(self, root: str):
+        self.root = root
+
+    def child(self, name: str) -> str:
+        """Derive a child thread ID: {root}-{name}"""
+        return f"{self.root}-{name}"
+
+    def indexed_child(self, name: str, index: int) -> str:
+        """Derive an indexed child: {root}-{name}-{index}"""
+        return f"{self.root}-{name}-{index}"
 
 
 MAX_TOOL_CONTENT_LENGTH = 500
@@ -361,8 +377,9 @@ class GraphRunnerApp(App):
 
             if not self.is_paused:
                 self.is_complete = True
-                self.query_one("#pause-btn", Button).label = "Complete"
+                self.query_one("#pause-btn", Button).label = "Complete (15s)"
                 self.query_one("#pause-btn", Button).disabled = True
+                self.set_timer(15, self._auto_exit)
 
         except Exception as e:
             self._error = e
@@ -386,6 +403,10 @@ class GraphRunnerApp(App):
             btn.label = "Pause"
             btn.variant = "primary"
             self._start_streaming()
+
+    def _auto_exit(self) -> None:
+        """Called by timer after completion to auto-exit."""
+        self.exit()
 
     async def action_quit(self) -> None:
         if self.is_complete:
@@ -443,7 +464,7 @@ def bind_standard(
     builder: Builder[Any, _C, _I],
     state_type: type[_S],
     doc: str | None = None,
-    validator: Callable[[_S], str | None] | None = None
+    validator: Callable[[_S, R], str | None] | None = None
 ) -> Builder[_S, _C, _I]:
     """
     Bind a state type to the builder and generate a result tool based on the state's `result` annotation.
@@ -485,7 +506,7 @@ def bind_standard(
 
     valid : tuple[type[_S], Callable[[_S, Any, str], ValidationResult]] | None = None
     if validator:
-        valid = (state_type, lambda s, r, id: validator(s))
+        valid = (state_type, lambda s, r, id: validator(s, cast(R, r)))
 
     # Generate the result tool
     if is_basemodel:
@@ -526,6 +547,7 @@ class SourceSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
     project_root: str
     main_contract: str
     system_doc: str
+    ignore_existing_config: bool
 
 
 def apply_async_parallel(
@@ -1024,7 +1046,7 @@ def property_feedback_judge(
                 "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
             })
 
-    def did_rough_draft_read(s: ST) -> str | None:
+    def did_rough_draft_read(s: ST, _) -> str | None:
         h = s.get("did_read", None) is None
         if h is None:
             return "Completion REJECTED: never read rough draft for review"
@@ -1207,7 +1229,15 @@ def _preaudit_agent(
     args: SourceSpecArgs,
     contract_spec: ContractSpec,
     b: Builder[None, None, None],
+    thread_factory: ThreadIdFactory,
 ) -> Configuration:
+    certora_dir = Path(args.project_root) / "certora"
+    if certora_dir.exists() and not args.ignore_existing_config:
+        raise RuntimeError(
+            f"Directory {certora_dir} already exists. "
+            "Use --ignore-existing-config to proceed anyway."
+        )
+
     class ST(VFSState, MessagesState):
         result: NotRequired[ContractSetup]
 
@@ -1265,11 +1295,14 @@ def _preaudit_agent(
     st = run_to_completion(
         graph,
         input=VFSInput(vfs={}, input=[]),
+        thread_prefix="harness-setup",
+        thread_id=thread_factory.child("harness-setup"),
         recursion_limit=100,
-        thread_prefix="harness-setup-"
     )
 
     res : ContractSetup = st["result"] # pyright: ignore[reportTypedDictNotRequiredAccess]
+    root = Path(args.project_root)
+    extra_files = []
     for r in res.external_contracts:
         print("=" * 80)
         print("Name: " + r.name)
@@ -1283,20 +1316,102 @@ def _preaudit_agent(
                 for h in r.harnesses:
                     print(f"Harness of {r.path}")
                     print(st["vfs"].keys())
+                    output_path = root / h.path
+                    output_path.parent.mkdir(exist_ok=True, parents=True)
+                    cont = st["vfs"][h.path]
+                    output_path.write_text(cont)
+                    extra_files.append(h.path)
                     print(h.path)
                     print(st["vfs"][h.path])
             case "SUMMARIZABLE":
                 print(r.suggested_summaries)
 
-
-
+    print("Running pre-audit tool")
     sys.exit(10)
+
+class Invariant(BaseModel):
+    """
+    A single invariant from your analysis.
+    """
+    name: str = Field(description="A unique, descriptive name of the invariant")
+    dependencies: list[str] = Field(description="The names of other invariants that are likely to be required to formalize this invariant")
+    description : str = Field(description="A semi-formal, language language description of the invariant to formalize.")
+
+class Invariants(BaseModel):
+    """
+    The structural invariants you identified in your analysis
+    """
+    inv: list[Invariant] = Field(description="The invariants you identified")
+
+def get_memory_backend(
+    tid: str
+) -> BaseTool:
+    return memory_tool(get_memory(
+        tid
+    ))
+
+def structural_invariants_flow(
+    args: SourceSpecArgs,
+    spec: ContractSpec,
+    tid_fact: ThreadIdFactory,
+    cvl_builder: Builder[None, None, None]
+) -> str:
+    
+    class ST(MessagesState):
+        result: NotRequired[Invariants]
+
+    fs = fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)
+
+    tid = tid_fact.child("structural-inv")
+
+    memory = get_memory_backend(tid)
+
+    def validate_invariants(
+        _: ST,
+        i: Invariants
+    ) -> str | None:
+        all_invariant_names = set()
+        for inv in i.inv:
+            if inv.name in all_invariant_names:
+                return f"Multiple definitions for {inv.name}"
+            all_invariant_names.add(inv.name)
+        
+        for inv in i.inv:
+            for d in inv.dependencies:
+                if d not in all_invariant_names:
+                    return f"Invariant {inv.name} references {d}, but no invariant with that name exists."
+
+    d = bind_standard(
+        cvl_builder,
+        ST,
+        doc="The structural/state invariants you identified",
+        validator=validate_invariants
+    ).with_sys_prompt(
+        "You are a methodical formal verification expert working at Certora, Inc."
+    ).with_initial_prompt_template(
+        "structural_invariant_prompt.j2",
+        contract_spec=spec
+    ).with_tools(
+        [*fs, memory]
+    ).with_input(FlowInput).build_async()[0].compile(checkpointer=get_checkpointer())
+
+    s = run_to_completion(
+        graph=d,
+        input=FlowInput(input=[]),
+        thread_id=tid,
+        thread_prefix="structural-inv"
+    )
+    print(s)
+
+    sys.exit(1)
+
 
 def execute(args: SourceSpecArgs) -> int:
     """Execute source-based spec generation workflow."""
 
     thread_id = args.thread_id if args.thread_id else f"source_spec_{uuid.uuid4().hex}"
     print(f"Thread ID: {thread_id}")
+    thread_factory = ThreadIdFactory(thread_id)
 
     project_root = Path(args.project_root)
 
@@ -1319,8 +1434,12 @@ def execute(args: SourceSpecArgs) -> int:
 
     basic_builder = Builder().with_llm(llm).with_loader(load_jinja_template)
 
+    structural_invariants_flow(
+        args, spec, thread_factory, basic_builder
+    )
+
     _preaudit_agent(
-        args, spec, basic_builder
+        args, spec, basic_builder, thread_factory
     )
 
     b : Builder[None, None, FlowInput] = Builder().with_llm(
@@ -1526,6 +1645,8 @@ def auto_prover() -> int:
     parser.add_argument("project_root")
     parser.add_argument("main_contract")
     parser.add_argument("system_doc")
+    parser.add_argument("--ignore-existing-config", action="store_true", dest="ignore_existing_config",
+                        help="Proceed even if certora/ directory already exists in project root")
 
     res = cast(SourceSpecArgs, parser.parse_args())
 
