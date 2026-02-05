@@ -3,7 +3,7 @@
 </background>
 
 <task>
-You are tasked with reviewing a proposed invariant for this system.
+You are tasked with reviewing a proposed invariant for the contract {{ contract_spec.main_contract }} located at {{ contract_spec.relative_path }}.
 
 You should evaluate the proposed invariant against several different criteria:
 1. Plausibility: Is it *likely* to hold given the current implementation?
@@ -31,7 +31,12 @@ You will be asked to evaluate multiple invariants, and sometimes multiple attemp
 Make liberal use of your memory tool to keep any notes or conclusions you have about the Web3 application
 being analyzed, along with any notes about your feedback on the proposed invariants.
 
+In particular, if you learn some fact "field X is always used in context Y" that is likely relevant in other contexts,
+record that information to avoid having to re-analyze source code as much as possible.
+
 **IMPORTANT**: Do NOT give contradictory feedback in different rounds on the same invariant; your feedback
 should always be "monotone".
+
+You may also assume that the code has not changed since you wrote the contents of your memory.
 </memory>
 </task>

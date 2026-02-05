@@ -15,6 +15,8 @@ import sqlite3
 import sys
 import subprocess
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import composer.certora as _
 
@@ -48,7 +50,7 @@ from composer.prover.results import read_and_format_run_result
 from composer.rag.db import PostgreSQLRAGDatabase
 from graphcore.graph import MessagesState, Builder
 from graphcore.tools.vfs import VFSState, VFSToolConfig, fs_tools, VFSInput
-from graphcore.tools.schemas import WithInjectedState, WithImplementation, WithInjectedId, WithImplementation
+from graphcore.tools.schemas import WithInjectedState, WithImplementation, WithInjectedId, WithImplementation, WithAsyncImplementation
 
 import uuid
 from typing import cast
@@ -73,6 +75,23 @@ from langgraph.graph.state import CompiledStateGraph
 from graphcore.summary import SummaryConfig
 
 T = TypeVar('T')
+
+# Context variables for nested workflow detection
+_current_runner_app: ContextVar["GraphRunnerApp | None"] = ContextVar('_current_runner_app', default=None)
+_nesting_depth: ContextVar[int] = ContextVar('_nesting_depth', default=0)
+
+
+@contextmanager
+def _workflow_context(app: "GraphRunnerApp | None", depth: int):
+    """Context manager for setting workflow nesting context."""
+    app_token = _current_runner_app.set(app)
+    depth_token = _nesting_depth.set(depth)
+    try:
+        yield
+    finally:
+        _current_runner_app.reset(app_token)
+        _nesting_depth.reset(depth_token)
+
 
 @dataclass
 class ContractSpec:
@@ -123,8 +142,15 @@ class WorkspaceContext(JobSpec):
             _store=store,
         )
 
-    def child(self, name: str) -> "WorkspaceContext":
+    def child(self, name: str, tag: dict | None = None) -> "WorkspaceContext":
         """Create a child context with derived namespaces."""
+        child_cache_ns = (*self.cache_namespace, name) if self.cache_namespace else None
+        if child_cache_ns is not None and tag is not None:
+            self._store.put(
+                child_cache_ns,
+                "_desc",
+                tag
+            )
         return WorkspaceContext(
             system_doc=self.system_doc,
             relative_path=self.relative_path,
@@ -132,7 +158,7 @@ class WorkspaceContext(JobSpec):
             project_root=self.project_root,
             thread_id=f"{self.thread_id}-{name}",
             memory_namespace=f"{self.memory_namespace}-{name}",
-            cache_namespace=(*self.cache_namespace, name) if self.cache_namespace else None,
+            cache_namespace=child_cache_ns,
             _store=self._store,
         )
 
@@ -140,20 +166,27 @@ class WorkspaceContext(JobSpec):
         """Create an indexed child context."""
         return self.child(f"{name}-{index}")
 
-    def cache_get(self, key: str) -> dict | None:
+    def cache_get(self) -> dict | None:
         """Get a value from the cache. Returns None if caching disabled or not found."""
         if self.cache_namespace is None:
             return None
-        full_key = self.cache_namespace
-        result = self._store.get(full_key, key)
+        
+        if len(self.cache_namespace) < 1:
+            raise ValueError("Cache prefix too small")
+        
+        full_key = self.cache_namespace[:-1]
+        result = self._store.get(full_key, self.cache_namespace[-1])
         return result.value if result else None
 
-    def cache_put(self, key: str, value: dict) -> None:
+    def cache_put(self, value: dict) -> None:
         """Put a value in the cache. No-op if caching disabled."""
         if self.cache_namespace is None:
             return
-        full_key = self.cache_namespace
-        self._store.put(full_key, key, value)
+        if len(self.cache_namespace) < 1:
+            raise ValueError("Cache prefix too small")
+        
+        full_key = self.cache_namespace[:-1]
+        self._store.put(full_key, self.cache_namespace[-1], value)
 
     def get_memory_tool(self) -> BaseTool:
         """Get a memory tool for this context's memory namespace."""
@@ -329,6 +362,60 @@ class UpdateWidget(Static):
             yield Static(f"[dim]State updates: {summary}[/dim]")
 
 
+class NestedWorkflowPanel(Vertical):
+    """Collapsible panel for nested workflow execution - reuses UpdateWidget for content."""
+
+    DEFAULT_CSS = """
+    NestedWorkflowPanel {
+        height: auto;
+        margin: 1 0;
+        border: solid $secondary;
+    }
+
+    NestedWorkflowPanel .nested-status {
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+    }
+
+    NestedWorkflowPanel #nested-messages {
+        height: auto;
+        max-height: 20;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, workflow_name: str, thread_id: str, **kwargs):
+        super().__init__(**kwargs)
+        self.workflow_name = workflow_name
+        self.workflow_thread_id = thread_id
+
+    def compose(self) -> ComposeResult:
+        yield Collapsible(
+            Static("Checkpoint: -", id="nested-checkpoint", classes="nested-status"),
+            Static("Node: -", id="nested-node", classes="nested-status"),
+            ScrollableContainer(id="nested-messages"),
+            title=f"⚙ {self.workflow_name} [{self.workflow_thread_id[:8]}...]",
+            collapsed=False,
+        )
+
+    def update_checkpoint(self, checkpoint_id: str) -> None:
+        self.query_one("#nested-checkpoint", Static).update(f"Checkpoint: {checkpoint_id[:12]}...")
+
+    def update_node(self, node_name: str) -> None:
+        self.query_one("#nested-node", Static).update(f"Node: {node_name}")
+
+    async def add_update(self, widget: Static) -> None:
+        """Mount an UpdateWidget (or any widget) into the nested message area."""
+        area = self.query_one("#nested-messages", ScrollableContainer)
+        await area.mount(widget)
+        area.scroll_end(animate=False)
+
+    def mark_complete(self) -> None:
+        collapsible = self.query_one(Collapsible)
+        collapsible.collapsed = True
+
+
 class GraphRunnerApp(App):
     """TUI for running a LangGraph to completion with pause/resume."""
 
@@ -390,6 +477,10 @@ class GraphRunnerApp(App):
         self._stream_task: asyncio.Task | None = None
         self._error: Exception | None = None
         self._last_ctrl_c_time: float | None = None
+        self._resume_event: asyncio.Event = asyncio.Event()
+        self._resume_event.set()  # Initially not paused
+        self._nested_events: dict[str, asyncio.Event] = {}
+        self._nested_panels: dict[str, "NestedWorkflowPanel"] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -427,8 +518,8 @@ class GraphRunnerApp(App):
                 config=config,
                 stream_mode=["checkpoints", "updates"]
             ):
-                if self.is_paused:
-                    break
+                # Wait here if paused - blocks until event is set
+                await self._resume_event.wait()
 
                 assert isinstance(payload, dict)
 
@@ -448,11 +539,10 @@ class GraphRunnerApp(App):
                             await message_area.mount(widget)
                             message_area.scroll_end(animate=False)
 
-            if not self.is_paused:
-                self.is_complete = True
-                self.query_one("#pause-btn", Button).label = "Complete (15s)"
-                self.query_one("#pause-btn", Button).disabled = True
-                self.set_timer(15, self._auto_exit)
+            self.is_complete = True
+            self.query_one("#pause-btn", Button).label = "Complete (15s)"
+            self.query_one("#pause-btn", Button).disabled = True
+            self.set_timer(15, self._auto_exit)
 
         except Exception as e:
             self._error = e
@@ -472,10 +562,11 @@ class GraphRunnerApp(App):
         if self.is_paused:
             btn.label = "Resume"
             btn.variant = "success"
+            self._resume_event.clear()  # Block workflows
         else:
             btn.label = "Pause"
             btn.variant = "primary"
-            self._start_streaming()
+            self._resume_event.set()  # Unblock workflows
 
     def _auto_exit(self) -> None:
         """Called by timer after completion to auto-exit."""
@@ -496,23 +587,54 @@ class GraphRunnerApp(App):
         self._last_ctrl_c_time = current_time
         self.notify("Press Ctrl+C again to abort", severity="warning")
 
+    @contextmanager
+    def nested_workflow(self, workflow_name: str, thread_id: str):
+        """Create, register, and manage a nested workflow panel."""
+        panel = NestedWorkflowPanel(workflow_name, thread_id, parent_app=self)
+        event = asyncio.Event()
+        event.set()  # Initially not paused
+        self._nested_events[thread_id] = event
+        self._nested_panels[thread_id] = panel
+        try:
+            yield panel, event
+        finally:
+            self._nested_events.pop(thread_id, None)
+            self._nested_panels.pop(thread_id, None)
 
-def run_to_completion[I: StateLike, S: StateLike](
+    def toggle_nested_pause(self, thread_id: str) -> bool:
+        """Toggle pause state for a specific nested workflow. Returns new paused state."""
+        if thread_id not in self._nested_events:
+            return False
+        event = self._nested_events[thread_id]
+        if event.is_set():
+            event.clear()
+            return True  # Now paused
+        else:
+            event.set()
+            return False  # Now running
+
+
+async def run_to_completion[I: StateLike, S: StateLike](
     graph: CompiledStateGraph[S, None, I, Any],
     input: I,
-    thread_prefix: str,
+    thread_id: str,
     *,
-    thread_id: str | None = None,
+    workflow_name: str = "Nested Workflow",
     checkpoint_id: str | None = None,
     recursion_limit: int = 100,
 ) -> S:
     """
     Run a compiled state graph to completion using a TUI with pause/resume support.
 
+    Supports nested execution: when called from within a parent workflow's tool,
+    the nested workflow's progress is displayed in a collapsible panel within
+    the parent's TUI.
+
     Args:
         graph: The compiled state graph to execute
         input: The input to the graph (ignored if checkpoint_id is set)
         thread_prefix: Prefix for auto-generated thread IDs.
+        workflow_name: Display name for nested workflows.
         thread_id: Optional thread ID for checkpointing. Auto-generated if None.
         checkpoint_id: Optional checkpoint ID to resume from.
         recursion_limit: Maximum recursion depth (default 100).
@@ -520,10 +642,32 @@ def run_to_completion[I: StateLike, S: StateLike](
     Returns:
         The final state after graph completion.
     """
-    if thread_id is None:
-        thread_id = f"{thread_prefix}{uuid.uuid1().hex}"
-        print(f"Chose thread id {thread_id}")
+    parent_app = _current_runner_app.get()
+    depth = _nesting_depth.get()
 
+    if parent_app is None:
+        # Top-level: run with full TUI
+        return await _run_top_level(graph, input, thread_id, checkpoint_id, recursion_limit)
+    elif depth == 1:
+        # One level of nesting: show in parent's TUI
+        return await _run_nested(
+            parent_app, graph, input, thread_id, workflow_name, checkpoint_id, recursion_limit
+        )
+    else:
+        # Too deep: run silently with just a status message
+        return await _run_silent(
+            parent_app, graph, input, thread_id, workflow_name, checkpoint_id, recursion_limit
+        )
+
+
+async def _run_top_level[I: StateLike, S: StateLike](
+    graph: CompiledStateGraph[S, None, I, Any],
+    input: I,
+    thread_id: str,
+    checkpoint_id: str | None,
+    recursion_limit: int,
+) -> S:
+    """Run with full TUI at the top level."""
     app = GraphRunnerApp(
         graph=graph,
         input=input,
@@ -532,12 +676,133 @@ def run_to_completion[I: StateLike, S: StateLike](
         recursion_limit=recursion_limit,
     )
 
-    app.run()
+    with _workflow_context(app, depth=1):
+        await app.run_async()
 
-    if app._error is not None:
-        raise app._error
+        if app._error is not None:
+            raise app._error
+
+        return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
+
+
+async def _run_nested[I: StateLike, S: StateLike](
+    parent_app: GraphRunnerApp,
+    graph: CompiledStateGraph[S, None, I, Any],
+    input: I,
+    thread_id: str,
+    workflow_name: str,
+    checkpoint_id: str | None,
+    recursion_limit: int,
+) -> S:
+    """Run nested workflow, streaming into a panel in the parent's TUI."""
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": recursion_limit,
+    }
+
+    if checkpoint_id is not None:
+        config["configurable"]["checkpoint_id"] = checkpoint_id
+
+    stream_input = None if checkpoint_id is not None else input
+
+    with (
+        _workflow_context(parent_app, depth=2),
+        parent_app.nested_workflow(workflow_name, thread_id) as (panel, nested_event),
+    ):
+        # Mount the panel created by the context manager
+        message_area = parent_app.query_one("#message-area", ScrollableContainer)
+        await message_area.mount(panel)
+        message_area.scroll_end(animate=False)
+
+        async for (tag, payload) in graph.astream(
+            input=stream_input,
+            config=config,
+            stream_mode=["checkpoints", "updates"]
+        ):
+            # Wait on global pause first, then individual pause
+            await parent_app._resume_event.wait()
+            await nested_event.wait()
+
+            assert isinstance(payload, dict)
+
+            if tag == "checkpoints":
+                new_checkpoint = payload["config"]["configurable"]["checkpoint_id"]
+                panel.update_checkpoint(new_checkpoint)
+            else:
+                for node_name, update in payload.items():
+                    if node_name == "__interrupt__":
+                        continue
+                    panel.update_node(node_name)
+
+                    if isinstance(update, dict):
+                        widget = UpdateWidget(node_name, update)
+                        await panel.add_update(widget)
+
+        # Mark complete and collapse
+        panel.mark_complete()
 
     return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
+
+
+async def _run_silent[I: StateLike, S: StateLike](
+    parent_app: GraphRunnerApp,
+    graph: CompiledStateGraph[S, None, I, Any],
+    input: I,
+    thread_id: str,
+    workflow_name: str,
+    checkpoint_id: str | None,
+    recursion_limit: int,
+) -> S:
+    """Run deeply nested workflow silently, just showing a status message."""
+    # Show simple status in parent
+    message_area = parent_app.query_one("#message-area", ScrollableContainer)
+    status = Static(f"[dim]Running child workflow: {workflow_name}...[/dim]", classes="update-header")
+    await message_area.mount(status)
+
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": recursion_limit,
+    }
+
+    if checkpoint_id is not None:
+        config["configurable"]["checkpoint_id"] = checkpoint_id
+
+    stream_input = None if checkpoint_id is not None else input
+
+    # Run without detailed UI updates (depth stays at current level)
+    async for (_, _payload) in graph.astream(
+        input=stream_input,
+        config=config,
+        stream_mode=["checkpoints"]
+    ):
+        # Wait here if paused - blocks until event is set
+        await parent_app._resume_event.wait()
+
+    status.update(f"[dim]Completed: {workflow_name}[/dim]")
+
+    return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
+
+
+def run_to_completion_sync[I: StateLike, S: StateLike](
+    graph: CompiledStateGraph[S, None, I, Any],
+    input: I,
+    thread_id: str,
+    *,
+    workflow_name: str = "Workflow",
+    checkpoint_id: str | None = None,
+    recursion_limit: int = 100,
+) -> S:
+    """
+    Synchronous wrapper for run_to_completion.
+
+    Use this for top-level calls from non-async contexts (e.g., CLI entry points).
+    """
+    return asyncio.run(run_to_completion(
+        graph, input, thread_id,
+        workflow_name=workflow_name,
+        checkpoint_id=checkpoint_id,
+        recursion_limit=recursion_limit,
+    ))
 
 R = TypeVar('R')
 _S = TypeVar('_S', bound=MessagesState)
@@ -892,26 +1157,25 @@ def _root_cache(js: JobSpec) -> str:
     combined = "|".join(str(c) for c in components)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
+def _string_hash(
+    to_hash: str
+) -> str:
+    return hashlib.sha256(to_hash.encode()).hexdigest()[:16]
 
 def _cache_key_bug_analysis(
-    args: "SourceSpecArgs",
-    spec: "ContractSpec",
     component: "ApplicationComponent",
     summ: str
 ) -> str:
     """Generate a cache key for bug analysis based on inputs."""
     components = [
-        args.project_root,
-        spec.relative_path,
-        spec.contract_name,
         component.model_dump_json(),
         summ,
     ]
     combined = "|".join(str(c) for c in components)
-    return hashlib.sha256(combined.encode()).hexdigest()[:16]
+    return _string_hash(combined)
 
 # Common forbidden read pattern for source analysis
-FS_FORBIDDEN_READ = "(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)"
+FS_FORBIDDEN_READ = "(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)|(.*\\.json$)"
 
 def run_source_analysis(
     context: WorkspaceContext,
@@ -921,7 +1185,7 @@ def run_source_analysis(
     child_ctxt = context.child(
         "source-analysis"
     )
-    cached = child_ctxt.cache_get("analysis")
+    cached = child_ctxt.cache_get()
     if cached is not None:
         return ApplicationSummary.model_validate(cached)
     
@@ -948,7 +1212,6 @@ def run_source_analysis(
     ).build()[0].compile(
         checkpointer=get_checkpointer()
     )
-    task_thread_id = child_ctxt.thread_id
 
     input: FlowInput = FlowInput(
         input=[
@@ -957,16 +1220,17 @@ def run_source_analysis(
         ]
     )
 
-    res = graph.invoke(
-        input=input,
-        config={"configurable": {
-            "thread_id": task_thread_id
-        }, "recursion_limit": 50}
+    res = run_to_completion_sync(
+        graph,
+        input,
+        thread_id=child_ctxt.thread_id,
+        recursion_limit=50
     )
+    assert "result" in res
     result: ApplicationSummary = res["result"]
 
     child_ctxt.cache_put(
-        "analysis", result.model_dump()
+        result.model_dump()
     )
 
     return result
@@ -1039,17 +1303,15 @@ class PropertyFormulation(BaseModel):
         }
 
 def run_bug_analysis(
-    args: SourceSpecArgs,
+    ctx: WorkspaceContext,
     component: "ComponentInst",
     builder: Builder[None, None, FlowInput],
-    store: PostgresStore,
 ) -> list[PropertyFormulation] | None:
     # Check cache first
-    cache_key = _cache_key_bug_analysis(args, component, component.component, component.summ.application_type)
-    cached = store.get(("bug_analysis_2",), cache_key)
-    if cached is not None:
-        print(f"Using cached bug analysis (key={cache_key})")
-        return [PropertyFormulation.model_validate(p) for p in cached.value["items"]]
+    component_analysis = ctx.child("bug_analysis")
+    if (cached := component_analysis.cache_get()) is not None:
+        l = cached["items"]
+        return [PropertyFormulation.model_validate(p) for p in l ]
 
     class ST(MessagesState):
         result: NotRequired[list[PropertyFormulation]]
@@ -1063,14 +1325,19 @@ def run_bug_analysis(
         "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
     ).build()[0].compile()
 
-    r = d.invoke(input=FlowInput(input=[]))
+    r = run_to_completion_sync(
+        d,
+        FlowInput(input=[]),
+        thread_id=component_analysis.thread_id
+    )
+    assert "result" in r
 
     result: list[PropertyFormulation] = r["result"]
 
     # Cache the result
-    store.put(("bug_analysis_2",), cache_key, {"items": [p.model_dump() for p in result]})
-    print(f"Cached bug analysis (key={cache_key})")
-
+    component_analysis.cache_put(
+        {"items": [p.model_dump() for p in result]}
+    )
     return result
 
 @dataclass
@@ -1093,12 +1360,15 @@ class PropertyFeedback(BaseModel):
     good: bool = Field(description="Whether the properties are good as is, or if there is room for improvement")
     feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
 
-type FeedbackTool = Callable[[str], PropertyFeedback]
+type FeedbackTool = Callable[[str], Awaitable[PropertyFeedback]]
 
 def property_feedback_judge(
+    ctx: WorkspaceContext,
     builder: Builder[None, None, FlowInput],
     inst: ComponentInst, prop: PropertyFormulation
 ) -> FeedbackTool:
+    
+    child = ctx.child("feedback")
     
     class ST(MessagesState):
         memory: NotRequired[str]
@@ -1148,17 +1418,20 @@ def property_feedback_judge(
         **prop.to_template_args()
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
-    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft"), memory]).build()[0].compile()
+    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft"), memory]).build_async()[0].compile()
 
-    def the_tool(
+    async def the_tool(
         cvl: str
     ) -> PropertyFeedback:
-        print("HIYA")
-        print(cvl)
-        res = workflow.invoke(FlowInput(input=[
-            "The proposed CVL file is",
-            cvl
-        ]))
+        res = await run_to_completion(
+            workflow,
+            FlowInput(input=[
+                "The proposed CVL file is",
+                cvl
+            ]),
+            thread_id=child.thread_id,
+        )
+        assert "result" in res
         r = res["result"]
         print(f"Returning feedback \n{r.feedback}\nFor:{prop}")
         return r
@@ -1166,10 +1439,10 @@ def property_feedback_judge(
     return the_tool
 
 def generate_property_cvl(
+    ctx: WorkspaceContext,
     feat: ComponentInst,
     prop: PropertyFormulation,
     builder: Builder[None, None, FlowInput],
-    store: PostgresStore
 ) -> tuple[str, str]:
     
     class ST(MessagesState):
@@ -1177,20 +1450,20 @@ def generate_property_cvl(
         result: NotRequired[str]
 
     feedback = property_feedback_judge(
-        builder, feat, prop
+        ctx, builder, feat, prop
     )
 
-    class FeedbackSchema(WithInjectedState[ST], WithImplementation[str]):
+    class FeedbackSchema(WithInjectedState[ST], WithAsyncImplementation[str]):
         """
         Receive feedback on your CVL
         """
         @override
-        def run(self) -> str:
+        async def run(self) -> str:
             st = self.state
             spec = st.get("curr_spec", None)
             if spec is None:
                 return "No spec put yet"
-            t = feedback(spec)
+            t = await feedback(spec)
             return f"""
 Good? {str(t.good)}
 Feedback {t.feedback}
@@ -1206,30 +1479,45 @@ Feedback {t.feedback}
         "property_generation_prompt.j2",
         context=feat,
         **prop.to_template_args()
-    ).build()[0].compile()
+    ).build_async()[0].compile()
 
-    r = d.invoke(input=FlowInput(input=[]), config={"recursion_limit": 100})
+    r = run_to_completion_sync(
+        d,
+        FlowInput(input=[]),
+        thread_id=ctx.thread_id
+    )
+    assert "result" in r and "curr_spec" in r
 
     return (r["result"], r["curr_spec"])
 
 type PropertyFormalization = tuple[PropertyFormulation, str, str]
 
 def _analyze_component(
-    args: SourceSpecArgs,
+    ctx: WorkspaceContext,
     feat: ComponentInst,
     b: Builder[None, None, FlowInput],
     cvl_builder: Builder[None, None, FlowInput],
-    store: PostgresStore
 ) -> None | list[tuple[PropertyFormulation, str, str]]:
-    res = run_bug_analysis(args, feat, b, store)
+    cache_key = _cache_key_bug_analysis(feat.component, feat.summ.application_type)
+    feat_ctx = ctx.child(
+        cache_key,
+        {
+            "component": feat.component.model_dump(),
+            "app_type": feat.summ.application_type
+        }
+    )
+    res = run_bug_analysis(feat_ctx, feat, b)
     if res is None:
         print("Didn't work")
         return None
     work : list[tuple[PropertyFormulation, str, str]] = []
     for prop in res:
         print(prop)
+        prop_model = prop.model_dump()
+        prop_key = _string_hash(prop.model_dump_json())
+        prop_ctx = feat_ctx.child(prop_key, prop_model)
         r, cvl = generate_property_cvl(
-            feat, prop, cvl_builder, store
+            prop_ctx, feat, prop, cvl_builder
         )
         print(cvl)
         print(r)
@@ -1312,12 +1600,21 @@ class Configuration(ContractSetup):
     summaries_path: str  # Path to summaries-{Contract}.spec, if generated
     user_types: list[dict]
 
+class HarnessSetup(BaseModel):
+    setup: ContractSetup
+    vfs: dict[str, str]
+    is_v2: Literal["is_v2"]
+
 def _harness_setup(
     ctx: WorkspaceContext,
     b: Builder[None, None, None]
-) -> tuple[dict[str, str], ContractSetup]:
-    if (cached := ctx.cache_get("harnessing")) is not None:
-        return (cached["vfs"], ContractSetup.model_validate(cached["setup"]))
+) -> HarnessSetup:
+    if (cached := ctx.cache_get()) is not None:
+        adapted = cached
+        if "is_v2" not in cached:
+            adapted = adapted.copy()
+            adapted["is_v2"] = "is_v2"
+        return HarnessSetup.model_validate(adapted)
     
     class ST(VFSState, MessagesState):
         result: NotRequired[ContractSetup]
@@ -1373,22 +1670,19 @@ def _harness_setup(
     ).build_async()[0].compile(checkpointer=get_checkpointer())
 
     harness_ctx = ctx.child("harness-setup")
-    st = run_to_completion(
+    st = run_to_completion_sync(
         graph,
         input=VFSInput(vfs={}, input=[]),
-        thread_prefix="harness-setup",
         thread_id=harness_ctx.thread_id,
         recursion_limit=100,
     )
 
     res : ContractSetup = st["result"] # pyright: ignore[reportTypedDictNotRequiredAccess]
+    to_ret = HarnessSetup(vfs=st["vfs"], setup=res, is_v2="is_v2")
     ctx.cache_put(
-        "harnessing", {
-            "vfs": st["vfs"],
-            "setup": res.model_dump()
-        }
+        to_ret.model_dump()
     )
-    return (st["vfs"], res)
+    return to_ret
 
 def _preaudit_agent(
     args: SourceSpecArgs,
@@ -1398,7 +1692,7 @@ def _preaudit_agent(
     child_ctxt = ctx.child(
         "setup"
     )
-    if (cached := child_ctxt.cache_get("setup_conf")) is not None:
+    if (cached := child_ctxt.cache_get()) is not None:
         return Configuration.model_validate(cached)
 
     certora_dir = Path(ctx.project_root) / "certora"
@@ -1408,7 +1702,9 @@ def _preaudit_agent(
             "Use --ignore-existing-config to proceed anyway."
         )
     
-    (vfs, res) = _harness_setup(ctx, b)
+    h_setup = _harness_setup(ctx, b)
+    vfs = h_setup.vfs
+    res = h_setup.setup
 
     root = Path(args.project_root)
     extra_files = []
@@ -1456,7 +1752,7 @@ def _preaudit_agent(
         summaries_path=str(r.summaries_path),
         user_types=r.user_types
     )
-    child_ctxt.cache_put("setup_conf", to_ret.model_dump())
+    child_ctxt.cache_put(to_ret.model_dump())
     return to_ret
 
 class BaseInvariant(BaseModel):
@@ -1485,19 +1781,49 @@ def get_memory_backend(
         tid
     ))
 
-def structural_invariants_flow(
-    ctx: WorkspaceContext,
-    conf: Configuration,
-    cvl_builder: Builder[None, None, None]
-) -> str:
+type InvFeedbackSort = Literal[
+    "GOOD",
+    "NOT_STRUCTURAL",
+    "NOT_INDUCTIVE",
+    "UNLIKELY_TO_HOLD",
+    "NOT_FORMAL"
+]
+
+class InvariantFeedback(BaseModel):
+    """
+    Your feedback on the given invariant
+    """
+    sort: InvFeedbackSort = Field(description="Your classification on the invariant")
+    explanation: str = Field(description="An explanation of your finding, including any suggestions for improvement.")
+
+def _get_invariant_formulation(
+    inv_ctx: WorkspaceContext,
+    builder: Builder[None, None, None]
+) -> Invariants:
+    if (cached := inv_ctx.cache_get()) is not None:
+        return Invariants.model_validate(cached)
+
+    def merge_invariant_feedback(left: dict[str, tuple[str, InvFeedbackSort]], right: dict[str, tuple[str, InvFeedbackSort]]) -> dict:
+        to_ret = left.copy()
+        for (k,v) in right.items():
+            to_ret[k] = v
+
+        return to_ret
+
+    class InvInput(FlowInput):
+        invariant_data: dict
+
     class ST(MessagesState):
         result: NotRequired[Invariants]
+        invariant_data: Annotated[dict[str, tuple[str, InvFeedbackSort]], merge_invariant_feedback]
 
-    fs = fs_tools(ctx.project_root, forbidden_read=FS_FORBIDDEN_READ)
-
-    inv_ctx = ctx.child("structural-inv")
+    fs = fs_tools(inv_ctx.project_root, forbidden_read=FS_FORBIDDEN_READ)
 
     memory = inv_ctx.get_memory_tool()
+
+    judge_ctx = inv_ctx.child(
+        "judge"
+    )
 
     def validate_invariants(
         _: ST,
@@ -1514,10 +1840,58 @@ def structural_invariants_flow(
                 if d not in all_invariant_names:
                     return f"Invariant {inv.name} references {d}, but no invariant with that name exists."
 
-    
+    class FeedbackST(MessagesState):
+        result: NotRequired[InvariantFeedback]
+
+    feedback_graph = bind_standard(
+        builder,
+        FeedbackST
+    ).with_sys_prompt(
+        "You are a methodical formal verification expert working at Certora, Inc."
+    ).with_initial_prompt_template(
+        "invariant_judge_prompt.j2",
+        contract_spec=inv_ctx
+    ).with_tools(
+        [*fs, judge_ctx.get_memory_tool()]
+    ).with_input(
+        FlowInput
+    ).build_async()[0].compile(
+        checkpointer=get_checkpointer()
+    )
+
+    sem = asyncio.Semaphore(3)
+
+    class InvariantFeedbackTool(WithInjectedId, WithAsyncImplementation[Command]):
+        """
+        Receive feedback on one of your invariants
+        """
+        inv: BaseInvariant = Field(description="The invariant to receive feedback on")
+        
+        @override
+        async def run(self) -> Command:
+            async with sem:
+                res = await run_to_completion(
+                    feedback_graph,
+                    FlowInput(input=[
+                        f"The invariant is called: {self.inv.name}\nStatement: {self.inv.description}"
+                    ]),
+                    "invariant-judge"
+                )
+                assert "result" in res
+                feedback = res["result"]
+                update = {
+                    "messages": [ToolMessage(
+                        tool_call_id=self.tool_call_id,
+                        content=f"Judgment: {feedback.sort}\nExplanation: {feedback.explanation}"
+                    )],
+                    "invariant_data": {
+                        self.inv.name: (self.inv.description, feedback.sort)
+                    }
+                }
+                return Command(update=update)
 
     d = bind_standard(
-        cvl_builder,
+        builder,
         ST,
         doc="The structural/state invariants you identified",
         validator=validate_invariants
@@ -1525,18 +1899,34 @@ def structural_invariants_flow(
         "You are a methodical formal verification expert working at Certora, Inc."
     ).with_initial_prompt_template(
         "structural_invariant_prompt.j2",
-        contract_spec=ctx
+        contract_spec=inv_ctx
     ).with_tools(
-        [*fs, memory]
-    ).with_input(FlowInput).build_async()[0].compile(checkpointer=get_checkpointer())
+        [*fs, memory, InvariantFeedbackTool.as_tool("invariant_feedback")]
+    ).with_input(InvInput).build_async()[0].compile(checkpointer=get_checkpointer())
 
-    s = run_to_completion(
+    s = run_to_completion_sync(
         graph=d,
-        input=FlowInput(input=[]),
+        input=InvInput(input=[], invariant_data={}),
         thread_id=inv_ctx.thread_id,
-        thread_prefix="structural-inv"
+    )
+    assert "result" in s
+    to_ret = s["result"]
+    inv_ctx.cache_put(to_ret.model_dump())
+    return to_ret
+
+
+def structural_invariants_flow(
+    ctx: WorkspaceContext,
+    conf: Configuration,
+    builder: Builder[None, None, None]
+) -> str:
+    s = _get_invariant_formulation(
+        ctx.child("structural-inv"),
+        builder
     )
     print(s)
+
+    
 
     sys.exit(1)
 
@@ -1598,12 +1988,11 @@ def execute(args: SourceSpecArgs) -> int:
         args, ctx, basic_builder
     )
 
-    sys.exit(10)
-    
     structural_invariants_flow(
-        ctx, basic_builder
+        ctx, d, basic_builder
     )
 
+    sys.exit(1)
 
     b : Builder[None, None, FlowInput] = Builder().with_llm(
         llm
