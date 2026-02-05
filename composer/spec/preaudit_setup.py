@@ -35,6 +35,7 @@ def run_preaudit_setup(
     project_root: Path,
     relative_path: str,
     main_contract: str,
+    *extra_files: str
 ) -> SetupResult:
     """
     Run PreAudit compilation analysis and summary generation.
@@ -62,25 +63,26 @@ def run_preaudit_setup(
 
     # Run orchestrator with --stop-after-summaries
     with tempfile.NamedTemporaryFile("r") as f:
+        main_contract_path = f"{relative_path}:{contract_name}"
         result = subprocess.run(
             [
                 sys.executable, "-m", "orchestrator",
-                f"{relative_path}:{contract_name}",
+                main_contract_path,
                 "--setup-only", f.name,
-                "--use-local-runner"
+                "--use-local-runner",
+                "--additional-contracts", *extra_files,
+                "--main-contracts",
+                main_contract_path
             ],
             cwd=project_root,
-            capture_output=True,
             text=True,
             env=env,
         )
-        print(result.stdout)
-        print(result.stderr)
         data = json.load(f)
 
     if result.returncode != 0:
         return SetupFailure(
-            error=f"PreAudit setup failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            error=f"PreAudit setup failed",
         )
 
     summary_path = Path(data["contract_to_summary"][main_contract])

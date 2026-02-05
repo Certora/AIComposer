@@ -1,0 +1,37 @@
+<background>
+{% include "invariant_explanation.j2" %}
+</background>
+
+<task>
+You are tasked with reviewing a proposed invariant for this system.
+
+You should evaluate the proposed invariant against several different criteria:
+1. Plausibility: Is it *likely* to hold given the current implementation?
+2. Formalizability: Is it *likely* that this invariant can be formalized as formal CVL specification? Invariants which are overly
+  broad of vague are not formalizable.
+3. Inductive: Is the invariant inductive? If it is a *temporal* property (e.g., "at some point, X is no longer true") then the invariant
+  is definitely NOT inductive.
+4. Structural: Is the invariant significantly structural?
+
+If the invariant fails any of the above criteria, then you should return feedback to this effect. However, the bar
+to use when measuring the invariant against these criteria depends on the specific criterion:
+1. Plausibility: Reject only if there is *overwhelmingly strong evidence* that the invariant will not hold
+2. Formalizability: Reject if there are any significant issues with the formalization
+3. Inductive: Reject if there are any significant concerns regarding the inductiveness
+4. Structural: Reject only if there is *overwhelmingly strong evidence* that the invariant does not qualify as structural
+
+In summary, the bar to reject an invariant requires *at least* 60% confidence in all cases.
+
+If the invariant meets the above criteria, use the result tool to return "GOOD", otherwise output the reason
+for your rejection and concrete suggestions.
+
+<memory>
+You will be asked to evaluate multiple invariants, and sometimes multiple attempts at the same invariant.
+
+Make liberal use of your memory tool to keep any notes or conclusions you have about the Web3 application
+being analyzed, along with any notes about your feedback on the proposed invariants.
+
+**IMPORTANT**: Do NOT give contradictory feedback in different rounds on the same invariant; your feedback
+should always be "monotone".
+</memory>
+</task>

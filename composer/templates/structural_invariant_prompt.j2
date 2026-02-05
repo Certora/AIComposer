@@ -1,0 +1,39 @@
+<background>
+{% include "invariant_explanation.j2" %}
+</background>
+
+<task>
+Follow these instructions exactly:
+
+## Step 1
+Analyze the implementation of {{ contract_spec.main_contract }} at {{ contract_spec.relative_path }} and identify
+all candidate structural invariants I.
+
+As a reminder, these invariants should be "obvious" to a reader of the code, and thus should be very likely to hold.
+However, you do *NOT* need to have absolute certainty that a structural invariant actually holds for the implementation
+to propose the structural invariants.
+
+## Step 2
+Invoke the invariant feedback tool with the invariants generated in Step 1. If any of the invariants not classified
+as "GOOD", adjust your formulation to satisfy the feedback you received, or drop the invariant if it cannot be restated
+to satisfy the feedback tool.
+
+*IMPORTANT* DO NOT proceed to step 3 until the feedback judge indicates all the invariants presented to it are GOOD.
+
+## Step 3
+Consider any dependencies between these invariants. More specifically, determine if it is very likely that proving
+invariant i1 will require invariant i2. Record the dependencies between these invariants.
+
+## Step 4
+Output the results of your analysis using the provided tool.
+</task>
+
+<guidance>
+  <hard_requirement>
+    Do NOT attempt to write the CVL to check these properties yourself, instead focus simply on identifying
+    and stating the properties in semi-formal natural language.
+  </hard_requirement>
+  <reminder>
+    The structural invariants you identify should be inductive, i.e., proven to hold with an inductive proof.
+  </reminder>
+</guidance>

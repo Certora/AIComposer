@@ -14,13 +14,14 @@ import tempfile
 import sqlite3
 import sys
 import subprocess
+import time
 
 import composer.certora as _
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override, Coroutine, Awaitable
+from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override, Coroutine, Awaitable, Protocol, Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -39,7 +40,7 @@ from langgraph.runtime import get_runtime
 from langgraph.types import Command
 from pydantic import BaseModel, Field, Discriminator
 
-from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
+from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions, OptionalArg
 from composer.input.parsing import add_protocol_args
 from composer.prover.analysis import analyze_cex
 from composer.prover.ptypes import RuleResult
@@ -73,20 +74,90 @@ from graphcore.summary import SummaryConfig
 
 T = TypeVar('T')
 
+@dataclass
+class ContractSpec:
+    relative_path: str
+    contract_name: str
 
-class ThreadIdFactory:
-    """Deterministically derive child thread IDs from a root thread ID."""
+@dataclass
+class JobSpec(ContractSpec):
+    project_root: str
+    system_doc: str
 
-    def __init__(self, root: str):
-        self.root = root
+@dataclass
+class WorkspaceContext(JobSpec):
+    """
+    Manages thread IDs, memory namespaces, and caching for workflows.
 
-    def child(self, name: str) -> str:
-        """Derive a child thread ID: {root}-{name}"""
-        return f"{self.root}-{name}"
+    - thread_id: Root for LangGraph checkpointing (sub-workflows derive from this)
+    - memory_namespace: String namespace for persistent memory (memory_tool)
+    - cache_namespace: Tuple namespace for store caching (None = no caching)
+    """
+    thread_id: str
+    memory_namespace: str
+    cache_namespace: tuple[str, ...] | None
+    project_root: str
+    _store: PostgresStore
 
-    def indexed_child(self, name: str, index: int) -> str:
-        """Derive an indexed child: {root}-{name}-{index}"""
-        return f"{self.root}-{name}-{index}"
+    @staticmethod
+    def create(
+        js: JobSpec,
+        thread_id: str,
+        store: PostgresStore,
+        memory_namespace: str | None = None,
+        cache_namespace: tuple[str, ...] | None | str = None,
+    ) -> "WorkspaceContext":
+        cache_ns : tuple[str, ...] | None
+        if isinstance(cache_namespace, str):
+            cache_ns = (cache_namespace, )
+        else:
+            cache_ns = cache_namespace
+        return WorkspaceContext(
+            system_doc=js.system_doc,
+            relative_path=js.relative_path,
+            contract_name=js.contract_name,
+            project_root=js.project_root,
+            thread_id=thread_id,
+            memory_namespace=memory_namespace or thread_id,
+            cache_namespace=cache_ns,
+            _store=store,
+        )
+
+    def child(self, name: str) -> "WorkspaceContext":
+        """Create a child context with derived namespaces."""
+        return WorkspaceContext(
+            system_doc=self.system_doc,
+            relative_path=self.relative_path,
+            contract_name=self.contract_name,
+            project_root=self.project_root,
+            thread_id=f"{self.thread_id}-{name}",
+            memory_namespace=f"{self.memory_namespace}-{name}",
+            cache_namespace=(*self.cache_namespace, name) if self.cache_namespace else None,
+            _store=self._store,
+        )
+
+    def indexed_child(self, name: str, index: int) -> "WorkspaceContext":
+        """Create an indexed child context."""
+        return self.child(f"{name}-{index}")
+
+    def cache_get(self, key: str) -> dict | None:
+        """Get a value from the cache. Returns None if caching disabled or not found."""
+        if self.cache_namespace is None:
+            return None
+        full_key = self.cache_namespace
+        result = self._store.get(full_key, key)
+        return result.value if result else None
+
+    def cache_put(self, key: str, value: dict) -> None:
+        """Put a value in the cache. No-op if caching disabled."""
+        if self.cache_namespace is None:
+            return
+        full_key = self.cache_namespace
+        self._store.put(full_key, key, value)
+
+    def get_memory_tool(self) -> BaseTool:
+        """Get a memory tool for this context's memory namespace."""
+        return memory_tool(get_memory(self.memory_namespace))
 
 
 MAX_TOOL_CONTENT_LENGTH = 500
@@ -295,6 +366,7 @@ class GraphRunnerApp(App):
     BINDINGS = [
         ("p", "toggle_pause", "Pause/Resume"),
         ("q", "quit", "Quit"),
+        ("ctrl+c", "interrupt", "Abort (2x)"),
     ]
 
     is_paused: reactive[bool] = reactive(False)
@@ -317,6 +389,7 @@ class GraphRunnerApp(App):
         self.recursion_limit = recursion_limit
         self._stream_task: asyncio.Task | None = None
         self._error: Exception | None = None
+        self._last_ctrl_c_time: float | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -411,6 +484,17 @@ class GraphRunnerApp(App):
     async def action_quit(self) -> None:
         if self.is_complete:
             self.exit()
+
+    def action_interrupt(self) -> None:
+        """Handle Ctrl+C - double press within 2 seconds to abort."""
+        current_time = time.time()
+
+        if self._last_ctrl_c_time is not None and (current_time - self._last_ctrl_c_time) < 2.0:
+            # Double Ctrl+C within 2 seconds - abort immediately
+            sys.exit(1)
+
+        self._last_ctrl_c_time = current_time
+        self.notify("Press Ctrl+C again to abort", severity="warning")
 
 
 def run_to_completion[I: StateLike, S: StateLike](
@@ -542,7 +626,15 @@ class SourceSpecState(MessagesState, VFSState):
     result: NotRequired[dict]
 
 
-class SourceSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
+class StateOptions(Protocol):
+    memory_ns: Annotated[Optional[str], OptionalArg(
+        help="The namespace to use for memory (default: thread id)"
+    )]
+    cache_ns: Annotated[Optional[str], OptionalArg(
+        help="The namespace to use for caching (default: no caching)"
+    )]
+
+class SourceSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions, StateOptions):
     """Arguments for source-based spec generation."""
     project_root: str
     main_contract: str
@@ -730,10 +822,6 @@ def get_cvl(
         return "No spec file on VFS"
     return state["curr_spec"]
 
-@dataclass
-class ContractSpec:
-    relative_path: str
-    contract_name: str
 
 class ComponentInteraction(BaseModel):
     """
@@ -793,13 +881,13 @@ def _hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _cache_key_source_analysis(args: "SourceSpecArgs", spec: "ContractSpec") -> str:
+def _root_cache(js: JobSpec) -> str:
     """Generate a cache key for source analysis based on inputs."""
     components = [
-        args.project_root,
-        _hash_file(Path(args.system_doc)),
-        spec.relative_path,
-        spec.contract_name,
+        js.project_root,
+        _hash_file(Path(js.system_doc)),
+        js.relative_path,
+        js.contract_name,
     ]
     combined = "|".join(str(c) for c in components)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
@@ -826,24 +914,22 @@ def _cache_key_bug_analysis(
 FS_FORBIDDEN_READ = "(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)"
 
 def run_source_analysis(
-    args: SourceSpecArgs,
-    thread_id: str,
-    spec: ContractSpec,
-    store: PostgresStore,
+    context: WorkspaceContext,
     builder: Builder[None, None, FlowInput]
 ) -> ApplicationSummary | None:
     # Check cache first
-    cache_key = _cache_key_source_analysis(args, spec)
-    cached = store.get(("source_analysis",), cache_key)
+    child_ctxt = context.child(
+        "source-analysis"
+    )
+    cached = child_ctxt.cache_get("analysis")
     if cached is not None:
-        print(f"Using cached source analysis (key={cache_key})")
-        return ApplicationSummary.model_validate(cached.value)
+        return ApplicationSummary.model_validate(cached)
     
-    system_doc = get_system_doc(Path(args.system_doc))
+    system_doc = get_system_doc(Path(context.system_doc))
     if system_doc is None:
         return None
 
-    memory = memory_tool(get_memory(f"source-summary-{thread_id}"))
+    memory = child_ctxt.get_memory_tool()
 
     class AnalysisState(MessagesState):
         result: NotRequired[ApplicationSummary]
@@ -857,12 +943,12 @@ def run_source_analysis(
         [memory]
     ).with_initial_prompt_template(
         "source_summarization.j2",
-        main_contract_name=spec.contract_name,
-        relative_path=spec.relative_path
+        main_contract_name=context.contract_name,
+        relative_path=context.relative_path
     ).build()[0].compile(
         checkpointer=get_checkpointer()
     )
-    task_thread_id = "summary-extraction-" + thread_id
+    task_thread_id = child_ctxt.thread_id
 
     input: FlowInput = FlowInput(
         input=[
@@ -879,9 +965,9 @@ def run_source_analysis(
     )
     result: ApplicationSummary = res["result"]
 
-    # Cache the result
-    store.put(("source_analysis",), cache_key, result.model_dump())
-    print(f"Cached source analysis (key={cache_key})")
+    child_ctxt.cache_put(
+        "analysis", result.model_dump()
+    )
 
     return result
 
@@ -1150,10 +1236,6 @@ def _analyze_component(
         work.append((prop, r, cvl))
     return work
 
-@dataclass
-class Configuration(SetupSuccess):
-    vfs_diff: dict[str, str]
-
 class ExternalActor(BaseModel):
     name: str = Field(description="A short, descriptive name of the external contract being interacted with")
     description: str = Field(description="A short, precise description of what the external actor does and its interaction with the main contract")
@@ -1225,26 +1307,25 @@ class ContractSetup(BaseModel):
     non_trivial_state: str = Field(description="A semi-formal description of a `non-trivial state`. Reference the external " \
     "contracts you identified during the harnessing step as necessary.")
 
-def _preaudit_agent(
-    args: SourceSpecArgs,
-    contract_spec: ContractSpec,
-    b: Builder[None, None, None],
-    thread_factory: ThreadIdFactory,
-) -> Configuration:
-    certora_dir = Path(args.project_root) / "certora"
-    if certora_dir.exists() and not args.ignore_existing_config:
-        raise RuntimeError(
-            f"Directory {certora_dir} already exists. "
-            "Use --ignore-existing-config to proceed anyway."
-        )
+class Configuration(ContractSetup):
+    config: dict  # Contents of compilation_config.conf
+    summaries_path: str  # Path to summaries-{Contract}.spec, if generated
+    user_types: list[dict]
 
+def _harness_setup(
+    ctx: WorkspaceContext,
+    b: Builder[None, None, None]
+) -> tuple[dict[str, str], ContractSetup]:
+    if (cached := ctx.cache_get("harnessing")) is not None:
+        return (cached["vfs"], ContractSetup.model_validate(cached["setup"]))
+    
     class ST(VFSState, MessagesState):
         result: NotRequired[ContractSetup]
 
-    fs_tools, mat = vfs_tools(conf=VFSToolConfig(
+    fs_tools, _ = vfs_tools(conf=VFSToolConfig(
         immutable=False,
         forbidden_read=FS_FORBIDDEN_READ,
-        fs_layer=args.project_root,
+        fs_layer=ctx.project_root,
         forbidden_write=r"^(?!certora/)",
         put_doc_extra="You may only write files in the certora/ subdirectory"
     ), ty=ST)
@@ -1272,8 +1353,7 @@ def _preaudit_agent(
         validator=(ST, validate_mocks)
     )
 
-    memory_back = sqlite3.connect(":memory:", check_same_thread=False)
-    mem = memory_tool(SqliteMemoryBackend("ns", memory_back))
+    mem = ctx.get_memory_tool()
 
     graph = b.with_input(
         VFSInput
@@ -1289,18 +1369,47 @@ def _preaudit_agent(
         [*fs_tools, result, mem, ERC20TokenGuidance.as_tool("erc20_guidance")]
     ).with_initial_prompt_template(
         "harness_prompt.j2",
-        contract_spec=contract_spec
+        contract_spec=ctx
     ).build_async()[0].compile(checkpointer=get_checkpointer())
 
+    harness_ctx = ctx.child("harness-setup")
     st = run_to_completion(
         graph,
         input=VFSInput(vfs={}, input=[]),
         thread_prefix="harness-setup",
-        thread_id=thread_factory.child("harness-setup"),
+        thread_id=harness_ctx.thread_id,
         recursion_limit=100,
     )
 
     res : ContractSetup = st["result"] # pyright: ignore[reportTypedDictNotRequiredAccess]
+    ctx.cache_put(
+        "harnessing", {
+            "vfs": st["vfs"],
+            "setup": res.model_dump()
+        }
+    )
+    return (st["vfs"], res)
+
+def _preaudit_agent(
+    args: SourceSpecArgs,
+    ctx: WorkspaceContext,
+    b: Builder[None, None, None]
+) -> Configuration:
+    child_ctxt = ctx.child(
+        "setup"
+    )
+    if (cached := child_ctxt.cache_get("setup_conf")) is not None:
+        return Configuration.model_validate(cached)
+
+    certora_dir = Path(ctx.project_root) / "certora"
+    if certora_dir.exists() and not args.ignore_existing_config:
+        raise RuntimeError(
+            f"Directory {certora_dir} already exists. "
+            "Use --ignore-existing-config to proceed anyway."
+        )
+    
+    (vfs, res) = _harness_setup(ctx, b)
+
     root = Path(args.project_root)
     extra_files = []
     for r in res.external_contracts:
@@ -1315,27 +1424,53 @@ def _preaudit_agent(
             case "MULTIPLE" | "DYNAMIC":
                 for h in r.harnesses:
                     print(f"Harness of {r.path}")
-                    print(st["vfs"].keys())
                     output_path = root / h.path
                     output_path.parent.mkdir(exist_ok=True, parents=True)
-                    cont = st["vfs"][h.path]
+                    cont = vfs[h.path]
                     output_path.write_text(cont)
                     extra_files.append(h.path)
                     print(h.path)
-                    print(st["vfs"][h.path])
+                    print(vfs[h.path])
+            case "SINGLETON":
+                extra_files.append(r.path)
             case "SUMMARIZABLE":
                 print(r.suggested_summaries)
 
     print("Running pre-audit tool")
-    sys.exit(10)
 
-class Invariant(BaseModel):
+    r = run_preaudit_setup(
+        Path(ctx.project_root),
+        ctx.relative_path,
+        ctx.contract_name,
+        *extra_files
+    )
+    if isinstance(r, SetupFailure):
+        print(f"Setup failed :( {r.error}")
+        sys.exit(1)
+
+    to_ret = Configuration(
+        external_contracts=res.external_contracts,
+        primary_entity=res.primary_entity,
+        non_trivial_state=res.non_trivial_state,
+        config=r.config,
+        summaries_path=str(r.summaries_path),
+        user_types=r.user_types
+    )
+    child_ctxt.cache_put("setup_conf", to_ret.model_dump())
+    return to_ret
+
+class BaseInvariant(BaseModel):
     """
-    A single invariant from your analysis.
+    A single invariant
     """
     name: str = Field(description="A unique, descriptive name of the invariant")
-    dependencies: list[str] = Field(description="The names of other invariants that are likely to be required to formalize this invariant")
     description : str = Field(description="A semi-formal, language language description of the invariant to formalize.")
+
+class Invariant(BaseInvariant):
+    """
+    A single invariant from your analysis with dependencies to other invariants.
+    """
+    dependencies: list[str] = Field(description="The names of other invariants that are likely to be required to formalize this invariant")
 
 class Invariants(BaseModel):
     """
@@ -1351,20 +1486,18 @@ def get_memory_backend(
     ))
 
 def structural_invariants_flow(
-    args: SourceSpecArgs,
-    spec: ContractSpec,
-    tid_fact: ThreadIdFactory,
+    ctx: WorkspaceContext,
+    conf: Configuration,
     cvl_builder: Builder[None, None, None]
 ) -> str:
-    
     class ST(MessagesState):
         result: NotRequired[Invariants]
 
-    fs = fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)
+    fs = fs_tools(ctx.project_root, forbidden_read=FS_FORBIDDEN_READ)
 
-    tid = tid_fact.child("structural-inv")
+    inv_ctx = ctx.child("structural-inv")
 
-    memory = get_memory_backend(tid)
+    memory = inv_ctx.get_memory_tool()
 
     def validate_invariants(
         _: ST,
@@ -1381,6 +1514,8 @@ def structural_invariants_flow(
                 if d not in all_invariant_names:
                     return f"Invariant {inv.name} references {d}, but no invariant with that name exists."
 
+    
+
     d = bind_standard(
         cvl_builder,
         ST,
@@ -1390,7 +1525,7 @@ def structural_invariants_flow(
         "You are a methodical formal verification expert working at Certora, Inc."
     ).with_initial_prompt_template(
         "structural_invariant_prompt.j2",
-        contract_spec=spec
+        contract_spec=ctx
     ).with_tools(
         [*fs, memory]
     ).with_input(FlowInput).build_async()[0].compile(checkpointer=get_checkpointer())
@@ -1398,7 +1533,7 @@ def structural_invariants_flow(
     s = run_to_completion(
         graph=d,
         input=FlowInput(input=[]),
-        thread_id=tid,
+        thread_id=inv_ctx.thread_id,
         thread_prefix="structural-inv"
     )
     print(s)
@@ -1411,7 +1546,6 @@ def execute(args: SourceSpecArgs) -> int:
 
     thread_id = args.thread_id if args.thread_id else f"source_spec_{uuid.uuid4().hex}"
     print(f"Thread ID: {thread_id}")
-    thread_factory = ThreadIdFactory(thread_id)
 
     project_root = Path(args.project_root)
 
@@ -1422,32 +1556,59 @@ def execute(args: SourceSpecArgs) -> int:
     if not full_contract_path.is_relative_to(project_root.resolve()):
         print(f"Invalid path: {full_contract_path} doesn't appear in project root {project_root}")
         return 1
-    
+
     relativized_main = full_contract_path.relative_to(project_root.resolve())
 
-    spec = ContractSpec(str(relativized_main), main_contract_name)
-
+    spec = JobSpec(
+        project_root=args.project_root,
+        system_doc=args.system_doc,
+        relative_path=str(relativized_main),
+        contract_name=main_contract_name
+)
 
     store = get_store()
+
+    cache_ns : tuple[str, ...] | None = None
+    if (ns := args.cache_ns) is not None:
+        import time
+        cache_ns = (ns, _root_cache(spec))
+        cache_key = (ns, _root_cache(spec), uuid.uuid4().hex)
+        print(f"Job cache: {cache_key}")
+        store.put(cache_key, "job_info", {
+            "root": args.project_root,
+            "relative_path": spec.project_root,
+            "system_doc": spec.system_doc,
+            "main_contract": spec.contract_name,
+            "ts": time.time()
+        })
+
+    ctx = WorkspaceContext.create(
+        spec,
+        thread_id=thread_id,
+        store=store,
+        memory_namespace=args.memory_ns,
+        cache_namespace=cache_ns,
+    )
 
     llm = create_llm(args)
 
     basic_builder = Builder().with_llm(llm).with_loader(load_jinja_template)
 
-    structural_invariants_flow(
-        args, spec, thread_factory, basic_builder
+    d = _preaudit_agent(
+        args, ctx, basic_builder
     )
 
-    _preaudit_agent(
-        args, spec, basic_builder, thread_factory
+    sys.exit(10)
+    
+    structural_invariants_flow(
+        ctx, basic_builder
     )
+
 
     b : Builder[None, None, FlowInput] = Builder().with_llm(
         llm
     ).with_input(
         FlowInput
-    ).with_loader(
-        load_jinja_template
     ).with_tools(
         fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)
     )
@@ -1637,11 +1798,13 @@ def execute(args: SourceSpecArgs) -> int:
 
     return 0
 
+
 def auto_prover() -> int:
     parser = argparse.ArgumentParser()
     add_protocol_args(parser, ModelOptions)
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, LangraphOptions)
+    add_protocol_args(parser, StateOptions)
     parser.add_argument("project_root")
     parser.add_argument("main_contract")
     parser.add_argument("system_doc")
