@@ -1,13 +1,15 @@
-
+import os
 import asyncio
 import json
 import tempfile
 import sys
+import uuid
+from contextlib import contextmanager
 
 import composer.certora as _
 
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, NotRequired, Awaitable, TypedDict
+from typing import Annotated, Awaitable, Callable, NotRequired, Awaitable, TypedDict, Iterator
 
 from langchain_core.messages import AnyMessage
 from langchain_core.tools import InjectedToolCallId, tool, BaseTool
@@ -45,6 +47,26 @@ class VerifySpecSchema[T: WithCVL](BaseModel):
         description="Specific rules to verify. If None, verifies all rules."
     )
 
+@contextmanager
+def tmp_spec(
+    *,
+    root: str,
+    content: str,
+    prefix: str = "generated"
+) -> Iterator[str]:
+    t_name = f"{prefix}_{uuid.uuid4().hex[:16]}.spec"
+
+    rel_path = "certora/" + t_name
+
+    full_path = (Path(root) / "certora" / t_name)
+
+    full_path.write_text(content)
+
+    try:
+        yield rel_path
+    finally:
+        os.unlink(full_path)
+
 async def _prover_tool_internal(
     sem: asyncio.Semaphore,
     curr_spec: str,
@@ -57,43 +79,45 @@ async def _prover_tool_internal(
     
     certora_dir = Path(project_root) / "certora"
 
-    (certora_dir / "generated.spec").write_text(curr_spec)
+    with tmp_spec(
+        root=project_root,
+        content=curr_spec
+    ) as generated:
+        config = {
+            **compilation_config,
+            "verify": f"{main_contract}:{generated}",
+            "parametric_contracts": main_contract,
+            "optimistic_loop": True,
+            "rule_sanity": "basic",
+        }
 
-    config = {
-        **compilation_config,
-        "verify": f"{main_contract}:certora/generated.spec",
-        "parametric_contracts": main_contract,
-        "optimistic_loop": True,
-        "rule_sanity": "basic",
-    }
+        if rules:
+            config["rule"] = rules
 
-    if rules:
-        config["rule"] = rules
+        # Write config file
+        config_path = certora_dir / "verify.conf"
+        config_path.write_text(json.dumps(config, indent=2))
 
-    # Write config file
-    config_path = certora_dir / "verify.conf"
-    config_path.write_text(json.dumps(config, indent=2))
+        # Run certoraRunWrapper
+        wrapper_script = Path(__file__).parent.parent / "prover" / "certoraRunWrapper.py"
+        log_message(f"starting command: {str(config)}", "info")
 
-    # Run certoraRunWrapper
-    wrapper_script = Path(__file__).parent.parent / "prover" / "certoraRunWrapper.py"
-    log_message(f"starting command: {str(config)}", "info")
+        with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
+            async with sem: 
+                proc_result = await asyncio.subprocess.create_subprocess_exec(
+                    sys.executable,
+                    str(wrapper_script), str(output_file.name), str(config_path),
+                    cwd=project_root,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout_raw, stderr_raw = await proc_result.communicate()
+            stdout = stdout_raw.decode()
+            stderr = stderr_raw.decode()
 
-    with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
-        async with sem:
-            proc_result = await asyncio.subprocess.create_subprocess_exec(
-                sys.executable,
-                str(wrapper_script), str(output_file.name), str(config_path),
-                cwd=project_root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout_raw, stderr_raw = await proc_result.communicate()
-        stdout = stdout_raw.decode()
-        stderr = stderr_raw.decode()
-
-        # Read the pickled output
-        import pickle
-        run_result = pickle.load(output_file)
+            # Read the pickled output
+            import pickle
+            run_result = pickle.load(output_file)
 
     # Check for errors
     if proc_result.returncode != 0:
