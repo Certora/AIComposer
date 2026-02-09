@@ -6,48 +6,32 @@ compilation analysis and verification.
 """
 
 import argparse
-import asyncio
-import base64
 import hashlib
-import json
-import tempfile
-import sqlite3
 import sys
-import subprocess
 
 import composer.certora as _
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, Iterable, NotRequired, TypeVar, Literal, get_args, get_origin, Any, override, Awaitable, Protocol, Optional
+from typing import Annotated, NotRequired, TypeVar, Protocol, Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
-from langchain_core.messages import ToolMessage, HumanMessage
-from langchain_core.tools import InjectedToolCallId, tool
+from langchain_core.tools import tool, BaseTool
 from langgraph.prebuilt import InjectedState
-from langgraph.runtime import get_runtime
 from langgraph.types import Command
-from pydantic import BaseModel, Field, Discriminator
+from pydantic import BaseModel
 
 from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions, OptionalArg
 from composer.input.parsing import add_protocol_args
-from composer.prover.analysis import analyze_cex
-from composer.prover.ptypes import RuleResult
-from composer.prover.results import read_and_format_run_result
 from composer.rag.db import PostgreSQLRAGDatabase
 from graphcore.graph import MessagesState, Builder
-from graphcore.tools.vfs import VFSState, VFSToolConfig, fs_tools, VFSInput
-from graphcore.tools.schemas import WithInjectedState, WithImplementation, WithInjectedId, WithImplementation, WithAsyncImplementation
+from graphcore.tools.vfs import VFSState, VFSToolConfig, fs_tools, VFSAccessor
 
 import uuid
 from typing import cast
 
 from langchain_core.runnables import RunnableConfig
 
-from composer.spec.trunner import run_to_completion, run_to_completion_sync
-from composer.spec.graph_builder import bind_standard
 from composer.spec.context import WorkspaceContext, JobSpec
 from composer.spec.harness import setup_and_harness_agent
 from composer.spec.struct_invariant import structural_invariants_flow
@@ -56,17 +40,23 @@ from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl
 from composer.tools.search import cvl_manual_search
 from composer.human.handlers import handle_human_interrupt
-from graphcore.tools.results import result_tool_generator, ValidationResult
-from langgraph.store.postgres import PostgresStore
-from composer.workflow.services import create_llm, get_checkpointer, get_memory, get_store
+from graphcore.tools.results import result_tool_generator
+from composer.workflow.services import create_llm, get_checkpointer, get_memory, get_store, get_indexed_store
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.templates.loader import load_jinja_template
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.vfs import vfs_tools
-from graphcore.tools.memory import memory_tool, SqliteMemoryBackend
-from langgraph._internal._typing import StateLike
+from graphcore.tools.memory import memory_tool
 from graphcore.summary import SummaryConfig
+
+from composer.kb.knowledge_base import DefaultEmbedder, kb_tools
+
+from composer.spec.prop import PropertyFormulation
+from composer.spec.component import ApplicationComponent, ComponentInst
+from composer.spec.bug import run_bug_analysis
+
+from composer.spec.cvl_generation import generate_property_cvl
 
 T = TypeVar('T')
 
@@ -108,173 +98,6 @@ class SourceSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions, StateOptions):
     system_doc: str
     ignore_existing_config: bool
 
-
-def apply_async_parallel(
-    func: Callable[[T], Awaitable[R]],
-    items: Iterable[T]
-) -> list[R]:
-    """
-    Apply an async function to items in parallel and return results.
-
-    Works whether or not there's an active event loop.
-    """
-    async def _gather_results():
-        tasks = [func(item) for item in items]
-        return await asyncio.gather(*tasks)
-
-    in_loop = False
-    try:
-        # Check if there's a running event loop
-        asyncio.get_running_loop()
-        in_loop = True
-    except RuntimeError:
-        pass
-    if not in_loop:
-        return asyncio.run(_gather_results())
-    else:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(asyncio.run, _gather_results())
-            return future.result()
-
-
-class VerifySpecSchema(BaseModel):
-    """
-    Run the Certora prover to verify the current spec against the source code.
-
-    Returns verification results:
-    - VERIFIED: Rule holds for all inputs
-    - VIOLATED: Counterexample found (with CEX analysis)
-    - TIMEOUT: Verification did not complete in time
-
-    Use these results to refine your spec.
-    """
-    tool_call_id: Annotated[str, InjectedToolCallId]
-    state: Annotated[SourceSpecState, InjectedState]
-
-    rules: list[str] | None = Field(
-        default=None,
-        description="Specific rules to verify. If None, verifies all rules."
-    )
-    timeout: int = Field(
-        default=300,
-        description="Per-rule timeout in seconds"
-    )
-
-
-async def _analyze(
-    llm: BaseChatModel, state, res: RuleResult, tool_call_id: str
-) -> tuple[RuleResult, str | None]:
-    cex_analysis = None
-    if res.status == "VIOLATED":
-        cex_analysis = await analyze_cex(llm, state, res, tool_call_id=tool_call_id)
-    return (res, cex_analysis)
-
-
-@tool(args_schema=VerifySpecSchema)
-def verify_spec(
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated["SourceSpecState", InjectedState],
-    rules: list[str] | None = None,
-    timeout: int = 300
-) -> str | Command:
-    """Run Certora prover to verify the spec against source code."""
-    context = get_runtime(SourceSpecContext).context
-
-    curr_spec = state.get("curr_spec")
-    if curr_spec is None:
-        return "No spec has been written yet. Use put_cvl_raw or put_cvl to create a spec first."
-
-    # Create temp directory and copy source
-
-    certora_dir = Path(context.project_root) / "certora"
-
-    (certora_dir / "generated.spec").write_text(curr_spec)
-
-    config = {
-        **context.compilation_config,
-        "verify": f"{context.main_contract}:certora/generated.spec",
-        "parametric_contracts": context.main_contract,
-        "optimistic_loop": True,
-        "rule_sanity": "basic",
-    }
-
-    if rules:
-        config["rule"] = rules
-
-    # Write config file
-    config_path = certora_dir / "verify.conf"
-    config_path.write_text(json.dumps(config, indent=2))
-
-    # Run certoraRunWrapper
-    wrapper_script = Path(__file__).parent.parent / "prover" / "certoraRunWrapper.py"
-    with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
-
-        proc_result = subprocess.run(
-            [sys.executable, str(wrapper_script), str(output_file.name), str(config_path)],
-            cwd=context.project_root,
-            capture_output=True,
-            text=True,
-            timeout=timeout * 2,
-        )
-
-        # Read the pickled output
-        import pickle
-        run_result = pickle.load(output_file)
-
-
-    # Check for errors
-    if proc_result.returncode != 0:
-        return f"Verification failed:\nstdout:\n{proc_result.stdout}\nstderr:\n{proc_result.stderr}"
-
-
-    # Check if it's an exception
-    if isinstance(run_result, Exception):
-        return f"Certora prover raised exception: {str(run_result)}\nstdout:\n{proc_result.stdout}"
-
-    if run_result is None or not run_result.is_local_link or run_result.link is None:
-        return f"Prover did not produce local results.\nstdout:\n{proc_result.stdout}"
-
-    emv_path = Path(run_result.link)
-
-    # Parse results using existing infrastructure
-    results = read_and_format_run_result(emv_path)
-
-    if isinstance(results, str):
-        # Error occurred during parsing
-        return f"Failed to parse prover results: {results}"
-
-    # Run CEX analysis for violated rules using apply_async_parallel
-    results_with_analysis = apply_async_parallel(
-        lambda res: _analyze(context.unbound_llm, state, res, tool_call_id),
-        list(results.values())
-    )
-
-    # Format results for LLM
-    lines = ["## Verification Results\n"]
-    verified, violated, timeout_count = 0, 0, 0
-
-    for rule_result, cex_analysis in results_with_analysis:
-        status = rule_result.status
-        name = rule_result.name
-
-        if status == "VERIFIED":
-            verified += 1
-            lines.append(f"✓ **{name}**: VERIFIED")
-        elif status == "VIOLATED":
-            violated += 1
-            lines.append(f"✗ **{name}**: VIOLATED")
-            if cex_analysis:
-                lines.append(f"  Analysis: {cex_analysis}")
-        elif status == "TIMEOUT":
-            timeout_count += 1
-            lines.append(f"⏱ **{name}**: TIMEOUT")
-        else:
-            lines.append(f"? **{name}**: {status}")
-
-    lines.append(f"\n**Summary**: {verified} verified, {violated} violated, {timeout_count} timeout")
-
-    return "\n".join(lines)
-
 class GetCVLSchema(BaseModel):
     """
     View the (pretty-printed) version of the CVL file.
@@ -288,59 +111,6 @@ def get_cvl(
     if state["curr_spec"] is None:
         return "No spec file on VFS"
     return state["curr_spec"]
-
-
-class ComponentInteraction(BaseModel):
-    """
-    Describes an interaction between some component and another
-    """
-    other_component: str = Field(description="The name of the other component with which this component interacts")
-    interaction_description: str = Field(description="Why the interaction occurs, and a brief description of what the interaction looks like")
-
-class ExternalDependency(BaseModel):
-    """
-    A single external dependency for a component
-    """
-    name: str = Field(description="A succint name for the external dependency (e.g., 'Price Oracle', 'Off-chain oracle', 'ERC20 asset token', etc.)")
-    requirements: list[str] = Field(description="A list of assumptions/requirements that this external dependency must satisfy (e.g., 'Honest validator', 'implements a standard erc20 interface', etc.)")
-
-class ApplicationComponent(BaseModel):
-    """
-    A single component within the application
-    """
-    name: str = Field(description="The brief, concise name of the component (e.g., Price Tracking/Token Management/etc.)")
-    description: str = Field(description="A longer description of *what* the component does, not *how* it does it.")
-    requirements: list[str] = Field(description="A list of short, succint natural language requirements describing the component's *intended* behavior")
-    external_entry_points: list[str] = Field(description="The signatures/names of any external methods that comprise this component")
-    state_variables: list[str] = Field(description="State variables involved in the component")
-    interactions: list[ComponentInteraction] = Field(description="A list of interactions with other components")
-
-    dependencies: list[ExternalDependency] = Field(description="A list of external dependencies for this component")
-
-class ApplicationSummary(BaseModel):
-    """
-    A summary of your analysis of the application
-    """
-    application_type : str = Field(description="A short, concise description of the type of application (AMM/Liquidity Provider/etc.)")
-    components: list[ApplicationComponent] = Field(description="The list of components in the application")
-
-def get_system_doc(sys_path: Path) -> dict | str | None:
-    """Load a system document from a file path, returning base64-encoded PDF or text."""
-    if not sys_path.is_file():
-        print("System file not found")
-        return None
-    if sys_path.suffix == ".pdf":
-        file_data = base64.standard_b64encode(sys_path.read_bytes()).decode("utf-8")
-        return {
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": file_data
-            }
-        }
-    else:
-        return sys_path.read_text()
 
 
 def _hash_file(path: Path) -> str:
@@ -379,64 +149,6 @@ def _cache_key_bug_analysis(
 # Common forbidden read pattern for source analysis
 FS_FORBIDDEN_READ = "(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)|(.*\\.json$)"
 
-def run_source_analysis(
-    context: WorkspaceContext,
-    builder: Builder[None, None, FlowInput]
-) -> ApplicationSummary | None:
-    # Check cache first
-    child_ctxt = context.child(
-        "source-analysis"
-    )
-    cached = child_ctxt.cache_get()
-    if cached is not None:
-        return ApplicationSummary.model_validate(cached)
-    
-    system_doc = get_system_doc(Path(context.system_doc))
-    if system_doc is None:
-        return None
-
-    memory = child_ctxt.get_memory_tool()
-
-    class AnalysisState(MessagesState):
-        result: NotRequired[ApplicationSummary]
-
-    graph = bind_standard(
-        builder=builder,
-        state_type=AnalysisState
-    ).with_sys_prompt(
-        "You are an expert software analyst, who is very methodical in their work."
-    ).with_tools(
-        [memory]
-    ).with_initial_prompt_template(
-        "source_summarization.j2",
-        main_contract_name=context.contract_name,
-        relative_path=context.relative_path
-    ).build()[0].compile(
-        checkpointer=get_checkpointer()
-    )
-
-    input: FlowInput = FlowInput(
-        input=[
-            "The system document is as follows",
-            system_doc
-        ]
-    )
-
-    res = run_to_completion_sync(
-        graph,
-        input,
-        thread_id=child_ctxt.thread_id,
-        recursion_limit=50
-    )
-    assert "result" in res
-    result: ApplicationSummary = res["result"]
-
-    child_ctxt.cache_put(
-        result.model_dump()
-    )
-
-    return result
-
 def format_container(d: dict) -> str:
     c = d.get("containingContract", None)
     if c is None:
@@ -474,223 +186,6 @@ def format_types(udts: list[dict]) -> str:
             continue
         to_format.append(r)
     return "\n".join(to_format)
-
-class PropertyFormulation(BaseModel):
-    """
-    A property or invariant that must hold for the component
-    """
-    methods: list[str] | Literal["invariant"] = Field(description="A list of external methods involved in the property, or 'invariant' if the property is an invariant on the contract state")
-    sort: Literal["attack_vector", "safety_property", "invariant"] = Field(description="The type of property you are describing.")
-    description: str = Field(description="The description of the property")
-
-    def to_template_args(self) -> dict:
-        thing : str
-        what_formal : str
-        prop = self
-        match prop.sort:
-            case "attack_vector":
-                thing = "potential attack vector/exploit"
-                what_formal = f"that a {thing} is not possible"
-            case "invariant":
-                thing = "invariant"
-                what_formal = "that an invariant holds"
-            case "safety_property":
-                thing = "safety property"
-                what_formal = "that a safety property holds"
-        return {
-            "thing": thing,
-            "what_formal": what_formal,
-            "thing_tag": self.sort,
-            "thing_descr": self.description
-        }
-
-def run_bug_analysis(
-    ctx: WorkspaceContext,
-    component: "ComponentInst",
-    builder: Builder[None, None, FlowInput],
-) -> list[PropertyFormulation] | None:
-    # Check cache first
-    component_analysis = ctx.child("bug_analysis")
-    if (cached := component_analysis.cache_get()) is not None:
-        l = cached["items"]
-        return [PropertyFormulation.model_validate(p) for p in l ]
-
-    class ST(MessagesState):
-        result: NotRequired[list[PropertyFormulation]]
-
-    d = bind_standard(
-        builder, ST, "The security properties you have extracted about the component"
-    ).with_initial_prompt_template(
-        "property_analysis_prompt.j2",
-        context=component
-    ).with_sys_prompt(
-        "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
-    ).build()[0].compile()
-
-    r = run_to_completion_sync(
-        d,
-        FlowInput(input=[]),
-        thread_id=component_analysis.thread_id
-    )
-    assert "result" in r
-
-    result: list[PropertyFormulation] = r["result"]
-
-    # Cache the result
-    component_analysis.cache_put(
-        {"items": [p.model_dump() for p in result]}
-    )
-    return result
-
-@dataclass
-class ComponentInst():
-    summ: ApplicationSummary
-    ind: int
-
-    @property
-    def component(self) -> ApplicationComponent:
-        return self.summ.components[self.ind]
-    
-    @property
-    def application_type(self) -> str:
-        return self.summ.application_type
-
-class PropertyFeedback(BaseModel):
-    """
-    The feedback on the properties
-    """
-    good: bool = Field(description="Whether the properties are good as is, or if there is room for improvement")
-    feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
-
-type FeedbackTool = Callable[[str], Awaitable[PropertyFeedback]]
-
-def property_feedback_judge(
-    ctx: WorkspaceContext,
-    builder: Builder[None, None, FlowInput],
-    inst: ComponentInst, prop: PropertyFormulation
-) -> FeedbackTool:
-    
-    child = ctx.child("feedback")
-    
-    class ST(MessagesState):
-        memory: NotRequired[str]
-        result: NotRequired[PropertyFeedback]
-        did_read: NotRequired[bool]
-
-    class GetMemory(WithInjectedState[ST], WithImplementation[Command | str], WithInjectedId):
-        """
-        Retrieve the rough draft of the feedback
-        """
-        @override
-        def run(self) -> str | Command:
-            mem = self.state.get("memory", None)
-            if mem is None:
-                return "Rough draft not yet written"
-            return Command(update={
-                "messages": [ToolMessage(tool_call_id=self.tool_call_id, content=mem)],
-                "did_read": True
-            })
-
-    class SetMemory(WithInjectedId, WithImplementation[Command]):
-        """
-        Write your rough draft for review
-        """
-        rough_draft : str = Field(description="The new rough draft of your feedback")
-
-        @override
-        def run(self) -> Command:
-            return Command(update={
-                "memory": self.rough_draft,
-                "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
-            })
-
-    def did_rough_draft_read(s: ST, _) -> str | None:
-        h = s.get("did_read", None) is None
-        if h is None:
-            return "Completion REJECTED: never read rough draft for review"
-        return None
-
-    db = sqlite3.connect(":memory:", check_same_thread=False)
-    memory = memory_tool(SqliteMemoryBackend("dummy", db))
-    workflow = bind_standard(
-        builder, ST, validator=did_rough_draft_read
-    ).with_initial_prompt_template(
-        "property_judge_prompt.j2",
-        context=inst,
-        **prop.to_template_args()
-    ).with_sys_prompt_template(
-        "cvl_system_prompt.j2"
-    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft"), memory]).build_async()[0].compile()
-
-    async def the_tool(
-        cvl: str
-    ) -> PropertyFeedback:
-        res = await run_to_completion(
-            workflow,
-            FlowInput(input=[
-                "The proposed CVL file is",
-                cvl
-            ]),
-            thread_id=child.thread_id,
-        )
-        assert "result" in res
-        r = res["result"]
-        print(f"Returning feedback \n{r.feedback}\nFor:{prop}")
-        return r
-
-    return the_tool
-
-def generate_property_cvl(
-    ctx: WorkspaceContext,
-    feat: ComponentInst,
-    prop: PropertyFormulation,
-    builder: Builder[None, None, FlowInput],
-) -> tuple[str, str]:
-    
-    class ST(MessagesState):
-        curr_spec: NotRequired[str]
-        result: NotRequired[str]
-
-    feedback = property_feedback_judge(
-        ctx, builder, feat, prop
-    )
-
-    class FeedbackSchema(WithInjectedState[ST], WithAsyncImplementation[str]):
-        """
-        Receive feedback on your CVL
-        """
-        @override
-        async def run(self) -> str:
-            st = self.state
-            spec = st.get("curr_spec", None)
-            if spec is None:
-                return "No spec put yet"
-            t = await feedback(spec)
-            return f"""
-Good? {str(t.good)}
-Feedback {t.feedback}
-"""
-
-    d = bind_standard(
-        builder, ST, "A description of your generated CVL"
-    ).with_tools(
-        [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool")]
-    ).with_sys_prompt_template(
-        "cvl_system_prompt.j2"
-    ).with_initial_prompt_template(
-        "property_generation_prompt.j2",
-        context=feat,
-        **prop.to_template_args()
-    ).build_async()[0].compile()
-
-    r = run_to_completion_sync(
-        d,
-        FlowInput(input=[]),
-        thread_id=ctx.thread_id
-    )
-    assert "result" in r and "curr_spec" in r
-
-    return (r["result"], r["curr_spec"])
 
 type PropertyFormalization = tuple[PropertyFormulation, str, str]
 
@@ -745,12 +240,44 @@ def execute(args: SourceSpecArgs) -> int:
 
     relativized_main = full_contract_path.relative_to(project_root.resolve())
 
+    model = get_model()
+
+    indexed_store = get_indexed_store(DefaultEmbedder(model))
+
+    class SVCHost():
+        def kb_tools(self, read_only: bool) -> list[BaseTool]:
+            return kb_tools(
+                store=indexed_store,
+                kb_ns=("cvl",),
+                read_only=read_only
+            )
+        
+        def fs_tools(self) -> list[BaseTool]:
+            return fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)
+        
+        def vfs_tools[S: VFSState](
+                self,
+                ty: type[S],
+                forbidden_write: str | None = None,
+                put_doc_extra: str | None = None) -> tuple[list[BaseTool], VFSAccessor[S]]:
+            tool_conf : VFSToolConfig = VFSToolConfig(
+                fs_layer=args.project_root,
+                forbidden_read=FS_FORBIDDEN_READ,
+                immutable=False
+            )
+            if forbidden_write:
+                tool_conf["forbidden_write"] = forbidden_write
+            if put_doc_extra:
+                tool_conf["put_doc_extra"] = put_doc_extra
+            return vfs_tools(tool_conf, ty)
+
+    host = SVCHost()
+
     spec = JobSpec(
         project_root=args.project_root,
         system_doc=args.system_doc,
         relative_path=str(relativized_main),
         contract_name=main_contract_name,
-        fs_filter=FS_FORBIDDEN_READ
     )
 
     store = get_store()
@@ -770,7 +297,8 @@ def execute(args: SourceSpecArgs) -> int:
         })
 
     ctx = WorkspaceContext.create(
-        spec,
+        services=host,
+        js=spec,
         thread_id=thread_id,
         store=store,
         memory_namespace=args.memory_ns,
@@ -785,8 +313,18 @@ def execute(args: SourceSpecArgs) -> int:
         ctx, basic_builder, ignore_existing_config=args.ignore_existing_config
     )
 
+    rag_db = PostgreSQLRAGDatabase(
+        conn_string=args.rag_db,
+        model=get_model(),
+        skip_test=True
+    )
+
+    cvl_builder = basic_builder.with_tools(
+        [cvl_manual_search(rag_db), *fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)]
+    )
+
     structural_invariants_flow(
-        ctx, d, basic_builder
+        llm, ctx, d, basic_builder, cvl_builder
     )
 
     sys.exit(1)

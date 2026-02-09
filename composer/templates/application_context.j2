@@ -8,6 +8,10 @@
   {% endif %}
 {% endmacro %}
 
+{% if not context %}
+You may read the application source code to receive surrounding context as necessary.
+{% else %}
+
 The Web3 application is described as: {{ context.application_type }}
 
 The entry point for the application is found in a smart contract called {{ context.contract_name }},
@@ -51,3 +55,4 @@ The component you are analyzing is described as follows:
       * {{ ext }}
    {% endcall %}
 </component>
+{% endif %}

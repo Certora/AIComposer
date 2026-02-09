@@ -9,15 +9,55 @@ Given the following {{ thing }} description:
   {{ thing_descr}}
 </{{ thing_tag }}>
 
+Follow these steps exactly
+
+## Step 1
+
 Write a CVL (Certora Verification Language) specification which shows {% if thing_tag == "attack_vector" %}
 the described attack/exploit cannot occur{% else %}that the {{ thing }} holds.{%endif%}
 
 When writing your specification, you may consult the implementation of the component to, e.g., understand the role
 of external arguments, etc.
 
-Before completing your task, iterate with the feedback tool until it is pleased with your proposed spec.
+## Step 2
+
+Seek feedback on your specification from the feedback tool. If it indicates that your spec needs work, address its feedback,
+and reinvoke the tool until it is satisfied with your specification.
+
+## Step 3
+
+Use the provided `verify_spec` tool to test your spec. If there are verification failures
+that point to errors in your specification, refine your specification until they have been addressed.
+
+## Step 4
+
+Deliver your CVL specification and an explanation using the "result" tool.
 
 IMPORTANT: Do not try to reason yourself about whether the {{ thing }} is true or possible, focus solely on authoring CVL which will *demonstrate* the desired property.
+
+{% if resources %}
+You may also make use of the following CVL resources, available as CVL files.
+
+{% for res in resources %}
+   <resource>
+      Description: {{ res.description }}
+      Import with: `import "{{ res.import_path }}";`
+      
+      {% if res.required %}
+      You MUST ensure your final specification imports this file.
+      {% else %}
+      You may use this import at your discretion (e.g., it defines an invariant necessary to prove your rule/invariant).
+      {% endif %}
+   </resource>
+{% endfor %}
+{% endif %}
+
+{% if memory %}
+<state>
+Use the available memory tools to track your progress, and any lessons about CVL you may have learned.
+In particular, be sure to update your memory before calling the prover.
+</state>
+{% endif %}
 </task>
 
 <context>

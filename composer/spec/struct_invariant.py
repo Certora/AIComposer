@@ -1,10 +1,7 @@
-from typing import Literal
-import asyncio
-
-from pydantic import Field, BaseModel
-
 from typing import Literal, Annotated, override, NotRequired
+import asyncio
 import sys
+import pathlib
 
 from pydantic import Field, BaseModel
 
@@ -16,18 +13,19 @@ from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 from graphcore.tools.vfs import fs_tools
 from graphcore.graph import Builder, FlowInput
 
-from composer.spec.trunner import run_to_completion_sync, run_to_completion
+from composer.spec.trunner import run_to_completion_sync, run_to_completion, log_message
 from composer.spec.context import WorkspaceContext
 from composer.workflow.services import get_checkpointer
 from composer.spec.graph_builder import bind_standard
 from composer.spec.harness import Configuration
-
+from composer.spec.prop import PropertyFormulation
+from composer.spec.cvl_generation import generate_property_cvl, CVLResource, LLM
 
 class BaseInvariant(BaseModel):
     """
     A single invariant
     """
-    name: str = Field(description="A unique, descriptive name of the invariant")
+    name: str = Field(description="A unique, descriptive name of the invariant. Must not contain spaces (use snake casing if necessary)")
     description : str = Field(description="A semi-formal, language language description of the invariant to formalize.")
 
 class Invariant(BaseInvariant):
@@ -78,7 +76,7 @@ def _get_invariant_formulation(
         result: NotRequired[Invariants]
         invariant_data: Annotated[dict[str, tuple[str, InvFeedbackSort]], merge_invariant_feedback]
 
-    fs = fs_tools(inv_ctx.project_root, forbidden_read=inv_ctx.fs_filter)
+    fs = inv_ctx.fs_tools()
 
     memory = inv_ctx.get_memory_tool()
 
@@ -87,7 +85,7 @@ def _get_invariant_formulation(
     )
 
     def validate_invariants(
-        _: ST,
+        state: ST,
         i: Invariants
     ) -> str | None:
         all_invariant_names = set()
@@ -95,6 +93,10 @@ def _get_invariant_formulation(
             if inv.name in all_invariant_names:
                 return f"Multiple definitions for {inv.name}"
             all_invariant_names.add(inv.name)
+            if (feed_rec := state["invariant_data"].get(inv.name, None)) is None or \
+                feed_rec[0] != inv.description or feed_rec[1] != "GOOD":
+                log_message(str(state["invariant_data"]), "error")
+                return f"Invariant with name {inv.name} (with description `{inv.description}`) was never accepted by feedback judge"
         
         for inv in i.inv:
             for d in inv.dependencies:
@@ -177,16 +179,84 @@ def _get_invariant_formulation(
 
 
 def structural_invariants_flow(
+    llm: LLM,
     ctx: WorkspaceContext,
     conf: Configuration,
-    builder: Builder[None, None, None]
+    builder: Builder[None, None, None],
+    cvl_builder: Builder[None, None, FlowInput]
 ) -> str:
     s = _get_invariant_formulation(
         ctx.child("structural-inv"),
         builder
     )
-    print(s)
+    n_waiting : dict[str, int] = {}
+    dependents : dict[str, set[str]]= {}
+    worklist : list[str] = []
 
-    
+    i_map : dict[str, Invariant] = {}
+
+    child_invs = ctx.child("inv-formal")
+
+    for inv in s.inv:
+        i_map[inv.name] = inv
+        if len(inv.dependencies) == 0:
+            worklist.append(inv.name)
+        else:
+            n_waiting[inv.name] = len(inv.dependencies)
+            for dep in inv.dependencies:
+                if dep not in dependents:
+                    dependents[dep] = set()
+                dependents[dep].add(inv.name)
+
+    inv_to_impl : dict[str, str] = {}
+
+    while len(worklist) > 0:
+        for w in worklist:
+            to_generate = i_map[w]
+            import hashlib
+
+            uniq_key = hashlib.sha256(
+                f"{to_generate.name}|{to_generate.description}".encode()
+            ).hexdigest()[:16]
+
+            child_key = f"{to_generate.name}-{uniq_key}"
+
+            inv_ctx = child_invs.child(child_key, to_generate.model_dump())
+
+            as_prop = PropertyFormulation(
+                methods="invariant",
+                description=to_generate.description,
+                sort="invariant"
+            )
+            resources : list[CVLResource] = [
+                CVLResource(
+                    required=True,
+                    import_path=conf.summaries_path,
+                    description="Summaries to simplify the formal verification."
+                )
+            ]
+
+            for d in to_generate.dependencies:
+                assert d in inv_to_impl
+                resources.append(CVLResource(
+                    required=False,
+                    import_path=inv_to_impl[d],
+                    description=f"A spec file containing the invariant `{d}` which may be necessary to prove this invariant"
+                ))
+            
+            (prop, spec) = generate_property_cvl(
+                llm,
+                inv_ctx,
+                conf.config,
+                as_prop,
+                None,
+                resources,
+                cvl_builder,
+                with_memory=True
+            )
+            print(prop)
+            inv_name = f"{to_generate.name}.spec"
+            (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(spec)
+            inv_to_impl[to_generate.name] = inv_name
 
     sys.exit(1)

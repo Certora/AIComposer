@@ -104,7 +104,8 @@ def _harness_setup(
     ctx: WorkspaceContext,
     b: Builder[None, None, None]
 ) -> HarnessSetup:
-    if (cached := ctx.cache_get()) is not None:
+    harness_ctx = ctx.child("harnessing")
+    if (cached := harness_ctx.cache_get()) is not None:
         adapted = cached
         if "is_v2" not in cached:
             adapted = adapted.copy()
@@ -114,13 +115,11 @@ def _harness_setup(
     class ST(VFSState, MessagesState):
         result: NotRequired[ContractSetup]
 
-    fs_tools, _ = vfs_tools(conf=VFSToolConfig(
-        immutable=False,
-        forbidden_read=ctx.fs_filter,
-        fs_layer=ctx.project_root,
+    fs_tools, mat = ctx.vfs_tools(
         forbidden_write=r"^(?!certora/)",
-        put_doc_extra="You may only write files in the certora/ subdirectory"
-    ), ty=ST)
+        put_doc_extra="You may only write files in the certora/ subdirectory",
+        ty=ST
+    )
 
     def validate_mocks(
         s: ST,
@@ -132,7 +131,8 @@ def _harness_setup(
             if m.l == "DYNAMIC" or m.l == "MULTIPLE":
                 for h in m.harnesses:
                     path = h.path
-                    if path not in s["vfs"]:
+                    harness_cont = mat.get(s, path)
+                    if harness_cont is None:
                         errors.append(f"Harness {path} for {m.path} not found on the VFS")
         if errors:
             return "Update rejected:\n" + "\n".join(errors)
@@ -145,7 +145,7 @@ def _harness_setup(
         validator=(ST, validate_mocks)
     )
 
-    mem = ctx.get_memory_tool()
+    mem = harness_ctx.get_memory_tool()
 
     graph = b.with_input(
         VFSInput
@@ -162,7 +162,7 @@ def _harness_setup(
     ).with_initial_prompt_template(
         "harness_prompt.j2",
         contract_spec=ctx
-    ).build_async()[0].compile(checkpointer=get_checkpointer())
+    ).compile_async(checkpointer=get_checkpointer())
 
     harness_ctx = ctx.child("harness-setup")
     st = run_to_completion_sync(
@@ -173,8 +173,17 @@ def _harness_setup(
     )
 
     res : ContractSetup = st["result"] # pyright: ignore[reportTypedDictNotRequiredAccess]
-    to_ret = HarnessSetup(vfs=st["vfs"], setup=res, is_v2="is_v2")
-    ctx.cache_put(
+
+    vfs = {}
+    for r in res.external_contracts:
+        if r.l == "MULTIPLE" or r.l == "DYNAMIC":
+            for h in r.harnesses:
+                cont = mat.get(st, h.path)
+                assert cont is not None
+                vfs[h.path] = cont.decode()
+
+    to_ret = HarnessSetup(vfs=vfs, setup=res, is_v2="is_v2")
+    harness_ctx.cache_put(
         to_ret.model_dump()
     )
     return to_ret
@@ -197,8 +206,8 @@ def setup_and_harness_agent(
             f"Directory {certora_dir} already exists. "
             "Use --ignore-existing-config to proceed anyway."
         )
-    
-    h_setup = _harness_setup(ctx, b)
+
+    h_setup = _harness_setup(child_ctxt, b)
     vfs = h_setup.vfs
     res = h_setup.setup
 

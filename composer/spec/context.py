@@ -1,11 +1,17 @@
 from dataclasses import dataclass
+from pathlib import Path
+import base64
+
+from typing import Protocol
 
 from langgraph.store.postgres import PostgresStore
 from langchain_core.tools import BaseTool
 
 from graphcore.tools.memory import memory_tool
+from graphcore.tools.vfs import VFSState, VFSAccessor
 
 from composer.workflow.services import get_memory
+from composer.rag.db import PostgreSQLRAGDatabase
 
 
 @dataclass
@@ -17,7 +23,22 @@ class ContractSpec:
 class JobSpec(ContractSpec):
     project_root: str
     system_doc: str
-    fs_filter: str
+
+class Services(Protocol):
+
+    def kb_tools(self, read_only: bool) -> list[BaseTool]:
+        ...
+    
+    def fs_tools(self) -> list[BaseTool]:
+        ...
+
+    def vfs_tools[S: VFSState](
+        self,
+        ty: type[S],
+        forbidden_write: str | None = None,
+        put_doc_extra: str | None = None
+    ) -> tuple[list[BaseTool], VFSAccessor[S]]:
+        ...
 
 @dataclass
 class WorkspaceContext:
@@ -31,6 +52,7 @@ class WorkspaceContext:
     - cache_namespace: Tuple namespace for store caching (None = no caching)
     """
     _job_spec: JobSpec
+    _services: Services
     thread_id: str
     memory_namespace: str
     cache_namespace: tuple[str, ...] | None
@@ -53,13 +75,25 @@ class WorkspaceContext:
     def contract_name(self) -> str:
         return self._job_spec.contract_name
 
-    @property
-    def fs_filter(self) -> str:
-        return self._job_spec.fs_filter
+    def kb_tools(self, read_only: bool) -> list[BaseTool]:
+        return self._services.kb_tools(read_only)
+
+    def fs_tools(self) -> list[BaseTool]:
+        return self._services.fs_tools()
+    
+    def vfs_tools[S: VFSState](
+        self,
+        ty: type[S],
+        forbidden_write: str | None = None,
+        put_doc_extra: str | None = None
+    ) -> tuple[list[BaseTool], VFSAccessor[S]]:
+        return self._services.vfs_tools(ty, forbidden_write, put_doc_extra)
+
 
     @staticmethod
     def create(
         js: JobSpec,
+        services: Services,
         thread_id: str,
         store: PostgresStore,
         memory_namespace: str | None = None,
@@ -72,6 +106,7 @@ class WorkspaceContext:
             cache_ns = cache_namespace
         return WorkspaceContext(
             _job_spec=js,
+            _services=services,
             thread_id=thread_id,
             memory_namespace=memory_namespace or thread_id,
             cache_namespace=cache_ns,
@@ -88,6 +123,7 @@ class WorkspaceContext:
                 tag
             )
         return WorkspaceContext(
+            _services=self._services,
             _job_spec=self._job_spec,
             thread_id=f"{self.thread_id}-{name}",
             memory_namespace=f"{self.memory_namespace}-{name}",
@@ -124,3 +160,22 @@ class WorkspaceContext:
     def get_memory_tool(self) -> BaseTool:
         """Get a memory tool for this context's memory namespace."""
         return memory_tool(get_memory(self.memory_namespace))
+
+
+def get_system_doc(sys_path: Path) -> dict | str | None:
+    """Load a system document from a file path, returning base64-encoded PDF or text."""
+    if not sys_path.is_file():
+        print("System file not found")
+        return None
+    if sys_path.suffix == ".pdf":
+        file_data = base64.standard_b64encode(sys_path.read_bytes()).decode("utf-8")
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": file_data
+            }
+        }
+    else:
+        return sys_path.read_text()

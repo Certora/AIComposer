@@ -6,6 +6,7 @@ from psycopg.rows import dict_row, RowFactory, DictRow
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.embeddings import Embeddings
 from langchain_anthropic import ChatAnthropic
 from langgraph.store.postgres import PostgresStore
 
@@ -169,6 +170,25 @@ def get_store() -> PostgresStore:
         row_factory=dict_row
     )
     store = PostgresStore(conn)
+    store.setup()
+    return store
+
+def get_indexed_store(embedder: Embeddings) -> PostgresStore:
+    conn = _get_composer_connection(
+        user="langgraph_store_user",
+        password="langgraph_store_password",
+        database="langgraph_store_db",
+        autocommit=True,
+        row_factory=dict_row
+    )
+    store = PostgresStore(
+        conn,
+        index={
+            "embed": embedder,
+            "dims": 768,
+            "fields": None
+        }
+    )
     store.setup()
     return store
 

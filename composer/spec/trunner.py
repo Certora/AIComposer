@@ -5,6 +5,7 @@ import sys
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import Literal, TypedDict
 
 import composer.certora as _
 
@@ -13,7 +14,7 @@ from typing import Iterable, TypeVar, Any
 from langchain_core.messages import BaseMessage, ToolMessage, AIMessage, HumanMessage, SystemMessage
 from textual.app import App, ComposeResult
 from textual.containers import ScrollableContainer, Horizontal, Vertical
-from textual.widgets import Button, Static, Header, Footer, Collapsible
+from textual.widgets import Button, Static, Header, Footer, Collapsible, RichLog
 from textual.reactive import reactive
 from rich.text import Text
 from rich.panel import Panel
@@ -22,11 +23,38 @@ from rich.markdown import Markdown
 from typing import cast
 
 from langchain_core.runnables import RunnableConfig
+from langgraph.config import get_stream_writer
 
 from langgraph._internal._typing import StateLike
 from langgraph.graph.state import CompiledStateGraph
 
 T = TypeVar('T')
+
+LogLevel = Literal["info", "warning", "error", "debug"]
+
+LOG_LEVEL_STYLES: dict[LogLevel, str] = {
+    "debug": "dim",
+    "info": "",
+    "warning": "bold yellow",
+    "error": "bold red",
+}
+
+
+class LogEvent(TypedDict):
+    type: Literal["log"]
+    message: str
+    level: LogLevel
+
+
+def log_message(message: str, level: LogLevel = "info") -> None:
+    """Emit a log message via the LangGraph stream writer.
+
+    Call this from within a graph node to send a log entry to the TUI log panel.
+    """
+    writer = get_stream_writer()
+    event: LogEvent = {"type": "log", "message": message, "level": level}
+    writer(event)
+
 
 # Context variables for nested workflow detection
 _current_runner_app: ContextVar["GraphRunnerApp | None"] = ContextVar('_current_runner_app', default=None)
@@ -268,6 +296,55 @@ class NestedWorkflowPanel(Vertical):
         collapsible.collapsed = True
 
 
+class LogPanel(Vertical):
+    """Collapsible panel that displays log messages emitted via stream writers.
+
+    Hidden by default; automatically appears (expanded) when an error-level
+    log is received.  All log levels are buffered so earlier context is
+    visible once the panel opens.
+    """
+
+    DEFAULT_CSS = """
+    LogPanel {
+        width: 1fr;
+        height: 1fr;
+        border: solid $secondary;
+        display: none;
+    }
+
+    LogPanel RichLog {
+        height: 1fr;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._buffer: list[tuple[str, LogLevel]] = []
+
+    def compose(self) -> ComposeResult:
+        yield Collapsible(
+            RichLog(id="log-output", wrap=True, markup=True),
+            title="Logs",
+            collapsed=False,
+        )
+
+    def write_log(self, message: str, level: LogLevel = "info") -> None:
+        """Write a log entry.  Shows the panel on first error."""
+        self._buffer.append((message, level))
+
+        style = LOG_LEVEL_STYLES.get(level, "")
+        prefix = level.upper().ljust(7)
+
+        log_widget = self.query_one("#log-output", RichLog)
+        if style:
+            log_widget.write(Text.from_markup(f"[{style}]{prefix} {message}[/{style}]"))
+        else:
+            log_widget.write(f"{prefix} {message}")
+
+        if level == "error" and self.styles.display == "none":
+            self.styles.display = "block"
+
+
 class GraphRunnerApp(App):
     """TUI for running a LangGraph to completion with pause/resume."""
 
@@ -283,7 +360,12 @@ class GraphRunnerApp(App):
         width: auto;
     }
 
+    #main-content {
+        height: 1fr;
+    }
+
     #message-area {
+        width: 2fr;
         height: 1fr;
         border: solid $primary;
         padding: 1;
@@ -342,7 +424,9 @@ class GraphRunnerApp(App):
             yield Static("Checkpoint: -", id="checkpoint-display")
             yield Static(" | ", classes="separator")
             yield Static("Node: -", id="node-display")
-        yield ScrollableContainer(id="message-area")
+        with Horizontal(id="main-content"):
+            yield ScrollableContainer(id="message-area")
+            yield LogPanel(id="log-panel")
         with Horizontal(id="controls"):
             yield Button("Pause", id="pause-btn", variant="primary")
         yield Footer()
@@ -352,6 +436,12 @@ class GraphRunnerApp(App):
 
     def _start_streaming(self) -> None:
         self._stream_task = asyncio.create_task(self._run_stream())
+
+    def _handle_custom_event(self, payload: dict) -> None:
+        """Route a custom stream event to the appropriate handler."""
+        if payload.get("type") == "log":
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.write_log(payload.get("message", ""), payload.get("level", "info"))
 
     async def _run_stream(self) -> None:
         config: RunnableConfig = {
@@ -368,10 +458,15 @@ class GraphRunnerApp(App):
             async for (tag, payload) in self.graph.astream(
                 input=stream_input,
                 config=config,
-                stream_mode=["checkpoints", "updates"]
+                stream_mode=["checkpoints", "updates", "custom"]
             ):
                 # Wait here if paused - blocks until event is set
                 await self._resume_event.wait()
+
+                if tag == "custom":
+                    if isinstance(payload, dict):
+                        self._handle_custom_event(payload)
+                    continue
 
                 assert isinstance(payload, dict)
 
@@ -442,7 +537,7 @@ class GraphRunnerApp(App):
     @contextmanager
     def nested_workflow(self, workflow_name: str, thread_id: str):
         """Create, register, and manage a nested workflow panel."""
-        panel = NestedWorkflowPanel(workflow_name, thread_id, parent_app=self)
+        panel = NestedWorkflowPanel(workflow_name, thread_id)
         event = asyncio.Event()
         event.set()  # Initially not paused
         self._nested_events[thread_id] = event
@@ -569,11 +664,16 @@ async def _run_nested[I: StateLike, S: StateLike](
         async for (tag, payload) in graph.astream(
             input=stream_input,
             config=config,
-            stream_mode=["checkpoints", "updates"]
+            stream_mode=["checkpoints", "updates", "custom"]
         ):
             # Wait on global pause first, then individual pause
             await parent_app._resume_event.wait()
             await nested_event.wait()
+
+            if tag == "custom":
+                if isinstance(payload, dict):
+                    parent_app._handle_custom_event(payload)
+                continue
 
             assert isinstance(payload, dict)
 
@@ -622,13 +722,16 @@ async def _run_silent[I: StateLike, S: StateLike](
     stream_input = None if checkpoint_id is not None else input
 
     # Run without detailed UI updates (depth stays at current level)
-    async for (_, _payload) in graph.astream(
+    async for (_tag, _payload) in graph.astream(
         input=stream_input,
         config=config,
-        stream_mode=["checkpoints"]
+        stream_mode=["checkpoints", "custom"]
     ):
         # Wait here if paused - blocks until event is set
         await parent_app._resume_event.wait()
+
+        if _tag == "custom" and isinstance(_payload, dict):
+            parent_app._handle_custom_event(_payload)
 
     status.update(f"[dim]Completed: {workflow_name}[/dim]")
 
