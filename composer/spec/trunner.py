@@ -1,11 +1,11 @@
 
 import asyncio
 import json
+import logging
 import sys
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Literal, TypedDict
 
 import composer.certora as _
 
@@ -23,37 +23,45 @@ from rich.markdown import Markdown
 from typing import cast
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.config import get_stream_writer
 
 from langgraph._internal._typing import StateLike
 from langgraph.graph.state import CompiledStateGraph
 
 T = TypeVar('T')
 
-LogLevel = Literal["info", "warning", "error", "debug"]
-
-LOG_LEVEL_STYLES: dict[LogLevel, str] = {
-    "debug": "dim",
-    "info": "",
-    "warning": "bold yellow",
-    "error": "bold red",
+_LEVEL_STYLES: dict[int, str] = {
+    logging.DEBUG: "dim",
+    logging.INFO: "",
+    logging.WARNING: "bold yellow",
+    logging.ERROR: "bold red",
+    logging.CRITICAL: "bold red",
 }
 
-
-class LogEvent(TypedDict):
-    type: Literal["log"]
-    message: str
-    level: LogLevel
+_LOG_NAMESPACE = "composer.spec"
 
 
-def log_message(message: str, level: LogLevel = "info") -> None:
-    """Emit a log message via the LangGraph stream writer.
+class _TUILogHandler(logging.Handler):
+    """Synchronous handler that buffers records and signals an asyncio event.
 
-    Call this from within a graph node to send a log entry to the TUI log panel.
+    Installed on the ``composer.spec`` logger while the TUI is alive.
+    A background task in :class:`GraphRunnerApp` waits on *notify*, drains
+    the buffer, and writes to the :class:`LogPanel`.
     """
-    writer = get_stream_writer()
-    event: LogEvent = {"type": "log", "message": message, "level": level}
-    writer(event)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+        self.notify: asyncio.Event = asyncio.Event()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+        self.notify.set()
+
+    def drain(self) -> list[logging.LogRecord]:
+        """Return all buffered records and clear the buffer."""
+        out = self.records
+        self.records = []
+        return out
 
 
 # Context variables for nested workflow detection
@@ -297,11 +305,9 @@ class NestedWorkflowPanel(Vertical):
 
 
 class LogPanel(Vertical):
-    """Collapsible panel that displays log messages emitted via stream writers.
+    """Always-visible collapsible log panel.
 
-    Hidden by default; automatically appears (expanded) when an error-level
-    log is received.  All log levels are buffered so earlier context is
-    visible once the panel opens.
+    Starts collapsed; automatically expands when an ERROR-level record arrives.
     """
 
     DEFAULT_CSS = """
@@ -309,7 +315,6 @@ class LogPanel(Vertical):
         width: 1fr;
         height: 1fr;
         border: solid $secondary;
-        display: none;
     }
 
     LogPanel RichLog {
@@ -317,23 +322,18 @@ class LogPanel(Vertical):
     }
     """
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._buffer: list[tuple[str, LogLevel]] = []
-
     def compose(self) -> ComposeResult:
         yield Collapsible(
             RichLog(id="log-output", wrap=True, markup=True),
             title="Logs",
-            collapsed=False,
+            collapsed=True,
         )
 
-    def write_log(self, message: str, level: LogLevel = "info") -> None:
-        """Write a log entry.  Shows the panel on first error."""
-        self._buffer.append((message, level))
-
-        style = LOG_LEVEL_STYLES.get(level, "")
-        prefix = level.upper().ljust(7)
+    def write_record(self, record: logging.LogRecord) -> None:
+        """Render a log record.  Expands the panel on first error."""
+        style = _LEVEL_STYLES.get(record.levelno, "")
+        prefix = record.levelname.ljust(7)
+        message = record.getMessage()
 
         log_widget = self.query_one("#log-output", RichLog)
         if style:
@@ -341,8 +341,8 @@ class LogPanel(Vertical):
         else:
             log_widget.write(f"{prefix} {message}")
 
-        if level == "error" and self.styles.display == "none":
-            self.styles.display = "block"
+        if record.levelno >= logging.ERROR:
+            self.query_one(Collapsible).collapsed = False
 
 
 class GraphRunnerApp(App):
@@ -432,16 +432,24 @@ class GraphRunnerApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._log_handler = _TUILogHandler()
+        logger = logging.getLogger(_LOG_NAMESPACE)
+        logger.addHandler(self._log_handler)
+        self._log_task = asyncio.create_task(self._drain_logs())
         self._start_streaming()
 
     def _start_streaming(self) -> None:
         self._stream_task = asyncio.create_task(self._run_stream())
 
-    def _handle_custom_event(self, payload: dict) -> None:
-        """Route a custom stream event to the appropriate handler."""
-        if payload.get("type") == "log":
-            log_panel = self.query_one("#log-panel", LogPanel)
-            log_panel.write_log(payload.get("message", ""), payload.get("level", "info"))
+    async def _drain_logs(self) -> None:
+        """Background task: wait for log records, render them in the LogPanel."""
+        panel = self.query_one("#log-panel", LogPanel)
+        handler = self._log_handler
+        while True:
+            await handler.notify.wait()
+            handler.notify.clear()
+            for record in handler.drain():
+                panel.write_record(record)
 
     async def _run_stream(self) -> None:
         config: RunnableConfig = {
@@ -458,15 +466,10 @@ class GraphRunnerApp(App):
             async for (tag, payload) in self.graph.astream(
                 input=stream_input,
                 config=config,
-                stream_mode=["checkpoints", "updates", "custom"]
+                stream_mode=["checkpoints", "updates"]
             ):
                 # Wait here if paused - blocks until event is set
                 await self._resume_event.wait()
-
-                if tag == "custom":
-                    if isinstance(payload, dict):
-                        self._handle_custom_event(payload)
-                    continue
 
                 assert isinstance(payload, dict)
 
@@ -514,6 +517,10 @@ class GraphRunnerApp(App):
             btn.label = "Pause"
             btn.variant = "primary"
             self._resume_event.set()  # Unblock workflows
+
+    def on_unmount(self) -> None:
+        logging.getLogger(_LOG_NAMESPACE).removeHandler(self._log_handler)
+        self._log_task.cancel()
 
     def _auto_exit(self) -> None:
         """Called by timer after completion to auto-exit."""
@@ -664,16 +671,11 @@ async def _run_nested[I: StateLike, S: StateLike](
         async for (tag, payload) in graph.astream(
             input=stream_input,
             config=config,
-            stream_mode=["checkpoints", "updates", "custom"]
+            stream_mode=["checkpoints", "updates"]
         ):
             # Wait on global pause first, then individual pause
             await parent_app._resume_event.wait()
             await nested_event.wait()
-
-            if tag == "custom":
-                if isinstance(payload, dict):
-                    parent_app._handle_custom_event(payload)
-                continue
 
             assert isinstance(payload, dict)
 
@@ -722,16 +724,13 @@ async def _run_silent[I: StateLike, S: StateLike](
     stream_input = None if checkpoint_id is not None else input
 
     # Run without detailed UI updates (depth stays at current level)
-    async for (_tag, _payload) in graph.astream(
+    async for (_, _payload) in graph.astream(
         input=stream_input,
         config=config,
-        stream_mode=["checkpoints", "custom"]
+        stream_mode=["checkpoints"]
     ):
         # Wait here if paused - blocks until event is set
         await parent_app._resume_event.wait()
-
-        if _tag == "custom" and isinstance(_payload, dict):
-            parent_app._handle_custom_event(_payload)
 
     status.update(f"[dim]Completed: {workflow_name}[/dim]")
 

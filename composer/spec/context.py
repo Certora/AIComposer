@@ -7,11 +7,11 @@ from typing import Protocol
 from langgraph.store.postgres import PostgresStore
 from langchain_core.tools import BaseTool
 
+from graphcore.graph import LLM
 from graphcore.tools.memory import memory_tool
 from graphcore.tools.vfs import VFSState, VFSAccessor
 
 from composer.workflow.services import get_memory
-from composer.rag.db import PostgreSQLRAGDatabase
 
 
 @dataclass
@@ -25,6 +25,8 @@ class JobSpec(ContractSpec):
     system_doc: str
 
 class Services(Protocol):
+    def llm(self) -> LLM:
+        ...
 
     def kb_tools(self, read_only: bool) -> list[BaseTool]:
         ...
@@ -80,6 +82,9 @@ class WorkspaceContext:
 
     def fs_tools(self) -> list[BaseTool]:
         return self._services.fs_tools()
+    
+    def llm(self) -> LLM:
+        return self._services.llm()
     
     def vfs_tools[S: VFSState](
         self,

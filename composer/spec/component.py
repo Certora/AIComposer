@@ -67,7 +67,7 @@ class ComponentInst():
     def application_type(self) -> str:
         return self.summ.application_type
 
-def run_source_analysis(
+def run_component_analysis(
     context: WorkspaceContext,
     builder: Builder[None, None, FlowInput]
 ) -> ApplicationSummary | None:

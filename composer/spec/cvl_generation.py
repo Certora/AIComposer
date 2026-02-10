@@ -1,6 +1,7 @@
-from typing import Callable, Awaitable, NotRequired, override
+from typing import Callable, Awaitable, NotRequired, override, TypedDict
 import sqlite3
 import uuid
+from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +18,7 @@ from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 from composer.spec.context import WorkspaceContext
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard
-from composer.spec.cvl_tools import put_cvl_raw, put_cvl
+from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
 from composer.spec.trunner import run_to_completion, run_to_completion_sync
 from composer.spec.component import ComponentInst
 from composer.spec.prover import get_prover_tool, LLM
@@ -125,16 +126,33 @@ class CVLResource(
     required : bool = Field(description="whether this resource *must* be used in the verification process")
     description: str = Field(description="A description of this resource")
 
+@dataclass
+class ProverContext:
+    prover_config: dict
+    resources: list[CVLResource]
+
+    def with_resources(
+        self,
+        to_add: list[CVLResource]
+    ) -> "ProverContext":
+        new_l = self.resources + to_add
+        return ProverContext(
+            self.prover_config,
+            new_l
+        )
+    
+class GeneratedCVL(TypedDict):
+    commentary: str
+    cvl: str
+
 def generate_property_cvl(
-    llm: LLM,
     ctx: WorkspaceContext,
-    conf: dict,
+    prover_setup: ProverContext,
     prop: PropertyFormulation,
     feat: ComponentInst | None,
-    resources: list[CVLResource],
     builder: Builder[None, None, FlowInput],
     with_memory: bool
-) -> tuple[str, str]:
+) -> GeneratedCVL:
     
     class ST(MessagesState):
         curr_spec: NotRequired[str]
@@ -144,10 +162,12 @@ def generate_property_cvl(
         ctx.child("judge"), builder, feat, prop, with_memory
     )
 
+    llm = ctx.llm()
+
     verifier = get_prover_tool(
         llm,
         ST,
-        conf,
+        prover_setup.prover_config,
         ctx.contract_name,
         ctx.project_root
     )
@@ -168,7 +188,7 @@ Good? {str(t.good)}
 Feedback {t.feedback}
 """
 
-    tools = [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool"), verifier]
+    tools = [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool"), verifier, get_cvl(ST)]
     tools.extend(ctx.kb_tools(read_only=False))
 
     if with_memory:
@@ -185,7 +205,7 @@ Feedback {t.feedback}
     ).with_initial_prompt_template(
         "property_generation_prompt.j2",
         context=feat,
-        resources=resources,
+        resources=prover_setup.prover_config,
         **prop.to_template_args(),
         memory=with_memory
     ).compile_async(
@@ -199,4 +219,7 @@ Feedback {t.feedback}
     )
     assert "result" in r and "curr_spec" in r
 
-    return (r["result"], r["curr_spec"])
+    return {
+        "commentary": r["result"],
+        "cvl": r["curr_spec"]
+    }

@@ -9,11 +9,12 @@ source_spec (source-based spec generation) workflows.
 import os
 import subprocess
 import tempfile
-from typing import Annotated
+from typing import Annotated, TypedDict, NotRequired, cast
 
-from langchain_core.tools import tool, InjectedToolCallId
+from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langgraph.types import Command
-from pydantic import BaseModel, Field
+from langgraph.prebuilt import InjectedState
+from pydantic import BaseModel, Field, create_model
 
 from composer.cvl.schema import CVLFile
 from composer.cvl.pretty_print import pretty_print
@@ -116,3 +117,31 @@ def put_cvl_raw(
 ) -> str | Command:
     """Put a CVL file using raw surface syntax."""
     return _maybe_update_cvl(tool_call_id, cvl_file)
+
+class WithCurrSpec(TypedDict):
+    curr_spec: NotRequired[str]
+
+class GetCVLSchemaTemplate(BaseModel):
+    """
+    Retrive the textual representation of the current specification.
+    """
+
+def get_cvl[S: WithCurrSpec](
+    ty: type[S]
+) -> BaseTool:
+    schema = create_model(
+        "GetCVL",
+        __base__=GetCVLSchemaTemplate,
+        __doc__=GetCVLSchemaTemplate.__doc__,
+        state=Annotated[ty, InjectedState]
+    )
+    @tool(args_schema=schema)
+    def get_cvl(
+        **args
+    ) -> str:
+        st = cast(S, args["state"])
+        if "curr_spec" not in st:
+            return "No spec file written yet"
+        else:
+            return st["curr_spec"]
+    return get_cvl

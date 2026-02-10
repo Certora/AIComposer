@@ -1,25 +1,24 @@
-from typing import Literal, Annotated, override, NotRequired
+from typing import Literal, Annotated, override, NotRequired, cast
 import asyncio
-import sys
 import pathlib
+import uuid
 
 from pydantic import Field, BaseModel
 
 from langgraph.types import Command
 from langgraph.graph import MessagesState
+from langgraph.errors import GraphRecursionError
 from langchain_core.messages import ToolMessage
 
 from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
-from graphcore.tools.vfs import fs_tools
 from graphcore.graph import Builder, FlowInput
 
-from composer.spec.trunner import run_to_completion_sync, run_to_completion, log_message
+from composer.spec.trunner import run_to_completion_sync, run_to_completion
 from composer.spec.context import WorkspaceContext
 from composer.workflow.services import get_checkpointer
 from composer.spec.graph_builder import bind_standard
-from composer.spec.harness import Configuration
 from composer.spec.prop import PropertyFormulation
-from composer.spec.cvl_generation import generate_property_cvl, CVLResource, LLM
+from composer.spec.cvl_generation import generate_property_cvl, CVLResource, ProverContext, GeneratedCVL
 
 class BaseInvariant(BaseModel):
     """
@@ -95,7 +94,6 @@ def _get_invariant_formulation(
             all_invariant_names.add(inv.name)
             if (feed_rec := state["invariant_data"].get(inv.name, None)) is None or \
                 feed_rec[0] != inv.description or feed_rec[1] != "GOOD":
-                log_message(str(state["invariant_data"]), "error")
                 return f"Invariant with name {inv.name} (with description `{inv.description}`) was never accepted by feedback judge"
         
         for inv in i.inv:
@@ -138,7 +136,7 @@ def _get_invariant_formulation(
                     FlowInput(input=[
                         f"The invariant is called: {self.inv.name}\nStatement: {self.inv.description}"
                     ]),
-                    "invariant-judge"
+                    judge_ctx.thread_id + uuid.uuid4().hex[:16]
                 )
                 assert "result" in res
                 feedback = res["result"]
@@ -179,12 +177,11 @@ def _get_invariant_formulation(
 
 
 def structural_invariants_flow(
-    llm: LLM,
     ctx: WorkspaceContext,
-    conf: Configuration,
+    conf: ProverContext,
     builder: Builder[None, None, None],
     cvl_builder: Builder[None, None, FlowInput]
-) -> str:
+) -> list[CVLResource]:
     s = _get_invariant_formulation(
         ctx.child("structural-inv"),
         builder
@@ -210,6 +207,8 @@ def structural_invariants_flow(
 
     inv_to_impl : dict[str, str] = {}
 
+    to_ret : list[CVLResource] = []
+
     while len(worklist) > 0:
         for w in worklist:
             to_generate = i_map[w]
@@ -228,13 +227,7 @@ def structural_invariants_flow(
                 description=to_generate.description,
                 sort="invariant"
             )
-            resources : list[CVLResource] = [
-                CVLResource(
-                    required=True,
-                    import_path=conf.summaries_path,
-                    description="Summaries to simplify the formal verification."
-                )
-            ]
+            resources : list[CVLResource] = []
 
             for d in to_generate.dependencies:
                 assert d in inv_to_impl
@@ -244,19 +237,30 @@ def structural_invariants_flow(
                     description=f"A spec file containing the invariant `{d}` which may be necessary to prove this invariant"
                 ))
             
-            (prop, spec) = generate_property_cvl(
-                llm,
-                inv_ctx,
-                conf.config,
-                as_prop,
-                None,
-                resources,
-                cvl_builder,
-                with_memory=True
-            )
-            print(prop)
+            gen : GeneratedCVL
+            if (d := inv_ctx.cache_get()) is not None:
+                gen = cast(GeneratedCVL, d)
+            else:
+                try:
+                    gen = generate_property_cvl(
+                        inv_ctx,
+                        conf.with_resources(resources),
+                        as_prop,
+                        None,
+                        cvl_builder,
+                        with_memory=True
+                    )
+                except GraphRecursionError:
+                    continue
+                inv_ctx.cache_put(gen) #type: ignore
+            print(gen["commentary"])
             inv_name = f"{to_generate.name}.spec"
-            (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(spec)
+            to_ret.append(CVLResource(
+                import_path=inv_name,
+                required=False,
+                description=f"A specification file containing the invariant {to_generate.name}, which may be necessary to assume a precondition."
+            ))
+            (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(gen["cvl"])
             inv_to_impl[to_generate.name] = inv_name
 
-    sys.exit(1)
+    return to_ret

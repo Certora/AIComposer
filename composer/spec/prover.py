@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from composer.prover.analysis import analyze_cex_raw
 from composer.prover.ptypes import RuleResult
 from composer.prover.results import read_and_format_run_result
-from composer.spec.trunner import log_message
 
 from graphcore.graph import LLM
 
@@ -100,7 +99,6 @@ async def _prover_tool_internal(
 
         # Run certoraRunWrapper
         wrapper_script = Path(__file__).parent.parent / "prover" / "certoraRunWrapper.py"
-        log_message(f"starting command: {str(config)}", "info")
 
         with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
             async with sem: 
@@ -198,8 +196,6 @@ def get_prover_tool[T: WithCVL](
         if "curr_spec" not in state:
             return "Specification not yet put on VFS"
         
-        log_message("YES HELLO", "error")
-
         async def analyzer(
             rule_result: RuleResult
         ) -> tuple[RuleResult, str | None]:
