@@ -46,6 +46,7 @@ def property_feedback_judge(
         memory: NotRequired[str]
         result: NotRequired[PropertyFeedback]
         did_read: NotRequired[bool]
+        curr_spec: NotRequired[str]
 
     class GetMemory(WithInjectedState[ST], WithImplementation[Command | str], WithInjectedId):
         """
@@ -60,6 +61,9 @@ def property_feedback_judge(
                 "messages": [ToolMessage(tool_call_id=self.tool_call_id, content=mem)],
                 "did_read": True
             })
+
+    class SpecJudgeInput(FlowInput):
+        curr_spec: str
 
     class SetMemory(WithInjectedId, WithImplementation[Command]):
         """
@@ -89,14 +93,14 @@ def property_feedback_judge(
     workflow = bind_standard(
         builder, ST, validator=did_rough_draft_read
     ).with_input(
-        FlowInput
+        SpecJudgeInput
     ).with_initial_prompt_template(
         "property_judge_prompt.j2",
         context=inst,
         **prop.to_template_args()
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
-    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft"), memory]).compile_async(
+    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft"), memory, get_cvl(ST)]).compile_async(
         checkpointer=get_checkpointer()
     )
 
@@ -105,10 +109,10 @@ def property_feedback_judge(
     ) -> PropertyFeedback:
         res = await run_to_completion(
             workflow,
-            FlowInput(input=[
+            SpecJudgeInput(input=[
                 "The proposed CVL file is",
                 cvl
-            ]),
+            ], curr_spec=cvl),
             thread_id=child.uniq_thread_id(),
         )
         assert "result" in res
@@ -278,7 +282,7 @@ Feedback {t.feedback}
     ).with_initial_prompt_template(
         "property_generation_prompt.j2",
         context=feat,
-        resources=prover_setup.prover_config,
+        resources=prover_setup.resources,
         **prop.to_template_args(),
         memory=with_memory
     ).compile_async(
