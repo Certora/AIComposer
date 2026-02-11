@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import uuid
 from pathlib import Path
 import base64
 
@@ -94,6 +95,9 @@ class WorkspaceContext:
     ) -> tuple[list[BaseTool], VFSAccessor[S]]:
         return self._services.vfs_tools(ty, forbidden_write, put_doc_extra)
 
+    def uniq_thread_id(self) -> str:
+        suff = uuid.uuid4().hex[:16]
+        return f"{self.thread_id}-{suff}"
 
     @staticmethod
     def create(

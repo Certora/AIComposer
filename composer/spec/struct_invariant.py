@@ -210,7 +210,9 @@ def structural_invariants_flow(
     to_ret : list[CVLResource] = []
 
     while len(worklist) > 0:
-        for w in worklist:
+        to_iter = worklist
+        worklist = []
+        for w in to_iter:
             to_generate = i_map[w]
             import hashlib
 
@@ -234,7 +236,8 @@ def structural_invariants_flow(
                 resources.append(CVLResource(
                     required=False,
                     import_path=inv_to_impl[d],
-                    description=f"A spec file containing the invariant `{d}` which may be necessary to prove this invariant"
+                    description=f"A spec file containing the invariant `{d}` which may be necessary to prove this invariant",
+                    sort="import"
                 ))
             
             gen : GeneratedCVL
@@ -258,9 +261,17 @@ def structural_invariants_flow(
             to_ret.append(CVLResource(
                 import_path=inv_name,
                 required=False,
-                description=f"A specification file containing the invariant {to_generate.name}, which may be necessary to assume a precondition."
+                description=f"A specification file containing the invariant {to_generate.name}, which may be necessary to assume a precondition.",
+                sort="import"
             ))
             (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(gen["cvl"])
             inv_to_impl[to_generate.name] = inv_name
+
+            if to_generate.name in dependents:
+                for dep in dependents[to_generate.name]:
+                    assert dep in n_waiting
+                    n_waiting[dep] -= 1
+                    if n_waiting[dep] == 0:
+                        worklist.append(dep)
 
     return to_ret

@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 import asyncio
 import json
@@ -136,7 +137,7 @@ class MessageWidget(Static):
                 text = "\n".join(c.get("text", str(c)) for c in content)
                 yield Static(Panel(text, title=type(self.message).__name__))
 
-    def _render_ai_message(self, msg: AIMessage) -> Iterable[Static | Collapsible]:
+    def _render_ai_message(self, msg: AIMessage) -> Iterable[Static | Collapsible | ToolCallWidget]:
         content_parts: list[str] = []
 
         for block in _normalize_content(msg.content):
@@ -156,13 +157,10 @@ class MessageWidget(Static):
                     content_parts.append(text)
             elif block_type == "tool_use":
                 tool_name = block.get("name", "unknown")
+                tool_call_id = block.get("id", "")
                 tool_input = block.get("input", {})
                 args_str = json.dumps(tool_input, indent=2) if tool_input else ""
-                yield Static(Panel(
-                    f"[bold]{tool_name}[/bold]\n{args_str}",
-                    title="Tool Call",
-                    border_style="yellow"
-                ))
+                yield ToolCallWidget(tool_name, args_str, tool_call_id)
 
         if content_parts:
             yield Static(Panel(
@@ -345,6 +343,45 @@ class LogPanel(Vertical):
             self.query_one(Collapsible).collapsed = False
 
 
+class ToolCallWidget(Vertical):
+    """Container for a tool call display, identified by tool_call_id for later lookup."""
+
+    DEFAULT_CSS = """
+    ToolCallWidget {
+        height: auto;
+        border: solid yellow;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, tool_name: str, args_str: str, tool_call_id: str):
+        super().__init__(id=f"tool-call-{tool_call_id}")
+        self._tool_name = tool_name
+        self._args_str = args_str
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"[bold yellow]Tool Call[/bold yellow]: [bold]{self._tool_name}[/bold]\n{self._args_str}")
+
+
+class ProverOutputPanel(Vertical):
+    """Collapsible panel for real-time prover stdout, mounted inside a ToolCallWidget."""
+
+    DEFAULT_CSS = """
+    ProverOutputPanel { height: auto; }
+    ProverOutputPanel RichLog { height: auto; max-height: 20; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Collapsible(
+            RichLog(id="prover-log", wrap=True),
+            title="Prover Output",
+            collapsed=False,
+        )
+
+    def append_line(self, line: str) -> None:
+        self.query_one("#prover-log", RichLog).write(line)
+
+
 class GraphRunnerApp(App):
     """TUI for running a LangGraph to completion with pause/resume."""
 
@@ -415,6 +452,7 @@ class GraphRunnerApp(App):
         self._resume_event.set()  # Initially not paused
         self._nested_events: dict[str, asyncio.Event] = {}
         self._nested_panels: dict[str, "NestedWorkflowPanel"] = {}
+        self._prover_panels: dict[str, ProverOutputPanel] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -451,6 +489,26 @@ class GraphRunnerApp(App):
             for record in handler.drain():
                 panel.write_record(record)
 
+    async def _handle_custom_event(self, payload: dict) -> None:
+        """Route custom stream events to the appropriate widget."""
+        if payload.get("type") != "prover_output":
+            return
+
+        tool_call_id: str = payload["tool_call_id"]
+        line: str = payload["line"]
+
+        if tool_call_id not in self._prover_panels:
+            results = self.query(f"#tool-call-{tool_call_id}")
+            if not results:
+                return
+            tc_widget = results[0]
+            panel = ProverOutputPanel(id=f"prover-output-{tool_call_id}")
+            self._prover_panels[tool_call_id] = panel
+            await tc_widget.mount(panel)
+
+        self._prover_panels[tool_call_id].append_line(line)
+        self.query_one("#message-area", ScrollableContainer).scroll_end(animate=False)
+
     async def _run_stream(self) -> None:
         config: RunnableConfig = {
             "configurable": {"thread_id": self.thread_id},
@@ -466,7 +524,7 @@ class GraphRunnerApp(App):
             async for (tag, payload) in self.graph.astream(
                 input=stream_input,
                 config=config,
-                stream_mode=["checkpoints", "updates"]
+                stream_mode=["checkpoints", "updates", "custom"]
             ):
                 # Wait here if paused - blocks until event is set
                 await self._resume_event.wait()
@@ -477,6 +535,8 @@ class GraphRunnerApp(App):
                     new_checkpoint = payload["config"]["configurable"]["checkpoint_id"]
                     self.checkpoint_id = new_checkpoint
                     self.query_one("#checkpoint-display", Static).update(f"Checkpoint: {new_checkpoint[:12]}...")
+                elif tag == "custom":
+                    await self._handle_custom_event(payload)
                 else:
                     for node_name, update in payload.items():
                         if node_name == "__interrupt__":
@@ -671,7 +731,7 @@ async def _run_nested[I: StateLike, S: StateLike](
         async for (tag, payload) in graph.astream(
             input=stream_input,
             config=config,
-            stream_mode=["checkpoints", "updates"]
+            stream_mode=["checkpoints", "updates", "custom"]
         ):
             # Wait on global pause first, then individual pause
             await parent_app._resume_event.wait()
@@ -682,6 +742,8 @@ async def _run_nested[I: StateLike, S: StateLike](
             if tag == "checkpoints":
                 new_checkpoint = payload["config"]["configurable"]["checkpoint_id"]
                 panel.update_checkpoint(new_checkpoint)
+            elif tag == "custom":
+                await parent_app._handle_custom_event(payload)
             else:
                 for node_name, update in payload.items():
                     if node_name == "__interrupt__":

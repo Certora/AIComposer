@@ -1,5 +1,5 @@
 from graphcore.graph import WithToolCallId
-from pydantic import Field
+from pydantic import BaseModel, Field
 from typing import Annotated, cast, Literal, TypedDict, Protocol, ClassVar, Any, Callable, overload
 
 from langchain_core.tools import tool, InjectedToolCallId, BaseTool
@@ -86,6 +86,78 @@ def _cvl_manual_search_factory(
             return f"Failed to search CVL manual: {str(e)}"
     return _cvl_manual_search
 
+class CVLKeywordSearchSchema(BaseModel):
+    """
+    Search the CVL manual for sections matching keywords using full-text search.
+
+    Returns the headers of matching sections ranked by relevance. Use get_cvl_manual_section
+    to retrieve the full content of a section returned by this tool.
+    """
+    query: str = Field(description=(
+        "A websearch-style query string. Unquoted terms are combined with AND. "
+        "Use 'OR' between terms for alternatives, quotes for exact phrases, "
+        "and '-' to exclude terms. Example: '\"ghost variable\" OR storage -mapping'"
+    ))
+    min_depth: int = Field(default=0, description="Minimum section depth (0-6). Only return sections where at least this many header levels (h1..hN) are present. 0 means no filtering.")
+    limit: int = Field(default=10, description="Maximum number of results to return.")
+
+class CVLGetSectionSchema(BaseModel):
+    """
+    Retrieve the full content of a CVL manual section by its exact headers.
+
+    Use cvl_keyword_search to discover section headers first, then use this tool
+    to fetch the complete text of a specific section.
+    """
+    headers: list[str] = Field(description="The section header path, e.g. ['Types', 'Integer Types']. Must match exactly.")
+
+def _cvl_keyword_search_factory(
+    db_provider: Callable[[], PostgreSQLRAGDatabase]
+) -> BaseTool:
+    @tool("cvl_keyword_search", args_schema=CVLKeywordSearchSchema)
+    def _cvl_keyword_search(
+        query: str,
+        min_depth: int = 0,
+        limit: int = 10,
+    ) -> str:
+        """Search the CVL manual for sections matching keywords."""
+        rag_db = db_provider()
+        try:
+            hits = rag_db.search_manual_keywords(query, min_depth=min_depth, limit=limit)
+            if not hits:
+                return "No matching sections found."
+            lines = []
+            for h in hits:
+                section_path = " > ".join(h.headers)
+                lines.append(f"[{h.relevance:.4f}] {section_path}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Failed to search CVL manual: {str(e)}"
+    return _cvl_keyword_search
+
+def _cvl_get_section_factory(
+    db_provider: Callable[[], PostgreSQLRAGDatabase]
+) -> BaseTool:
+    @tool("get_cvl_manual_section", args_schema=CVLGetSectionSchema)
+    def _get_cvl_manual_section(
+        headers: list[str],
+    ) -> str:
+        """Retrieve the full content of a CVL manual section by its headers."""
+        rag_db = db_provider()
+        try:
+            content = rag_db.get_manual_section(headers)
+            if content is None:
+                return f"No section found matching headers: {headers}"
+            return content
+        except Exception as e:
+            return f"Failed to retrieve section: {str(e)}"
+    return _get_cvl_manual_section
+
+def _get_provider(ctxt: "type[RAGDBContext] | PostgreSQLRAGDatabase") -> Callable[[], PostgreSQLRAGDatabase]:
+    if isinstance(ctxt, PostgreSQLRAGDatabase):
+        return lambda: ctxt
+    else:
+        return lambda: get_runtime(ctxt).context.rag_db
+
 @overload
 def cvl_manual_search(ctxt: PostgreSQLRAGDatabase) -> BaseTool:
     ...
@@ -95,8 +167,20 @@ def cvl_manual_search(ctxt: type[RAGDBContext]) -> BaseTool:
     ...
 
 def cvl_manual_search(ctxt: type[RAGDBContext] | PostgreSQLRAGDatabase) -> BaseTool:
-    if isinstance(ctxt, PostgreSQLRAGDatabase):
-        provider = lambda: ctxt
-    else:
-        provider = lambda: get_runtime(ctxt).context.rag_db
-    return _cvl_manual_search_factory(provider)
+    return _cvl_manual_search_factory(_get_provider(ctxt))
+
+@overload
+def cvl_manual_tools(ctxt: PostgreSQLRAGDatabase) -> list[BaseTool]:
+    ...
+
+@overload
+def cvl_manual_tools(ctxt: type[RAGDBContext]) -> list[BaseTool]:
+    ...
+
+def cvl_manual_tools(ctxt: type[RAGDBContext] | PostgreSQLRAGDatabase) -> list[BaseTool]:
+    provider = _get_provider(ctxt)
+    return [
+        _cvl_manual_search_factory(provider),
+        _cvl_keyword_search_factory(provider),
+        _cvl_get_section_factory(provider),
+    ]

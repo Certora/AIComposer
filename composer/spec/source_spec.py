@@ -29,7 +29,7 @@ from composer.spec.context import WorkspaceContext, JobSpec
 from composer.spec.harness import setup_and_harness_agent
 from composer.spec.struct_invariant import structural_invariants_flow
 
-from composer.tools.search import cvl_manual_search
+from composer.tools.search import cvl_manual_tools
 from composer.workflow.services import create_llm, get_store, get_indexed_store
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
@@ -44,6 +44,7 @@ from composer.spec.component import ApplicationComponent, ComponentInst
 from composer.spec.bug import run_bug_analysis
 from composer.spec.component import run_component_analysis
 from composer.spec.cvl_generation import generate_property_cvl, CVLResource, ProverContext, GeneratedCVL
+from composer.spec.summarizer import setup_summaries
 
 T = TypeVar('T')
 
@@ -247,21 +248,29 @@ def execute(args: SourceSpecArgs) -> int:
         skip_test=True
     )
 
+    resources : list[CVLResource] = [
+        CVLResource(
+            required=True,
+            import_path=d.summaries_path,
+            description="Summaries to simplify the formal verification.",
+            sort="import"
+        )
+    ]
+
     cvl_builder = basic_builder.with_tools(
-        [cvl_manual_search(rag_db), *fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)]
+        [*cvl_manual_tools(rag_db), *host.fs_tools()]
     ).with_input(FlowInput)
+
+    custom_summaries = setup_summaries(
+        ctx, d, cvl_builder
+    )
+
+    resources.append(custom_summaries)
 
     source_builder = basic_builder.with_tools(
         host.fs_tools()
     ).with_input(FlowInput)
 
-    resources = [
-        CVLResource(
-            required=True,
-            import_path=d.summaries_path,
-            description="Summaries to simplify the formal verification."
-        )
-    ]
 
 
     invariants = structural_invariants_flow(

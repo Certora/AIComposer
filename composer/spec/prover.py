@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import composer.certora as _
 
 from pathlib import Path
-from typing import Annotated, Awaitable, Callable, NotRequired, Awaitable, TypedDict, Iterator
+from typing import Annotated, Awaitable, Callable, Literal, NotRequired, Awaitable, TypedDict, Iterator
 
 from langchain_core.messages import AnyMessage
 from langchain_core.tools import InjectedToolCallId, tool, BaseTool
@@ -20,9 +20,17 @@ from composer.prover.analysis import analyze_cex_raw
 from composer.prover.ptypes import RuleResult
 from composer.prover.results import read_and_format_run_result
 
+from langgraph.config import get_stream_writer
 from graphcore.graph import LLM
 
 from pydantic import create_model
+
+
+class ProverOutputEvent(TypedDict):
+    type: Literal["prover_output"]
+    tool_call_id: str
+    line: str
+
 
 class WithCVL(TypedDict):
     curr_spec: NotRequired[str]
@@ -73,7 +81,8 @@ async def _prover_tool_internal(
     main_contract: str,
     compilation_config: dict,
     rules: list[str] | None,
-    cex_analyzer: Callable[[RuleResult], Awaitable[tuple[RuleResult, str | None]]]
+    cex_analyzer: Callable[[RuleResult], Awaitable[tuple[RuleResult, str | None]]],
+    line_callback: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
     
     certora_dir = Path(project_root) / "certora"
@@ -101,16 +110,27 @@ async def _prover_tool_internal(
         wrapper_script = Path(__file__).parent.parent / "prover" / "certoraRunWrapper.py"
 
         with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
-            async with sem: 
-                proc_result = await asyncio.subprocess.create_subprocess_exec(
+            async with sem:
+                proc = await asyncio.subprocess.create_subprocess_exec(
                     sys.executable,
                     str(wrapper_script), str(output_file.name), str(config_path),
                     cwd=project_root,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                stdout_raw, stderr_raw = await proc_result.communicate()
-            stdout = stdout_raw.decode()
+                stdout_lines: list[str] = []
+                assert proc.stdout is not None
+                while True:
+                    raw = await proc.stdout.readline()
+                    if not raw:
+                        break
+                    line = raw.decode()
+                    stdout_lines.append(line)
+                    if line_callback:
+                        await line_callback(line.rstrip("\n"))
+                stderr_raw = await proc.stderr.read() if proc.stderr else b""
+                await proc.wait()
+            stdout = "".join(stdout_lines)
             stderr = stderr_raw.decode()
 
             # Read the pickled output
@@ -118,7 +138,7 @@ async def _prover_tool_internal(
             run_result = pickle.load(output_file)
 
     # Check for errors
-    if proc_result.returncode != 0:
+    if proc.returncode != 0:
         return f"Verification failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
 
 
@@ -203,9 +223,20 @@ def get_prover_tool[T: WithCVL](
                 llm, m, rule_result, tool_call_id
             )
             return (rule_result, res)
-        
+
+        writer = get_stream_writer()
+
+        async def on_prover_line(line: str) -> None:
+            evt: ProverOutputEvent = {
+                "type": "prover_output",
+                "tool_call_id": tool_call_id,
+                "line": line,
+            }
+            writer(evt)
+
         return await _prover_tool_internal(
-            sem, state["curr_spec"], project_root, main_contract, conf, rules, analyzer
+            sem, state["curr_spec"], project_root, main_contract, conf, rules, analyzer,
+            line_callback=on_prover_line,
         )
     
     return verify_spec
