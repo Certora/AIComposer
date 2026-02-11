@@ -83,6 +83,19 @@ def _workflow_context(app: "GraphRunnerApp | None", depth: int):
 
 
 MAX_TOOL_CONTENT_LENGTH = 500
+PREVIEW_LENGTH = 80
+
+
+def _collapsible_message(content: str, title: str, border_style: str, collapsed: bool = True) -> Collapsible:
+    """Wrap a message in a Collapsible with a preview in the title."""
+    preview = content[:PREVIEW_LENGTH].replace('\n', ' ').strip()
+    if len(content) > PREVIEW_LENGTH:
+        preview += "..."
+    return Collapsible(
+        Static(Panel(_format_text_content(content), title=title, border_style=border_style)),
+        title=f"{title}: {preview}",
+        collapsed=collapsed,
+    )
 
 
 def _normalize_content(s: str | list[str | dict]) -> list[dict]:
@@ -137,7 +150,7 @@ class MessageWidget(Static):
                 text = "\n".join(c.get("text", str(c)) for c in content)
                 yield Static(Panel(text, title=type(self.message).__name__))
 
-    def _render_ai_message(self, msg: AIMessage) -> Iterable[Static | Collapsible | ToolCallWidget]:
+    def _render_ai_message(self, msg: AIMessage) -> Iterable[Collapsible | ToolCallWidget]:
         content_parts: list[str] = []
 
         for block in _normalize_content(msg.content):
@@ -163,23 +176,14 @@ class MessageWidget(Static):
                 yield ToolCallWidget(tool_name, args_str, tool_call_id)
 
         if content_parts:
-            yield Static(Panel(
-                _format_text_content("\n".join(content_parts)),
-                title="Assistant",
-                border_style="magenta"
-            ))
+            yield _collapsible_message("\n".join(content_parts), "Assistant", "magenta", collapsed=False)
 
-    def _render_tool_message(self, msg: ToolMessage) -> Iterable[Static]:
+    def _render_tool_message(self, msg: ToolMessage) -> Iterable[Collapsible]:
         content = str(msg.content)
         tool_name = getattr(msg, 'name', 'Tool Result')
+        yield _collapsible_message(content, tool_name, "cyan")
 
-        if len(content) > MAX_TOOL_CONTENT_LENGTH:
-            truncated = content[:MAX_TOOL_CONTENT_LENGTH] + f"\n... [truncated {len(content) - MAX_TOOL_CONTENT_LENGTH} chars]"
-            yield Static(Panel(truncated, title=tool_name, border_style="cyan"))
-        else:
-            yield Static(Panel(content, title=tool_name, border_style="cyan"))
-
-    def _render_human_message(self, msg: HumanMessage) -> Iterable[Static]:
+    def _render_human_message(self, msg: HumanMessage) -> Iterable[Collapsible]:
         content_parts: list[str] = []
 
         for block in _normalize_content(msg.content):
@@ -198,13 +202,9 @@ class MessageWidget(Static):
 
         if content_parts:
             combined = "\n".join(content_parts)
-            if len(combined) > MAX_TOOL_CONTENT_LENGTH:
-                truncated = combined[:MAX_TOOL_CONTENT_LENGTH] + f"\n... [truncated {len(combined) - MAX_TOOL_CONTENT_LENGTH} chars]"
-                yield Static(Panel(truncated, title="Human", border_style="green"))
-            else:
-                yield Static(Panel(_format_text_content(combined), title="Human", border_style="green"))
+            yield _collapsible_message(combined, "Human", "green")
 
-    def _render_system_message(self, msg: SystemMessage) -> Iterable[Static]:
+    def _render_system_message(self, msg: SystemMessage) -> Iterable[Collapsible]:
         content_parts: list[str] = []
 
         for block in _normalize_content(msg.content):
@@ -219,11 +219,7 @@ class MessageWidget(Static):
 
         if content_parts:
             combined = "\n".join(content_parts)
-            if len(combined) > MAX_TOOL_CONTENT_LENGTH:
-                truncated = combined[:MAX_TOOL_CONTENT_LENGTH] + f"\n... [truncated {len(combined) - MAX_TOOL_CONTENT_LENGTH} chars]"
-                yield Static(Panel(truncated, title="System", border_style="blue"))
-            else:
-                yield Static(Panel(_format_text_content(combined), title="System", border_style="blue"))
+            yield _collapsible_message(combined, "System", "blue")
 
 
 class UpdateWidget(Static):
