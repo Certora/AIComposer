@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolMessage, HumanMessage
 
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 
-from graphcore.graph import FlowInput, Builder
+from graphcore.graph import FlowInput, Builder, tool_state_update
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
@@ -198,6 +198,48 @@ class GeneratedCVL(TypedDict):
     commentary: str
     cvl: str
 
+# class Question(BaseModel):
+#     context: str = Field(description="A description of the context of the question. Describe what has worked, what you have tried, and what you're trying to accomplish")
+#     question: str = Field(description="The concrete question you need help with.")
+
+class ExplicitThinking(
+    WithImplementation[Command],
+    WithInjectedId
+):
+    """Use this tool to record your reasoning. It will not execute any actions
+    or retrieve any information — it only logs your thought for future reference.
+
+    Use it when you need to:
+    - Synthesize findings after gathering source files or documentation
+    - Plan an implementation approach before writing or modifying code
+    - Analyze a prover violation before deciding on a fix
+    - Evaluate tradeoffs between multiple strategies for spec changes
+    - Verify that your planned changes satisfy all requirements and constraints
+
+    Do NOT use it when:
+    - The next step is obvious (e.g., fetching a file, running a test)
+    - You are simply executing a known plan step by step
+    - You have not yet gathered the information needed to reason usefully
+
+    IMPORTANT: you may not call this tool in parallel with other tools.
+    """
+    thought: str = Field(
+        description=(
+            "Your structured reasoning. Include: "
+            "what you have learned so far, "
+            "what constraints or requirements apply, "
+            "what approach you are considering and why, "
+            "and any risks or edge cases to watch for."
+        )
+    )
+    @override
+    def run(self) -> Command:
+        return Command(update=[
+            ToolMessage(tool_call_id=self.tool_call_id, content="Thought recorded."),
+            HumanMessage(content="Now, consider your current thought process and carefully evaluate how to proceed.")
+        ])
+
+
 def generate_property_cvl(
     ctx: WorkspaceContext,
     prover_setup: ProverContext,
@@ -265,7 +307,7 @@ Feedback {t.feedback}
         async def run(self) -> str:
             return await explorer(self.question)
 
-    tools = [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool"), ExploreCodeSchema.as_tool("explore_code"), verifier, get_cvl(ST)]
+    tools = [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool"), ExploreCodeSchema.as_tool("explore_code"), verifier, get_cvl(ST), ExplicitThinking.as_tool("extended_reasoning")]
     tools.extend(ctx.kb_tools(read_only=False))
 
     if with_memory:
