@@ -1,4 +1,4 @@
-from typing import Callable, Awaitable, NotRequired, override, TypedDict, Literal
+from typing import Callable, Awaitable, NotRequired, override, Literal
 import sqlite3
 from dataclasses import dataclass
 
@@ -9,12 +9,12 @@ from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 
-from graphcore.graph import FlowInput, Builder, tool_state_update
+from graphcore.graph import FlowInput, tool_state_update
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
 
-from composer.spec.context import WorkspaceContext
+from composer.spec.context import WorkspaceContext, CVLBuilder
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
@@ -23,6 +23,7 @@ from composer.spec.component import ComponentInst
 from composer.spec.prover import get_prover_tool
 from composer.workflow.services import get_checkpointer
 from composer.spec.draft import get_rough_draft_tools
+from composer.spec.cvl_research import cvl_researcher
 
 class PropertyFeedback(BaseModel):
     """
@@ -35,7 +36,7 @@ type FeedbackTool = Callable[[str], Awaitable[PropertyFeedback]]
 
 def property_feedback_judge(
     ctx: WorkspaceContext,
-    builder: Builder[None, None, FlowInput],
+    builder: CVLBuilder,
     inst: ComponentInst | None,
     prop: PropertyFormulation,
     with_memory: bool
@@ -56,8 +57,7 @@ def property_feedback_judge(
     rough_draft_tools = get_rough_draft_tools(ST)
 
     def did_rough_draft_read(s: ST, _) -> str | None:
-        h = s.get("did_read", None) is None
-        if h is None:
+        if s.get("did_read", None) is None:
             return "Completion REJECTED: never read rough draft for review"
         return None
 
@@ -116,7 +116,7 @@ Guidelines:
 
 def code_explorer(
     ctx: WorkspaceContext,
-    builder: Builder[None, None, FlowInput],
+    builder: CVLBuilder,
 ) -> ExplorationTool:
 
     child = ctx.child("explorer")
@@ -171,8 +171,11 @@ class ProverContext:
             new_l
         )
 
-class GeneratedCVL(TypedDict):
+class GeneratedCVL(BaseModel):
     commentary: str
+    cvl: str
+
+class _LastAttemptCache(BaseModel):
     cvl: str
 
 class ExplicitThinking(
@@ -218,10 +221,10 @@ def generate_property_cvl(
     prover_setup: ProverContext,
     prop: PropertyFormulation,
     feat: ComponentInst | None,
-    builder: Builder[None, None, FlowInput],
+    builder: CVLBuilder,
     with_memory: bool
 ) -> GeneratedCVL:
-    
+
     class ST(MessagesState):
         curr_spec: NotRequired[str]
         result: NotRequired[str]
@@ -233,6 +236,8 @@ def generate_property_cvl(
     explorer = code_explorer(
         ctx, builder
     )
+
+    researcher = cvl_researcher(ctx, builder)
 
     llm = ctx.llm()
 
@@ -280,7 +285,26 @@ Feedback {t.feedback}
         async def run(self) -> str:
             return await explorer(self.question)
 
-    tools = [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool"), ExploreCodeSchema.as_tool("explore_code"), verifier, get_cvl(ST), ExplicitThinking.as_tool("extended_reasoning")]
+    class CVLResearchSchema(WithAsyncImplementation[str]):
+        """
+        Delegate a question about CVL syntax, patterns, or techniques to a research sub-agent.
+        The sub-agent searches the CVL manual and knowledge base, then delivers a synthesized answer.
+
+        Use this when you need to understand how to express something in CVL, what patterns to
+        use, or how a specific CVL feature works. Do NOT use this for source code questions
+        (use explore_code instead).
+        """
+        question: str = Field(
+            description="A specific question about CVL. "
+            "Good: 'How do I use ghost state to track cumulative token transfers?' "
+            "Good: 'What is the correct syntax for a preserved block with require statements?' "
+            "Bad: 'How does the withdraw function work?' (use explore_code)"
+        )
+        @override
+        async def run(self) -> str:
+            return await researcher(self.question)
+
+    tools = [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool"), ExploreCodeSchema.as_tool("explore_code"), CVLResearchSchema.as_tool("cvl_research"), verifier, get_cvl(ST), ExplicitThinking.as_tool("extended_reasoning")]
     tools.extend(ctx.kb_tools(read_only=False))
 
     if with_memory:
@@ -289,10 +313,10 @@ Feedback {t.feedback}
     extra_inputs : list[str | dict] = []
 
     if with_memory:
-        last_attempt = ctx.child("last_attempt").cache_get()
+        last_attempt = ctx.child("last_attempt").cache_get(_LastAttemptCache)
         if last_attempt is not None:
             extra_inputs.append("Your last working draft was:")
-            extra_inputs.append(last_attempt["cvl"])
+            extra_inputs.append(last_attempt.cvl)
         
 
     d = bind_standard(
@@ -322,11 +346,11 @@ Feedback {t.feedback}
     finally:
         last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values
         if "curr_spec" in last_state and with_memory:
-            ctx.child("last_attempt").cache_put({"cvl": last_state["curr_spec"]})
+            ctx.child("last_attempt").cache_put(_LastAttemptCache(cvl=last_state["curr_spec"]))
 
     assert "result" in r and "curr_spec" in r
 
-    return {
-        "commentary": r["result"],
-        "cvl": r["curr_spec"]
-    }
+    return GeneratedCVL(
+        commentary=r["result"],
+        cvl=r["curr_spec"]
+    )

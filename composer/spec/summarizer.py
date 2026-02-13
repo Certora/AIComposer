@@ -6,19 +6,22 @@ import json
 import subprocess
 import sys
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from langgraph.types import Command
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from graphcore.graph import Builder, FlowInput, MessagesState, tool_state_update
+from graphcore.graph import FlowInput, MessagesState, tool_state_update
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId
 
 from composer.spec.harness import Configuration, ERC20TokenGuidance
 from composer.spec.graph_builder import bind_standard
 from composer.spec.cvl_tools import get_cvl, put_cvl, put_cvl_raw
 from composer.spec.cvl_generation import CVLResource
-from composer.spec.context import WorkspaceContext
+from composer.spec.context import WorkspaceContext, CVLBuilder
+
+class _SummaryCache(BaseModel):
+    content: str
 from composer.spec.utils import temp_certora_file
 from composer.workflow.services import get_checkpointer
 from composer.templates.loader import load_jinja_template
@@ -83,7 +86,7 @@ def format_types(udts: list[dict]) -> str:
 def setup_summaries(
     ctx: WorkspaceContext,
     d: Configuration,
-    cvl_builder: Builder[None, None, FlowInput]
+    cvl_builder: CVLBuilder
 ) -> CVLResource:
     cacher = hashlib.sha256(d.model_dump_json().encode()).hexdigest()[:16]
     
@@ -98,9 +101,8 @@ def setup_summaries(
         sort="import"
     )
 
-    if (cached := summary_context.cache_get()) is not None:
-        c = cached["content"]
-        result_path.write_text(c)
+    if (cached := summary_context.cache_get(_SummaryCache)) is not None:
+        result_path.write_text(cached.content)
         return to_ret
 
     class ST(MessagesState):
@@ -231,6 +233,6 @@ Summarization instructions: {ext.suggested_summaries}
     assert "curr_spec" in res
     assert "result" in res
 
-    summary_context.cache_put({"content": res["curr_spec"]})
+    summary_context.cache_put(_SummaryCache(content=res["curr_spec"]))
     result_path.write_text(res["curr_spec"])
     return to_ret

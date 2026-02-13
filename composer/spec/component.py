@@ -8,12 +8,12 @@ from typing import NotRequired
 
 from pydantic import BaseModel, Field
 
-from graphcore.graph import MessagesState, Builder
+from graphcore.graph import MessagesState
 
 
 from composer.spec.trunner import run_to_completion_sync
 from composer.spec.graph_builder import bind_standard
-from composer.spec.context import WorkspaceContext, get_system_doc
+from composer.spec.context import WorkspaceContext, SourceBuilder, get_system_doc
 
 from composer.workflow.services import get_checkpointer
 from graphcore.graph import FlowInput
@@ -69,15 +69,14 @@ class ComponentInst():
 
 def run_component_analysis(
     context: WorkspaceContext,
-    builder: Builder[None, None, FlowInput]
+    builder: SourceBuilder
 ) -> ApplicationSummary | None:
     # Check cache first
     child_ctxt = context.child(
         "source-analysis"
     )
-    cached = child_ctxt.cache_get()
-    if cached is not None:
-        return ApplicationSummary.model_validate(cached)
+    if (cached := child_ctxt.cache_get(ApplicationSummary)) is not None:
+        return cached
     
     system_doc = get_system_doc(Path(context.system_doc))
     if system_doc is None:
@@ -119,8 +118,6 @@ def run_component_analysis(
     assert "result" in res
     result: ApplicationSummary = res["result"]
 
-    child_ctxt.cache_put(
-        result.model_dump()
-    )
+    child_ctxt.cache_put(result)
 
     return result

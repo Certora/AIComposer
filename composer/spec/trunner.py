@@ -20,6 +20,7 @@ from textual.reactive import reactive
 from rich.text import Text
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.markup import escape as rich_escape
 
 from typing import cast
 
@@ -93,7 +94,7 @@ def _collapsible_message(content: str, title: str, border_style: str, collapsed:
         preview += "..."
     return Collapsible(
         Static(Panel(_format_text_content(content), title=title, border_style=border_style)),
-        title=f"{title}: {preview}",
+        title=f"{title}: {rich_escape(preview)}",
         collapsed=collapsed,
     )
 
@@ -114,7 +115,21 @@ def _normalize_content(s: str | list[str | dict]) -> list[dict]:
     return to_ret
 
 
-def _format_text_content(content: str) -> Text | Markdown:
+class _SafeMarkdown:
+    """Markdown renderable that falls back to plain Text on render errors."""
+
+    def __init__(self, content: str) -> None:
+        self._md = Markdown(content)
+        self._fallback = Text(content)
+
+    def __rich_console__(self, console, options):
+        try:
+            yield from self._md.__rich_console__(console, options)
+        except Exception:
+            yield from self._fallback.__rich_console__(console, options)
+
+
+def _format_text_content(content: str) -> Text | _SafeMarkdown:
     """Format string content with markdown if appropriate."""
     import re
     html_tag_pattern = r'<[^>]+>'
@@ -123,7 +138,7 @@ def _format_text_content(content: str) -> Text | Markdown:
 
     markdown_markers = ['#', '*', '`', '```', '- ', '* ', '1. ', '## ', '### ']
     if any(marker in content for marker in markdown_markers):
-        return Markdown(content)
+        return _SafeMarkdown(content)
     else:
         return Text(content)
 
@@ -331,7 +346,7 @@ class LogPanel(Vertical):
 
         log_widget = self.query_one("#log-output", RichLog)
         if style:
-            log_widget.write(Text.from_markup(f"[{style}]{prefix} {message}[/{style}]"))
+            log_widget.write(Text.from_markup(f"[{style}]{prefix} {rich_escape(message)}[/{style}]"))
         else:
             log_widget.write(f"{prefix} {message}")
 
@@ -356,10 +371,10 @@ class ToolCallWidget(Vertical):
         self._args_str = args_str
 
     def compose(self) -> ComposeResult:
-        yield Static(f"[bold yellow]Tool Call[/bold yellow]: [bold]{self._tool_name}[/bold]")
+        yield Static(f"[bold yellow]Tool Call[/bold yellow]: [bold]{rich_escape(self._tool_name)}[/bold]")
         if self._args_str:
             yield Collapsible(
-                Static(self._args_str),
+                Static(Text(self._args_str)),
                 title="Input",
                 collapsed=True,
             )

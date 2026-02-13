@@ -6,23 +6,34 @@
 Follow these instructions exactly:
 
 ## Step 1
-Analyze the implementation of {{ contract_spec.main_contract }} at {{ contract_spec.relative_path }} and identify
-all candidate structural invariants I.
+Read the implementation of {{ contract_spec.main_contract }} at {{ contract_spec.relative_path }} and identify
+all candidate structural invariants. Examine the contract's storage layout, state-modifying functions, access control
+patterns, and relationships between data structures.
 
-As a reminder, these invariants should be "obvious" to a reader of the code, and thus should be very likely to hold.
+These invariants should be "obvious" to a reader of the code, and thus should be very likely to hold.
 However, you do *NOT* need to have absolute certainty that a structural invariant actually holds for the implementation
-to propose the structural invariants.
+to propose it.
 
 ## Step 2
-Invoke the invariant feedback tool with the invariants generated in Step 1. If any of the invariants not classified
-as "GOOD", adjust your formulation to satisfy the feedback you received, or drop the invariant if it cannot be restated
-to satisfy the feedback tool.
+Invoke the invariant feedback tool with the invariants generated in Step 1. The feedback tool classifies each invariant as one of:
+- **GOOD**: The invariant is well-formulated and appropriate.
+- **NOT_STRUCTURAL**: The property is a safety/security property, not a structural invariant. Consider whether it can be restated as a simpler, structural relationship.
+- **NOT_INDUCTIVE**: The property cannot be proven inductively — it may reference specific functions or call sequences. Reformulate as a property that holds regardless of which function was called.
+- **UNLIKELY_TO_HOLD**: The property probably does not hold for the implementation. Re-examine the source code to verify your assumption.
+- **NOT_FORMAL**: The statement is too vague to formalize. Make it precise enough that it could be translated to a logical formula over the contract's state.
+
+If any invariant is not classified as "GOOD", adjust your formulation to address the feedback, or drop the invariant if it cannot be restated.
 
 *IMPORTANT* DO NOT proceed to step 3 until the feedback judge indicates all the invariants presented to it are GOOD.
 
 ## Step 3
-Consider any dependencies between these invariants. More specifically, determine if it is very likely that proving
-invariant i1 will require invariant i2. Record the dependencies between these invariants.
+Consider dependencies between your invariants. Invariant i1 depends on invariant i2 when proving i1 is preserved
+likely requires assuming i2 in the prestate — that is, without i2, the prover would consider states where i1 is
+spuriously violated.
+
+For example, if i1 states "every active position has a non-zero owner" and i2 states "the position count never
+exceeds the array length", then i1 likely depends on i2 because without i2, the prover could consider
+out-of-bounds positions that vacuously violate i1.
 
 ## Step 4
 Output the results of your analysis using the provided tool.
@@ -35,5 +46,9 @@ Output the results of your analysis using the provided tool.
   </hard_requirement>
   <reminder>
     The structural invariants you identify should be inductive, i.e., proven to hold with an inductive proof.
+    Do NOT propose properties of the form "after calling function F, property P holds" — these are not inductive.
+    An inductive invariant must hold regardless of which function was called or in what order. If you find yourself
+    referencing a specific function in the invariant statement, you are likely describing a postcondition, not a
+    structural invariant.
   </reminder>
 </guidance>

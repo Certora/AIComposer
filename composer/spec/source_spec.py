@@ -25,7 +25,7 @@ import uuid
 from typing import cast
 
 
-from composer.spec.context import WorkspaceContext, JobSpec
+from composer.spec.context import WorkspaceContext, JobSpec, SourceBuilder, CVLBuilder
 from composer.spec.harness import setup_and_harness_agent
 from composer.spec.struct_invariant import structural_invariants_flow
 
@@ -107,8 +107,8 @@ def _analyze_component(
     ctx: WorkspaceContext,
     conf: ProverContext,
     feat: ComponentInst,
-    analysis_builder: Builder[None, None, FlowInput],
-    cvl_builder: Builder[None, None, FlowInput],
+    analysis_builder: SourceBuilder,
+    cvl_builder: CVLBuilder,
 ) -> None | list[tuple[PropertyFormulation, str, str]]:
     cache_key = _cache_key_bug_analysis(feat.component, feat.summ.application_type)
     feat_ctx = ctx.child(
@@ -128,20 +128,17 @@ def _analyze_component(
         prop_model = prop.model_dump()
         prop_key = _string_hash(prop.model_dump_json())
         prop_ctx = feat_ctx.child(prop_key, prop_model)
-        m = prop_ctx.cache_get()
+        m = prop_ctx.cache_get(GeneratedCVL)
         if m is not None:
-            cache = cast(GeneratedCVL, m)
-            r = cache["commentary"]
-            cvl = cache["cvl"]
+            r = m.commentary
+            cvl = m.cvl
         else:
             d = generate_property_cvl(
                 ctx=prop_ctx, builder=cvl_builder, prover_setup=conf, feat=feat, prop=prop, with_memory=False
             )
-            prop_ctx.cache_put(
-                d #type: ignore
-            )
-            cvl = d["cvl"]
-            r = d["commentary"]
+            prop_ctx.cache_put(d)
+            cvl = d.cvl
+            r = d.commentary
         print(cvl)
         print(r)
         work.append((prop, r, cvl))
@@ -219,7 +216,7 @@ def execute(args: SourceSpecArgs) -> int:
         print(f"Job cache: {cache_key}")
         store.put(cache_key, "job_info", {
             "root": args.project_root,
-            "relative_path": spec.project_root,
+            "relative_path": spec.relative_path,
             "system_doc": spec.system_doc,
             "main_contract": spec.contract_name,
             "ts": time.time()
@@ -257,7 +254,7 @@ def execute(args: SourceSpecArgs) -> int:
         )
     ]
 
-    cvl_builder = basic_builder.with_tools(
+    cvl_builder: CVLBuilder = basic_builder.with_tools(
         [*cvl_manual_tools(rag_db), *host.fs_tools()]
     ).with_input(FlowInput)
 
@@ -267,7 +264,7 @@ def execute(args: SourceSpecArgs) -> int:
 
     resources.append(custom_summaries)
 
-    source_builder = basic_builder.with_tools(
+    source_builder: SourceBuilder = basic_builder.with_tools(
         host.fs_tools()
     ).with_input(FlowInput)
 

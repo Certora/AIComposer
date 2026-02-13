@@ -3,14 +3,29 @@ import uuid
 from pathlib import Path
 import base64
 
-from typing import Protocol
+from typing import Annotated, Protocol
+
+from pydantic import BaseModel
 
 from langgraph.store.postgres import PostgresStore
 from langchain_core.tools import BaseTool
 
-from graphcore.graph import LLM
+from graphcore.graph import LLM, Builder, FlowInput
 from graphcore.tools.memory import memory_tool
 from graphcore.tools.vfs import VFSState, VFSAccessor
+
+
+# Phantom tool-capability markers. These tag Builder type aliases to document
+# which tool sets have been bound. The type checker erases them (via Annotated)
+# but they are visible in signatures for documentation.
+class SOURCE_TOOLS:
+    """Builder has fs_tools bound (source code file access)."""
+
+class CVL_TOOLS:
+    """Builder has cvl_manual_tools bound (CVL manual RAG search)."""
+
+type SourceBuilder = Annotated[Builder[None, None, FlowInput], SOURCE_TOOLS]
+type CVLBuilder = Annotated[Builder[None, None, FlowInput], SOURCE_TOOLS, CVL_TOOLS]
 
 from composer.workflow.services import get_memory
 
@@ -83,10 +98,10 @@ class WorkspaceContext:
 
     def fs_tools(self) -> list[BaseTool]:
         return self._services.fs_tools()
-    
+
     def llm(self) -> LLM:
         return self._services.llm()
-    
+
     def vfs_tools[S: VFSState](
         self,
         ty: type[S],
@@ -144,27 +159,29 @@ class WorkspaceContext:
         """Create an indexed child context."""
         return self.child(f"{name}-{index}")
 
-    def cache_get(self) -> dict | None:
-        """Get a value from the cache. Returns None if caching disabled or not found."""
+    def cache_get[T: BaseModel](self, ty: type[T]) -> T | None:
+        """Get a typed value from the cache. Returns None if caching disabled or not found."""
         if self.cache_namespace is None:
             return None
-        
+
         if len(self.cache_namespace) < 1:
             raise ValueError("Cache prefix too small")
-        
+
         full_key = self.cache_namespace[:-1]
         result = self._store.get(full_key, self.cache_namespace[-1])
-        return result.value if result else None
+        if result is None:
+            return None
+        return ty.model_validate(result.value)
 
-    def cache_put(self, value: dict) -> None:
-        """Put a value in the cache. No-op if caching disabled."""
+    def cache_put(self, value: BaseModel) -> None:
+        """Put a typed value in the cache. No-op if caching disabled."""
         if self.cache_namespace is None:
             return
         if len(self.cache_namespace) < 1:
             raise ValueError("Cache prefix too small")
-        
+
         full_key = self.cache_namespace[:-1]
-        self._store.put(full_key, self.cache_namespace[-1], value)
+        self._store.put(full_key, self.cache_namespace[-1], value.model_dump())
 
     def get_memory_tool(self) -> BaseTool:
         """Get a memory tool for this context's memory namespace."""

@@ -1,4 +1,4 @@
-from typing import Literal, Annotated, override, NotRequired, cast
+from typing import Literal, Annotated, override, NotRequired
 import asyncio
 import pathlib
 import uuid
@@ -14,7 +14,7 @@ from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 from graphcore.graph import Builder, FlowInput
 
 from composer.spec.trunner import run_to_completion_sync, run_to_completion
-from composer.spec.context import WorkspaceContext
+from composer.spec.context import WorkspaceContext, CVLBuilder
 from composer.workflow.services import get_checkpointer
 from composer.spec.graph_builder import bind_standard
 from composer.spec.prop import PropertyFormulation
@@ -59,8 +59,8 @@ def _get_invariant_formulation(
     inv_ctx: WorkspaceContext,
     builder: Builder[None, None, None]
 ) -> Invariants:
-    if (cached := inv_ctx.cache_get()) is not None:
-        return Invariants.model_validate(cached)
+    if (cached := inv_ctx.cache_get(Invariants)) is not None:
+        return cached
 
     def merge_invariant_feedback(left: dict[str, tuple[str, InvFeedbackSort]], right: dict[str, tuple[str, InvFeedbackSort]]) -> dict:
         to_ret = left.copy()
@@ -177,7 +177,7 @@ def _get_invariant_formulation(
     )
     assert "result" in s
     to_ret = s["result"]
-    inv_ctx.cache_put(to_ret.model_dump())
+    inv_ctx.cache_put(to_ret)
     return to_ret
 
 
@@ -185,7 +185,7 @@ def structural_invariants_flow(
     ctx: WorkspaceContext,
     conf: ProverContext,
     builder: Builder[None, None, None],
-    cvl_builder: Builder[None, None, FlowInput]
+    cvl_builder: CVLBuilder
 ) -> list[CVLResource]:
     s = _get_invariant_formulation(
         ctx.child("structural-inv"),
@@ -246,8 +246,8 @@ def structural_invariants_flow(
                 ))
             
             gen : GeneratedCVL
-            if (d := inv_ctx.cache_get()) is not None:
-                gen = cast(GeneratedCVL, d)
+            if (cached := inv_ctx.cache_get(GeneratedCVL)) is not None:
+                gen = cached
             else:
                 try:
                     gen = generate_property_cvl(
@@ -260,8 +260,8 @@ def structural_invariants_flow(
                     )
                 except GraphRecursionError:
                     continue
-                inv_ctx.cache_put(gen) #type: ignore
-            print(gen["commentary"])
+                inv_ctx.cache_put(gen)
+            print(gen.commentary)
             inv_name = f"{to_generate.name}.spec"
             to_ret.append(CVLResource(
                 import_path=inv_name,
@@ -269,7 +269,7 @@ def structural_invariants_flow(
                 description=f"A specification file containing the invariant {to_generate.name}, which may be necessary to assume a precondition.",
                 sort="import"
             ))
-            (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(gen["cvl"])
+            (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(gen.cvl)
             inv_to_impl[to_generate.name] = inv_name
 
             if to_generate.name in dependents:

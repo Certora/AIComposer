@@ -9,15 +9,36 @@ Given the following {{ thing }} description:
   {{ thing_descr}}
 </{{ thing_tag }}>
 
-Follow these steps exactly
+Follow procedure exactly:
+
+## Step 0
+
+Gather information about the Web3 application and its relationship with {{ thing }}. Use this information to inform how you plan
+to formalize {{ what_formal }}.
+
+When collecting broad information about the source code (e.g., "where is X modified?", "what entry points are responsible
+for implementing feature Y") prefer using the code exploration tool instead of exploring the source code directly.
+
+Do NOT use the exploration tool to answer questions like "What is the type signature of X" or "what is the implementation of function F",
+these are better answered by "reading" the code directly.
+
+IMPORTANT: you may assume that the source code has not changed in any way that invalidates the the exploration tool's answers.
+
 
 ## Step 1
 
 Write a CVL (Certora Verification Language) specification which shows {% if thing_tag == "attack_vector" %}
 the described attack/exploit cannot occur{% else %}that the {{ thing }} holds.{%endif%}
 
-When writing your specification, you may consult the implementation of the component to, e.g., understand the role
+When writing your specification, you may consult the implementation of the application to, e.g., understand the role
 of external arguments, etc.
+
+If you are facing a specific issue, use the knowledge base articles to search for help.
+
+When you need to understand CVL syntax, patterns, or language features — especially for
+non-obvious constructs or features — delegate to the cvl_research tool rather than searching the manual yourself.
+
+Before writing your specification, use the `extended_reasoning` tool for in-context analysis of your collected information.
 
 ## Step 2
 
@@ -27,7 +48,12 @@ and reinvoke the tool until it is satisfied with your specification.
 ## Step 3
 
 Use the provided `verify_spec` tool to test your spec. If there are verification failures
-that point to errors in your specification, refine your specification until they have been addressed.
+that point to errors in your specification, refine your specification, and return to step 2.
+
+If the prover feedback requires non-trivial changes, be sure to use the `extended_reasoning` tool to reflect on
+and appropriately digest the feedback from the prover before actually editing your specification.
+
+As in step 2, if you are facing specific issues, use the knowledge base articles to search for help.
 
 ## Step 4
 
@@ -54,8 +80,9 @@ You may also make use of the following CVL resources, available as CVL files.
 
 {% if memory %}
 <state>
-Use the available memory tools to track your progress, any lessons about CVL you may have learned,
- or any other significant, relevant information to this task. In particular, be sure to update your memory before calling the prover.
+Use the available memory tools to track your progress through this algorithm, any important lessons about CVL you may have learned,
+or any other significant, relevant information to this task. In particular, be sure to update your memory before calling the prover to summarize
+your current approach.
 </state>
 {% endif %}
 </task>
@@ -68,21 +95,8 @@ Use the available memory tools to track your progress, any lessons about CVL you
 {% include "cvl_guidelines.j2" %}
 {% include "cvl_additions.j2" %}
   <tools>
-  You are encouraged to use the cvl_manual_search tool for information on CVL.
-  </tools>
-  <tools>
-    If you are facing a specific issue, use the knowledge base articles to search for help.
-  </tools>
-  <tools>
-    When collecting broad information about the source code (e.g., "where is X modified?", "what entry points are responsible
-    for implementing feature Y") prefer using the code exploration tool instead of exploring the source code directly.
-
-    Do NOT use the exploration tool to answer questions like "What is the type signature of X" or "what is the implementation of function F",
-    these are better answered by "reading" the code directly.
-
-    IMPORTANT: you may assume that the source code has not changed in anyway that invalidates the the exploration tool's answers.
-  </tools>
-  <tools>
-    Use the `extending_reasoning` tool for in-context analysis of gathered data. Use memory for cross-session recall. These are distinct tools with different purposes.
+    When choosing between using the `memory` tool or the `extended_reasoning` tool:
+       extended_reasoning: synthesize information you've gathered in this conversation before making a decision.
+       memory: record lessons that should persist across runs (e.g., "this contract requires strengthened invariants for X").
   </tools>
 </guidance>

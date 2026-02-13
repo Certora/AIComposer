@@ -167,7 +167,7 @@ class HarnessSetup(BaseModel):
     """
     setup: ContractSetup
     vfs: dict[str, str]
-    is_v2: Literal["is_v2"]
+    is_v2: Literal["is_v2"] = "is_v2"
 
 class HarnessProtocol(Protocol):
     @property
@@ -390,12 +390,8 @@ def _harness_setup(
     b: Builder[None, None, None]
 ) -> HarnessSetup:
     harness_ctx = ctx.child("harnessing")
-    if (cached := harness_ctx.cache_get()) is not None:
-        adapted = cached
-        if "is_v2" not in cached:
-            adapted = adapted.copy()
-            adapted["is_v2"] = "is_v2"
-        return HarnessSetup.model_validate(adapted)
+    if (cached := harness_ctx.cache_get(HarnessSetup)) is not None:
+        return cached
     
     class SVC():
         def tid(self) -> str:
@@ -428,9 +424,7 @@ def _harness_setup(
         svc, ctx, b
     )
 
-    harness_ctx.cache_put(
-        to_ret.model_dump()
-    )
+    harness_ctx.cache_put(to_ret)
     return to_ret
 
 def setup_and_harness_agent(
@@ -442,8 +436,8 @@ def setup_and_harness_agent(
     child_ctxt = ctx.child(
         "setup"
     )
-    if (cached := child_ctxt.cache_get()) is not None:
-        return Configuration.model_validate(cached)
+    if (cached := child_ctxt.cache_get(Configuration)) is not None:
+        return cached
 
     certora_dir = Path(ctx.project_root) / "certora"
     if certora_dir.exists() and not ignore_existing_config:
@@ -502,5 +496,5 @@ def setup_and_harness_agent(
         summaries_path=str(r.summaries_path),
         user_types=r.user_types
     )
-    child_ctxt.cache_put(to_ret.model_dump())
+    child_ctxt.cache_put(to_ret)
     return to_ret
