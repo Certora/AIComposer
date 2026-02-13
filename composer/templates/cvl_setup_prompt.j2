@@ -74,7 +74,9 @@ For each planned summary, determine the following:
 You *MUST* write your plan using the "write_plan" tool.
 
 If you are instructed to use the "standard erc20 summarization", use the "erc20_guidance" tools for more details
-on how this is accomplished.
+on how this is accomplished. When considering whether the purely symbolic or hybrid approach is necessary,
+consider whether any of the inputs to the prover are ERC20 tokens. You may need to investigate the inheritance hierarchy
+to make this determination.
 
 ## Step 6
 
@@ -107,5 +109,9 @@ Signal the completion of your work by calling the "result" tool.
   <hard_requirement>
    Do *NOT* write any rules or invariants that attempt to prove the soundness of these summaries. Your CVL
    output should consist SOLELY of the summary annotations and the supporting definitions.
+  </hard_requirement>
+  <hard_requirement>
+DO NOT, under any circumstances, use "assert" in any of the summaries you write. If you need to "exceptionally abort"
+    a summary, use the "revert" statement.
   </hard_requirement>
 </guidance>

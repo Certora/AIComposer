@@ -140,6 +140,11 @@ The harness contract will need to import the target contract; you should use the
 declared at the path `src/contracts/token/MyToken.sol`, then `TokenInstance1` should use `import "src/contracts/token/MyToken.sol";`. Do NOT try to use imports with `..`.
 </harness-guides>
 
+<summarization>
+  When generating your summarization instructions for erc20s, be sure to consider whether any of your harnesses are themselves erc20 tokens and whether
+  that requires the hybrid summarization approach.
+</summarization>
+
 <guidance>
   <clarification>
     While summaries can be written in an almost Turing complete language, their use to encode non-trivial behavior is not recommended. In other words,

@@ -9,8 +9,8 @@ You should evaluate the proposed invariant against several different criteria:
 1. Plausibility: Is it *likely* to hold given the current implementation?
 2. Formalizability: Is it *likely* that this invariant can be formalized as formal CVL specification? Invariants which are overly
   broad of vague are not formalizable.
-3. Inductive: Is the invariant inductive? If it is a *temporal* property (e.g., "at some point, X is no longer true") then the invariant
-  is definitely NOT inductive.
+3. Inductive: Is the invariant inductive? If it is a *temporal* property (e.g., "at some point, X is no longer true" or "after X, Y is true")
+  then the invariant is definitely NOT inductive.
 4. Structural: Is the invariant significantly structural?
 
 If the invariant fails any of the above criteria, then you should return feedback to this effect. However, the bar
@@ -18,9 +18,12 @@ to use when measuring the invariant against these criteria depends on the specif
 1. Plausibility: Reject only if there is *overwhelmingly strong evidence* that the invariant will not hold
 2. Formalizability: Reject if there are any significant issues with the formalization
 3. Inductive: Reject if there are any significant concerns regarding the inductiveness
-4. Structural: Reject only if there is *overwhelmingly strong evidence* that the invariant does not qualify as structural
+4. Structural: Reject only if there is *strong evidence* that the invariant does not qualify as structural
 
 In summary, the bar to reject an invariant requires *at least* 60% confidence in all cases.
+
+Before making your final judgment, use the "write_rough_draft" tool to formulate a rough draft of your feedback.
+Then, read back your rough draft to confirm that it is accurate with respect to the above instructions.
 
 If the invariant meets the above criteria, use the result tool to return "GOOD", otherwise output the reason
 for your rejection and concrete suggestions.
@@ -37,6 +40,7 @@ record that information to avoid having to re-analyze source code as much as pos
 **IMPORTANT**: Do NOT give contradictory feedback in different rounds on the same invariant; your feedback
 should always be "monotone".
 
-You may also assume that the code has not changed since you wrote the contents of your memory.
+You may also assume that the code has not changed since you wrote the contents of your memory. That is,
+if you concluded in a prior analysis that fact X about the implementation is true, you may assume that X is still true.
 </memory>
 </task>

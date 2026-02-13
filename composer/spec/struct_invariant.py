@@ -19,6 +19,7 @@ from composer.workflow.services import get_checkpointer
 from composer.spec.graph_builder import bind_standard
 from composer.spec.prop import PropertyFormulation
 from composer.spec.cvl_generation import generate_property_cvl, CVLResource, ProverContext, GeneratedCVL
+from composer.spec.draft import get_rough_draft_tools
 
 class BaseInvariant(BaseModel):
     """
@@ -103,6 +104,8 @@ def _get_invariant_formulation(
 
     class FeedbackST(MessagesState):
         result: NotRequired[InvariantFeedback]
+        did_read: NotRequired[bool]
+        memory: NotRequired[str]
 
     feedback_graph = bind_standard(
         builder,
@@ -113,7 +116,7 @@ def _get_invariant_formulation(
         "invariant_judge_prompt.j2",
         contract_spec=inv_ctx
     ).with_tools(
-        [*fs, judge_ctx.get_memory_tool()]
+        [*fs, judge_ctx.get_memory_tool(), *get_rough_draft_tools(FeedbackST)]
     ).with_input(
         FlowInput
     ).build_async()[0].compile(
@@ -124,7 +127,9 @@ def _get_invariant_formulation(
 
     class InvariantFeedbackTool(WithInjectedId, WithAsyncImplementation[Command]):
         """
-        Receive feedback on one of your invariants
+        Receive feedback on one of your invariants.
+
+        You may call this tool in parallel.
         """
         inv: BaseInvariant = Field(description="The invariant to receive feedback on")
         

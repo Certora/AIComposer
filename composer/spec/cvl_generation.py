@@ -22,6 +22,7 @@ from composer.spec.trunner import run_to_completion, run_to_completion_sync
 from composer.spec.component import ComponentInst
 from composer.spec.prover import get_prover_tool
 from composer.workflow.services import get_checkpointer
+from composer.spec.draft import get_rough_draft_tools
 
 class PropertyFeedback(BaseModel):
     """
@@ -48,35 +49,11 @@ def property_feedback_judge(
         did_read: NotRequired[bool]
         curr_spec: NotRequired[str]
 
-    class GetMemory(WithInjectedState[ST], WithImplementation[Command | str], WithInjectedId):
-        """
-        Retrieve the rough draft of the feedback
-        """
-        @override
-        def run(self) -> str | Command:
-            mem = self.state.get("memory", None)
-            if mem is None:
-                return "Rough draft not yet written"
-            return Command(update={
-                "messages": [ToolMessage(tool_call_id=self.tool_call_id, content=mem)],
-                "did_read": True
-            })
-
+    
     class SpecJudgeInput(FlowInput):
         curr_spec: str
 
-    class SetMemory(WithInjectedId, WithImplementation[Command]):
-        """
-        Write your rough draft for review
-        """
-        rough_draft : str = Field(description="The new rough draft of your feedback")
-
-        @override
-        def run(self) -> Command:
-            return Command(update={
-                "memory": self.rough_draft,
-                "messages": [ToolMessage(tool_call_id=self.tool_call_id, content="Success")]
-            })
+    rough_draft_tools = get_rough_draft_tools(ST)
 
     def did_rough_draft_read(s: ST, _) -> str | None:
         h = s.get("did_read", None) is None
@@ -100,7 +77,7 @@ def property_feedback_judge(
         **prop.to_template_args()
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
-    ).with_tools([SetMemory.as_tool("write_rough_draft"), GetMemory.as_tool("read_rough_draft"), memory, get_cvl(ST)]).compile_async(
+    ).with_tools([*rough_draft_tools, memory, get_cvl(ST)]).compile_async(
         checkpointer=get_checkpointer()
     )
 
@@ -193,14 +170,10 @@ class ProverContext:
             self.prover_config,
             new_l
         )
-    
+
 class GeneratedCVL(TypedDict):
     commentary: str
     cvl: str
-
-# class Question(BaseModel):
-#     context: str = Field(description="A description of the context of the question. Describe what has worked, what you have tried, and what you're trying to accomplish")
-#     question: str = Field(description="The concrete question you need help with.")
 
 class ExplicitThinking(
     WithImplementation[Command],
@@ -234,10 +207,10 @@ class ExplicitThinking(
     )
     @override
     def run(self) -> Command:
-        return Command(update=[
+        return Command(update={"messages": [
             ToolMessage(tool_call_id=self.tool_call_id, content="Thought recorded."),
             HumanMessage(content="Now, consider your current thought process and carefully evaluate how to proceed.")
-        ])
+        ]})
 
 
 def generate_property_cvl(
@@ -313,6 +286,15 @@ Feedback {t.feedback}
     if with_memory:
         tools.append(ctx.get_memory_tool())
 
+    extra_inputs : list[str | dict] = []
+
+    if with_memory:
+        last_attempt = ctx.child("last_attempt").cache_get()
+        if last_attempt is not None:
+            extra_inputs.append("Your last working draft was:")
+            extra_inputs.append(last_attempt["cvl"])
+        
+
     d = bind_standard(
         builder, ST, "A description of your generated CVL"
     ).with_input(
@@ -331,11 +313,17 @@ Feedback {t.feedback}
         checkpointer=get_checkpointer()
     )
 
-    r = run_to_completion_sync(
-        d,
-        FlowInput(input=[]),
-        thread_id=ctx.thread_id
-    )
+    try:
+        r = run_to_completion_sync(
+            d,
+            FlowInput(input=extra_inputs),
+            thread_id=ctx.thread_id
+        )
+    finally:
+        last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values
+        if "curr_spec" in last_state and with_memory:
+            ctx.child("last_attempt").cache_put({"cvl": last_state["curr_spec"]})
+
     assert "result" in r and "curr_spec" in r
 
     return {

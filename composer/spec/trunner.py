@@ -356,7 +356,13 @@ class ToolCallWidget(Vertical):
         self._args_str = args_str
 
     def compose(self) -> ComposeResult:
-        yield Static(f"[bold yellow]Tool Call[/bold yellow]: [bold]{self._tool_name}[/bold]\n{self._args_str}")
+        yield Static(f"[bold yellow]Tool Call[/bold yellow]: [bold]{self._tool_name}[/bold]")
+        if self._args_str:
+            yield Collapsible(
+                Static(self._args_str),
+                title="Input",
+                collapsed=True,
+            )
 
 
 class ProverOutputPanel(Vertical):

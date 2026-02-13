@@ -69,6 +69,7 @@ def run_preaudit_setup(
                 sys.executable, "-m", "orchestrator",
                 main_contract_path,
                 "--setup-only", f.name,
+                "--skip-hashing-bound-detection", "1024",
                 "--use-local-runner",
                 "--additional-contracts", *extra_files,
                 "--main-contracts",

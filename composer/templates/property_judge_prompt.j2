@@ -44,7 +44,12 @@ NOTE: portions of the input state may be unconstrained/undercontrained if they d
 You may also consider the inverse; over-constraining the input space may cause the prover to miss real bugs. When possible, all requirements should be implied or explicitly
 backed up by another rule or invariant.
 
-### Criteria 5: Manifest Errors
+### Criteria 5: Trivializing summaries
+Consider if any of the summaries added in the spec *trivialize* the verification by summarizing away obviously crucial behavior. For example,
+if the specification summarizes away an invocation of a contract function which moves balances as "NONDET", then this effectively makes any balance
+transfers a NO-OP trivializing any property that reasons about balances.
+
+### Criteria 6: Manifest Errors
 
 Finally, audit the rule to determine if it is likely to fail because it is *OBVIOUSLY* wrong; it asserts that the contract does X, but the contract actually does Y
 (and Y is, with overwhelming probability, the correct outcome). For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
@@ -75,7 +80,7 @@ The {{ thing }} is described as: {{ thing_descr }}
 
 <guidance>
 <hard_requirement>
-Do not provide ANY feedback except for the 5 criteria above.
+Do not provide ANY feedback except for the 6 criteria above.
 </hard_requirement>
 <hard_requirement>
 Do NOT make assertions about the behavior of CVL without first checking the manual.

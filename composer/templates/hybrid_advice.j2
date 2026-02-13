@@ -1,0 +1,59 @@
+If the main contracts interacts both with explicit ERC20 instances in the prover 
+(i.e., inputs to the Prover which are ERC20 tokens) and other, unmodelled tokens, it is necessary
+to take a hybrid summarization approach.
+
+Under this model, the ERC20 summaries all include a dispatch prefix which checks whether the
+receiver token is one of the known ERC20 contracts fed into the prover, and if so, simply forwards
+the call to the appropriate instance. For example, suppose there are two special ERC20 token harnesses,
+called "StakeToken1" and "StakeToken2". Then the implementation for the transfer summary would look like this:
+
+```
+using StakeToken1 as _erc20_summ_stake1;
+using StakeToken1 as _erc20_summ_stake2;
+
+function transferCVL(
+    address token,
+    address sender,
+    address recipient,
+    uint256 amount
+) returns bool {
+    if(token == _erc20_summ_stake1) {
+        env e;
+        require(e.msg.sender == sender);
+        return _erc20_summ_stake1.transfer(recipient, amount);
+    } else if(token == _erc20_summ_stake2) {
+        env e;
+        require(e.msg.sender == sender);
+        return _erc20_summ_stake2.transfer(recipient, amount);
+    }
+    bool returnOnError;
+    // ... as before
+}
+```
+
+with similar dispatching at the beginning of the other CVL functions which model the ERC20 behavior.
+
+In addition, it is necessary to *synchronize* the state between the ghost state used in summaries
+and the concrete ERC20 instances. Under this hybrid approach, specification writers will use the ghost state
+to reason about token state without needing to consider whether the token in question is explicitly modelled
+vs symbolic.
+
+To synchronize the state, it is necessary to add *hooks* on storage state reads and writes in the explicitly
+modelled ERC20 instances. For example, an `Sload` hook is necessary to constrain the values in one token's balances
+map to be in sync with the ghost balances:
+
+```
+hook Sload uint balance _erc20_summ_stake1._balances[KEY address account] {
+    require balance == balanceByToken[_erc20_summ_stake1][account];
+}
+```
+
+And a store hook to similarly synchronize on writes:
+
+```
+hook Sstore _erc20_summ_stake1._balances[key address account] uint newValue {
+    balanceByToken[_erc20_summ_stake1][account] = newValue;
+}
+```
+
+One such set of hooks will be needed for each explicit erc20 instance.
