@@ -4,7 +4,7 @@ from langgraph.graph import MessagesState
 
 from graphcore.graph import FlowInput
 
-from composer.spec.context import WorkspaceContext, CVLOnlyBuilder
+from composer.spec.context import WorkspaceContext, CVLOnlyBuilder, CVLGeneration
 from composer.spec.graph_builder import bind_standard
 from composer.spec.trunner import run_to_completion
 from composer.spec.draft import get_rough_draft_tools
@@ -42,11 +42,9 @@ needs a dense, precise answer they can immediately apply.
 
 
 def cvl_researcher(
-    ctx: WorkspaceContext,
+    ctx: WorkspaceContext[CVLGeneration],
     builder: CVLOnlyBuilder,
 ) -> ResearchTool:
-
-    child = ctx.child("researcher")
 
     class ST(MessagesState):
         memory: NotRequired[str]
@@ -78,7 +76,7 @@ def cvl_researcher(
         res = await run_to_completion(
             workflow,
             FlowInput(input=[question]),
-            thread_id=child.uniq_thread_id(),
+            thread_id=ctx.uniq_thread_id(),
         )
         assert "result" in res
         return res["result"]

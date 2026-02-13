@@ -16,9 +16,9 @@ from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import Builder, BaseChatModel
 
 from composer.templates.loader import load_jinja_template
-from composer.spec.trunner import run_to_completion_sync
+from composer.spec.trunner import run_to_completion
 from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
-from composer.spec.context import WorkspaceContext
+from composer.spec.context import WorkspaceContext, CacheKey
 from composer.workflow.services import get_checkpointer, create_llm
 
 class ExternalActor(BaseModel):
@@ -206,7 +206,7 @@ class _ServiceProtocol(Protocol):
     def get_checkpointer(self) -> Checkpointer:
         ...
 
-    def graph_runner[S: StateLike, I: StateLike](
+    async def graph_runner[S: StateLike, I: StateLike](
         self,
         graph: CompiledStateGraph[S, None, I, Any],
         input: I,
@@ -235,7 +235,7 @@ class LLMParams:
     memory_tool: bool
     
 
-def analyze_external_interactions(
+async def analyze_external_interactions(
     basic_ctx: HarnessProtocol,
     forbidden_reads: str,
     llm: BaseChatModel | LLMParams
@@ -289,21 +289,21 @@ def analyze_external_interactions(
             
             return vfs_tools(conf=conf, ty=ty)
 
-        def graph_runner[S: StateLike, I: StateLike](
+        async def graph_runner[S: StateLike, I: StateLike](
             self,
             graph: CompiledStateGraph[S, None, I, Any],
             input: I,
             thread_id: str,
             recursion_limit: int
         ) -> S:
-            res = graph.invoke(input, config={"configurable": {"thread_id": thread_id}, "recursion_limit": recursion_limit})
+            res = await graph.ainvoke(input, config={"configurable": {"thread_id": thread_id}, "recursion_limit": recursion_limit})
             return cast(S, res)
 
-    return _harness_setup_inner(
+    return await _harness_setup_inner(
         SVC(), basic_ctx, b
     )
 
-def _harness_setup_inner(
+async def _harness_setup_inner(
     svc: _ServiceProtocol,
     ctx: HarnessProtocol,
     b: Builder[None, None, None]
@@ -365,7 +365,7 @@ def _harness_setup_inner(
         contract_spec=ctx
     ).compile_async(checkpointer=svc.get_checkpointer())
 
-    st = svc.graph_runner(
+    st = await svc.graph_runner(
         graph,
         input=VFSInput(vfs={}, input=[]),
         thread_id=svc.tid(),
@@ -385,11 +385,13 @@ def _harness_setup_inner(
     to_ret = HarnessSetup(vfs=vfs, setup=res, is_v2="is_v2")
     return to_ret
 
-def _harness_setup(
-    ctx: WorkspaceContext,
+HARNESS_KEY = CacheKey[Configuration, HarnessSetup]("harnessing")
+
+async def _harness_setup(
+    ctx: WorkspaceContext[Configuration],
     b: Builder[None, None, None]
 ) -> HarnessSetup:
-    harness_ctx = ctx.child("harnessing")
+    harness_ctx = ctx.child(HARNESS_KEY)
     if (cached := harness_ctx.cache_get(HarnessSetup)) is not None:
         return cached
     
@@ -410,32 +412,32 @@ def _harness_setup(
         ) -> tuple[list[BaseTool], VFSAccessor[T]]:
             return ctx.vfs_tools(ty, forbidden_write, put_doc_extra)
     
-        def graph_runner[S: StateLike, I: StateLike](self,
+        async def graph_runner[S: StateLike, I: StateLike](self,
             graph: CompiledStateGraph[S, None, I, Any],
             input: I,
             thread_id: str,
             recursion_limit: int
         ) -> S:
-            return run_to_completion_sync(graph, input, thread_id, recursion_limit=recursion_limit)
+            return await run_to_completion(graph, input, thread_id, recursion_limit=recursion_limit)
     
     svc : _ServiceProtocol = SVC()
 
-    to_ret = _harness_setup_inner(
+    to_ret = await _harness_setup_inner(
         svc, ctx, b
     )
 
     harness_ctx.cache_put(to_ret)
     return to_ret
 
-def setup_and_harness_agent(
-    ctx: WorkspaceContext,
+SETUP_KEY = CacheKey[None, Configuration]("setup")
+
+async def setup_and_harness_agent(
+    ctx: WorkspaceContext[None],
     b: Builder[None, None, None],
     *,
     ignore_existing_config: bool
 ) -> Configuration:
-    child_ctxt = ctx.child(
-        "setup"
-    )
+    child_ctxt = ctx.child(SETUP_KEY)
     if (cached := child_ctxt.cache_get(Configuration)) is not None:
         return cached
 
@@ -446,7 +448,7 @@ def setup_and_harness_agent(
             "Use --ignore-existing-config to proceed anyway."
         )
 
-    h_setup = _harness_setup(child_ctxt, b)
+    h_setup = await _harness_setup(child_ctxt, b)
     vfs = h_setup.vfs
     res = h_setup.setup
 

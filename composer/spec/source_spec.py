@@ -6,6 +6,7 @@ compilation analysis and verification.
 """
 
 import argparse
+import asyncio
 import hashlib
 
 import composer.certora as _
@@ -25,7 +26,7 @@ import uuid
 from typing import cast
 
 
-from composer.spec.context import WorkspaceContext, JobSpec, Builders, SourceBuilder, CVLBuilder
+from composer.spec.context import WorkspaceContext, JobSpec, Builders, SourceBuilder, CVLBuilder, CacheKey, Properties, ComponentGroup, CVLGeneration
 from composer.spec.harness import setup_and_harness_agent
 from composer.spec.struct_invariant import structural_invariants_flow
 
@@ -44,7 +45,10 @@ from composer.spec.component import ApplicationComponent, ComponentInst
 from composer.spec.bug import run_bug_analysis
 from composer.spec.component import run_component_analysis
 from composer.spec.cvl_generation import generate_property_cvl, CVLResource, ProverContext, GeneratedCVL
+from composer.spec.prover import get_prover_tool, WithCVL
 from composer.spec.summarizer import setup_summaries
+from composer.spec.trunner import buffer_collection, fresh_buffer
+from composer.spec.job_manager import JobManagerApp
 
 T = TypeVar('T')
 
@@ -91,62 +95,70 @@ def _string_hash(
 def _cache_key_bug_analysis(
     component: "ApplicationComponent",
     summ: str
-) -> str:
+) -> CacheKey[Properties, ComponentGroup]:
     """Generate a cache key for bug analysis based on inputs."""
     components = [
         component.model_dump_json(),
         summ,
     ]
     combined = "|".join(str(c) for c in components)
-    return _string_hash(combined)
+    return CacheKey(_string_hash(combined))
 
 # Common forbidden read pattern for source analysis
 FS_FORBIDDEN_READ = "(^lib/.*)|(^\\.certora_internal.*)|(^\\.git.*)|(^test/.*)|(^emv-.*)|(.*\\.json$)"
 
+PROPERTIES_KEY = CacheKey[None, Properties]("properties")
+
 type PropertyFormalization = tuple[PropertyFormulation, str, str]
 
-def _analyze_component(
-    ctx: WorkspaceContext,
+def _property_cache_key(prop: PropertyFormulation) -> CacheKey[ComponentGroup, GeneratedCVL]:
+    return CacheKey(_string_hash(prop.model_dump_json()))
+
+async def _analyze_component(
+    ctx: WorkspaceContext[Properties],
     conf: ProverContext,
     feat: ComponentInst,
     builders: Builders,
 ) -> None | list[tuple[PropertyFormulation, str, str]]:
-    cache_key = _cache_key_bug_analysis(feat.component, feat.summ.application_type)
+    name = feat.component.name
     feat_ctx = ctx.child(
-        cache_key,
+        _cache_key_bug_analysis(feat.component, feat.summ.application_type),
         {
             "component": feat.component.model_dump(),
             "app_type": feat.summ.application_type
         }
     )
-    res = run_bug_analysis(feat_ctx, feat, builders.source)
+
+    with fresh_buffer(name=f"{name}: analysis"):
+        res = await run_bug_analysis(feat_ctx, feat, builders.source)
     if res is None:
         print("Didn't work")
         return None
-    work : list[tuple[PropertyFormulation, str, str]] = []
-    for prop in res:
-        print(prop)
-        prop_model = prop.model_dump()
-        prop_key = _string_hash(prop.model_dump_json())
-        prop_ctx = feat_ctx.child(prop_key, prop_model)
+
+    async def _verify_property(prop: PropertyFormulation) -> tuple[PropertyFormulation, str, str]:
+        prop_ctx = feat_ctx.child(_property_cache_key(prop), prop.model_dump())
         m = prop_ctx.cache_get(GeneratedCVL)
         if m is not None:
             r = m.commentary
             cvl = m.cvl
         else:
-            d = generate_property_cvl(
-                ctx=prop_ctx, builders=builders, prover_setup=conf, feat=feat, prop=prop, with_memory=False
-            )
+            prop_label = prop.description[:50]
+            with fresh_buffer(name=f"{name}: {prop_label}"):
+                d = await generate_property_cvl(
+                    ctx=prop_ctx.abstract(CVLGeneration), builders=builders, prover_setup=conf, feat=feat, prop=prop, with_memory=False
+                )
             prop_ctx.cache_put(d)
             cvl = d.cvl
             r = d.commentary
         print(cvl)
         print(r)
-        work.append((prop, r, cvl))
-    return work
+        return (prop, r, cvl)
+
+    results = await asyncio.gather(*[_verify_property(prop) for prop in res])
+    return list(results)
 
 
-def execute(args: SourceSpecArgs) -> int:
+async def execute(args: SourceSpecArgs) -> int:
     """Execute source-based spec generation workflow."""
 
     thread_id = args.thread_id if args.thread_id else f"source_spec_{uuid.uuid4().hex}"
@@ -168,6 +180,8 @@ def execute(args: SourceSpecArgs) -> int:
 
     indexed_store = get_indexed_store(DefaultEmbedder(model))
 
+    prover_sem = asyncio.Semaphore(args.max_parallel if args.cloud else 1)
+
     class SVCHost():
         def kb_tools(self, read_only: bool) -> list[BaseTool]:
             return kb_tools(
@@ -175,10 +189,10 @@ def execute(args: SourceSpecArgs) -> int:
                 kb_ns=("cvl",),
                 read_only=read_only
             )
-        
+
         def fs_tools(self) -> list[BaseTool]:
             return fs_tools(args.project_root, forbidden_read=FS_FORBIDDEN_READ)
-        
+
         def vfs_tools[S: VFSState](
                 self,
                 ty: type[S],
@@ -194,9 +208,15 @@ def execute(args: SourceSpecArgs) -> int:
             if put_doc_extra:
                 tool_conf["put_doc_extra"] = put_doc_extra
             return vfs_tools(tool_conf, ty)
-        
+
         def llm(self) -> LLM:
             return llm
+
+        def prover_tool[T: WithCVL](self, ty: type[T], config: dict) -> BaseTool:
+            return get_prover_tool(
+                llm, ty, config, main_contract_name, args.project_root,
+                cloud=args.cloud, semaphore=prover_sem,
+            )
 
     host = SVCHost()
 
@@ -223,7 +243,7 @@ def execute(args: SourceSpecArgs) -> int:
             "ts": time.time()
         })
 
-    ctx = WorkspaceContext.create(
+    ctx : WorkspaceContext[None] = WorkspaceContext.create(
         services=host,
         js=spec,
         thread_id=thread_id,
@@ -236,7 +256,7 @@ def execute(args: SourceSpecArgs) -> int:
 
     basic_builder: Builder[None, None, None] = Builder().with_llm(llm).with_loader(load_jinja_template)
 
-    d = setup_and_harness_agent(
+    d = await setup_and_harness_agent(
         ctx, basic_builder, ignore_existing_config=args.ignore_existing_config
     )
 
@@ -271,42 +291,52 @@ def execute(args: SourceSpecArgs) -> int:
         cvl_only=basic_builder.with_tools(cvl_manual).with_input(FlowInput),
     )
 
-    custom_summaries = setup_summaries(
+    custom_summaries = await setup_summaries(
         ctx, d, cvl_builder
     )
 
     resources.append(custom_summaries)
 
-    invariants = structural_invariants_flow(
-        ctx, ProverContext(
-            d.config, resources,
-            cloud=args.cloud, max_parallel=args.max_parallel,
-        ), basic_builder, builders
+    invariants = await structural_invariants_flow(
+        ctx, ProverContext(d.config, resources), basic_builder, builders
     )
 
     resources.extend(invariants)
 
-    prover_context = ProverContext(
-        d.config, resources,
-        cloud=args.cloud, max_parallel=args.max_parallel,
-    )
+    prover_context = ProverContext(d.config, resources)
 
-    analysis = run_component_analysis(ctx, source_builder)
+    analysis = await run_component_analysis(ctx, source_builder)
 
     if analysis is None:
         print("It didn't work :(")
         return 1
 
-    prop_context = ctx.child("properties")
+    prop_context = ctx.child(PROPERTIES_KEY)
 
-    for i in range(0, len(analysis.components)):
-        inst = ComponentInst(
-            analysis, i
-        )
-        _analyze_component(
-            prop_context, prover_context, inst, builders
-        )
-    
+    # -- parallel execution with job manager TUI ----------------------------
+    with buffer_collection() as buffers:
+        app = JobManagerApp(buffers=buffers)
+
+        async def _run_all_jobs() -> None:
+            await asyncio.gather(*[
+                _analyze_component(
+                    prop_context, prover_context,
+                    ComponentInst(analysis, i), builders
+                )
+                for i in range(len(analysis.components))
+            ])
+            # All jobs done — give user a moment then exit TUI
+            app.set_timer(5, lambda: app.exit())
+
+        # Run TUI and jobs concurrently
+        job_task = asyncio.create_task(_run_all_jobs())
+        await app.run_async()
+        # If TUI exits before jobs finish (user quit), cancel them
+        if not job_task.done():
+            job_task.cancel()
+        elif (exc := job_task.exception()) is not None:
+            raise exc
+
     return 0
 
 def auto_prover() -> int:
@@ -327,4 +357,4 @@ def auto_prover() -> int:
 
     res = cast(SourceSpecArgs, parser.parse_args())
 
-    return execute(res)
+    return asyncio.run(execute(res))

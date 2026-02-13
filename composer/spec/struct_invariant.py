@@ -13,8 +13,9 @@ from langchain_core.messages import ToolMessage
 from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 from graphcore.graph import Builder, FlowInput
 
-from composer.spec.trunner import run_to_completion_sync, run_to_completion
-from composer.spec.context import WorkspaceContext, Builders
+from composer.spec.trunner import run_to_completion, buffer_collection, fresh_buffer
+from composer.spec.context import WorkspaceContext, Builders, CacheKey, InvJudge, InvFormal, CVLGeneration
+from composer.spec.job_manager import JobManagerApp
 from composer.workflow.services import get_checkpointer
 from composer.spec.graph_builder import bind_standard
 from composer.spec.prop import PropertyFormulation
@@ -40,6 +41,17 @@ class Invariants(BaseModel):
     """
     inv: list[Invariant] = Field(description="The invariants you identified")
 
+STRUCTURAL_INV_KEY = CacheKey[None, Invariants]("structural-inv")
+INV_JUDGE_KEY = CacheKey[Invariants, InvJudge]("judge")
+INV_FORMAL_KEY = CacheKey[None, InvFormal]("inv-formal")
+
+def _inv_cache_key(inv: "Invariant") -> CacheKey[InvFormal, GeneratedCVL]:
+    import hashlib
+    uniq_key = hashlib.sha256(
+        f"{inv.name}|{inv.description}".encode()
+    ).hexdigest()[:16]
+    return CacheKey(f"{inv.name}-{uniq_key}")
+
 type InvFeedbackSort = Literal[
     "GOOD",
     "NOT_STRUCTURAL",
@@ -55,8 +67,8 @@ class InvariantFeedback(BaseModel):
     sort: InvFeedbackSort = Field(description="Your classification on the invariant")
     explanation: str = Field(description="An explanation of your finding, including any suggestions for improvement.")
 
-def _get_invariant_formulation(
-    inv_ctx: WorkspaceContext,
+async def _get_invariant_formulation(
+    inv_ctx: WorkspaceContext[Invariants],
     builder: Builder[None, None, None]
 ) -> Invariants:
     if (cached := inv_ctx.cache_get(Invariants)) is not None:
@@ -80,9 +92,7 @@ def _get_invariant_formulation(
 
     memory = inv_ctx.get_memory_tool()
 
-    judge_ctx = inv_ctx.child(
-        "judge"
-    )
+    judge_ctx = inv_ctx.child(INV_JUDGE_KEY)
 
     def validate_invariants(
         state: ST,
@@ -170,7 +180,7 @@ def _get_invariant_formulation(
         [*fs, memory, InvariantFeedbackTool.as_tool("invariant_feedback")]
     ).with_input(InvInput).build_async()[0].compile(checkpointer=get_checkpointer())
 
-    s = run_to_completion_sync(
+    s = await run_to_completion(
         graph=d,
         input=InvInput(input=[], invariant_data={}),
         thread_id=inv_ctx.thread_id,
@@ -181,102 +191,99 @@ def _get_invariant_formulation(
     return to_ret
 
 
-def structural_invariants_flow(
-    ctx: WorkspaceContext,
+async def structural_invariants_flow(
+    ctx: WorkspaceContext[None],
     conf: ProverContext,
     builder: Builder[None, None, None],
     builders: Builders,
 ) -> list[CVLResource]:
-    s = _get_invariant_formulation(
-        ctx.child("structural-inv"),
+    s = await _get_invariant_formulation(
+        ctx.child(STRUCTURAL_INV_KEY),
         builder
     )
-    n_waiting : dict[str, int] = {}
-    dependents : dict[str, set[str]]= {}
-    worklist : list[str] = []
 
-    i_map : dict[str, Invariant] = {}
+    child_invs = ctx.child(INV_FORMAL_KEY)
 
-    child_invs = ctx.child("inv-formal")
+    # Event-based dependency tracking: each invariant gets an event that is
+    # set on completion (success or failure).  Dependents await their
+    # dependency events before starting.
+    completion: dict[str, asyncio.Event] = {inv.name: asyncio.Event() for inv in s.inv}
+    inv_to_impl: dict[str, str] = {}
+    to_ret: list[CVLResource] = []
 
-    for inv in s.inv:
-        i_map[inv.name] = inv
-        if len(inv.dependencies) == 0:
-            worklist.append(inv.name)
-        else:
-            n_waiting[inv.name] = len(inv.dependencies)
-            for dep in inv.dependencies:
-                if dep not in dependents:
-                    dependents[dep] = set()
-                dependents[dep].add(inv.name)
+    async def _process_invariant(inv: Invariant) -> None:
+        try:
+            with fresh_buffer(name=f"invariant[{inv.name}]", status="waiting") as buf:
+                # Wait for all dependencies to finish
+                for dep_name in inv.dependencies:
+                    await completion[dep_name].wait()
+                buf.status = "running"
 
-    inv_to_impl : dict[str, str] = {}
+                # Build dependency resource list; skip if any dependency failed
+                dep_resources: list[CVLResource] = []
+                for dep_name in inv.dependencies:
+                    if dep_name not in inv_to_impl:
+                        return
+                    dep_resources.append(CVLResource(
+                        required=False,
+                        import_path=inv_to_impl[dep_name],
+                        description=f"A spec file containing the invariant `{dep_name}` which may be necessary to prove this invariant",
+                        sort="import"
+                    ))
 
-    to_ret : list[CVLResource] = []
+                inv_ctx = child_invs.child(_inv_cache_key(inv), inv.model_dump())
 
-    while len(worklist) > 0:
-        to_iter = worklist
-        worklist = []
-        for w in to_iter:
-            to_generate = i_map[w]
-            import hashlib
+                as_prop = PropertyFormulation(
+                    methods="invariant",
+                    description=inv.description,
+                    sort="invariant"
+                )
 
-            uniq_key = hashlib.sha256(
-                f"{to_generate.name}|{to_generate.description}".encode()
-            ).hexdigest()[:16]
+                gen: GeneratedCVL
+                if (cached := inv_ctx.cache_get(GeneratedCVL)) is not None:
+                    gen = cached
+                else:
+                    try:
+                        gen = await generate_property_cvl(
+                            inv_ctx.abstract(CVLGeneration),
+                            conf.with_resources(dep_resources),
+                            as_prop,
+                            None,
+                            builders,
+                            with_memory=True
+                        )
+                    except GraphRecursionError:
+                        return
+                    inv_ctx.cache_put(gen)
 
-            child_key = f"{to_generate.name}-{uniq_key}"
-
-            inv_ctx = child_invs.child(child_key, to_generate.model_dump())
-
-            as_prop = PropertyFormulation(
-                methods="invariant",
-                description=to_generate.description,
-                sort="invariant"
-            )
-            resources : list[CVLResource] = []
-
-            for d in to_generate.dependencies:
-                assert d in inv_to_impl
-                resources.append(CVLResource(
+                print(gen.commentary)
+                inv_name = f"{inv.name}.spec"
+                (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(gen.cvl)
+                inv_to_impl[inv.name] = inv_name
+                to_ret.append(CVLResource(
+                    import_path=inv_name,
                     required=False,
-                    import_path=inv_to_impl[d],
-                    description=f"A spec file containing the invariant `{d}` which may be necessary to prove this invariant",
+                    description=f"A specification file containing the invariant {inv.name}, which may be necessary to assume as a precondition.",
                     sort="import"
                 ))
-            
-            gen : GeneratedCVL
-            if (cached := inv_ctx.cache_get(GeneratedCVL)) is not None:
-                gen = cached
-            else:
-                try:
-                    gen = generate_property_cvl(
-                        inv_ctx,
-                        conf.with_resources(resources),
-                        as_prop,
-                        None,
-                        builders,
-                        with_memory=True
-                    )
-                except GraphRecursionError:
-                    continue
-                inv_ctx.cache_put(gen)
-            print(gen.commentary)
-            inv_name = f"{to_generate.name}.spec"
-            to_ret.append(CVLResource(
-                import_path=inv_name,
-                required=False,
-                description=f"A specification file containing the invariant {to_generate.name}, which may be necessary to assume a precondition.",
-                sort="import"
-            ))
-            (pathlib.Path(ctx.project_root) / "certora" / inv_name).write_text(gen.cvl)
-            inv_to_impl[to_generate.name] = inv_name
+        finally:
+            completion[inv.name].set()
 
-            if to_generate.name in dependents:
-                for dep in dependents[to_generate.name]:
-                    assert dep in n_waiting
-                    n_waiting[dep] -= 1
-                    if n_waiting[dep] == 0:
-                        worklist.append(dep)
+    if not s.inv:
+        return to_ret
+
+    with buffer_collection() as buffers:
+        app = JobManagerApp(buffers=buffers)
+
+        async def _run_all() -> None:
+            await asyncio.gather(*[_process_invariant(inv) for inv in s.inv])
+            app.set_timer(5, lambda: app.exit())
+
+        job_task = asyncio.create_task(_run_all())
+        await app.run_async()
+        if not job_task.done():
+            job_task.cancel()
+        elif (exc := job_task.exception()) is not None:
+            raise exc
 
     return to_ret

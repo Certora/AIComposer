@@ -5,12 +5,15 @@ import json
 import logging
 import sys
 import time
+import traceback as tb_mod
+import uuid
+from dataclasses import dataclass, field
 from contextlib import contextmanager
 from contextvars import ContextVar
 
 import composer.certora as _
 
-from typing import Iterable, TypeVar, Any
+from typing import Iterable, Literal, TypeVar, Any
 
 from langchain_core.messages import BaseMessage, ToolMessage, AIMessage, HumanMessage, SystemMessage
 from textual.app import App, ComposeResult
@@ -28,6 +31,12 @@ from langchain_core.runnables import RunnableConfig
 
 from langgraph._internal._typing import StateLike
 from langgraph.graph.state import CompiledStateGraph
+
+from composer.spec.events import (
+    BufferEvent, CheckpointEvt, NodeUpdateEvt, ProverOutputEvt, CloudPollingEvt,
+    NestedStart, NestedEnd, NestedEvt, SilentStart, SilentEnd, ErrorEvt,
+    parse_custom_event, dom_id, TOOL_CALL, PROVER_OUTPUT, SILENT_STATUS,
+)
 
 T = TypeVar('T')
 
@@ -66,20 +75,107 @@ class _TUILogHandler(logging.Handler):
         return out
 
 
-# Context variables for nested workflow detection
-_current_runner_app: ContextVar["GraphRunnerApp | None"] = ContextVar('_current_runner_app', default=None)
+# Context variables — routing execution to the correct buffer/depth
 _nesting_depth: ContextVar[int] = ContextVar('_nesting_depth', default=0)
 
 
+# ---------------------------------------------------------------------------
+# Buffer infrastructure for parallel job execution
+# ---------------------------------------------------------------------------
+
+@dataclass
+class JobEventBuffer:
+    """Append-only event log for a single workflow job.
+
+    Producers (``_run_depth0`` and its nested variants) append typed
+    ``BufferEvent`` instances and set ``notify``.  Consumers
+    (``GraphRunnerApp``, ``JobDisplay``) read from a cursor position,
+    clearing ``notify`` before draining and waiting again when caught up.
+    """
+    name: str
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    events: list[BufferEvent] = field(default_factory=list)
+    notify: asyncio.Event = field(default_factory=asyncio.Event)
+    resume: asyncio.Event = field(default_factory=lambda: _make_set_event())
+    status: Literal["waiting", "running", "done", "error"] = "running"
+
+    def append(self, event: BufferEvent) -> None:
+        """Append an event and wake any waiting consumer."""
+        self.events.append(event)
+        self.notify.set()
+
+
+def _make_set_event() -> asyncio.Event:
+    e = asyncio.Event()
+    e.set()
+    return e
+
+
+_current_event_buffer: ContextVar["JobEventBuffer | None"] = ContextVar(
+    '_current_event_buffer', default=None
+)
+
+_buffer_collection: ContextVar["list[JobEventBuffer] | None"] = ContextVar(
+    '_buffer_collection', default=None
+)
+
+
 @contextmanager
-def _workflow_context(app: "GraphRunnerApp | None", depth: int):
-    """Context manager for setting workflow nesting context."""
-    app_token = _current_runner_app.set(app)
-    depth_token = _nesting_depth.set(depth)
+def buffer_collection():
+    """Set up a shared buffer collection visible to ``fresh_buffer`` calls.
+
+    Yields the live list so callers can pass it to ``JobManagerApp``.
+    """
+    buffers: list[JobEventBuffer] = []
+    token = _buffer_collection.set(buffers)
+    try:
+        yield buffers
+    finally:
+        _buffer_collection.reset(token)
+
+
+@contextmanager
+def fresh_buffer(
+    name: str,
+    *,
+    status: Literal["waiting", "running"] = "running",
+):
+    """Create a ``JobEventBuffer``, register it in the collection, and activate it.
+
+    Must be called inside a ``buffer_collection`` context.
+    """
+    buffers = _buffer_collection.get()
+    if buffers is None:
+        raise RuntimeError("fresh_buffer used outside buffer_collection")
+    buf = JobEventBuffer(name=name, status=status)
+    buffers.append(buf)
+    with event_buffer_context(buf):
+        yield buf
+
+
+@contextmanager
+def event_buffer_context(buffer: JobEventBuffer):
+    """Public context manager: run code with *buffer* as the active event sink.
+
+    Sets ``_current_event_buffer`` and ``_nesting_depth`` for the calling
+    task.  On normal exit, marks the buffer ``"done"``; on exception,
+    marks it ``"error"`` and re-raises.  Always fires ``notify`` so
+    consumers see the terminal status.
+    """
+    buf_token = _current_event_buffer.set(buffer)
+    depth_token = _nesting_depth.set(0)
     try:
         yield
+    except Exception as exc:
+        buffer.status = "error"
+        buffer.append(ErrorEvt(message=str(exc), traceback=tb_mod.format_exc()))
+        raise
+    else:
+        if buffer.status in ("waiting", "running"):
+            buffer.status = "done"
     finally:
-        _current_runner_app.reset(app_token)
+        buffer.notify.set()
+        _current_event_buffer.reset(buf_token)
         _nesting_depth.reset(depth_token)
 
 
@@ -366,7 +462,7 @@ class ToolCallWidget(Vertical):
     """
 
     def __init__(self, tool_name: str, args_str: str, tool_call_id: str):
-        super().__init__(id=f"tool-call-{tool_call_id}")
+        super().__init__(id=dom_id(TOOL_CALL, tool_call_id))
         self._tool_name = tool_name
         self._args_str = args_str
 
@@ -399,8 +495,136 @@ class ProverOutputPanel(Vertical):
         self.query_one("#prover-log", RichLog).write(line)
 
 
+# ---------------------------------------------------------------------------
+# Shared event renderer — single rendering path for both TUI consumers
+# ---------------------------------------------------------------------------
+
+class EventRenderer:
+    """Stateful renderer: consumes ``BufferEvent`` instances and mounts widgets.
+
+    Used by both ``GraphRunnerApp`` (single-workflow TUI) and ``JobDisplay``
+    (job manager detail view).  Callers pass a Textual *app* (for DOM queries)
+    and a *container* (``ScrollableContainer``) into which widgets are mounted.
+
+    Set ``live = True`` to enable auto-scroll (live follow mode);
+    ``live = False`` suppresses scrolling (batch replay mode).
+
+    Populate ``skip_nested`` with thread IDs of already-completed nested
+    workflows before replaying history — their panels will be pre-collapsed.
+    """
+
+    def __init__(self, app: App, container: ScrollableContainer, *, live: bool = True) -> None:
+        self._app = app
+        self._container = container
+        self.live = live
+        self.skip_nested: set[str] = set()
+        self._nested_panels: dict[str, NestedWorkflowPanel] = {}
+        self._prover_panels: dict[str, ProverOutputPanel] = {}
+        self._pending_prover_lines: dict[str, list[str]] = {}
+
+    def _scroll(self) -> None:
+        if self.live:
+            self._container.scroll_end(animate=False)
+
+    async def render(self, event: BufferEvent) -> None:
+        """Render a single typed event.  Checkpoint events are no-ops (callers
+        that need status-bar updates should inspect the event separately)."""
+        match event:
+            case CheckpointEvt():
+                pass
+            case NodeUpdateEvt(node_name=name, state_update=update):
+                widget = UpdateWidget(name, update)
+                await self._container.mount(widget)
+                await self._flush_pending_prover()
+                self._scroll()
+            case ProverOutputEvt(tool_call_id=tc_id, line=line):
+                await self._route_prover(tc_id, line)
+            case CloudPollingEvt(tool_call_id=tc_id, message=msg):
+                await self._route_prover(tc_id, msg)
+            case NestedStart(thread_id=tid, workflow_name=wf_name):
+                panel = NestedWorkflowPanel(wf_name, tid, id=dom_id("nested", tid))
+                if tid in self.skip_nested:
+                    panel.mark_complete()
+                self._nested_panels[tid] = panel
+                await self._container.mount(panel)
+                self._scroll()
+            case NestedEvt(thread_id=tid, inner=inner):
+                panel = self._nested_panels.get(tid)
+                if panel is not None:
+                    await self._render_nested(inner, panel)
+            case NestedEnd(thread_id=tid):
+                panel = self._nested_panels.pop(tid, None)
+                if panel is not None:
+                    panel.mark_complete()
+            case SilentStart(thread_id=tid, workflow_name=wf_name):
+                status = Static(
+                    f"[dim]Running: {wf_name}...[/dim]",
+                    id=dom_id(SILENT_STATUS, tid),
+                    classes="update-header",
+                )
+                await self._container.mount(status)
+            case SilentEnd(thread_id=tid):
+                results = self._app.query(f"#{dom_id(SILENT_STATUS, tid)}")
+                if results:
+                    w = results[0]
+                    assert isinstance(w, Static)
+                    w.update("[dim]Completed[/dim]")
+            case ErrorEvt(message=msg, traceback=traceback):
+                await self._container.mount(
+                    Static(f"[bold red]Error:[/bold red] {rich_escape(msg)}")
+                )
+                if traceback:
+                    await self._container.mount(Collapsible(
+                        Static(Text(traceback)),
+                        title="Traceback",
+                        collapsed=False,
+                    ))
+                self._scroll()
+
+    async def _render_nested(self, event: BufferEvent, panel: NestedWorkflowPanel) -> None:
+        match event:
+            case CheckpointEvt(checkpoint_id=cp_id):
+                panel.update_checkpoint(cp_id)
+            case NodeUpdateEvt(node_name=name, state_update=update):
+                panel.update_node(name)
+                widget = UpdateWidget(name, update)
+                await panel.add_update(widget)
+                await self._flush_pending_prover()
+            case ProverOutputEvt(tool_call_id=tc_id, line=line):
+                await self._route_prover(tc_id, line)
+            case CloudPollingEvt(tool_call_id=tc_id, message=msg):
+                await self._route_prover(tc_id, msg)
+
+    async def _route_prover(self, tool_call_id: str, line: str) -> None:
+        if tool_call_id in self._prover_panels:
+            self._prover_panels[tool_call_id].append_line(line)
+            self._scroll()
+            return
+        self._pending_prover_lines.setdefault(tool_call_id, []).append(line)
+        await self._try_attach_prover(tool_call_id)
+
+    async def _try_attach_prover(self, tool_call_id: str) -> None:
+        results = self._app.query(f"#{dom_id(TOOL_CALL, tool_call_id)}")
+        if not results:
+            return
+        panel = ProverOutputPanel(id=dom_id(PROVER_OUTPUT, tool_call_id))
+        self._prover_panels[tool_call_id] = panel
+        await results[0].mount(panel)
+        for buffered_line in self._pending_prover_lines.pop(tool_call_id, []):
+            panel.append_line(buffered_line)
+
+    async def _flush_pending_prover(self) -> None:
+        for tc_id in list(self._pending_prover_lines.keys()):
+            await self._try_attach_prover(tc_id)
+
+
 class GraphRunnerApp(App):
-    """TUI for running a LangGraph to completion with pause/resume."""
+    """TUI for a single workflow: consumes typed events from a ``JobEventBuffer``.
+
+    The graph producer runs as a separate asyncio task (spawned by
+    ``_run_top_level_buffered``).  This app renders events, manages
+    pause/resume via ``buffer.resume``, and auto-exits on completion.
+    """
 
     CSS = """
     #status-bar {
@@ -447,34 +671,19 @@ class GraphRunnerApp(App):
     is_paused: reactive[bool] = reactive(False)
     is_complete: reactive[bool] = reactive(False)
 
-    def __init__(
-        self,
-        graph: CompiledStateGraph,
-        input: Any,
-        thread_id: str,
-        initial_checkpoint_id: str | None,
-        recursion_limit: int,
-        **kwargs
-    ) -> None:
+    def __init__(self, buffer: JobEventBuffer, display_thread_id: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
-        self.graph = graph
-        self.graph_input = input
-        self.thread_id = thread_id
-        self.checkpoint_id = initial_checkpoint_id
-        self.recursion_limit = recursion_limit
-        self._stream_task: asyncio.Task | None = None
+        self._buffer = buffer
+        self._display_thread_id = display_thread_id
+        self._follow_task: asyncio.Task | None = None
         self._error: Exception | None = None
         self._last_ctrl_c_time: float | None = None
-        self._resume_event: asyncio.Event = asyncio.Event()
-        self._resume_event.set()  # Initially not paused
-        self._nested_events: dict[str, asyncio.Event] = {}
-        self._nested_panels: dict[str, "NestedWorkflowPanel"] = {}
-        self._prover_panels: dict[str, ProverOutputPanel] = {}
+        self._renderer: EventRenderer | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="status-bar"):
-            yield Static(f"Thread: {self.thread_id}", id="thread-display")
+            yield Static(f"Thread: {self._display_thread_id}", id="thread-display")
             yield Static(" | ", classes="separator")
             yield Static("Checkpoint: -", id="checkpoint-display")
             yield Static(" | ", classes="separator")
@@ -490,11 +699,11 @@ class GraphRunnerApp(App):
         self._log_handler = _TUILogHandler()
         logger = logging.getLogger(_LOG_NAMESPACE)
         logger.addHandler(self._log_handler)
+        self._renderer = EventRenderer(
+            self, self.query_one("#message-area", ScrollableContainer)
+        )
         self._log_task = asyncio.create_task(self._drain_logs())
-        self._start_streaming()
-
-    def _start_streaming(self) -> None:
-        self._stream_task = asyncio.create_task(self._run_stream())
+        self._follow_task = asyncio.create_task(self._follow_buffer())
 
     async def _drain_logs(self) -> None:
         """Background task: wait for log records, render them in the LogPanel."""
@@ -506,79 +715,46 @@ class GraphRunnerApp(App):
             for record in handler.drain():
                 panel.write_record(record)
 
-    async def _handle_custom_event(self, payload: dict) -> None:
-        """Route custom stream events to the appropriate widget."""
-        event_type = payload.get("type")
+    # -- Buffer consumer -------------------------------------------------------
 
-        if event_type == "prover_output":
-            tool_call_id = payload["tool_call_id"]
-            line = payload["line"]
-        elif event_type == "cloud_polling":
-            tool_call_id = payload["tool_call_id"]
-            line = payload["message"]
-        else:
-            return
-
-        if tool_call_id not in self._prover_panels:
-            results = self.query(f"#tool-call-{tool_call_id}")
-            if not results:
-                return
-            tc_widget = results[0]
-            panel = ProverOutputPanel(id=f"prover-output-{tool_call_id}")
-            self._prover_panels[tool_call_id] = panel
-            await tc_widget.mount(panel)
-
-        self._prover_panels[tool_call_id].append_line(line)
-        self.query_one("#message-area", ScrollableContainer).scroll_end(animate=False)
-
-    async def _run_stream(self) -> None:
-        config: RunnableConfig = {
-            "configurable": {"thread_id": self.thread_id},
-            "recursion_limit": self.recursion_limit,
-        }
-
-        if self.checkpoint_id is not None:
-            config["configurable"]["checkpoint_id"] = self.checkpoint_id
-
-        stream_input = None if self.checkpoint_id is not None else self.graph_input
+    async def _follow_buffer(self) -> None:
+        """Main consumer loop: drain events from buffer, render via EventRenderer."""
+        buf = self._buffer
+        cursor = 0
+        assert self._renderer is not None
 
         try:
-            async for (tag, payload) in self.graph.astream(
-                input=stream_input,
-                config=config,
-                stream_mode=["checkpoints", "updates", "custom"]
-            ):
-                # Wait here if paused - blocks until event is set
-                await self._resume_event.wait()
+            while True:
+                buf.notify.clear()
+                events = buf.events[cursor:]
+                cursor = len(buf.events)
 
-                assert isinstance(payload, dict)
+                for event in events:
+                    # Status bar updates (specific to GraphRunnerApp)
+                    if isinstance(event, CheckpointEvt):
+                        self.query_one("#checkpoint-display", Static).update(
+                            f"Checkpoint: {event.checkpoint_id[:12]}..."
+                        )
+                    elif isinstance(event, NodeUpdateEvt):
+                        self.query_one("#node-display", Static).update(
+                            f"Node: {event.node_name}"
+                        )
+                    await self._renderer.render(event)
 
-                if tag == "checkpoints":
-                    new_checkpoint = payload["config"]["configurable"]["checkpoint_id"]
-                    self.checkpoint_id = new_checkpoint
-                    self.query_one("#checkpoint-display", Static).update(f"Checkpoint: {new_checkpoint[:12]}...")
-                elif tag == "custom":
-                    await self._handle_custom_event(payload)
-                else:
-                    for node_name, update in payload.items():
-                        if node_name == "__interrupt__":
-                            continue
-                        self.query_one("#node-display", Static).update(f"Node: {node_name}")
+                if buf.status != "running":
+                    self.is_complete = True
+                    self.query_one("#pause-btn", Button).label = "Complete (15s)"
+                    self.query_one("#pause-btn", Button).disabled = True
+                    self.set_timer(15, self._auto_exit)
+                    return
 
-                        if isinstance(update, dict):
-                            message_area = self.query_one("#message-area", ScrollableContainer)
-                            widget = UpdateWidget(node_name, update)
-                            await message_area.mount(widget)
-                            message_area.scroll_end(animate=False)
-
-            self.is_complete = True
-            self.query_one("#pause-btn", Button).label = "Complete (15s)"
-            self.query_one("#pause-btn", Button).disabled = True
-            self.set_timer(15, self._auto_exit)
+                await buf.notify.wait()
 
         except Exception as e:
             self._error = e
             self.exit()
+
+    # -- Controls --------------------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "pause-btn":
@@ -594,15 +770,17 @@ class GraphRunnerApp(App):
         if self.is_paused:
             btn.label = "Resume"
             btn.variant = "success"
-            self._resume_event.clear()  # Block workflows
+            self._buffer.resume.clear()
         else:
             btn.label = "Pause"
             btn.variant = "primary"
-            self._resume_event.set()  # Unblock workflows
+            self._buffer.resume.set()
 
     def on_unmount(self) -> None:
         logging.getLogger(_LOG_NAMESPACE).removeHandler(self._log_handler)
         self._log_task.cancel()
+        if self._follow_task:
+            self._follow_task.cancel()
 
     def _auto_exit(self) -> None:
         """Called by timer after completion to auto-exit."""
@@ -617,37 +795,10 @@ class GraphRunnerApp(App):
         current_time = time.time()
 
         if self._last_ctrl_c_time is not None and (current_time - self._last_ctrl_c_time) < 2.0:
-            # Double Ctrl+C within 2 seconds - abort immediately
             sys.exit(1)
 
         self._last_ctrl_c_time = current_time
         self.notify("Press Ctrl+C again to abort", severity="warning")
-
-    @contextmanager
-    def nested_workflow(self, workflow_name: str, thread_id: str):
-        """Create, register, and manage a nested workflow panel."""
-        panel = NestedWorkflowPanel(workflow_name, thread_id)
-        event = asyncio.Event()
-        event.set()  # Initially not paused
-        self._nested_events[thread_id] = event
-        self._nested_panels[thread_id] = panel
-        try:
-            yield panel, event
-        finally:
-            self._nested_events.pop(thread_id, None)
-            self._nested_panels.pop(thread_id, None)
-
-    def toggle_nested_pause(self, thread_id: str) -> bool:
-        """Toggle pause state for a specific nested workflow. Returns new paused state."""
-        if thread_id not in self._nested_events:
-            return False
-        event = self._nested_events[thread_id]
-        if event.is_set():
-            event.clear()
-            return True  # Now paused
-        else:
-            event.set()
-            return False  # Now running
 
 
 async def run_to_completion[I: StateLike, S: StateLike](
@@ -659,131 +810,121 @@ async def run_to_completion[I: StateLike, S: StateLike](
     checkpoint_id: str | None = None,
     recursion_limit: int = 100,
 ) -> S:
+    """Run a compiled state graph to completion.
+
+    Routing:
+    - If a ``JobEventBuffer`` is active (set by ``event_buffer_context`` or
+      ``_run_top_level_buffered``), events are written to the buffer at the
+      appropriate depth.
+    - Otherwise, creates a fresh buffer, spawns the graph as a producer
+      task, and runs ``GraphRunnerApp`` as the consumer TUI.
     """
-    Run a compiled state graph to completion using a TUI with pause/resume support.
+    buffer = _current_event_buffer.get()
+    if buffer is not None:
+        depth = _nesting_depth.get()
+        if depth == 0:
+            return await _run_depth0(
+                buffer, graph, input, thread_id, checkpoint_id, recursion_limit
+            )
+        elif depth == 1:
+            return await _run_depth1(
+                buffer, graph, input, thread_id, workflow_name, checkpoint_id, recursion_limit
+            )
+        else:
+            return await _run_depth2(
+                buffer, graph, input, thread_id, workflow_name, checkpoint_id, recursion_limit
+            )
 
-    Supports nested execution: when called from within a parent workflow's tool,
-    the nested workflow's progress is displayed in a collapsible panel within
-    the parent's TUI.
-
-    Args:
-        graph: The compiled state graph to execute
-        input: The input to the graph (ignored if checkpoint_id is set)
-        thread_prefix: Prefix for auto-generated thread IDs.
-        workflow_name: Display name for nested workflows.
-        thread_id: Optional thread ID for checkpointing. Auto-generated if None.
-        checkpoint_id: Optional checkpoint ID to resume from.
-        recursion_limit: Maximum recursion depth (default 100).
-
-    Returns:
-        The final state after graph completion.
-    """
-    parent_app = _current_runner_app.get()
-    depth = _nesting_depth.get()
-
-    if parent_app is None:
-        # Top-level: run with full TUI
-        return await _run_top_level(graph, input, thread_id, checkpoint_id, recursion_limit)
-    elif depth == 1:
-        # One level of nesting: show in parent's TUI
-        return await _run_nested(
-            parent_app, graph, input, thread_id, workflow_name, checkpoint_id, recursion_limit
-        )
-    else:
-        # Too deep: run silently with just a status message
-        return await _run_silent(
-            parent_app, graph, input, thread_id, workflow_name, checkpoint_id, recursion_limit
-        )
-
-
-async def _run_top_level[I: StateLike, S: StateLike](
-    graph: CompiledStateGraph[S, None, I, Any],
-    input: I,
-    thread_id: str,
-    checkpoint_id: str | None,
-    recursion_limit: int,
-) -> S:
-    """Run with full TUI at the top level."""
-    app = GraphRunnerApp(
-        graph=graph,
-        input=input,
-        thread_id=thread_id,
-        initial_checkpoint_id=checkpoint_id,
-        recursion_limit=recursion_limit,
+    # Top-level: create buffer, run producer + TUI consumer
+    return await _run_top_level_buffered(
+        graph, input, thread_id, checkpoint_id, recursion_limit
     )
 
-    with _workflow_context(app, depth=1):
-        await app.run_async()
 
-        if app._error is not None:
-            raise app._error
-
-        return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
-
-
-async def _run_nested[I: StateLike, S: StateLike](
-    parent_app: GraphRunnerApp,
+async def _run_top_level_buffered[I: StateLike, S: StateLike](
     graph: CompiledStateGraph[S, None, I, Any],
     input: I,
     thread_id: str,
-    workflow_name: str,
     checkpoint_id: str | None,
     recursion_limit: int,
 ) -> S:
-    """Run nested workflow, streaming into a panel in the parent's TUI."""
-    config: RunnableConfig = {
-        "configurable": {"thread_id": thread_id},
-        "recursion_limit": recursion_limit,
-    }
+    """Create a buffer, spawn graph producer, run GraphRunnerApp as consumer."""
+    buf = JobEventBuffer(name="main")
 
-    if checkpoint_id is not None:
-        config["configurable"]["checkpoint_id"] = checkpoint_id
+    async def producer():
+        with event_buffer_context(buf):
+            try:
+                await _run_depth0(buf, graph, input, thread_id, checkpoint_id, recursion_limit)
+            except Exception as e:
+                buf.append(ErrorEvt(message=str(e), traceback=tb_mod.format_exc()))
+                raise
 
-    stream_input = None if checkpoint_id is not None else input
+    app = GraphRunnerApp(buffer=buf, display_thread_id=thread_id)
+    task = asyncio.create_task(producer())
+    await app.run_async()
 
-    with (
-        _workflow_context(parent_app, depth=2),
-        parent_app.nested_workflow(workflow_name, thread_id) as (panel, nested_event),
-    ):
-        # Mount the panel created by the context manager
-        message_area = parent_app.query_one("#message-area", ScrollableContainer)
-        await message_area.mount(panel)
-        message_area.scroll_end(animate=False)
-
-        async for (tag, payload) in graph.astream(
-            input=stream_input,
-            config=config,
-            stream_mode=["checkpoints", "updates", "custom"]
-        ):
-            # Wait on global pause first, then individual pause
-            await parent_app._resume_event.wait()
-            await nested_event.wait()
-
-            assert isinstance(payload, dict)
-
-            if tag == "checkpoints":
-                new_checkpoint = payload["config"]["configurable"]["checkpoint_id"]
-                panel.update_checkpoint(new_checkpoint)
-            elif tag == "custom":
-                await parent_app._handle_custom_event(payload)
-            else:
-                for node_name, update in payload.items():
-                    if node_name == "__interrupt__":
-                        continue
-                    panel.update_node(node_name)
-
-                    if isinstance(update, dict):
-                        widget = UpdateWidget(node_name, update)
-                        await panel.add_update(widget)
-
-        # Mark complete and collapse
-        panel.mark_complete()
+    if not task.done():
+        task.cancel()
+    elif (exc := task.exception()) is not None:
+        raise exc
 
     return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
 
 
-async def _run_silent[I: StateLike, S: StateLike](
-    parent_app: GraphRunnerApp,
+# ---------------------------------------------------------------------------
+# Buffer-based producers: stream graph events into a JobEventBuffer
+# ---------------------------------------------------------------------------
+
+async def _run_depth0[I: StateLike, S: StateLike](
+    buffer: JobEventBuffer,
+    graph: CompiledStateGraph[S, None, I, Any],
+    input: I,
+    thread_id: str,
+    checkpoint_id: str | None,
+    recursion_limit: int,
+) -> S:
+    """Top-level producer: streams graph, translates LangGraph tuples to typed events."""
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": recursion_limit,
+    }
+    if checkpoint_id is not None:
+        config["configurable"]["checkpoint_id"] = checkpoint_id
+
+    stream_input = None if checkpoint_id is not None else input
+
+    depth_token = _nesting_depth.set(1)
+    try:
+        async for (tag, payload) in graph.astream(
+            input=stream_input,
+            config=config,
+            stream_mode=["checkpoints", "updates", "custom"],
+        ):
+            await buffer.resume.wait()
+            assert isinstance(payload, dict)
+
+            match tag:
+                case "checkpoints":
+                    cp_id = payload["config"]["configurable"]["checkpoint_id"]
+                    buffer.append(CheckpointEvt(checkpoint_id=cp_id))
+                case "updates":
+                    for node_name, update in payload.items():
+                        if node_name == "__interrupt__":
+                            continue
+                        if isinstance(update, dict):
+                            buffer.append(NodeUpdateEvt(node_name=node_name, state_update=update))
+                case "custom":
+                    evt = parse_custom_event(payload)
+                    if evt is not None:
+                        buffer.append(evt)
+    finally:
+        _nesting_depth.reset(depth_token)
+
+    return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
+
+
+async def _run_depth1[I: StateLike, S: StateLike](
+    buffer: JobEventBuffer,
     graph: CompiledStateGraph[S, None, I, Any],
     input: I,
     thread_id: str,
@@ -791,32 +932,85 @@ async def _run_silent[I: StateLike, S: StateLike](
     checkpoint_id: str | None,
     recursion_limit: int,
 ) -> S:
-    """Run deeply nested workflow silently, just showing a status message."""
-    # Show simple status in parent
-    message_area = parent_app.query_one("#message-area", ScrollableContainer)
-    status = Static(f"[dim]Running child workflow: {workflow_name}...[/dim]", classes="update-header")
-    await message_area.mount(status)
-
+    """Nested producer (depth 1): wraps each inner event in NestedEvt."""
     config: RunnableConfig = {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": recursion_limit,
     }
-
     if checkpoint_id is not None:
         config["configurable"]["checkpoint_id"] = checkpoint_id
 
     stream_input = None if checkpoint_id is not None else input
 
-    # Run without detailed UI updates (depth stays at current level)
-    async for (_, _payload) in graph.astream(
+    buffer.append(NestedStart(thread_id=thread_id, workflow_name=workflow_name))
+
+    depth_token = _nesting_depth.set(2)
+    try:
+        async for (tag, payload) in graph.astream(
+            input=stream_input,
+            config=config,
+            stream_mode=["checkpoints", "updates", "custom"],
+        ):
+            await buffer.resume.wait()
+            assert isinstance(payload, dict)
+
+            match tag:
+                case "checkpoints":
+                    cp_id = payload["config"]["configurable"]["checkpoint_id"]
+                    buffer.append(NestedEvt(
+                        thread_id=thread_id,
+                        inner=CheckpointEvt(checkpoint_id=cp_id),
+                    ))
+                case "updates":
+                    for node_name, update in payload.items():
+                        if node_name == "__interrupt__":
+                            continue
+                        if isinstance(update, dict):
+                            buffer.append(NestedEvt(
+                                thread_id=thread_id,
+                                inner=NodeUpdateEvt(node_name=node_name, state_update=update),
+                            ))
+                case "custom":
+                    evt = parse_custom_event(payload)
+                    if evt is not None:
+                        buffer.append(NestedEvt(thread_id=thread_id, inner=evt))
+    finally:
+        _nesting_depth.reset(depth_token)
+
+    buffer.append(NestedEnd(thread_id=thread_id))
+
+    return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
+
+
+async def _run_depth2[I: StateLike, S: StateLike](
+    buffer: JobEventBuffer,
+    graph: CompiledStateGraph[S, None, I, Any],
+    input: I,
+    thread_id: str,
+    workflow_name: str,
+    checkpoint_id: str | None,
+    recursion_limit: int,
+) -> S:
+    """Deeply nested producer (depth >= 2): only lifecycle events."""
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": recursion_limit,
+    }
+    if checkpoint_id is not None:
+        config["configurable"]["checkpoint_id"] = checkpoint_id
+
+    stream_input = None if checkpoint_id is not None else input
+
+    buffer.append(SilentStart(thread_id=thread_id, workflow_name=workflow_name))
+
+    async for _ in graph.astream(
         input=stream_input,
         config=config,
-        stream_mode=["checkpoints"]
+        stream_mode=["checkpoints"],
     ):
-        # Wait here if paused - blocks until event is set
-        await parent_app._resume_event.wait()
+        await buffer.resume.wait()
 
-    status.update(f"[dim]Completed: {workflow_name}[/dim]")
+    buffer.append(SilentEnd(thread_id=thread_id))
 
     return cast(S, graph.get_state({"configurable": {"thread_id": thread_id}}).values)
 

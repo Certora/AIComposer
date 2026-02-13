@@ -14,16 +14,18 @@ from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithI
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
 
-from composer.spec.context import WorkspaceContext, Builders, CVLBuilder, SourceBuilder
+from composer.spec.context import WorkspaceContext, Builders, CVLBuilder, SourceBuilder, CacheKey, CVLGeneration, CVLJudge, Feedback, ThreadProvider
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
-from composer.spec.trunner import run_to_completion, run_to_completion_sync
+from composer.spec.trunner import run_to_completion
 from composer.spec.component import ComponentInst
-from composer.spec.prover import get_prover_tool
 from composer.workflow.services import get_checkpointer
 from composer.spec.draft import get_rough_draft_tools
 from composer.spec.cvl_research import cvl_researcher
+
+CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
+FEEDBACK_KEY = CacheKey[CVLJudge, Feedback]("feedback")
 
 class PropertyFeedback(BaseModel):
     """
@@ -35,14 +37,14 @@ class PropertyFeedback(BaseModel):
 type FeedbackTool = Callable[[str], Awaitable[PropertyFeedback]]
 
 def property_feedback_judge(
-    ctx: WorkspaceContext,
+    ctx: WorkspaceContext[CVLJudge],
     builder: CVLBuilder,
     inst: ComponentInst | None,
     prop: PropertyFormulation,
     with_memory: bool
 ) -> FeedbackTool:
-    
-    child = ctx.child("feedback")
+
+    child = ctx.child(FEEDBACK_KEY)
     
     class ST(MessagesState):
         memory: NotRequired[str]
@@ -115,11 +117,9 @@ Guidelines:
 """
 
 def code_explorer(
-    ctx: WorkspaceContext,
+    ctx: ThreadProvider,
     builder: SourceBuilder
 ) -> ExplorationTool:
-
-    child = ctx.child("explorer")
 
     class ST(MessagesState):
         result: NotRequired[str]
@@ -140,7 +140,7 @@ def code_explorer(
         res = await run_to_completion(
             workflow,
             FlowInput(input=[question]),
-            thread_id=child.uniq_thread_id(),
+            thread_id=ctx.uniq_thread_id(),
         )
         assert "result" in res
         return res["result"]
@@ -160,20 +160,12 @@ class CVLResource(
 class ProverContext:
     prover_config: dict
     resources: list[CVLResource]
-    cloud: bool = False
-    max_parallel: int = 4
 
     def with_resources(
         self,
         to_add: list[CVLResource]
     ) -> "ProverContext":
-        new_l = self.resources + to_add
-        return ProverContext(
-            self.prover_config,
-            new_l,
-            cloud=self.cloud,
-            max_parallel=self.max_parallel,
-        )
+        return ProverContext(self.prover_config, self.resources + to_add)
 
 class GeneratedCVL(BaseModel):
     commentary: str
@@ -181,6 +173,8 @@ class GeneratedCVL(BaseModel):
 
 class _LastAttemptCache(BaseModel):
     cvl: str
+
+LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 
 class ExplicitThinking(
     WithImplementation[Command],
@@ -220,8 +214,8 @@ class ExplicitThinking(
         ]})
 
 
-def generate_property_cvl(
-    ctx: WorkspaceContext,
+async def generate_property_cvl(
+    ctx: WorkspaceContext[CVLGeneration],
     prover_setup: ProverContext,
     prop: PropertyFormulation,
     feat: ComponentInst | None,
@@ -234,7 +228,7 @@ def generate_property_cvl(
         result: NotRequired[str]
 
     feedback = property_feedback_judge(
-        ctx.child("judge"), builders.cvl, feat, prop, with_memory
+        ctx.child(CVL_JUDGE_KEY), builders.cvl, feat, prop, with_memory
     )
 
     explorer = code_explorer(
@@ -243,17 +237,7 @@ def generate_property_cvl(
 
     researcher = cvl_researcher(ctx, builders.cvl_only)
 
-    llm = ctx.llm()
-
-    verifier = get_prover_tool(
-        llm,
-        ST,
-        prover_setup.prover_config,
-        ctx.contract_name,
-        ctx.project_root,
-        cloud=prover_setup.cloud,
-        max_parallel=prover_setup.max_parallel,
-    )
+    verifier = ctx.prover_tool(ST, prover_setup.prover_config)
 
     class FeedbackSchema(WithInjectedState[ST], WithAsyncImplementation[str]):
         """
@@ -319,7 +303,7 @@ Feedback {t.feedback}
     extra_inputs : list[str | dict] = []
 
     if with_memory:
-        last_attempt = ctx.child("last_attempt").cache_get(_LastAttemptCache)
+        last_attempt = ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
         if last_attempt is not None:
             extra_inputs.append("Your last working draft was:")
             extra_inputs.append(last_attempt.cvl)
@@ -344,7 +328,7 @@ Feedback {t.feedback}
     )
 
     try:
-        r = run_to_completion_sync(
+        r = await run_to_completion(
             d,
             FlowInput(input=extra_inputs),
             thread_id=ctx.thread_id
@@ -352,7 +336,7 @@ Feedback {t.feedback}
     finally:
         last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values
         if "curr_spec" in last_state and with_memory:
-            ctx.child("last_attempt").cache_put(_LastAttemptCache(cvl=last_state["curr_spec"]))
+            ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=last_state["curr_spec"]))
 
     assert "result" in r and "curr_spec" in r
 

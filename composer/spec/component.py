@@ -11,9 +11,9 @@ from pydantic import BaseModel, Field
 from graphcore.graph import MessagesState
 
 
-from composer.spec.trunner import run_to_completion_sync
+from composer.spec.trunner import run_to_completion
 from composer.spec.graph_builder import bind_standard
-from composer.spec.context import WorkspaceContext, SourceBuilder, get_system_doc
+from composer.spec.context import WorkspaceContext, SourceBuilder, get_system_doc, CacheKey
 
 from composer.workflow.services import get_checkpointer
 from graphcore.graph import FlowInput
@@ -67,14 +67,14 @@ class ComponentInst():
     def application_type(self) -> str:
         return self.summ.application_type
 
-def run_component_analysis(
-    context: WorkspaceContext,
+SOURCE_ANALYSIS_KEY = CacheKey[None, ApplicationSummary]("source-analysis")
+
+async def run_component_analysis(
+    context: WorkspaceContext[None],
     builder: SourceBuilder
 ) -> ApplicationSummary | None:
     # Check cache first
-    child_ctxt = context.child(
-        "source-analysis"
-    )
+    child_ctxt = context.child(SOURCE_ANALYSIS_KEY)
     if (cached := child_ctxt.cache_get(ApplicationSummary)) is not None:
         return cached
     
@@ -109,7 +109,7 @@ def run_component_analysis(
         ]
     )
 
-    res = run_to_completion_sync(
+    res = await run_to_completion(
         graph,
         input,
         thread_id=child_ctxt.thread_id,

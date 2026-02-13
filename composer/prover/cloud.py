@@ -20,7 +20,10 @@ import aiohttp
 logger = logging.getLogger("composer.spec")
 
 # Terminal job statuses — anything not in this set means "still running"
-_TERMINAL_STATUSES = frozenset({"DONE", "FAILED", "ERROR", "CANCELLED", "TIMEOUT"})
+_TERMINAL_STATUSES = frozenset({"FAILED", "ERROR", "CANCELLED", "TIMEOUT", "SUCCEEDED"})
+
+# Avoid requesting Brotli — aiohttp's brotli support is often broken/missing.
+_NO_BROTLI_HEADERS = {"Accept-Encoding": "gzip, deflate"}
 
 
 @dataclass
@@ -80,7 +83,7 @@ async def poll_job(
     url = job.job_data_url
     elapsed = 0.0
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(headers=_NO_BROTLI_HEADERS) as session:
         while True:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 resp.raise_for_status()
@@ -141,7 +144,7 @@ async def cloud_results(
     job_data = await poll_job(cloud_job, on_status=on_status)
 
     status = job_data.get("jobStatus", "UNKNOWN")
-    if status != "DONE":
+    if status != "SUCCEEDED":
         raise RuntimeError(f"Cloud job finished with status {status} (expected DONE)")
 
     zip_url = job_data.get("zipOutputUrl")
@@ -158,7 +161,7 @@ async def cloud_results(
             tmp_path = Path(tmp.name)
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(headers=_NO_BROTLI_HEADERS) as session:
                 async with session.get(full_url, timeout=aiohttp.ClientTimeout(total=300)) as resp:
                     resp.raise_for_status()
                     with open(tmp_path, "wb") as f:

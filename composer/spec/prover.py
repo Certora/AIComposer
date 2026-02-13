@@ -228,9 +228,9 @@ def get_prover_tool[T: WithCVL](
     main_contract: str,
     project_root: str,
     cloud: bool = False,
-    max_parallel: int = 4,
+    semaphore: asyncio.Semaphore | None = None,
 ) -> BaseTool:
-    sem = asyncio.Semaphore(max_parallel if cloud else 1)
+    sem = semaphore or asyncio.Semaphore(1)
     args_spec = create_model(
         "VerifySpecSchemaInst",
         __doc__=VerifySpecSchema.__doc__,

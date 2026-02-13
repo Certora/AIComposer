@@ -13,6 +13,7 @@ from langchain_core.tools import BaseTool
 from graphcore.graph import LLM, Builder, FlowInput
 from graphcore.tools.memory import memory_tool
 from graphcore.tools.vfs import VFSState, VFSAccessor
+from composer.spec.prover import WithCVL
 
 
 # Phantom tool-capability markers. These tag Builder type aliases to document
@@ -55,7 +56,7 @@ class Services(Protocol):
 
     def kb_tools(self, read_only: bool) -> list[BaseTool]:
         ...
-    
+
     def fs_tools(self) -> list[BaseTool]:
         ...
 
@@ -67,8 +68,65 @@ class Services(Protocol):
     ) -> tuple[list[BaseTool], VFSAccessor[S]]:
         ...
 
+    def prover_tool[T: WithCVL](self, ty: type[T], config: dict) -> BaseTool:
+        ...
+
+# ---------------------------------------------------------------------------
+# Phantom marker types for the cache hierarchy.
+#
+# Each marker represents a non-caching step in the hierarchy.  The Marker
+# union is sealed — add new members here (not via subclassing).
+# ---------------------------------------------------------------------------
+
+class InvJudge:
+    """Invariant formulation feedback judge step."""
+
+class InvFormal:
+    """Grouping step for individual invariant formalization."""
+
+class Properties:
+    """Grouping step for property-level analysis."""
+
+class ComponentGroup:
+    """A single application component under analysis."""
+
+class CVLJudge:
+    """CVL property feedback judge step."""
+
+class Feedback:
+    """Feedback sub-step within CVL judge."""
+
+# -- Abstraction markers (used with .abstract(), not .child()) --------------
+
+class CVLGeneration:
+    """Abstraction for the CVL generation pipeline."""
+
+type Abstraction = CVLGeneration
+
+type Marker = (
+    InvJudge | InvFormal | Properties | ComponentGroup
+    | CVLJudge | Feedback
+    | Abstraction
+)
+
+
+class ThreadProvider(Protocol):
+    def uniq_thread_id(self) -> str: ...
+
+
+type CacheTypes = None | BaseModel | Marker
+
+
+class CacheKey[Parent : CacheTypes, Curr : CacheTypes]():
+    def __init__(self, key: str):
+        self.key = key
+
+    def __str__(self) -> str:
+        return self.key
+
+
 @dataclass
-class WorkspaceContext:
+class WorkspaceContext[K: CacheTypes]:
     """
     Manages thread IDs, memory namespaces, and caching for workflows.
 
@@ -119,9 +177,15 @@ class WorkspaceContext:
     ) -> tuple[list[BaseTool], VFSAccessor[S]]:
         return self._services.vfs_tools(ty, forbidden_write, put_doc_extra)
 
+    def prover_tool[T: WithCVL](self, ty: type[T], config: dict) -> BaseTool:
+        return self._services.prover_tool(ty, config)
+
     def uniq_thread_id(self) -> str:
         suff = uuid.uuid4().hex[:16]
         return f"{self.thread_id}-{suff}"
+
+    def abstract[T: Abstraction](self, ty: type[T]) -> "WorkspaceContext[T]":
+        return self  # type: ignore[return-value]
 
     @staticmethod
     def create(
@@ -131,7 +195,7 @@ class WorkspaceContext:
         store: PostgresStore,
         memory_namespace: str | None = None,
         cache_namespace: tuple[str, ...] | None | str = None,
-    ) -> "WorkspaceContext":
+    ) -> "WorkspaceContext[None]":
         cache_ns: tuple[str, ...] | None
         if isinstance(cache_namespace, str):
             cache_ns = (cache_namespace,)
@@ -146,8 +210,9 @@ class WorkspaceContext:
             _store=store,
         )
 
-    def child(self, name: str, tag: dict | None = None) -> "WorkspaceContext":
+    def child[NXT: CacheTypes](self, name_key: CacheKey[K, NXT], tag: dict | None = None) -> "WorkspaceContext[NXT]":
         """Create a child context with derived namespaces."""
+        name = name_key.key
         child_cache_ns = (*self.cache_namespace, name) if self.cache_namespace else None
         if child_cache_ns is not None and tag is not None:
             self._store.put(
@@ -164,12 +229,10 @@ class WorkspaceContext:
             _store=self._store,
         )
 
-    def indexed_child(self, name: str, index: int) -> "WorkspaceContext":
-        """Create an indexed child context."""
-        return self.child(f"{name}-{index}")
-
-    def cache_get[T: BaseModel](self, ty: type[T]) -> T | None:
+    def cache_get(self, ty: type[K]) -> K | None:
         """Get a typed value from the cache. Returns None if caching disabled or not found."""
+        if not issubclass(ty, BaseModel):
+            raise ValueError("Cannot use cache with non-basemodel keys")
         if self.cache_namespace is None:
             return None
 
@@ -182,8 +245,11 @@ class WorkspaceContext:
             return None
         return ty.model_validate(result.value)
 
-    def cache_put(self, value: BaseModel) -> None:
+    def cache_put(self, value: K) -> None:
         """Put a typed value in the cache. No-op if caching disabled."""
+        if not isinstance(value, BaseModel):
+            raise ValueError("Caching not allowed for non-basemodel keys")
+
         if self.cache_namespace is None:
             return
         if len(self.cache_namespace) < 1:

@@ -18,14 +18,15 @@ from composer.spec.harness import Configuration, ERC20TokenGuidance
 from composer.spec.graph_builder import bind_standard
 from composer.spec.cvl_tools import get_cvl, put_cvl, put_cvl_raw
 from composer.spec.cvl_generation import CVLResource
-from composer.spec.context import WorkspaceContext, CVLBuilder
+from composer.spec.context import WorkspaceContext, CVLBuilder, CacheKey
 
-class _SummaryCache(BaseModel):
-    content: str
 from composer.spec.utils import temp_certora_file
 from composer.workflow.services import get_checkpointer
 from composer.templates.loader import load_jinja_template
-from composer.spec.trunner import run_to_completion_sync
+from composer.spec.trunner import run_to_completion
+
+class _SummaryCache(BaseModel):
+    content: str
 
 class ResolutionGuidance(WithImplementation[Command], WithInjectedId):
     """
@@ -82,15 +83,18 @@ def format_types(udts: list[dict]) -> str:
         to_format.append(r)
     return "\n".join(to_format)
 
+def _summary_key(d: Configuration) -> CacheKey[None, _SummaryCache]:
+    cacher = hashlib.sha256(d.model_dump_json().encode()).hexdigest()[:16]
+    return CacheKey("summary-" + cacher)
 
-def setup_summaries(
-    ctx: WorkspaceContext,
+
+
+async def setup_summaries(
+    ctx: WorkspaceContext[None],
     d: Configuration,
     cvl_builder: CVLBuilder
-) -> CVLResource:
-    cacher = hashlib.sha256(d.model_dump_json().encode()).hexdigest()[:16]
-    
-    summary_context = ctx.child(f"summary-{cacher}", d.model_dump())
+) -> CVLResource:    
+    summary_context = ctx.child(_summary_key(d), d.model_dump())
 
     result_path = (pathlib.Path(ctx.project_root) / "certora" / "custom_summaries.spec")
 
@@ -219,7 +223,7 @@ Summarization instructions: {ext.suggested_summaries}
 
     udts = format_types(d.user_types)
 
-    res = run_to_completion_sync(g, Input(
+    res = await run_to_completion(g, Input(
         typechecked="",
         input=[
             "The summarization instructions are as follows:",
