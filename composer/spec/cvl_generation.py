@@ -160,6 +160,8 @@ class CVLResource(
 class ProverContext:
     prover_config: dict
     resources: list[CVLResource]
+    cloud: bool = False
+    max_parallel: int = 4
 
     def with_resources(
         self,
@@ -168,7 +170,9 @@ class ProverContext:
         new_l = self.resources + to_add
         return ProverContext(
             self.prover_config,
-            new_l
+            new_l,
+            cloud=self.cloud,
+            max_parallel=self.max_parallel,
         )
 
 class GeneratedCVL(BaseModel):
@@ -246,7 +250,9 @@ def generate_property_cvl(
         ST,
         prover_setup.prover_config,
         ctx.contract_name,
-        ctx.project_root
+        ctx.project_root,
+        cloud=prover_setup.cloud,
+        max_parallel=prover_setup.max_parallel,
     )
 
     class FeedbackSchema(WithInjectedState[ST], WithAsyncImplementation[str]):

@@ -64,6 +64,8 @@ class SourceSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions, StateOptions):
     main_contract: str
     system_doc: str
     ignore_existing_config: bool
+    cloud: bool
+    max_parallel: int
 
 def _hash_file(path: Path) -> str:
     """Return SHA256 hash of a file's contents."""
@@ -272,14 +274,16 @@ def execute(args: SourceSpecArgs) -> int:
 
     invariants = structural_invariants_flow(
         ctx, ProverContext(
-            d.config, resources
+            d.config, resources,
+            cloud=args.cloud, max_parallel=args.max_parallel,
         ), basic_builder, cvl_builder
     )
 
     resources.extend(invariants)
 
     prover_context = ProverContext(
-        d.config, resources
+        d.config, resources,
+        cloud=args.cloud, max_parallel=args.max_parallel,
     )
 
     analysis = run_component_analysis(ctx, source_builder)
@@ -311,6 +315,10 @@ def auto_prover() -> int:
     parser.add_argument("system_doc")
     parser.add_argument("--ignore-existing-config", action="store_true", dest="ignore_existing_config",
                         help="Proceed even if certora/ directory already exists in project root")
+    parser.add_argument("--cloud", action="store_true", default=False,
+                        help="Run verification in the Certora cloud")
+    parser.add_argument("--max-parallel", type=int, default=4, dest="max_parallel",
+                        help="Max parallel cloud verification jobs (default: 4)")
 
     res = cast(SourceSpecArgs, parser.parse_args())
 

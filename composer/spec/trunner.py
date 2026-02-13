@@ -381,17 +381,21 @@ class ToolCallWidget(Vertical):
 
 
 class ProverOutputPanel(Vertical):
-    """Collapsible panel for real-time prover stdout, mounted inside a ToolCallWidget."""
+    """Collapsible panel for real-time prover stdout or cloud polling status."""
 
     DEFAULT_CSS = """
     ProverOutputPanel { height: auto; }
     ProverOutputPanel RichLog { height: auto; max-height: 20; }
     """
 
+    def __init__(self, title: str = "Prover Output", **kwargs):
+        super().__init__(**kwargs)
+        self._panel_title = title
+
     def compose(self) -> ComposeResult:
         yield Collapsible(
             RichLog(id="prover-log", wrap=True),
-            title="Prover Output",
+            title=self._panel_title,
             collapsed=False,
         )
 
@@ -508,18 +512,24 @@ class GraphRunnerApp(App):
 
     async def _handle_custom_event(self, payload: dict) -> None:
         """Route custom stream events to the appropriate widget."""
-        if payload.get("type") != "prover_output":
-            return
+        event_type = payload.get("type")
 
-        tool_call_id: str = payload["tool_call_id"]
-        line: str = payload["line"]
+        if event_type == "prover_output":
+            tool_call_id = payload["tool_call_id"]
+            line = payload["line"]
+        elif event_type == "cloud_polling":
+            tool_call_id = payload["tool_call_id"]
+            line = payload["message"]
+        else:
+            return
 
         if tool_call_id not in self._prover_panels:
             results = self.query(f"#tool-call-{tool_call_id}")
             if not results:
                 return
             tc_widget = results[0]
-            panel = ProverOutputPanel(id=f"prover-output-{tool_call_id}")
+            title = "Cloud Status" if event_type == "cloud_polling" else "Prover Output"
+            panel = ProverOutputPanel(id=f"prover-output-{tool_call_id}", title=title)
             self._prover_panels[tool_call_id] = panel
             await tc_widget.mount(panel)
 
