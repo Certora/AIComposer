@@ -14,7 +14,7 @@ from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 from graphcore.graph import Builder, FlowInput
 
 from composer.spec.trunner import run_to_completion_sync, run_to_completion
-from composer.spec.context import WorkspaceContext, CVLBuilder
+from composer.spec.context import WorkspaceContext, Builders
 from composer.workflow.services import get_checkpointer
 from composer.spec.graph_builder import bind_standard
 from composer.spec.prop import PropertyFormulation
@@ -185,7 +185,7 @@ def structural_invariants_flow(
     ctx: WorkspaceContext,
     conf: ProverContext,
     builder: Builder[None, None, None],
-    cvl_builder: CVLBuilder
+    builders: Builders,
 ) -> list[CVLResource]:
     s = _get_invariant_formulation(
         ctx.child("structural-inv"),
@@ -255,7 +255,7 @@ def structural_invariants_flow(
                         conf.with_resources(resources),
                         as_prop,
                         None,
-                        cvl_builder,
+                        builders,
                         with_memory=True
                     )
                 except GraphRecursionError:

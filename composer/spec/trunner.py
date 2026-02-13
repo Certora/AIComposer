@@ -381,21 +381,17 @@ class ToolCallWidget(Vertical):
 
 
 class ProverOutputPanel(Vertical):
-    """Collapsible panel for real-time prover stdout or cloud polling status."""
+    """Collapsible panel for real-time prover stdout and cloud polling status."""
 
     DEFAULT_CSS = """
     ProverOutputPanel { height: auto; }
     ProverOutputPanel RichLog { height: auto; max-height: 20; }
     """
 
-    def __init__(self, title: str = "Prover Output", **kwargs):
-        super().__init__(**kwargs)
-        self._panel_title = title
-
     def compose(self) -> ComposeResult:
         yield Collapsible(
             RichLog(id="prover-log", wrap=True),
-            title=self._panel_title,
+            title="Prover Output",
             collapsed=False,
         )
 
@@ -528,8 +524,7 @@ class GraphRunnerApp(App):
             if not results:
                 return
             tc_widget = results[0]
-            title = "Cloud Status" if event_type == "cloud_polling" else "Prover Output"
-            panel = ProverOutputPanel(id=f"prover-output-{tool_call_id}", title=title)
+            panel = ProverOutputPanel(id=f"prover-output-{tool_call_id}")
             self._prover_panels[tool_call_id] = panel
             await tc_widget.mount(panel)
 

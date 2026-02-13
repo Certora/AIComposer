@@ -14,7 +14,7 @@ from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithI
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
 
-from composer.spec.context import WorkspaceContext, CVLBuilder
+from composer.spec.context import WorkspaceContext, Builders, CVLBuilder, SourceBuilder
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
@@ -116,7 +116,7 @@ Guidelines:
 
 def code_explorer(
     ctx: WorkspaceContext,
-    builder: CVLBuilder,
+    builder: SourceBuilder
 ) -> ExplorationTool:
 
     child = ctx.child("explorer")
@@ -225,7 +225,7 @@ def generate_property_cvl(
     prover_setup: ProverContext,
     prop: PropertyFormulation,
     feat: ComponentInst | None,
-    builder: CVLBuilder,
+    builders: Builders,
     with_memory: bool
 ) -> GeneratedCVL:
 
@@ -234,14 +234,14 @@ def generate_property_cvl(
         result: NotRequired[str]
 
     feedback = property_feedback_judge(
-        ctx.child("judge"), builder, feat, prop, with_memory
+        ctx.child("judge"), builders.cvl, feat, prop, with_memory
     )
 
     explorer = code_explorer(
-        ctx, builder
+        ctx, builders.source
     )
 
-    researcher = cvl_researcher(ctx, builder)
+    researcher = cvl_researcher(ctx, builders.cvl_only)
 
     llm = ctx.llm()
 
@@ -326,7 +326,7 @@ Feedback {t.feedback}
         
 
     d = bind_standard(
-        builder, ST, "A description of your generated CVL"
+        builders.cvl, ST, "A description of your generated CVL"
     ).with_input(
         FlowInput
     ).with_tools(

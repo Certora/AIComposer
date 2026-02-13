@@ -2,9 +2,9 @@ from typing import Callable, Awaitable, NotRequired
 
 from langgraph.graph import MessagesState
 
-from graphcore.graph import FlowInput, Builder
+from graphcore.graph import FlowInput
 
-from composer.spec.context import WorkspaceContext
+from composer.spec.context import WorkspaceContext, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard
 from composer.spec.trunner import run_to_completion
 from composer.spec.draft import get_rough_draft_tools
@@ -43,7 +43,7 @@ needs a dense, precise answer they can immediately apply.
 
 def cvl_researcher(
     ctx: WorkspaceContext,
-    builder: Builder[None, None, FlowInput],
+    builder: CVLOnlyBuilder,
 ) -> ResearchTool:
 
     child = ctx.child("researcher")

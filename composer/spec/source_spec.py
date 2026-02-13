@@ -25,7 +25,7 @@ import uuid
 from typing import cast
 
 
-from composer.spec.context import WorkspaceContext, JobSpec, SourceBuilder, CVLBuilder
+from composer.spec.context import WorkspaceContext, JobSpec, Builders, SourceBuilder, CVLBuilder
 from composer.spec.harness import setup_and_harness_agent
 from composer.spec.struct_invariant import structural_invariants_flow
 
@@ -110,7 +110,7 @@ def _analyze_component(
     conf: ProverContext,
     feat: ComponentInst,
     analysis_builder: SourceBuilder,
-    cvl_builder: CVLBuilder,
+    builders: Builders,
 ) -> None | list[tuple[PropertyFormulation, str, str]]:
     cache_key = _cache_key_bug_analysis(feat.component, feat.summ.application_type)
     feat_ctx = ctx.child(
@@ -136,7 +136,7 @@ def _analyze_component(
             cvl = m.cvl
         else:
             d = generate_property_cvl(
-                ctx=prop_ctx, builder=cvl_builder, prover_setup=conf, feat=feat, prop=prop, with_memory=False
+                ctx=prop_ctx, builders=builders, prover_setup=conf, feat=feat, prop=prop, with_memory=False
             )
             prop_ctx.cache_put(d)
             cvl = d.cvl
@@ -256,9 +256,21 @@ def execute(args: SourceSpecArgs) -> int:
         )
     ]
 
+    cvl_manual = cvl_manual_tools(rag_db)
+
     cvl_builder: CVLBuilder = basic_builder.with_tools(
-        [*cvl_manual_tools(rag_db), *host.fs_tools()]
+        [*cvl_manual, *host.fs_tools()]
     ).with_input(FlowInput)
+
+    source_builder: SourceBuilder = basic_builder.with_tools(
+        host.fs_tools()
+    ).with_input(FlowInput)
+
+    builders = Builders(
+        source=source_builder,
+        cvl=cvl_builder,
+        cvl_only=basic_builder.with_tools(cvl_manual).with_input(FlowInput),
+    )
 
     custom_summaries = setup_summaries(
         ctx, d, cvl_builder
@@ -266,17 +278,11 @@ def execute(args: SourceSpecArgs) -> int:
 
     resources.append(custom_summaries)
 
-    source_builder: SourceBuilder = basic_builder.with_tools(
-        host.fs_tools()
-    ).with_input(FlowInput)
-
-
-
     invariants = structural_invariants_flow(
         ctx, ProverContext(
             d.config, resources,
             cloud=args.cloud, max_parallel=args.max_parallel,
-        ), basic_builder, cvl_builder
+        ), basic_builder, builders
     )
 
     resources.extend(invariants)
@@ -299,7 +305,7 @@ def execute(args: SourceSpecArgs) -> int:
             analysis, i
         )
         _analyze_component(
-            prop_context, prover_context, inst, source_builder, cvl_builder
+            prop_context, prover_context, inst, source_builder, builders
         )
     
     return 0

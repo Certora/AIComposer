@@ -25,7 +25,16 @@ class CVL_TOOLS:
     """Builder has cvl_manual_tools bound (CVL manual RAG search)."""
 
 type SourceBuilder = Annotated[Builder[None, None, FlowInput], SOURCE_TOOLS]
+type CVLOnlyBuilder = Annotated[Builder[None, None, FlowInput], CVL_TOOLS]
 type CVLBuilder = Annotated[Builder[None, None, FlowInput], SOURCE_TOOLS, CVL_TOOLS]
+
+
+@dataclass
+class Builders:
+    """Pre-configured builder variants with different tool sets."""
+    source: SourceBuilder
+    cvl: CVLBuilder
+    cvl_only: CVLOnlyBuilder
 
 from composer.workflow.services import get_memory
 
