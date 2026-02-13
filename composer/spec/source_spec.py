@@ -109,7 +109,6 @@ def _analyze_component(
     ctx: WorkspaceContext,
     conf: ProverContext,
     feat: ComponentInst,
-    analysis_builder: SourceBuilder,
     builders: Builders,
 ) -> None | list[tuple[PropertyFormulation, str, str]]:
     cache_key = _cache_key_bug_analysis(feat.component, feat.summ.application_type)
@@ -120,7 +119,7 @@ def _analyze_component(
             "app_type": feat.summ.application_type
         }
     )
-    res = run_bug_analysis(feat_ctx, feat, analysis_builder)
+    res = run_bug_analysis(feat_ctx, feat, builders.source)
     if res is None:
         print("Didn't work")
         return None
@@ -305,7 +304,7 @@ def execute(args: SourceSpecArgs) -> int:
             analysis, i
         )
         _analyze_component(
-            prop_context, prover_context, inst, source_builder, builders
+            prop_context, prover_context, inst, builders
         )
     
     return 0
