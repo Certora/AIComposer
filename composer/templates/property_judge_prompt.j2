@@ -41,8 +41,12 @@ NOTE: portions of the input state may be unconstrained/undercontrained if they d
 
 ### Criteria 4: Overconstrained Inputs
 
-You may also consider the inverse; over-constraining the input space may cause the prover to miss real bugs. When possible, all requirements should be implied or explicitly
-backed up by another rule or invariant.
+You may also consider the inverse; over-constraining the input space may cause the prover to miss real bugs. In particular, any constraints in
+`preserved` blocks that are *not* a `requireInvariant` statement (i.e., a *proven* assumption) should be subject to intense scrutiny.
+Justification for such requirements like "X is impossible in a realistic situation/deployment/etc" should not be taken at face value.
+
+To reiterate: unless there is overwhelming, verifiable, outside evidence that an assumption is justified, it should be rejected (a `requireInvariant` is considered
+to be a verified assumption).
 
 ### Criteria 5: Trivializing summaries
 Consider if any of the summaries added in the spec *trivialize* the verification by summarizing away obviously crucial behavior. For example,

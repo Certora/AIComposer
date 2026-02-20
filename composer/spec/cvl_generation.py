@@ -9,7 +9,7 @@ from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.types import Command, Checkpointer
 from langgraph.graph import MessagesState
 
-from graphcore.graph import FlowInput, tool_state_update
+from graphcore.graph import FlowInput
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
@@ -22,6 +22,7 @@ from composer.spec.trunner import run_to_completion
 from composer.spec.component import ComponentInst
 from composer.spec.draft import get_rough_draft_tools
 from composer.spec.cvl_research import cvl_researcher
+from composer.templates.loader import load_jinja_template
 
 CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
 FEEDBACK_KEY = CacheKey[CVLJudge, Feedback]("feedback")
@@ -166,6 +167,23 @@ class ProverContext:
         to_add: list[CVLResource]
     ) -> "ProverContext":
         return ProverContext(self.prover_config, self.resources + to_add)
+    
+class UnresolvedCallGuidance(WithImplementation[Command], WithInjectedId):
+    """
+Invoke this tool to receive guidance on how to deal with verification failures due to havocs caused by
+unresolved calls.
+
+You may NOT call this tool in parallel with other tools.
+    """
+    @override
+    def run(self) -> Command:
+        return Command(update={
+            "messages": [
+                ToolMessage(tool_call_id=self.tool_call_id, content="Advice is as follows:"),
+                HumanMessage(load_jinja_template("unresolved_call_guidance.j2"))
+            ]
+        })
+
 
 class GeneratedCVL(BaseModel):
     commentary: str
@@ -294,7 +312,10 @@ Feedback {t.feedback}
         async def run(self) -> str:
             return await researcher(self.question)
 
-    tools = [put_cvl, put_cvl_raw, FeedbackSchema.as_tool("feedback_tool"), ExploreCodeSchema.as_tool("explore_code"), CVLResearchSchema.as_tool("cvl_research"), verifier, get_cvl(ST), ExplicitThinking.as_tool("extended_reasoning")]
+    tools = [put_cvl, put_cvl_raw, 
+             FeedbackSchema.as_tool("feedback_tool"), ExploreCodeSchema.as_tool("explore_code"),
+             CVLResearchSchema.as_tool("cvl_research"), verifier, get_cvl(ST),
+             ExplicitThinking.as_tool("extended_reasoning"), UnresolvedCallGuidance.as_tool("unresolved_call_guidance")]
     tools.extend(ctx.kb_tools(read_only=False))
 
     if with_memory:
