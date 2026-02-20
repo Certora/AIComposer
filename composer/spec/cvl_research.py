@@ -8,7 +8,6 @@ from composer.spec.context import WorkspaceContext, CVLOnlyBuilder, CVLGeneratio
 from composer.spec.graph_builder import bind_standard
 from composer.spec.trunner import run_to_completion
 from composer.spec.draft import get_rough_draft_tools
-from composer.workflow.services import get_checkpointer
 
 type ResearchTool = Callable[[str], Awaitable[str]]
 
@@ -69,7 +68,7 @@ def cvl_researcher(
     ).with_initial_prompt(
         CVL_RESEARCH_INITIAL_PROMPT
     ).compile_async(
-        checkpointer=get_checkpointer()
+        checkpointer=ctx.checkpointer
     )
 
     async def research(question: str) -> str:

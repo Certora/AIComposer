@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from langchain_core.messages import ToolMessage, HumanMessage
 
-from langgraph.types import Command
+from langgraph.types import Command, Checkpointer
 from langgraph.graph import MessagesState
 
 from graphcore.graph import FlowInput, tool_state_update
@@ -20,7 +20,6 @@ from composer.spec.graph_builder import bind_standard
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
 from composer.spec.trunner import run_to_completion
 from composer.spec.component import ComponentInst
-from composer.workflow.services import get_checkpointer
 from composer.spec.draft import get_rough_draft_tools
 from composer.spec.cvl_research import cvl_researcher
 
@@ -80,7 +79,7 @@ def property_feedback_judge(
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
     ).with_tools([*rough_draft_tools, memory, get_cvl(ST)]).compile_async(
-        checkpointer=get_checkpointer()
+        checkpointer=ctx.checkpointer
     )
 
     async def the_tool(
@@ -118,7 +117,8 @@ Guidelines:
 
 def code_explorer(
     ctx: ThreadProvider,
-    builder: SourceBuilder
+    builder: SourceBuilder,
+    checkpointer: Checkpointer,
 ) -> ExplorationTool:
 
     class ST(MessagesState):
@@ -133,7 +133,7 @@ def code_explorer(
     ).with_initial_prompt(
         "Answer the following question about the source code"
     ).compile_async(
-        checkpointer=get_checkpointer()
+        checkpointer=checkpointer
     )
 
     async def explore(question: str) -> str:
@@ -232,7 +232,7 @@ async def generate_property_cvl(
     )
 
     explorer = code_explorer(
-        ctx, builders.source
+        ctx, builders.source, ctx.checkpointer
     )
 
     researcher = cvl_researcher(ctx, builders.cvl_only)
@@ -324,7 +324,7 @@ Feedback {t.feedback}
         **prop.to_template_args(),
         memory=with_memory
     ).compile_async(
-        checkpointer=get_checkpointer()
+        checkpointer=ctx.checkpointer
     )
 
     try:

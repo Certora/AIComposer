@@ -15,7 +15,6 @@ from composer.spec.trunner import run_to_completion
 from composer.spec.graph_builder import bind_standard
 from composer.spec.context import WorkspaceContext, SourceBuilder, get_system_doc, CacheKey
 
-from composer.workflow.services import get_checkpointer
 from graphcore.graph import FlowInput
 
 
@@ -99,7 +98,7 @@ async def run_component_analysis(
         main_contract_name=context.contract_name,
         relative_path=context.relative_path
     ).build()[0].compile(
-        checkpointer=get_checkpointer()
+        checkpointer=child_ctxt.checkpointer
     )
 
     input: FlowInput = FlowInput(

@@ -19,7 +19,7 @@ from composer.templates.loader import load_jinja_template
 from composer.spec.trunner import run_to_completion
 from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
 from composer.spec.context import WorkspaceContext, CacheKey
-from composer.workflow.services import get_checkpointer, create_llm
+from composer.workflow.services import create_llm
 
 class ExternalActor(BaseModel):
     """Base class for any external contract that the main contract directly interacts with.
@@ -400,8 +400,8 @@ async def _harness_setup(
             return harness_ctx.thread_id
         
         def get_checkpointer(self) -> Checkpointer:
-            return get_checkpointer()
-        
+            return ctx.checkpointer
+
         def memory_tool(self) -> BaseTool:
             return harness_ctx.get_memory_tool()
         

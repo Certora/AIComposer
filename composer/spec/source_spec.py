@@ -31,7 +31,7 @@ from composer.spec.harness import setup_and_harness_agent
 from composer.spec.struct_invariant import structural_invariants_flow
 
 from composer.tools.search import cvl_manual_tools
-from composer.workflow.services import create_llm, get_store, get_indexed_store
+from composer.workflow.services import create_llm, get_store, get_indexed_store, get_checkpointer
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.templates.loader import load_jinja_template
@@ -119,6 +119,7 @@ async def _analyze_component(
     conf: ProverContext,
     feat: ComponentInst,
     builders: Builders,
+    workflow_sem: asyncio.Semaphore,
 ) -> None | list[tuple[PropertyFormulation, str, str]]:
     name = feat.component.name
     feat_ctx = ctx.child(
@@ -129,8 +130,9 @@ async def _analyze_component(
         }
     )
 
-    with fresh_buffer(name=f"{name}: analysis"):
-        res = await run_bug_analysis(feat_ctx, feat, builders.source)
+    async with workflow_sem:
+        with fresh_buffer(name=f"{name}: analysis"):
+            res = await run_bug_analysis(feat_ctx, feat, builders.source)
     if res is None:
         print("Didn't work")
         return None
@@ -143,10 +145,11 @@ async def _analyze_component(
             cvl = m.cvl
         else:
             prop_label = prop.description[:50]
-            with fresh_buffer(name=f"{name}: {prop_label}"):
-                d = await generate_property_cvl(
-                    ctx=prop_ctx.abstract(CVLGeneration), builders=builders, prover_setup=conf, feat=feat, prop=prop, with_memory=False
-                )
+            async with workflow_sem:
+                with fresh_buffer(name=f"{name}: {prop_label}"):
+                    d = await generate_property_cvl(
+                        ctx=prop_ctx.abstract(CVLGeneration), builders=builders, prover_setup=conf, feat=feat, prop=prop, with_memory=False
+                    )
             prop_ctx.cache_put(d)
             cvl = d.cvl
             r = d.commentary
@@ -181,6 +184,7 @@ async def execute(args: SourceSpecArgs) -> int:
     indexed_store = get_indexed_store(DefaultEmbedder(model))
 
     prover_sem = asyncio.Semaphore(args.max_parallel if args.cloud else 1)
+    _checkpointer = get_checkpointer()
 
     class SVCHost():
         def kb_tools(self, read_only: bool) -> list[BaseTool]:
@@ -211,6 +215,10 @@ async def execute(args: SourceSpecArgs) -> int:
 
         def llm(self) -> LLM:
             return llm
+
+        @property
+        def checkpointer(self):
+            return _checkpointer
 
         def prover_tool[T: WithCVL](self, ty: type[T], config: dict) -> BaseTool:
             return get_prover_tool(
@@ -313,6 +321,8 @@ async def execute(args: SourceSpecArgs) -> int:
 
     prop_context = ctx.child(PROPERTIES_KEY)
 
+    workflow_sem = asyncio.Semaphore(10)
+
     # -- parallel execution with job manager TUI ----------------------------
     with buffer_collection() as buffers:
         app = JobManagerApp(buffers=buffers)
@@ -321,7 +331,8 @@ async def execute(args: SourceSpecArgs) -> int:
             await asyncio.gather(*[
                 _analyze_component(
                     prop_context, prover_context,
-                    ComponentInst(analysis, i), builders
+                    ComponentInst(analysis, i), builders,
+                    workflow_sem
                 )
                 for i in range(len(analysis.components))
             ])

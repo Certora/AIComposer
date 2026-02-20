@@ -8,6 +8,7 @@ from typing import Annotated, Protocol
 from pydantic import BaseModel
 
 from langgraph.store.postgres import PostgresStore
+from langgraph.types import Checkpointer
 from langchain_core.tools import BaseTool
 
 from graphcore.graph import LLM, Builder, FlowInput
@@ -69,6 +70,10 @@ class Services(Protocol):
         ...
 
     def prover_tool[T: WithCVL](self, ty: type[T], config: dict) -> BaseTool:
+        ...
+
+    @property
+    def checkpointer(self) -> Checkpointer:
         ...
 
 # ---------------------------------------------------------------------------
@@ -179,6 +184,10 @@ class WorkspaceContext[K: CacheTypes]:
 
     def prover_tool[T: WithCVL](self, ty: type[T], config: dict) -> BaseTool:
         return self._services.prover_tool(ty, config)
+
+    @property
+    def checkpointer(self) -> Checkpointer:
+        return self._services.checkpointer
 
     def uniq_thread_id(self) -> str:
         suff = uuid.uuid4().hex[:16]

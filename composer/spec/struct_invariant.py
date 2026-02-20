@@ -16,7 +16,6 @@ from graphcore.graph import Builder, FlowInput
 from composer.spec.trunner import run_to_completion, buffer_collection, fresh_buffer
 from composer.spec.context import WorkspaceContext, Builders, CacheKey, InvJudge, InvFormal, CVLGeneration
 from composer.spec.job_manager import JobManagerApp
-from composer.workflow.services import get_checkpointer
 from composer.spec.graph_builder import bind_standard
 from composer.spec.prop import PropertyFormulation
 from composer.spec.cvl_generation import generate_property_cvl, CVLResource, ProverContext, GeneratedCVL
@@ -130,7 +129,7 @@ async def _get_invariant_formulation(
     ).with_input(
         FlowInput
     ).build_async()[0].compile(
-        checkpointer=get_checkpointer()
+        checkpointer=inv_ctx.checkpointer
     )
 
     sem = asyncio.Semaphore(3)
@@ -178,7 +177,7 @@ async def _get_invariant_formulation(
         contract_spec=inv_ctx
     ).with_tools(
         [*fs, memory, InvariantFeedbackTool.as_tool("invariant_feedback")]
-    ).with_input(InvInput).build_async()[0].compile(checkpointer=get_checkpointer())
+    ).with_input(InvInput).build_async()[0].compile(checkpointer=inv_ctx.checkpointer)
 
     s = await run_to_completion(
         graph=d,

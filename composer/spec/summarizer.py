@@ -21,7 +21,6 @@ from composer.spec.cvl_generation import CVLResource
 from composer.spec.context import WorkspaceContext, CVLBuilder, CacheKey
 
 from composer.spec.utils import temp_certora_file
-from composer.workflow.services import get_checkpointer
 from composer.templates.loader import load_jinja_template
 from composer.spec.trunner import run_to_completion
 
@@ -204,7 +203,7 @@ async def setup_summaries(
             summary_context.get_memory_tool(),
             ResolutionGuidance.as_tool("resolution_guidance")
         ]
-    ).with_input(Input).compile(checkpointer=get_checkpointer())
+    ).with_input(Input).compile(checkpointer=summary_context.checkpointer)
     
     inputs = []
 

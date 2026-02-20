@@ -38,7 +38,7 @@ async def run_bug_analysis(
         context=component
     ).with_sys_prompt(
         "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
-    ).build()[0].compile()
+    ).compile_async(checkpointer=component_analysis.checkpointer)
 
     r = await run_to_completion(
         d,
