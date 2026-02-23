@@ -1,0 +1,18 @@
+State "havoc" (i.e., the prover assumes the state of all contracts can change arbitrarily) are a common source
+of verification failures. These havocs are due to the sound (but pesimistic) handling of "unresolved calls", i.e.,
+calls to external contracts which the prover cannot precisely model.
+
+A common solution to this issue it to add *summaries* to the specification. As the name suggests, these
+"summaries" provide a compact summary of the method behavior in lieu of the concrete implementation. With so called
+"wildcard" summaries, the behavior of a method (regarldess of the receiver contract) can be summarized, e.g., all ERC20 "transfer"
+functions.
+
+However, these summaries must be *sound* and accurately capture the behavior of the summarized function that is relevant
+to the property (or properties) being verified. For example, summarizing a function like "burnLiquidity" as having no side effects
+(i.e., with a NONDET summary) is unsound if the property in question deals with liquidity. It *MAY* be appropriate to use such a summary
+if the property in question does *NOT* reason about liquidity in anyway and thus the behavior of this function is irrelevant. However,
+these "trivializing" summaries should only be used when there is extremely strong, verifiable evidence that the function effets may be
+safely ignored.
+
+Note that summaries may interact with "state" via ghost variables declared in specifications. These ghosts are effective for representing the
+storage or state of unknown external contracts that the contract under verification may interact with.
