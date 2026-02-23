@@ -13,7 +13,7 @@
 #      You should have received a copy of the GNU General Public License
 #      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from typing import Optional, List, Generator, cast, Iterable
+from typing import Optional, Generator, cast, Iterable, Iterator
 
 from dataclasses import dataclass
 import logging
@@ -71,25 +71,80 @@ def get_section_header(s: Tag) -> Optional[Header]:
     level = int(target.name[1:])
     return Header(head=header, level=level)
 
-max_length = 800
+max_length = 2000
 nlp = spacy.load("en_core_web_sm")
 main_body_ctx: contextvars.ContextVar[Tag] = contextvars.ContextVar('main_body')
 
 @dataclass
 class InitContext:
-    codes: List[str]
+    codes: list[str]
     context: str
 
+class TextCollector:
+    def __init__(self):
+        self.bodies : list["TextStreamer"] = []
+
+    def chunks(self) -> Iterator[BlockChunk]:
+        for i in self.bodies:
+            if not i._active:
+                continue
+            yield BlockChunk(
+                i.header, 0, i._code_refs, i._buffer
+            )
+
+class TextStreamer():
+    def __init__(self, sink: TextCollector, min_depth: int, parent: "TextStreamer | None", header: list[str]):
+        self.parent = parent
+        self.min_depth = min_depth
+        self._code_refs : list[str] = []
+        self._buffer = ""
+        self.header = header
+        self._active = len(header) > min_depth
+        self._section_stack : list[list[str]] = []
+        self.sink = sink
+        sink.bodies.append(self)
+
+    def stream_text(self, text: str):
+        if self._active:
+            self._buffer += " " + text
+        if self.parent is not None:
+            self.parent.stream_text(text)
+
+    def stream_code(self, code: str):
+        if self._active:
+            self._buffer += "\n" + code_ref_tag(len(self._code_refs)) + "\n"
+            self._code_refs.append(code)
+        if self.parent is not None:
+            self.parent.stream_code(code)
+        
+    def section_start(self, headers: list[str]):
+        if self._active:
+            self._buffer += f"\n\nSection: {' / '.join(headers)}\n"
+            self._section_stack.append(headers)
+        if self.parent is not None:
+            self.parent.section_start(headers)
+        
+    def section_end(self):
+        if self._active:
+            assert len(self._section_stack) > 0
+            curr_section = self._section_stack.pop()
+            self._buffer += f"\n(End of Section {' / '.join(curr_section)})"
+        if self.parent is not None:
+            self.parent.section_end()
+
+    def child(self, child_headers: list[str]) -> "TextStreamer":
+        return TextStreamer(self.sink, self.min_depth, self, child_headers)
+
 class BlockBuilder:
-    def __init__(self, header: List[str]) -> None:
-        self.siblings : List[BlockChunk] = []
+    def __init__(self, header: list[str]) -> None:
+        self.siblings : list[BlockChunk] = []
         self.text = ""
-        self.code_refs : List[str] = []
+        self.code_refs : list[str] = []
         self.part_counter = 0
         self.headers = header
         self.appended_child = False
 
-    def _fixup_code_refs(self, text: str, refs: List[str]) -> str:
+    def _fixup_code_refs(self, text: str, refs: list[str]) -> str:
         replacement = {}
         id = 0
         replacer = text
@@ -108,7 +163,7 @@ class BlockBuilder:
 
     def add_code(self, code: str) -> None:
         self.appended_child = False
-        self.text += f"\n{code_ref_tag(len(self.code_refs))}>"
+        self.text += f"\n{code_ref_tag(len(self.code_refs))}"
         self.code_refs.append(code)
 
     def _push(self) -> None:
@@ -241,8 +296,8 @@ def translate_text_block(s: Tag) -> str:
     assert s.name == "p"
     return s.get_text("")
 
-def class_or_empty(s: Tag) -> List[str]:
-    return cast(List[str], s.attrs.get("class", []))
+def class_or_empty(s: Tag) -> list[str]:
+    return cast(list[str], s.attrs.get("class", []))
 
 def convert_li(s: Tag, depth: int) -> str:
     ident = (" " * depth) + " * "
@@ -268,7 +323,7 @@ def skip_class(s: Tag) -> bool:
     cl = class_or_empty(s)
     return "versionchanged" in cl or "versionadded" in cl or "math" in cl
 
-def translate_block(s: Tag, headers: List[str]) -> Generator[BlockChunk, None, None]:
+def translate_block(streamer: TextStreamer, s: Tag, headers: list[str]) -> Generator[BlockChunk, None, None]:
     assert s.name == "section"
     builder = BlockBuilder(
         header=headers
@@ -281,25 +336,40 @@ def translate_block(s: Tag, headers: List[str]) -> Generator[BlockChunk, None, N
                 continue
             case Tag(name="p"):
                 block = translate_text_block(ch)
+                streamer.stream_text(block)
                 builder.append_text(block, True, False)
             case Tag(name="div") if "admonition" in ch.attrs.get("class", []):
-                builder.append_text(ch.getText(""), is_structured_boundary=True, unbreakable=True)
+                txt = ch.getText("")
+                streamer.stream_text(txt)
+                builder.append_text(txt, is_structured_boundary=True, unbreakable=True)
             case Tag(name="div") if isinstance(ch.find("pre"), Tag):
-                builder.add_code(extract_code(cast(Tag, ch.find("pre"))))
+                code = extract_code(cast(Tag, ch.find("pre")))
+                streamer.stream_code(code)
+                builder.add_code(code)
             case Tag(name="ul") | Tag(name="ol"):
-                builder.append_text(convert_ul(ch), is_structured_boundary=True, unbreakable=True)
+                ul = convert_ul(ch)
+                streamer.stream_text(ul)
+                builder.append_text(ul, is_structured_boundary=True, unbreakable=True)
             case Tag(name="span") if ch.getText() == "":
                 continue
             case NavigableString():
+                streamer.stream_text(ch.text)
                 builder.append_text(ch.text, False, False)
             case Tag(name="section"):
                 head = get_block_header(ch)
+                sec = [ h for h in head if h ]
+                streamer.section_start(sec)
+                if "Example" in sec[-1]:
+                    child_streamer = streamer
+                else:
+                    child_streamer = streamer.child(sec)
                 first = True
-                for child_block in translate_block(ch, head):
+                for child_block in translate_block(child_streamer, ch, head):
                     if first:
                         builder.push_child(child_block)
                         first = False
                     yield child_block
+                streamer.section_end()
             case Tag(name=nm) if nm.startswith("h"):
                 continue
             case _:
@@ -308,7 +378,7 @@ def translate_block(s: Tag, headers: List[str]) -> Generator[BlockChunk, None, N
     for x in builder.finish():
         yield x
 
-def get_block_header(s: Tag) -> List[str]:
+def get_block_header(s: Tag) -> list[str]:
     assert isinstance(s, Tag)
     main_body = main_body_ctx.get()
     h = get_section_header(s)
@@ -358,11 +428,20 @@ def main() -> None:
     main_body_ctx.set(main_body)
 
     db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model(), skip_test=False)
-    buffer : List[BlockChunk] = []
+    buffer : list[BlockChunk] = []
+
+    sink = TextCollector()
+
+    root_streamer = TextStreamer(
+        sink, 1, None, []
+    )
 
     for s in main_body.select("div.compound > section"):
         assert isinstance(s, Tag)
-        for t in translate_block(s, get_block_header(s)):
+        head = get_block_header(s)
+        trunc_head = [ h for h in head if h ]
+        section_streamer = root_streamer.child(trunc_head)
+        for t in translate_block(section_streamer, s, head):
             sanity_checker(t)
             buffer.append(t)
             if len(buffer) == 50:
@@ -371,6 +450,9 @@ def main() -> None:
 
     if len(buffer) > 0:
         db.add_chunks_batch(buffer)
+
+    for i in sink.chunks():
+        db.add_manual_section(i)
 
 if __name__ == "__main__":
     main()
