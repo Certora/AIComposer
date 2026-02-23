@@ -270,7 +270,7 @@ def _analyze_core(
     if args.ecosystem == "evm":
         #import here to lazily load sentencetransformers
         from composer.tools.search import cvl_manual_search
-        tools.append(cvl_manual_search)
+        tools.append(cvl_manual_search(ExplainerContext))
 
     llm = ChatAnthropic(
         model_name="claude-sonnet-4-5-20250929",
