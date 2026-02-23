@@ -287,6 +287,13 @@ def _analyze_core(
 
     system_prompt = load_jinja_template("analyzer_system_prompt.j2")
 
+    # Wrap initial_prompt with cache_control for prompt caching
+    initial_prompt_with_cache = {
+        "type": "text",
+        "text": initial_prompt,
+        "cache_control": {"type": "ephemeral"}
+    }
+
     graph = build_workflow(
         input_type=FlowInput,
         context_schema=ExplainerContext,
@@ -294,7 +301,7 @@ def _analyze_core(
         tools_list=tools,
         unbound_llm=llm,
         sys_prompt=system_prompt,
-        initial_prompt=initial_prompt,
+        initial_prompt=initial_prompt_with_cache,
         state_class=SimpleState
     )[0].compile(checkpointer=get_checkpointer())
 
