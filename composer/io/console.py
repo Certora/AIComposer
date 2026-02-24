@@ -1,11 +1,12 @@
-from typing import Callable, cast
+from typing import Callable
 
 import difflib
 
 from rich.console import Console
 
-from composer.diagnostics.handlers import ProgressUpdate
-from composer.human.types import HumanInteractionType, ProposalType, QuestionType, RequirementRelaxationType
+from composer.diagnostics.handlers import summarize_update, print_prover_updates
+from composer.diagnostics.stream import ProgressUpdate
+from composer.human.types import HumanInteractionType, ProposalType, QuestionType, RequirementRelaxationType, ExtractionQuestionType
 from composer.io.prompt import prompt_input
 from composer.core.state import ResultStateSchema, AIComposerState
 
@@ -17,12 +18,27 @@ class ConsoleHandler:
         if chosen:
             print(f"Selected thread id: {tid}")
 
-    async def log_checkpoint_id(self, checkpoint_id: str):
+    async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str):
         print("current checkpoint: " + checkpoint_id)
 
-    async def log_state_update(self, st: dict): ...
+    async def log_state_update(self, path: list[str], st: dict):
+        summarize_update(st)
 
-    async def progress_update(self, upd: ProgressUpdate): ...
+    async def progress_update(self, path: list[str], upd: ProgressUpdate):
+        print_prover_updates(upd)
+
+    async def log_start(self, *, path: list[str], tool_id: str | None):
+        if len(path) > 1:
+            tool_info = f" (tool={tool_id})" if tool_id else ""
+            print(f"[Nested workflow start] {' > '.join(path)}{tool_info}")
+        else:
+            print(f"[Workflow start] {path[0]}")
+
+    async def log_end(self, path: list[str]):
+        if len(path) > 1:
+            print(f"[Nested workflow end] {' > '.join(path)}")
+        else:
+            print(f"[Workflow end] {path[0]}")
 
     def _print_header(self, topic: str) -> None:
         print("\n" + "=" * 80)
@@ -60,7 +76,7 @@ class ConsoleHandler:
                 console.print(line, style="red", end="")
             else:
                 console.print(line, end="")
-        
+
         print("")
 
         def filt(x: str) -> str | None:
@@ -91,6 +107,12 @@ class ConsoleHandler:
             return None
         return prompt_input("Response to request, must start with ACCEPTED/REJECTED", debug_thunk, filt)
 
+    def handle_extraction_question(self, interrupt: ExtractionQuestionType, debug_thunk: Callable[[], None]) -> str:
+        self._print_header("HUMAN ASSISTANCE REQUESTED")
+        print(f"Context:\n{interrupt['context']}")
+        print(f"Question: {interrupt['question']}")
+        return prompt_input("Enter your response", debug_thunk)
+
     async def human_interaction(
         self,
         ty: HumanInteractionType,
@@ -103,6 +125,8 @@ class ConsoleHandler:
                 return self.handle_question_interrupt(ty, debug_thunk)
             case "req_relaxation":
                 return self.handle_req_relaxation_interrupt(ty, debug_thunk)
+            case "extraction_question":
+                return self.handle_extraction_question(ty, debug_thunk)
 
     async def output(
         self,
@@ -122,4 +146,3 @@ class ConsoleHandler:
             print(content)
 
         print(f"\nComments: {res.comments}")
-

@@ -1,15 +1,12 @@
-from typing import Optional, Literal, cast
+from typing import Optional
 import logging
 import uuid
-import logging
 from dataclasses import dataclass
 import pathlib
 import psycopg
 
 from langchain_core.runnables import RunnableConfig
-from langchain_core.messages import HumanMessage
 from langchain_core.language_models.chat_models import BaseChatModel
-from langgraph.types import Command
 
 from graphcore.tools.memory import memory_tool
 
@@ -17,24 +14,18 @@ from composer.input.types import WorkflowOptions, InputData, ResumeFSData, Resum
 from composer.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools, get_memory_ns
 from composer.workflow.types import Input, PromptParams
 from composer.workflow.meta import create_resume_commentary
-from composer.core.state import ResultStateSchema, AIComposerState
+from composer.core.state import AIComposerState  # used by VFSAccessor type param
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.core.validation import ValidationType, prover, reqs as req_type
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model as get_rag_model
-from composer.audit.db import AuditDB, ResumeArtifact, InputFileLike
-from composer.diagnostics.stream import AllUpdates, PartialUpdates, Summarization
-from composer.diagnostics.handlers import summarize_update, handle_custom_update
-from composer.human.handlers import handle_human_interrupt
-from composer.templates.loader import load_jinja_template
+from composer.audit.db import AuditDB, AuditDBSink, ResumeArtifact, InputFileLike
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.tools.relaxation import requirements_relaxation
-from composer.console.handler import DebugHandler
-import composer.console.app as A
-
-
-StreamEvents = Literal["checkpoints", "custom", "updates"]
+from composer.templates.loader import load_jinja_template
+from composer.io.console import ConsoleHandler
+from composer.io.context import with_handler, run_graph
 
 
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
@@ -76,7 +67,7 @@ def get_resume_prompt_common(
     changes = []
     if other_changes is not None:
         changes.extend(other_changes)
-    
+
     if res.new_system is not None:
         changes.append(InputChangeDesc(
             orig_text=art.system_doc,
@@ -85,7 +76,7 @@ def get_resume_prompt_common(
             single_form="system document",
             vfs_note=None
         ))
-    
+
     return [load_jinja_template(
         "resume_prompt.j2",
         commentary=art.commentary,
@@ -158,15 +149,17 @@ async def execute_ai_composer_workflow(
     logger = logging.getLogger(__name__)
 
     checkpointer = get_checkpointer()
-    
+
     audit_conn = psycopg.connect(workflow_options.audit_db)
     audit_db = AuditDB(audit_conn)
 
     thread_id = workflow_options.thread_id
 
+    console = ConsoleHandler()
+
     if thread_id is None:
         thread_id = "crypto_session_" + str(uuid.uuid1())
-        print(f"Selected thread id: {thread_id}")
+        await console.log_thread_id(thread_id, chosen=True)
         logger.info(f"Selected thread id: {thread_id}")
 
     prompt_params: PromptParams
@@ -233,6 +226,7 @@ async def execute_ai_composer_workflow(
         else:
             print("Analyzing requirements...")
             reqs = await get_requirements(
+                console,
                 workflow_options,
                 llm,
                 system_doc,
@@ -299,117 +293,36 @@ async def execute_ai_composer_workflow(
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     config["recursion_limit"] = workflow_options.recursion_limit
 
-    current_input: Optional[Input | Command] = flow_input
-
     if workflow_options.checkpoint_id is not None:
         config["configurable"]["checkpoint_id"] = workflow_options.checkpoint_id
-        current_input = None
 
     rag_connection = workflow_options.rag_db
 
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,
         keep_folder=workflow_options.prover_keep_folders
-    )   
+    )
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
     required_validations : list[ValidationType] = [prover]
     if reqs_list is not None:
         required_validations.append(req_type)
-    
+
     work_context = AIComposerContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
 
-    curr_state_config: RunnableConfig = {
-        "configurable": {
-            "thread_id": thread_id
-        }
-    }
+    audit_sink = AuditDBSink(audit_db, thread_id)
 
-    handler = DebugHandler()
-    print("Debug handler installed (Ctrl+C to access)")
+    async with with_handler(console, audit=audit_sink):
+        final_state = await run_graph(workflow_exec, work_context, flow_input, config)
 
-    while True:
-        interrupted = False
-        r = current_input
-        current_input = None
-        async for (event_ty_raw, payload) in workflow_exec.astream(input=r, config=config, context=work_context, stream_mode=["custom", "updates", "checkpoints"]):
-            event_ty = cast(StreamEvents, event_ty_raw)
-            assert isinstance(payload, dict)
-            match event_ty:
-                case "checkpoints":
-                    print("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
-                    logger.info("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
-                case "updates":
-                    if handler.requested and "tools" in payload:
-                        st = workflow_exec.get_state(curr_state_config).values
-                        res = A.debug_console(
-                            work_context,
-                            st, #type: ignore
-                            True
-                        )
-                        handler.reset()
-                        if res is not None:
-                            state_res = workflow_exec.update_state(curr_state_config, {
-                                "messages": [
-                                    HumanMessage(content=res)
-                                ]
-                            }, as_node="tools")
-                            interrupted = True
-                            config["configurable"]["checkpoint_id"] = state_res.get("configurable", {})["checkpoint_id"]
-                            break
-                    if "__interrupt__" in payload:
-                        if "configurable" in config and "checkpoint_id" in config["configurable"]:
-                            del config["configurable"]["checkpoint_id"]
-                        interrupt_data = cast(dict, payload["__interrupt__"][0].value)
-                        def debug_thunk():
-                            st = cast(AIComposerState, workflow_exec.get_state(curr_state_config).values)
-                            A.debug_console(work_context, st, False)
-                        human_response = handle_human_interrupt(interrupt_data, debug_thunk)
-                        current_input = Command(resume=human_response)
-                        interrupted = True
-                        break
+    result = final_state.get("generated_code", None)
+    if result is None:
+        return 1
 
-                    summarize_update(payload)
-                case "custom":
-                    p = cast(PartialUpdates, payload)
-                    full_update: AllUpdates
-                    if p["type"] == "summarization_raw":
-                        curr_checkpoint = workflow_exec.get_state(curr_state_config).config.get("configurable", {}).get("checkpoint_id", None)
-                        if curr_checkpoint is None:
-                            raise RuntimeError("Have summarization before ever hitting a checkpoint; this is sus")
-                        full_update = Summarization(
-                            type="summarization",
-                            checkpoint_id=curr_checkpoint,
-                            summary=p["summary"]
-                        )
-                    else:
-                        full_update = p
-                    handle_custom_update(full_update, thread_id, audit_db)
+    res_commentary = create_resume_commentary(final_state, llm=llm)
+    audit_db.register_complete(
+        thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
+    )
 
-        if interrupted:
-            continue
-        state = workflow_exec.get_state(curr_state_config)
-        final_state = cast(AIComposerState, state.values)
-        result = final_state.get("generated_code", None)
-        if result is None:
-            return 1
-        if audit_db is not None:
-            res_commentary = create_resume_commentary(final_state, llm=llm)
-            audit_db.register_complete(
-                thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
-            )
-
-        assert isinstance(result, ResultStateSchema)
-        print("\n" + "=" * 80)
-        print("CODE GENERATION COMPLETED")
-        print("=" * 80)
-        print("Generated Source Files:")
-        for path in result.source:
-            print(f"\n--- {path} ---")
-            file_contents = materializer.get(final_state, path)
-            assert file_contents is not None
-            content = file_contents.decode("utf-8")
-            print(content)
-
-        print(f"\nComments: {result.comments}")
-        return 0
+    await console.output(result, materializer, final_state)
+    return 0

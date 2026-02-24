@@ -30,7 +30,7 @@ from composer.cvl.pretty_print import pretty_print
 from composer.spec.ptypes import NatSpecState, Result, NatSpecInput
 from composer.tools.search import cvl_manual_search
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
-from composer.human.handlers import prompt_input
+from composer.io.prompt import prompt_input
 from composer.templates.loader import load_jinja_template
 
 from graphcore.tools.human import human_interaction_tool

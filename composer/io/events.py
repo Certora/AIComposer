@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass
 
 
@@ -18,19 +19,24 @@ class CustomUpdate:
     checkpoint_id: str
 
 @dataclass
-class NestedStart:
+class Start:
     thread_id: str
-    child_thread_id: str
-    tool_context_id: str | None
+    tool_id: str | None = None
 
 @dataclass
-class NestedEnd:
+class End:
     thread_id: str
-    child_thread_id: str
 
 @dataclass
 class ToolOutput:
     tool_id: str
     output_line: str
 
-type AllEvents = StateUpdate | NextCheckpoint | CustomUpdate | NestedStart | NestedEnd | ToolOutput
+InnerEvent = StateUpdate | NextCheckpoint | CustomUpdate | Start | End | ToolOutput
+
+@dataclass
+class Nested:
+    inner: "AllEvents"
+    parent_id: str
+
+type AllEvents = InnerEvent | Nested
