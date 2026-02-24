@@ -335,7 +335,8 @@ def _analyze_core(
             if not args.quiet:
                 print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
         else:
-            print(d)
+            if not args.quiet:
+                print(d)
 
     return graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
 
