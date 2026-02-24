@@ -50,7 +50,7 @@ def handle_proposal_interrupt(interrupt_ty: ProposalType, debug_thunk: Callable[
     print(f"Explanation: {interrupt_ty['explanation']}")
     print("Proposed diff is as follows:")
 
-    console = Console(highlighter=None)
+    console = Console(highlighter=None, markup=False)
 
     for line in diff:
         if line.startswith("---"):
