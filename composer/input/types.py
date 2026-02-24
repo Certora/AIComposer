@@ -1,6 +1,21 @@
-from typing import Optional, Protocol, Literal
+from typing import Optional, Protocol, Literal, Any, Annotated
+from composer.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
 import pathlib
 from dataclasses import dataclass
+
+@dataclass
+class BasicArg:
+    help: str
+
+@dataclass
+class Arg(BasicArg):
+    default: Any | None
+    feature_flag: tuple[Any, Any] | None = None
+
+@dataclass
+class OptionalArg(BasicArg):
+    pass
+
 
 @dataclass
 class UploadedFile:
@@ -58,16 +73,26 @@ class NativeFS:
     
 class RAGDBOptions(Protocol):
     # database options
-    rag_db: str
+    rag_db: Annotated[str, Arg(
+        help="Database connection string for CVL manual search",
+        default=RAGDB_DEFAULT_CONNECTION
+    )]
 
-class WorkflowOptions(RAGDBOptions):
+class LangraphOptions(Protocol):
+    checkpoint_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
+    thread_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
+    recursion_limit: Annotated[int, Arg(
+        help="The number of iterations of the graph to allow (default: {default}",
+        default=50
+    )]
+
+
+class WorkflowOptions(RAGDBOptions, LangraphOptions):
     prover_capture_output: bool
     prover_keep_folders: bool
 
     debug_prompt_override: Optional[str]
 
-    checkpoint_id: Optional[str]
-    thread_id: Optional[str]
     recursion_limit: int
     audit_db: str
     summarization_threshold: Optional[int]
@@ -78,10 +103,22 @@ class WorkflowOptions(RAGDBOptions):
 
 
 class ModelOptions(Protocol):
-    model: str
-    tokens: int
-    thinking_tokens: int
-    memory_tool: bool
+    model: Annotated[str, Arg(
+        help="Model to use for code generation (default: {default})", default="claude-sonnet-4-20250514"
+        )]
+    tokens: Annotated[int, Arg(
+        help="Token budget for code generation (default: {default})",
+        default=10_000
+    )]
+    thinking_tokens: Annotated[int, Arg(
+        help="Token budget for thinking (default: {default})",
+        default=2048
+    )]
+    memory_tool: Annotated[bool, Arg(
+        help="Enable Anthropic's memory tool",
+        default=None,
+        feature_flag=("memory", True) # default to use if this is not exposed on command line
+    )]
 
 class CommandLineArgs(WorkflowOptions, ModelOptions):
     spec_file: str
