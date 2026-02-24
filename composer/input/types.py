@@ -87,7 +87,7 @@ class LangraphOptions(Protocol):
     )]
 
 
-class WorkflowOptions(RAGDBOptions, LangraphOptions):
+class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
     prover_capture_output: bool
     prover_keep_folders: bool
 
@@ -120,7 +120,7 @@ class ModelOptions(Protocol):
         feature_flag=("memory", True) # default to use if this is not exposed on command line
     )]
 
-class CommandLineArgs(WorkflowOptions, ModelOptions):
+class CommandLineArgs(WorkflowOptions, ModelOptions, Protocol):
     spec_file: str
     interface_file: str
     system_doc: str
@@ -128,7 +128,7 @@ class CommandLineArgs(WorkflowOptions, ModelOptions):
 
     debug: bool
 
-class ResumeArgs(WorkflowOptions, ModelOptions):
+class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
     # common
     src_thread_id: str
     command: Literal["materialize", "resume-dir", "resume-id"]
