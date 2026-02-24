@@ -66,6 +66,25 @@ _default_text = "The textual analysis explaining the counterexample. You MAY use
 
 _default_format = (str, _default_text)
 
+_TOKEN_USAGE_KEYS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
+
+def _accumulate_token_usage(update: dict, usage_dict: dict[str, int] | None) -> None:
+    """Extract token usage from update messages and accumulate into usage_dict."""
+    if usage_dict is None:
+        return
+
+    # Updates contain node outputs with messages
+    for node_output in update.values():
+        if not isinstance(node_output, dict):
+            continue
+        messages = node_output.get("messages", [])
+        for msg in messages:
+            if hasattr(msg, 'response_metadata') and isinstance(msg.response_metadata, dict):
+                usage = msg.response_metadata.get("usage", {})
+                for key in _TOKEN_USAGE_KEYS:
+                    if key in usage:
+                        usage_dict[key] = usage_dict.get(key, 0) + usage[key]
+
 def main() -> int:
     """CLI entry point for the analyzer."""
     import argparse
@@ -225,7 +244,8 @@ def _analyze_core(
     initial_prompt: str,
     report_dir: pathlib.Path,
     args: AnalysisArgs,
-    out_type: tuple[type[T], str] | type[T]
+    out_type: tuple[type[T], str] | type[T],
+    token_usage: dict[str, int] | None = None
 ) -> T:
     """Run the analysis workflow with custom calltraces and prompt.
 
@@ -335,6 +355,8 @@ def _analyze_core(
             if not args.quiet:
                 print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
         else:
+            if isinstance(d, dict):
+                _accumulate_token_usage(d, token_usage)
             if not args.quiet:
                 print(d)
 
@@ -412,7 +434,9 @@ B = TypeVar("B", bound=BaseModel)
 def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
-    args: AnalysisArgs
+    args: AnalysisArgs,
+    output: None = None,
+    token_usage: dict[str, int] | None = None
 ) -> str:
     ...
 
@@ -421,7 +445,8 @@ def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
-    output: tuple[type[T], str]
+    output: tuple[type[T], str],
+    token_usage: dict[str, int] | None = None
 ) -> T:
     ...
 
@@ -430,7 +455,8 @@ def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
-    output: type[B]
+    output: type[B],
+    token_usage: dict[str, int] | None = None
 ) -> B:
     ...
 
@@ -438,7 +464,8 @@ def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
-    output: tuple[type, str] | type | None = None
+    output: tuple[type, str] | type | None = None,
+    token_usage: dict[str, int] | None = None
 ) -> Any:
     """Run analysis workflow with custom calltraces and prompt.
 
@@ -485,4 +512,4 @@ def analyze_with_calltraces(
         "args.folder must be a local folder path, not a URL. Use analyze() to handle URLs."
 
     report_dir = pathlib.Path(args.folder)
-    return _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)
+    return _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format, token_usage)
