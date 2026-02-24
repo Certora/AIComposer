@@ -7,7 +7,6 @@ if __name__ != "__main__":
 import bind as _
 
 import psycopg
-import difflib
 import json
 
 from typing import Dict, Optional, List, cast, TypedDict, Literal, Annotated, Union, TypeVar, Generic, NotRequired
@@ -21,39 +20,24 @@ from composer.workflow.factories import get_checkpointer
 from composer.templates.loader import load_jinja_template
 from composer.natreq.judge import ClassificationType
 
+# Import common utilities and base types
+from traceCommon import (
+    AbstractStep, AIStepMessage, AIStep, QuestionStep, FreshFile, Diff, FileUpdate,
+    PutFileStep, SummarizationStep, Thought, Command, VFSInteraction, VFSStep,
+    VFSManager, compute_diff, MessageQueue,
+    has_vfs_tools, handle_vfs_tools, handle_next_vfs_tool, extract_human_response
+)
 
-StepTy = TypeVar("StepTy", 
-                 Literal["initial"],
-                 Literal["ai"],
-                 Literal["prover"],
-                 Literal["search"],
-                 Literal["put_file"],
-                 Literal["question"],
-                 Literal["proposal"],
-                 Literal["result"],
-                 Literal["summarization"],
-                 Literal["vfs"],
-                 Literal["relaxation"],
-                 Literal["judge"])
 
-class AbstractStep(TypedDict, Generic[StepTy]):
-    vfs_snapshot: int
-    type: StepTy
-
+# ========================================
+# Composer-Specific Type Definitions
+# ========================================
 
 class InitialStep(AbstractStep[Literal["initial"]]):
     spec: str
     interface: str
     system_doc: str
     reqs: NotRequired[list[str]]
-
-class AIStepMessage(TypedDict):
-    type: Literal["thinking", "text"]
-    text: str
-
-class AIStep(AbstractStep[Literal["ai"]]):
-    messages: List[AIStepMessage]
-    tool: str
 
 class ProverStep(AbstractStep[Literal["prover"]]):
     contract_file: str
@@ -65,11 +49,6 @@ class SearchStep(AbstractStep[Literal["search"]]):
     query: str
     results: List[ManualResult]
 
-class QuestionStep(AbstractStep[Literal["question"]]):
-    query: str
-    answer: str
-    context: str
-    code: Optional[str]
 
 class ResultStep(AbstractStep[Literal["result"]]):
     comments: str
@@ -79,39 +58,7 @@ class ProposalStep(AbstractStep[Literal["proposal"]]):
     explanation: str
     human_response: str
     proposed_diff: List[str]
-    
-class FreshFile(TypedDict):
-    type: Literal["fresh"]
-    contents: str
-    path: str
 
-class SummarizationStep(AbstractStep[Literal["summarization"]]):
-    summary_md: str
-
-class Thought(TypedDict):
-    type: Literal["thought"]
-    msg: str
-
-class Command(TypedDict):
-    type: Literal["cmd"]
-    cmd: str
-    stdout: str
-
-VFSInteraction = Annotated[Thought | Command, Discriminator("type")]
-
-class VFSStep(AbstractStep[Literal["vfs"]]):
-    commands: list[VFSInteraction]
-
-class Diff(TypedDict):
-    type: Literal["diff"]
-    path: str
-    contents: str
-    diff_lines: List[str]
-
-FileUpdate = Annotated[Union[Diff, FreshFile], Discriminator("type")]
-
-class PutFileStep(AbstractStep[Literal["put_file"]]):
-    updates: List[FileUpdate]
 
 class RelaxationStep(AbstractStep[Literal["relaxation"]]):
     requirement: str
@@ -149,52 +96,13 @@ db = AuditDB(audit)
 thread_id = sys.argv[1]
 (run_info, vfs_init) = db.get_run_info(thread_id=thread_id)
 
-
-class VFSManager():
-    def __init__(self, ver_0: Dict[str, str]):
-        self.fs = [ver_0]
-        self.curr_data = ver_0.copy()
-
-    def push_update(self, upd: Dict[str, str]):
-        self.fs.append(upd.copy())
-        for (k,v) in upd.items():
-            self.curr_data[k] = v
-
-    @property
-    def curr_version(self) -> int:
-        return len(self.fs) - 1
-
-vfs = VFSManager({ k: v.decode("utf-8") for (k, v) in vfs_init.to_dict().items()})
+# Initialize VFS from audit DB
+vfs = VFSManager({k: v.decode("utf-8") for (k, v) in vfs_init.to_dict().items()})
 
 
-def compute_diff(path: str, curr_version: str, new_version: str) -> List[str]:
-    ud = difflib.unified_diff(
-        a=curr_version.splitlines(keepends=True),
-        b=new_version.splitlines(keepends=True),
-        fromfile="a/" + path,
-        tofile="b/" + path
-    )
-    return list(ud)
-
-
-class MessageQueue:
-    def __init__(self, msgs: list[BaseMessage]):
-        self.msgs = msgs
-        self.i = 0
-
-    def peek(self) -> BaseMessage | None:
-        if self.i >= len(self.msgs):
-            return None
-        return self.msgs[self.i]
-    
-    def take(self) -> BaseMessage:
-        to_ret = self.msgs[self.i]
-        self.i += 1
-        return to_ret
-    
-    def has_next(self) -> bool:
-        return self.i < len(self.msgs)
-
+# ========================================
+# Composer-Specific Tool Handlers
+# ========================================
 
 def handle_cvl_manual_search(step: dict, tool_id: str) -> SearchStep:
     """Handle cvl_manual_search tool case."""
@@ -316,79 +224,6 @@ def handle_code_result(step: dict) -> ResultStep:
         files=result_input["source"]
     )
 
-def handle_next_vfs_tool(m: AIMessage, message_queue: MessageQueue) -> list[VFSInteraction]:
-    cont: List[dict | str]
-    if isinstance(m.content, list):
-        cont = m.content
-    else:
-        cont = [m.content]
-    thoughts : list[str] = []
-    to_ret : list[VFSInteraction] = []
-    for c in cont:
-        if isinstance(c, str):
-            thoughts.append(c)
-            continue
-        ty = c.get("type")
-        if ty == "text":
-            thoughts.append(cast(str, c.get("text")))
-            continue
-        elif ty == "thinking":
-            thoughts.append(cast(str, c.get("thinking")))
-        
-        # yolo
-        if ty != "tool_use":
-            continue
-        thoughts_san = [ d.strip() for d in thoughts if d.strip() ]
-        if len(thoughts_san) > 0:
-            to_ret.append(Thought(
-                type="thought",
-                msg="\n".join(thoughts_san)
-            ))
-        to_ret.extend(handle_vfs_tools(c, message_queue))
-        return to_ret
-    raise RuntimeError("Didn't actually hit a tool call")
-
-def has_vfs_tools(m: AIMessage) -> bool:
-    for t in m.tool_calls:
-        nm = t["name"]
-        if nm == "list_files" or nm == "grep_files" or nm == "get_file":
-            return True
-    return False
-        
-def handle_vfs_tools(step: dict, message_queue: MessageQueue) -> list[VFSInteraction]:
-    commands: list[VFSInteraction] = []
-    match step["name"]:
-        case "list_files":
-            nxt = message_queue.take()
-            assert isinstance(nxt, ToolMessage)
-            commands.append(Command(
-                type="cmd",
-                cmd="ls",
-                stdout=nxt.text()
-            ))
-        case "grep_files":
-            nxt = message_queue.take()
-            assert isinstance(nxt, ToolMessage)
-            query = step["input"]["search_string"]
-            commands.append(Command(
-                type="cmd",
-                cmd=f"grep {query}",
-                stdout=nxt.text()
-            ))
-        case "get_file":
-            which = step["input"]["path"]
-            nxt = message_queue.take()
-            assert isinstance(nxt, ToolMessage)
-            commands.append(Command(
-                type="cmd",
-                cmd=f"cat {which}",
-                stdout=nxt.text()
-            ))
-    rem_nxt = message_queue.peek()
-    if rem_nxt is not None and isinstance(rem_nxt, AIMessage) and has_vfs_tools(rem_nxt):
-        commands.extend(handle_next_vfs_tool(cast(AIMessage, message_queue.take()), message_queue))
-    return commands
-
 def handle_human_relaxation(step: dict, queue: MessageQueue) -> RelaxationStep:
     req_input = step["input"]
     response = extract_human_response(queue)
@@ -484,11 +319,6 @@ def requirements_judge(step: dict, queue: MessageQueue) -> RequirementsStep:
         vfs_snapshot=vfs.curr_version,
         evaluation=results
     )
-
-def extract_human_response(msg_queue: MessageQueue) -> str:
-    answer_msg = msg_queue.take()
-    assert isinstance(answer_msg, ToolMessage)
-    return answer_msg.text()
 
 def parse_message(checkpoint: CheckpointTuple) -> list[Steps]:
     state_messages = cast(list[BaseMessage], checkpoint.checkpoint["channel_values"]["messages"])
