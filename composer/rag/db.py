@@ -200,3 +200,111 @@ class PostgreSQLRAGDatabase:
                         body = body.replace(to_replace, row[1])
                     to_ret.append(ManualRef(headers=header, content=body, similarity=similarity))
                 return to_ret
+
+
+class ChromaRAGDatabase:
+    """ChromaDB-based RAG database (file-based, no PostgreSQL required)"""
+
+    def __init__(self, persist_dir: str, model: SentenceTransformer, skip_test: bool = True):
+        import chromadb
+
+        self.tr = model
+        self.client = chromadb.PersistentClient(path=persist_dir)
+        self.collection = self.client.get_or_create_collection(
+            name="cvl_manual",
+            metadata={"hnsw:space": "cosine"}
+        )
+        self._next_id = self.collection.count()
+
+    def add_chunks_batch(self, chunks: List[BlockChunk]) -> None:
+        """Add chunks to ChromaDB"""
+        if not chunks:
+            return
+
+        embeddings = cast(List[ndarray], self.tr.encode_document(
+            [d.chunk for d in chunks], show_progress_bar=False
+        ))
+
+        logger.info(f"Adding {len(chunks)} chunks to ChromaDB...")
+
+        ids = []
+        documents = []
+        embedding_list = []
+        metadatas = []
+
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            doc_id = str(self._next_id + i)
+            ids.append(doc_id)
+
+            # Expand code refs inline
+            body = chunk.chunk
+            for j, code in enumerate(chunk.code_refs):
+                to_replace = code_ref_tag(j)
+                body = body.replace(to_replace, code)
+            documents.append(body)
+
+            embedding_list.append(embedding.tolist())
+
+            # Store headers in metadata
+            metadata = {}
+            for j, header in enumerate(chunk.headers):
+                if header:
+                    metadata[f"h{j+1}"] = header
+            metadatas.append(metadata)
+
+        self.collection.add(
+            ids=ids,
+            embeddings=embedding_list,
+            documents=documents,
+            metadatas=metadatas
+        )
+        self._next_id += len(chunks)
+
+    def find_refs(self, query: str, similarity_cutoff: float = 0.5,
+                  top_k: int = 10, manual_section: List[str] = []) -> List[ManualRef]:
+        """Search for similar documents"""
+        query_embedding = cast(ndarray, self.tr.encode_query(query, show_progress_bar=False))
+
+        # Build where filter for manual_section if provided
+        where_filter = None
+        if manual_section:
+            # ChromaDB uses $or for multiple conditions
+            or_conditions = []
+            for section in manual_section:
+                for i in range(1, 7):
+                    or_conditions.append({f"h{i}": section})
+            if or_conditions:
+                where_filter = {"$or": or_conditions}
+
+        results = self.collection.query(
+            query_embeddings=[query_embedding.tolist()],
+            n_results=top_k,
+            where=where_filter,
+            include=["documents", "metadatas", "distances"]
+        )
+
+        to_ret = []
+        if not results['documents'] or not results['documents'][0]:
+            return to_ret
+
+        for i, doc in enumerate(results['documents'][0]):
+            # ChromaDB returns L2 distance by default, but we configured cosine
+            # For cosine distance: similarity = 1 - distance
+            distance = results['distances'][0][i] if results['distances'] else 0
+            similarity = 1 - distance
+
+            if similarity < similarity_cutoff:
+                continue
+
+            metadata = results['metadatas'][0][i] if results['metadatas'] else {}
+            headers = []
+            for j in range(1, 7):
+                h = metadata.get(f'h{j}')
+                if h:
+                    headers.append(h)
+                else:
+                    break
+
+            to_ret.append(ManualRef(headers=headers, content=doc, similarity=similarity))
+
+        return to_ret

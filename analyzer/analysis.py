@@ -16,12 +16,12 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 
-from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
+from composer.rag.db import PostgreSQLRAGDatabase, ChromaRAGDatabase, DEFAULT_CONNECTION
 from composer.rag.models import get_model
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
 
-from composer.workflow.factories import get_checkpointer
+from langgraph.checkpoint.memory import InMemorySaver
 
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
@@ -56,7 +56,7 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
 
 @dataclass
 class ExplainerContext:
-    rag_db: PostgreSQLRAGDatabase
+    rag_db: PostgreSQLRAGDatabase | ChromaRAGDatabase
 
 _analysis_doc = """REQUIRED: You MUST call this tool to submit your final analysis.
 Do NOT write your answer as plain text - the workflow cannot complete until you call this tool.
@@ -303,7 +303,7 @@ def _analyze_core(
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt_with_cache,
         state_class=SimpleState
-    )[0].compile(checkpointer=get_checkpointer())
+    )[0].compile(checkpointer=InMemorySaver())
 
     conf : RunnableConfig = {"configurable": {}}
     tid : str
@@ -320,16 +320,22 @@ def _analyze_core(
 
     conf["recursion_limit"] = args.recursion_limit
 
+    # Create RAG database - supports both PostgreSQL (connection string) and ChromaDB (directory path)
+    if args.rag_db.startswith("postgresql://"):
+        rag_db = PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
+    else:
+        # Assume it's a directory path for ChromaDB
+        rag_db = ChromaRAGDatabase(persist_dir=args.rag_db, model=get_model())
+
     for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
-        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
+        rag_db=rag_db
     ), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
             if not args.quiet:
                 print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
         else:
-            if not args.quiet:
-                print(d)
+            print(d)
 
     return graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
 
