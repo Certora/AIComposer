@@ -46,4 +46,5 @@ include = ["analyzer*", "composer*"]
 
 [tool.setuptools.package-data]
 composer = ["templates/*.j2"]
+"analyzer.rag_data" = ["**/*"]
 
