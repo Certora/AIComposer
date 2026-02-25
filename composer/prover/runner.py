@@ -129,7 +129,7 @@ def certora_prover(
 
             return result
         except Exception as e:
-            print(str(e))
+            print(e)
             import traceback
             traceback.print_exc()
             sys.exit(1)
