@@ -7,8 +7,6 @@ from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll, Container
 from textual.widgets import Static, Input, Collapsible, DataTable
 from textual.widgets.data_table import RowKey, ColumnKey
-from textual.message import Message
-from textual import on
 from textual.binding import Binding
 from textual.validation import Function, Validator
 
@@ -139,10 +137,7 @@ class RichConsoleApp(App):
     #status-bar { dock: top; height: 1; background: $surface; padding: 0 1; }
     #event-log { height: 1fr; padding: 0 1; }
     #event-log > * { margin-bottom: 1; }
-    #interaction-panel { dock: bottom; height: auto; max-height: 50%; border-top: double $accent; padding: 1; display: none; }
-    #interaction-prompt { height: auto; max-height: 15; margin-bottom: 1; }
-    #user-input { width: 1fr; }
-    #input-hint { color: $text-muted; padding: 0 1; }
+    .interaction-hint { color: $text-muted; padding: 0 1; }
     .nested-workflow { margin-left: 2; border-left: solid $secondary; padding-left: 1; }
     .vfs-change { color: cyan; }
     Collapsible { background: transparent; border: none; padding: 0; }
@@ -186,10 +181,6 @@ class RichConsoleApp(App):
     def compose(self) -> ComposeResult:
         yield Static("Session: — | Checkpoint: —", id="status-bar")
         yield VerticalScroll(id="event-log")
-        with Container(id="interaction-panel"):
-            yield Static(id="interaction-prompt")
-            yield Input(placeholder="Type here...", id="user-input", validate_on=["submitted"])
-            yield Static("", id="input-hint")
 
     def set_work(self, fn: Callable[[], Coroutine[None, None, None]]):
         self._work_fn = fn
@@ -243,8 +234,8 @@ class RichConsoleApp(App):
         try:
             assert self._ide is not None
             await self._ide.show_file(content, path, lang=lang)
-        except Exception:
-            self.notify("Failed to open file in VS Code", severity="warning")
+        except Exception as exc:
+            self.notify(f"Failed to open {path} (lang={lang}): {exc}", severity="warning")
 
     @staticmethod
     def _guess_lang(path: str) -> str | None:
@@ -516,24 +507,31 @@ class RichConsoleApp(App):
                     Static(Text("Context compacted (summarization applied)", style="dim italic"))
                 )
 
-    class _InteractionRequest(Message):
-        def __init__(self, ty: HumanInteractionType):
-            super().__init__()
-            self.ty = ty
-
     async def human_interaction(
         self,
         ty: HumanInteractionType,
         debug_thunk: Callable[[], None]
     ) -> str:
         await self._mounted.wait()
-        # Push the request into the app's message loop — the handler
-        # runs in the app's own context where focus / layout work.
-        self.post_message(self._InteractionRequest(ty))
+        target = self.query_one("#event-log", VerticalScroll)
+
+        # Mount directly from worker — post_message races with state update mounts
+        prompt_content, hint_text, validators = self._build_interaction(ty)
+
+        prompt_widget = Static(prompt_content)
+        hint_widget = Static(hint_text, classes="interaction-hint")
+        input_widget = Input(placeholder="Type here...", validate_on=["submitted"])
+        input_widget.validators = validators
+
+        await self._mount_to(target, prompt_widget, input_widget, hint_widget)
+        input_widget.focus()
+
         response = await self._input_queue.get()
 
-        # Log the interaction to the event log
-        target = self.query_one("#event-log", VerticalScroll)
+        # Replace interaction widgets with compact summary
+        await prompt_widget.remove()
+        await input_widget.remove()
+        await hint_widget.remove()
         await self._mount_to(
             target,
             Static(Text.assemble(("You: ", "bold green"), response))
@@ -541,32 +539,31 @@ class RichConsoleApp(App):
 
         return response
 
-    @on(_InteractionRequest)
-    def _on_interaction_request(self, event: _InteractionRequest) -> None:
-        panel = self.query_one("#interaction-panel", Container)
-        prompt_widget = self.query_one("#interaction-prompt", Static)
-        hint_widget = self.query_one("#input-hint", Static)
-        input_widget = self.query_one("#user-input", Input)
+    def _build_interaction(self, ty: HumanInteractionType) -> tuple[Text, str, list[Validator]]:
+        """Return (prompt_renderable, hint_text, validators) for the interaction type."""
+        _PROPOSAL_VALIDATOR = [Function(
+            lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
+            "Response must begin with ACCEPTED/REJECTED/REFINE",
+        )]
+        _REQ_VALIDATOR = [Function(
+            lambda r: r.startswith("ACCEPTED") or r.startswith("REJECTED"),
+            "Response must begin with ACCEPTED/REJECTED",
+        )]
 
-        match event.ty["type"]:
+        match ty["type"]:
             case "proposal":
-                validators = self._setup_proposal(event.ty, prompt_widget, hint_widget)
+                return self._build_proposal(ty), "Response must start with ACCEPTED, REJECTED, or REFINE", _PROPOSAL_VALIDATOR
             case "question":
-                validators = self._setup_question(event.ty, prompt_widget, hint_widget)
+                return self._build_question(ty), "Begin response with FOLLOWUP to request clarification", []
             case "extraction_question":
-                validators = self._setup_extraction_question(event.ty, prompt_widget, hint_widget)
+                return self._build_extraction_question(ty), "Enter your response", []
             case "req_relaxation":
-                validators = self._setup_req_relaxation(event.ty, prompt_widget, hint_widget)
+                return self._build_req_relaxation(ty), "Response must start with ACCEPTED or REJECTED", _REQ_VALIDATOR
             case _:
-                validators = []
+                return Text("Unknown interaction type"), "", []
 
-        input_widget.validators = validators
-        input_widget.value = ""
-        panel.styles.display = "block"
-        input_widget.focus()
-
-    def _setup_proposal(self, ty: ProposalType, prompt: Static, hint: Static) -> list[Validator]:
-        parts: list[tuple[str, str] | str] = [
+    def _build_proposal(self, ty: ProposalType) -> Text:
+        parts: list[tuple[str, str] | str | Text] = [
             ("SPEC CHANGE PROPOSAL\n\n", "bold"),
             ("Explanation: ", "bold"),
             ty["explanation"],
@@ -574,11 +571,9 @@ class RichConsoleApp(App):
         ]
 
         if self._ide is not None:
-            # Fire-and-forget diff in VS Code
             self.run_worker(self._show_proposal_diff(ty), thread=False)
             parts.append(("Diff opened in VS Code.\n", "dim italic"))
         else:
-            # Inline unified diff fallback
             current_lines = ty["current_spec"].splitlines(keepends=True)
             proposed_lines = ty["proposed_spec"].splitlines(keepends=True)
             diff_lines = list(difflib.unified_diff(
@@ -600,20 +595,9 @@ class RichConsoleApp(App):
                     else:
                         diff_text.append(stripped + "\n")
                 parts.append(("Diff:\n", "bold"))
-                # Flush current parts, then append the diff Text object separately
-                prompt.update(Text.assemble(*parts, diff_text))
-                hint.update("Response must start with ACCEPTED, REJECTED, or REFINE")
-                return [Function(
-                    lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
-                    "Response must begin with ACCEPTED/REJECTED/REFINE",
-                )]
+                parts.append(diff_text)
 
-        prompt.update(Text.assemble(*parts))
-        hint.update("Response must start with ACCEPTED, REJECTED, or REFINE")
-        return [Function(
-            lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
-            "Response must begin with ACCEPTED/REJECTED/REFINE",
-        )]
+        return Text.assemble(*parts)
 
     async def _show_proposal_diff(self, ty: ProposalType) -> None:
         try:
@@ -622,7 +606,8 @@ class RichConsoleApp(App):
         except Exception:
             self.notify("Failed to open diff in VS Code", severity="warning")
 
-    def _setup_question(self, ty: QuestionType, prompt: Static, hint: Static) -> list[Validator]:
+    @staticmethod
+    def _build_question(ty: QuestionType) -> Text:
         parts: list[tuple[str, str] | str] = [
             ("HUMAN ASSISTANCE REQUESTED\n\n", "bold"),
             ("Question: ", "bold"),
@@ -634,44 +619,33 @@ class RichConsoleApp(App):
         if ty["code"]:
             parts.append("\n\nCode:\n")
             parts.append(ty["code"])
-        prompt.update(Text.assemble(*parts))
-        hint.update("Begin response with FOLLOWUP to request clarification")
-        return []
+        return Text.assemble(*parts)
 
-    def _setup_extraction_question(self, ty: ExtractionQuestionType, prompt: Static, hint: Static) -> list[Validator]:
-        prompt.update(
-            Text.assemble(
-                ("HUMAN ASSISTANCE REQUESTED\n\n", "bold"),
-                ("Context: ", "bold"),
-                ty["context"],
-                "\n",
-                ("Question: ", "bold"),
-                ty["question"],
-            )
+    @staticmethod
+    def _build_extraction_question(ty: ExtractionQuestionType) -> Text:
+        return Text.assemble(
+            ("HUMAN ASSISTANCE REQUESTED\n\n", "bold"),
+            ("Context: ", "bold"),
+            ty["context"],
+            "\n",
+            ("Question: ", "bold"),
+            ty["question"],
         )
-        hint.update("Enter your response")
-        return []
 
-    def _setup_req_relaxation(self, ty: RequirementRelaxationType, prompt: Static, hint: Static) -> list[Validator]:
-        prompt.update(
-            Text.assemble(
-                ("REQUIREMENTS SKIP REQUEST\n\n", "bold"),
-                "The agent would like to skip satisfying one of the requirements\n\n",
-                ("Context: ", "bold"),
-                ty["context"], "\n",
-                ("Req #", "bold"),
-                str(ty["req_number"]), ": ", ty["req_text"], "\n",
-                ("Judgment: ", "bold"),
-                ty["judgment"], "\n",
-                ("Explanation: ", "bold"),
-                ty["explanation"],
-            )
+    @staticmethod
+    def _build_req_relaxation(ty: RequirementRelaxationType) -> Text:
+        return Text.assemble(
+            ("REQUIREMENTS SKIP REQUEST\n\n", "bold"),
+            "The agent would like to skip satisfying one of the requirements\n\n",
+            ("Context: ", "bold"),
+            ty["context"], "\n",
+            ("Req #", "bold"),
+            str(ty["req_number"]), ": ", ty["req_text"], "\n",
+            ("Judgment: ", "bold"),
+            ty["judgment"], "\n",
+            ("Explanation: ", "bold"),
+            ty["explanation"],
         )
-        hint.update("Response must start with ACCEPTED or REJECTED")
-        return [Function(
-            lambda r: r.startswith("ACCEPTED") or r.startswith("REJECTED"),
-            "Response must begin with ACCEPTED/REJECTED",
-        )]
 
     def on_input_submitted(self, event: Input.Submitted):
         value = event.value.strip()
@@ -683,8 +657,8 @@ class RichConsoleApp(App):
                 self.notify(desc, severity="error")
             return
 
-        self.query_one("#user-input", Input).value = ""
-        self.query_one("#interaction-panel", Container).styles.display = "none"
+        # Disable input to prevent double-submit
+        event.input.disabled = True
         self._input_queue.put_nowait(value)
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected):
@@ -751,26 +725,24 @@ class RichConsoleApp(App):
                 self.notify("Failed to preview results in VS Code", severity="warning")
 
             if preview_id is not None:
-                # Show ACCEPT/REJECT prompt using interaction panel
-                panel = self.query_one("#interaction-panel", Container)
-                prompt_widget = self.query_one("#interaction-prompt", Static)
-                hint_widget = self.query_one("#input-hint", Static)
-                input_widget = self.query_one("#user-input", Input)
-
-                prompt_widget.update(Text.assemble(
+                # Show inline ACCEPT/REJECT prompt
+                prompt_widget = Static(Text.assemble(
                     ("Results previewed in VS Code.\n", "bold"),
                     ("Type ACCEPT to write files or REJECT to discard.", "dim"),
                 ))
-                hint_widget.update("Response must be ACCEPT or REJECT")
+                hint_widget = Static("Response must be ACCEPT or REJECT", classes="interaction-hint")
+                input_widget = Input(placeholder="ACCEPT / REJECT", validate_on=["submitted"])
                 input_widget.validators = [Function(
                     lambda x: x.strip().upper() in ("ACCEPT", "REJECT"),
                     "Response must be ACCEPT or REJECT",
                 )]
-                input_widget.value = ""
-                panel.styles.display = "block"
+                await self._mount_to(target, prompt_widget, input_widget, hint_widget)
                 input_widget.focus()
 
                 response = await self._input_queue.get()
+                await prompt_widget.remove()
+                await input_widget.remove()
+                await hint_widget.remove()
                 decision = response.strip().upper()
 
                 if decision == "ACCEPT":
