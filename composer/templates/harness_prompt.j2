@@ -107,9 +107,11 @@ For each such external contract C identified in Step 2, go through the following
    by {{ contract_spec.contract_name }} go to step 5. Otherwise, consider how many extant instances would be required to model the protocol
    in a non-trivial state. For example, if the contract dynamically creates "Wrapper tokens" which wrap some underlying asset, how many such
    instances would be required to represent the protocl in a non-trivial state. Remember this number, classify C as "DYNAMIC", and halt your analysis.
+   For each instance, identify which state variable(s) in {{ contract_spec.contract_name }} hold a reference to that instance (see "linked fields" below).
 5. How many instances of these contracts are sufficient to model {{ contract_spec.contract_name }} in a non-trivial state. For example, if this is a pool
    that manages *exactly* two ERC20 tokens, then two ERC20 contract instances will be necessary. If a single instance is appropriate classify as "SINGLETON",
    otherwise classify C as "MULTIPLE", and remember how many instances are required.
+   In either case (SINGLETON or MULTIPLE), identify which state variable(s) in {{ contract_spec.contract_name }} hold a reference to each instance (see "linked fields" below).
 
 ## Step 4
 
@@ -138,6 +140,20 @@ compiler/typechecker; e.g., code to invoke the parent contract's constructor.
 
 The harness contract will need to import the target contract; you should use the relative path of the target file. For example, if `TokenInstance1` is inheriting from `MyToken`
 declared at the path `src/contracts/token/MyToken.sol`, then `TokenInstance1` should use `import "src/contracts/token/MyToken.sol";`. Do NOT try to use imports with `..`.
+
+### Linked fields
+
+For each harness instance (MULTIPLE/DYNAMIC) and each SINGLETON contract, you MUST identify which state variable(s) in {{ contract_spec.contract_name }} hold a reference to that instance,
+and record them in the `linked_fields` field. Use full Solidity-style storage path expressions, including array indices where applicable.
+
+Examples:
+- If a pool contract has `IERC20 public token0` and `IERC20 public token1`, and you generate two token harnesses,
+  the first harness should have `linked_fields: ["token0"]` and the second `linked_fields: ["token1"]`.
+- If the contract stores tokens in an array `IERC20[] public tokens`, and you generate two harnesses for two instances,
+  the first should have `linked_fields: ["tokens[0]"]` and the second `linked_fields: ["tokens[1]"]`.
+- If a mapping or nested structure is used, use dotted paths: `linked_fields: ["vaults[0].collateralToken"]`.
+- If the same harness instance is referenced by multiple state variables (e.g., `defaultToken` and `rewardToken` both
+  point to the same on-chain contract), include all of them: `linked_fields: ["defaultToken", "rewardToken"]`.
 </harness-guides>
 
 <summarization>
