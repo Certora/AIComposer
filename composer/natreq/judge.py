@@ -153,6 +153,7 @@ def get_judge_tool(
             None,
             JudgeInput(input=[req_list], vfs=state["vfs"], orig_reqs=reqs),
             judge_config,
+            description="Requirements evaluation",
             within_tool=tool_call_id
         )
         skipped = state.get("skipped_reqs", set())

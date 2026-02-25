@@ -313,7 +313,7 @@ async def execute_ai_composer_workflow(
     audit_sink = AuditDBSink(audit_db, thread_id)
 
     async with with_handler(handler, CodeGenEventHandler(handler, audit_sink)):
-        final_state = await run_graph(workflow_exec, work_context, flow_input, config)
+        final_state = await run_graph(workflow_exec, work_context, flow_input, config, description="Code generation")
 
     result = final_state.get("generated_code", None)
     if result is None:

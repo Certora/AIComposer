@@ -20,6 +20,7 @@ class CustomUpdate:
 @dataclass
 class Start:
     thread_id: str
+    description: str
     tool_id: str | None = None
 
 @dataclass

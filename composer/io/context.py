@@ -48,7 +48,7 @@ async def _queue_drainer(
         (parents, inner) = _unwrap(e)
         match inner:
             case Start():
-                await h.log_start(path=parents + [inner.thread_id], tool_id=inner.tool_id)
+                await h.log_start(path=parents + [inner.thread_id], description=inner.description, tool_id=inner.tool_id)
             case End():
                 await h.log_end(parents + [inner.thread_id])
             case NextCheckpoint():
@@ -87,6 +87,7 @@ async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     ctxt: C,
     input: I,
     run_conf: RunnableConfig,
+    description: str,
     within_tool: str | None = None,
 ) -> S:
     curr_io = _io_handler.get()
@@ -123,6 +124,7 @@ async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
             ctxt=ctxt,
             input=input,
             run_conf=run_conf,
+            description=description,
             human_handler=handle_human,
             within_tool=within_tool,
         )

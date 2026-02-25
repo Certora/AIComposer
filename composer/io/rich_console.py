@@ -242,21 +242,18 @@ class BaseRichConsoleApp[H, P](App):
                 Static(Text(f"checkpoint: {checkpoint_id}", style="dim"))
             )
 
-    async def log_start(self, *, path: list[str], tool_id: str | None):
+    async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
         await self._mounted.wait()
         target = self._get_mount_target(path)
 
         if len(path) == 1:
             banner = Static(
-                Text(f"━━ Workflow start: {path[0]} ━━", style="bold"),
+                Text(f"━━ {description} ━━", style="bold"),
             )
             await self._mount_to(target, banner)
         else:
-            # Nested workflow: create a collapsible with an inner container
-            tool_info = f" (tool={tool_id})" if tool_id else ""
-            label = " > ".join(path) + tool_info
             inner = VerticalScroll(classes="nested-workflow")
-            coll = Collapsible(inner, title=f"Nested: {label}", collapsed=True)
+            coll = Collapsible(inner, title=description, collapsed=True)
             self._nested_containers[path[-1]] = inner
             await self._mount_to(target, coll)
 

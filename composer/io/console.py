@@ -24,12 +24,8 @@ class BaseConsoleHandler[H, P]:
     async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str):
         print("current checkpoint: " + checkpoint_id)
 
-    async def log_start(self, *, path: list[str], tool_id: str | None):
-        if len(path) > 1:
-            tool_info = f" (tool={tool_id})" if tool_id else ""
-            print(f"[Nested workflow start] {' > '.join(path)}{tool_info}")
-        else:
-            print(f"[Workflow start] {path[0]}")
+    async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
+        print(f"[{description}]")
 
     async def log_end(self, path: list[str]):
         if len(path) > 1:

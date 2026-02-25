@@ -22,6 +22,7 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     ctxt: C,
     input: I,
     run_conf: RunnableConfig,
+    description: str,
     human_handler: HumanHandler[H, S] | None = None,
     within_tool: str | None = None,
 ) -> S:
@@ -39,7 +40,7 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     curr_config["configurable"] = config.copy()
 
     curr_checkpoint : str
-    event_sink(Start(tid, tool_id=within_tool))
+    event_sink(Start(tid, description=description, tool_id=within_tool))
     try:
         while True:
             curr_input = graph_input

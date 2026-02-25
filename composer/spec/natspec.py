@@ -530,6 +530,7 @@ class NatSpecConsoleHandler(BaseConsoleHandler[HumanQuestionSchema, Any]):
         return prompt_input("Enter your response", debug_thunk)
 
     async def display_result(self, final_state: NatSpecState) -> None:
+        assert "result" in final_state
         print("Spec file generation complete")
         print(final_state["curr_spec"])
         print(final_state["curr_intf"])
@@ -618,7 +619,7 @@ async def execute(args: NatSpecArgs, handler: NatSpecIOHandler | None = None) ->
     ], curr_intf=None, curr_spec=None, validations={})
 
     async with with_handler(handler, NullEventHandler()):
-        final_state = await run_graph(graph, ctxt, graph_input, runnable_conf)
+        final_state = await run_graph(graph, ctxt, graph_input, runnable_conf, description="NatSpec generation")
     if "result" not in final_state:
         return 1
 

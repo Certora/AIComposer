@@ -175,6 +175,6 @@ spec).
 
     handler = OracleHandler(io, req_oracle)
     async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
-        final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config)
+        final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config, description="Requirements extraction")
     assert "reqs" in final_state
     return final_state["reqs"]
