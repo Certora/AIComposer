@@ -87,3 +87,4 @@ xxhash==3.6.0
 zstandard==0.25.0
 textual==6.5.0
 websockets==15.0.1
+aiohttp==3.13.3

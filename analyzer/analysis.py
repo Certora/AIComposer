@@ -58,7 +58,9 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
 class ExplainerContext:
     rag_db: PostgreSQLRAGDatabase
 
-_analysis_doc = "Tool to communicate the result of your analysis."
+_analysis_doc = """REQUIRED: You MUST call this tool to submit your final analysis.
+Do NOT write your answer as plain text - the workflow cannot complete until you call this tool.
+When you have reached a conclusion about the counterexample, call this tool immediately."""
 
 _default_text = "The textual analysis explaining the counterexample. You MAY use markdown in your output."
 

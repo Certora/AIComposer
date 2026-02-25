@@ -1,12 +1,12 @@
 from contextlib import contextmanager
-from typing import Generator, List, cast, Any
+from typing import Generator, cast, Any, Iterator, LiteralString
 import logging
 
 import psycopg
 from sentence_transformers import SentenceTransformer
 from numpy import ndarray
 
-from composer.rag.types import ManualRef, BlockChunk
+from composer.rag.types import ManualRef, BlockChunk, ManualSectionHit
 from composer.rag.text import code_ref_tag
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,13 @@ class PostgreSQLRAGDatabase:
         except Exception as e:
             logger.error(f"Database connection failed: {e}")
             raise
+
+    @contextmanager
+    def _get_cursor(self) -> Iterator[psycopg.Cursor]:
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                yield cur
+            conn.commit()
 
     @contextmanager
     def _get_connection(self) -> Generator[psycopg.Connection, None, None]:
@@ -111,16 +118,72 @@ class PostgreSQLRAGDatabase:
                     CREATE INDEX IF NOT EXISTS section_h4 ON documents (h4);
                 """)
 
+                cur.execute("""
+                    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+                    CREATE TABLE IF NOT EXISTS manual_sections(
+                        id SERIAL PRIMARY KEY,
+                        content TEXT,
+                        h1 TEXT,
+                        h2 TEXT,
+                        h3 TEXT,
+                        h4 TEXT,
+                        h5 TEXT,
+                        h6 TEXT,
+                        part INTEGER,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        CONSTRAINT parts_unique UNIQUE (h1, h2, h3, h4, h5, h6, part)
+                    );
+                    CREATE INDEX IF NOT EXISTS manual_ts_idx ON manual_sections USING gin(
+                        to_tsvector('english', content)
+                    );
+                    CREATE INDEX IF NOT EXISTS manual_trgm_idx ON manual_sections USING gin(
+                        content gin_trgm_ops
+                    );
+                            
+                    CREATE TABLE IF NOT EXISTS manual_section_code_refs(
+                        id INTEGER,
+                        code_body TEXT,
+                        section_id INTEGER,
+                        CONSTRAINT id_section_id_pk PRIMARY KEY(id, section_id),
+                        CONSTRAINT section_id_manual_section_fk FOREIGN KEY(section_id) REFERENCES manual_sections(id)
+                    );
+                """)
+
                 cur.execute("CREATE INDEX IF NOT EXISTS documents_content_idx ON documents USING gin(to_tsvector('english', content));")
 
                 conn.commit()
                 logger.info("✅ Database schema created successfully")
 
-    def add_chunks_batch(self, chunks: List[BlockChunk]) -> None:
+    def add_manual_section(self, ch: BlockChunk):
+        with self._get_cursor() as cur:
+            headers : list[str | None] = [None] * 6
+            for (ind, h) in enumerate(ch.headers):
+                headers[ind] = h
+            data = (ch.chunk,) + tuple(headers) + (ch.part,)
+            cur.execute("""
+                INSERT INTO manual_sections(
+                    content, h1, h2, h3, h4, h5, h6, part
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, data)
+            insert_res = cur.fetchone()
+            if insert_res is None:
+                raise Exception("Insertion didn't return ID")
+            payloads = []
+            for (i, code) in enumerate(ch.code_refs):
+                payloads.append((i, code, insert_res[0]))
+            cur.executemany("""
+                INSERT INTO manual_section_code_refs(
+                    id, code_body, section_id
+                ) VALUES (%s, %s, %s)
+            """, payloads)
+                
+
+    def add_chunks_batch(self, chunks: list[BlockChunk]) -> None:
         """Add chunks to database in batches"""
         if not chunks:
             return
-        embeddings = cast(List[ndarray], self.tr.encode_document([d.chunk for d in chunks], show_progress_bar=False))
+        embeddings = cast(list[ndarray], self.tr.encode_document([f"search_document: {d.chunk}" for d in chunks], show_progress_bar=False))
 
         logger.info(f"Adding {len(chunks)} chunks to database...")
         # Insert batch
@@ -152,8 +215,8 @@ class PostgreSQLRAGDatabase:
 
                 conn.commit()
 
-    def find_refs(self, query: str, similarity_cutoff: float = 0.5, top_k: int = 10, manual_section : List[str] = []) -> List[ManualRef]:
-        question_embedding = cast(ndarray, self.tr.encode_query(query, show_progress_bar=False))
+    def find_refs(self, query: str, similarity_cutoff: float = 0.5, top_k: int = 10, manual_section : list[str] = []) -> list[ManualRef]:
+        question_embedding = cast(ndarray, self.tr.encode_query(f"search_query: {query}", show_progress_bar=False))
 
         params: tuple[Any, ...] = (question_embedding.tolist(),)
         where_clause = ""
@@ -182,7 +245,7 @@ class PostgreSQLRAGDatabase:
                     similarity = row[2]
                     if similarity < similarity_cutoff:
                         break
-                    header: List[str] = []
+                    header: list[str] = []
                     for i in row[3:]:
                         if i is None:
                             break
@@ -200,3 +263,58 @@ class PostgreSQLRAGDatabase:
                         body = body.replace(to_replace, row[1])
                     to_ret.append(ManualRef(headers=header, content=body, similarity=similarity))
                 return to_ret
+
+    def _replace_manual_code_refs(self, cur: psycopg.Cursor[Any], content: str, section_id: int) -> str:
+        cur.execute(
+            "SELECT id, code_body FROM manual_section_code_refs WHERE section_id = %s",
+            (section_id,)
+        )
+        for row in cur:
+            content = content.replace(code_ref_tag(row[0]), row[1])
+        return content
+
+    def search_manual_keywords(self, query: str, *, min_depth: int = 0, limit: int = 10) -> list[ManualSectionHit]:
+        if min_depth < 0 or min_depth > 6:
+            raise ValueError("min_depth must be between 0 and 6")
+        depth_clause = f"AND h{min_depth} IS NOT NULL" if min_depth > 0 else ""
+        depth_clause = cast(LiteralString, depth_clause)
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT ts_rank(to_tsvector('english', content), websearch_to_tsquery('english', %s)) AS relevance,
+                           h1, h2, h3, h4, h5, h6
+                    FROM manual_sections
+                    WHERE to_tsvector('english', content) @@ websearch_to_tsquery('english', %s)
+                    {depth_clause}
+                    ORDER BY relevance DESC
+                    LIMIT %s
+                """, (query, query, limit))
+                results = []
+                for row in cur.fetchall():
+                    headers = [h for h in row[1:7] if h is not None]
+                    results.append(ManualSectionHit(headers=headers, relevance=row[0]))
+                return results
+
+    def get_manual_section(self, headers: list[str]) -> str | None:
+        padded: list[str | None] = list(headers) + [None] * (6 - len(headers))
+        padded = padded[:6]
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, content, part
+                    FROM manual_sections
+                    WHERE h1 IS NOT DISTINCT FROM %s
+                      AND h2 IS NOT DISTINCT FROM %s
+                      AND h3 IS NOT DISTINCT FROM %s
+                      AND h4 IS NOT DISTINCT FROM %s
+                      AND h5 IS NOT DISTINCT FROM %s
+                      AND h6 IS NOT DISTINCT FROM %s
+                    ORDER BY part ASC
+                """, tuple(padded))
+                rows = cur.fetchall()
+                if not rows:
+                    return None
+                parts = []
+                for row in rows:
+                    parts.append(self._replace_manual_code_refs(cur, row[1], row[0]))
+                return "\n".join(parts)

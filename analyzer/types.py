@@ -12,7 +12,6 @@ class AnalysisArgs(ModelOptions, LangraphOptions, RAGDBOptions, Protocol):
     quiet: bool
     ecosystem: Ecosystem
 
-
 @dataclass
 class AnalysisArgsD():
     folder: str
@@ -24,6 +23,7 @@ class AnalysisArgsD():
     ecosystem: Ecosystem
     model: str
     rag_db: str
+    model: str
     method: str | None = None
     thread_id: str | None = None
     checkpoint_id: str | None = None

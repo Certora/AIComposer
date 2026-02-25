@@ -56,6 +56,7 @@ PRECEDENCE = {
     # Literals and identifiers (highest precedence)
     "bool_literal": 16,
     "number_literal": 16,
+    "hex_literal": 16,
     "string_literal": 16,
     "array_literal": 16,
     "identifier": 16,
@@ -72,8 +73,10 @@ def get_precedence(expr: Expression) -> int:
         return PRECEDENCE.get(expr.operator, 0)
     elif expr.type == "unary_op":
         return PRECEDENCE.get(expr.operator, 12)
+    elif expr.type in PRECEDENCE:
+        return PRECEDENCE[expr.type]
     else:
-        return PRECEDENCE.get(expr.type, 16)
+        raise ValueError(f"Unknown expression type {expr.type}")
 
 def needs_parentheses(expr: Expression, parent_expr: Expression, is_right_operand: bool = False) -> bool:
     """
@@ -184,11 +187,16 @@ class CVLPrettyPrinter:
                 return self._print_function_call(expr)
             case "signature_literal":
                 return self._print_signature_literal(expr)
+            case "hex_literal":
+                return self._print_hex_literal(expr)
 
     def _print_bool_literal(self, expr: BoolLiteral) -> str:
         return "true" if expr.value else "false"
     
     def _print_number_literal(self, expr: NumberLiteral) -> str:
+        return expr.value
+    
+    def _print_hex_literal(self, expr: HexLiteral) -> str:
         return expr.value
     
     def _print_string_literal(self, expr: StringLiteral) -> str:
@@ -856,12 +864,17 @@ class CVLPrettyPrinter:
 
     def print_contract_import(self, imp: ContractImport) -> str:
         return f"using {imp.contract_name} as {imp.as_name};"
+    
+    def print_spec_import(self, imp: ImportSpec) -> str:
+        return f"import \"{imp.spec_file}\";"
 
 def pretty_print(obj: CVLFile) -> str:
     printer = CVLPrettyPrinter()
     to_ret = []
-    for imp in obj.import_contract:
-        to_ret.append(printer.print_contract_import(imp))
+    for spec_imp in obj.import_specs:
+        to_ret.append(printer.print_spec_import(spec_imp))
+    for contract_imp in obj.import_contract:
+        to_ret.append(printer.print_contract_import(contract_imp))
     for bb in obj.blocks:
         to_ret.append(printer.print_basic_block(bb))
         to_ret.append("")

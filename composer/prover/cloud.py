@@ -68,20 +68,13 @@ def parse_cloud_link(link: str) -> CloudJob:
     )
 
 
-async def poll_job(
+async def _poll_job_inner(
     job: CloudJob,
     *,
-    interval: float = 10.0,
-    timeout: float = 1800.0,
-    on_status: Callable[[str], Awaitable[None]] | None = None,
+    interval: float,
+    on_status: Callable[[str], Awaitable[None]] | None,
 ) -> dict:
-    """Poll /jobData until the job reaches a terminal status.
-
-    Returns the full jobData JSON dict.
-    Raises TimeoutError if the job doesn't finish within `timeout` seconds.
-    """
     url = job.job_data_url
-    elapsed = 0.0
 
     async with aiohttp.ClientSession(headers=_NO_BROTLI_HEADERS) as session:
         while True:
@@ -97,14 +90,21 @@ async def poll_job(
             if status in _TERMINAL_STATUSES:
                 return data
 
-            if elapsed >= timeout:
-                raise TimeoutError(
-                    f"Cloud job {job.job_id} did not complete within {timeout}s (last status: {status})"
-                )
-
             await asyncio.sleep(interval)
-            elapsed += interval
 
+async def poll_job(
+    job: CloudJob,
+    *,
+    interval: float = 10.0,
+    timeout: float = 1800.0,
+    on_status: Callable[[str], Awaitable[None]] | None = None,
+) -> dict:
+    """Poll /jobData until the job reaches a terminal status.
+
+    Returns the full jobData JSON dict.
+    Raises TimeoutError if the job doesn't finish within `timeout` seconds.
+    """
+    return await asyncio.wait_for(_poll_job_inner(job, interval=interval, on_status=on_status), timeout=timeout)
 
 def _find_results_root(dest: Path) -> Path:
     """Navigate past the extra TarName/ top-level directory in the extracted archive."""
@@ -156,9 +156,7 @@ async def cloud_results(
 
     with tempfile.TemporaryDirectory(prefix="certora_cloud_") as tmp_dir:
         dest = Path(tmp_dir)
-
-        with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
+        tmp_path = Path(tmp_dir) / "downloaded.tar.gz"
 
         try:
             async with aiohttp.ClientSession(headers=_NO_BROTLI_HEADERS) as session:

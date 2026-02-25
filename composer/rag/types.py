@@ -1,15 +1,20 @@
-from typing import List, TypedDict
+from typing import TypedDict
 from dataclasses import dataclass
 
 @dataclass
 class ManualRef:
-    headers: List[str]
+    headers: list[str]
     content: str
     similarity: float
 
 @dataclass
+class ManualSectionHit:
+    headers: list[str]
+    relevance: float
+
+@dataclass
 class BlockChunk:
-    headers: List[str]
+    headers: list[str]
     part: int
-    code_refs: List[str]
+    code_refs: list[str]
     chunk: str

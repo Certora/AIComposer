@@ -1,7 +1,6 @@
 import argparse
 import tempfile
 import subprocess
-import os
 import hashlib
 import uuid
 import pathlib
@@ -10,7 +9,7 @@ import sys
 
 from dataclasses import dataclass
 import types
-from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence
+from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any
 
 from pydantic import BaseModel, Field
 
@@ -20,17 +19,22 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
 from langgraph.prebuilt import InjectedState
+from langgraph.graph.state import CompiledStateGraph
 
 from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.cvl.schema import CVLFile
-from composer.cvl.pretty_print import pretty_print
 from composer.spec.ptypes import NatSpecState, Result, NatSpecInput
+from composer.spec.cvl_tools import (
+    put_cvl_description,
+    PutCVLSchemaModel,
+    put_cvl,
+    put_cvl_raw,
+)
 from composer.tools.search import cvl_manual_search
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
-from composer.io.prompt import prompt_input
+from composer.human.handlers import prompt_input
 from composer.templates.loader import load_jinja_template
 
 from graphcore.tools.human import human_interaction_tool
@@ -42,9 +46,9 @@ from graphcore.summary import SummaryConfig
 
 type ValidationToken = Literal["guidelines", "suggestion", "typecheck"]
 
-guidelines = "guidelines"
-suggestions = "suggestion"
-typecheck = "typecheck"
+guidelines : ValidationToken = "guidelines"
+suggestions : ValidationToken = "suggestion"
+typecheck : ValidationToken = "typecheck"
 
 all_validations : list[ValidationToken] = [guidelines, suggestions, typecheck]
 
@@ -126,7 +130,7 @@ def gen_feedback_tool(
         exec_body=fill_state
     )
 
-    work = build_workflow(
+    work : CompiledStateGraph[MessagesState, NatSpecContext, FlowInput, Any] = build_workflow(
         state_class=state_class,
         input_type=FlowInput,
         tools_list=[mem, search_tool, result],
@@ -270,90 +274,6 @@ def get_document() -> str:
     Retrieves the original design document if necessary
     """
     return get_runtime(NatSpecContext).context.orig_doc
-
-put_cvl_description = """
-Put a new version of the proposed spec file onto the VFS. The tool schema constrains
-you to putting only syntactically valid CVL. However, a pretty printed version of this syntax
-is ultimately what is saved on the VFS.
-
-This pretty printed file is then run through the official CVL parser. If the code fails to parse,
-this tool will reject the update, with the reported errors.
-"""
-
-class PutCVLSchemaModel(BaseModel):
-    cvl_file: CVLFile = Field(description="The CVL AST to put in the VFS")
-
-class PutCVLSchemaLG(BaseModel):
-    cvl_file: dict = Field(description="The CVL AST to put in the VFS")
-    tool_call_id: Annotated[str, InjectedToolCallId]
-
-PutCVLSchemaLG.__doc__ = put_cvl_description
-
-def _maybe_update_cvl(
-    tool_call_id: str,
-    pp: str
-) -> str | Command:
-    try:
-        with tempfile.NamedTemporaryFile("w", suffix=".spec") as f:
-            f.write(pp)
-            certora_dir = os.environ["CERTORA"]
-            emv_jar = os.path.join(certora_dir, "emv.jar")
-            res = subprocess.run(
-                ["java", "-classpath", emv_jar, "spec.ParseCheckerKt", f.name],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            if res.returncode != 0:
-                return f"""
-    Update rejected, the syntax checker exited with non-zero status
-
-def execute(args: NatSpecArgs) -> int:
-
-    stdout:
-    {res.stdout}
-
-    stderr:
-    {res.stderr}
-    """
-    except:
-        return "Syntax checker failed"
-    return tool_state_update(
-        tool_call_id=tool_call_id,
-        content="Accepted",
-        curr_spec=pp
-    )
-
-# for deeply cursed reasons, we need to have two versions of this schema
-@tool(args_schema=PutCVLSchemaLG)
-def put_cvl(
-    cvl_file: dict,
-    tool_call_id: Annotated[str, InjectedToolCallId]
-) -> Command | str:
-    pp: str
-    try:
-        pp = pretty_print(CVLFile.model_validate(cvl_file))
-    except:
-        return "Failed to pretty print the AST"
-    return _maybe_update_cvl(tool_call_id, pp)
-
-class PutCVLRaw(BaseModel):
-    """
-    A version of put CVL which accepts the surface syntax of CVL. You should only use
-    this if you have extremely high confidence that the CVL representation you are passing in
-    is correct.
-
-    If `cvl_file` is determined to have a syntax error, this update is rejected.
-    """
-    cvl_file: str = Field(description="The raw, surface syntax of the CVL file.")
-    tool_call_id: Annotated[str, InjectedToolCallId]
-
-@tool(args_schema=PutCVLRaw)
-def put_cvl_raw(
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    cvl_file: str
-) -> str | Command:
-    return _maybe_update_cvl(tool_call_id, cvl_file)
 
 class GetCVLSchema(BaseModel):
     """
@@ -529,7 +449,7 @@ stdout:
         result_tool
     ]
 
-    gen = build_workflow(
+    gen : CompiledStateGraph[TypeCheckState, Any, FlowInput, Any] = build_workflow(
         state_class=TypeCheckState,
         context_schema=None,
         input_type=FlowInput,
@@ -635,7 +555,7 @@ def execute(args: NatSpecArgs) -> int:
 
     ctxt = NatSpecContext(orig_doc=document, rag_db=rag_db, unbound_llm=llm)
 
-    graph = build_workflow(
+    graph : CompiledStateGraph[NatSpecState, NatSpecContext, NatSpecInput, Any] = build_workflow(
         context_schema=NatSpecContext,
         initial_prompt=load_jinja_template("cvl_generation_prompt.j2"),
         sys_prompt=load_jinja_template("cvl_system_prompt.j2"),
