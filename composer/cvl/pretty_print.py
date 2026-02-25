@@ -873,8 +873,8 @@ def pretty_print(obj: CVLFile) -> str:
     to_ret = []
     for spec_imp in obj.import_specs:
         to_ret.append(printer.print_spec_import(spec_imp))
-    for contact_imp in obj.import_contract:
-        to_ret.append(printer.print_contract_import(contact_imp))
+    for contract_imp in obj.import_contract:
+        to_ret.append(printer.print_contract_import(contract_imp))
     for bb in obj.blocks:
         to_ret.append(printer.print_basic_block(bb))
         to_ret.append("")
