@@ -1,4 +1,5 @@
 import asyncio
+import difflib
 from collections.abc import Coroutine
 from typing import Callable
 
@@ -13,6 +14,8 @@ from textual.validation import Function, Validator
 
 from rich.syntax import Syntax
 from rich.text import Text
+
+from composer.io.ide_bridge import IDEBridge
 
 from graphcore.tools.vfs import VFSAccessor
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
@@ -151,7 +154,7 @@ class RichConsoleApp(App):
         Binding("q", "quit_app", "Quit", show=True),
     ]
 
-    def __init__(self, show_checkpoints: bool = False):
+    def __init__(self, show_checkpoints: bool = False, ide: IDEBridge | None = None):
         super().__init__()
         self._input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._mounted: asyncio.Event = asyncio.Event()
@@ -166,6 +169,9 @@ class RichConsoleApp(App):
         self._rule_analyses: dict[str, str] = {}
         self._work_fn: Callable[[], Coroutine[None, None, None]] | None = None
         self._show_checkpoints = show_checkpoints
+        self._ide: IDEBridge | None = ide
+        self._vfs_snapshots: dict[int, tuple[list[str], dict[str, str]]] = {}
+        self._next_snap_id: int = 0
 
         # Token stats accumulators
         self._total_input: int = 0
@@ -220,6 +226,35 @@ class RichConsoleApp(App):
         self._last_tool_group = None
         self._last_tool_items = []
         self._last_tool_widget = None
+
+    def action_show_vfs_file(self, snap_id: int, file_idx: int) -> None:
+        snap = self._vfs_snapshots.get(snap_id)
+        if snap is None or self._ide is None:
+            return
+        names, contents = snap
+        if file_idx < 0 or file_idx >= len(names):
+            return
+        path = names[file_idx]
+        content = contents[path]
+        lang = self._guess_lang(path)
+        self.run_worker(self._ide_show_file(content, path, lang), thread=False)
+
+    async def _ide_show_file(self, content: str, path: str, lang: str | None) -> None:
+        try:
+            assert self._ide is not None
+            await self._ide.show_file(content, path, lang=lang)
+        except Exception:
+            self.notify("Failed to open file in VS Code", severity="warning")
+
+    @staticmethod
+    def _guess_lang(path: str) -> str | None:
+        if path.endswith(".spec"):
+            return "cvl"
+        elif path.endswith(".sol"):
+            return "solidity"
+        elif path.endswith(".json"):
+            return "json"
+        return None
 
     def _render_collapsed_text(self, group: str, items: list[str]) -> str:
         """Build the display text for a collapsed group of tool calls."""
@@ -406,15 +441,32 @@ class RichConsoleApp(App):
                 self._reset_tool_collapsing()
                 count = len(v["vfs"])
                 names = list(v["vfs"].keys())
-                file_parts: list[tuple[str, str] | str] = [f"Wrote {count} file{'s' if count != 1 else ''}: "]
-                for i, name in enumerate(names):
-                    if i > 0:
-                        file_parts.append(", ")
-                    file_parts.append((name, "bold underline cyan"))
-                await self._mount_to(
-                    target,
-                    Static(Text.assemble(*file_parts), classes="vfs-change")
-                )
+                contents = {
+                    k: val.decode("utf-8") if isinstance(val, bytes) else val
+                    for k, val in v["vfs"].items()
+                }
+
+                if self._ide is not None:
+                    snap_id = self._next_snap_id
+                    self._next_snap_id += 1
+                    self._vfs_snapshots[snap_id] = (names, contents)
+                    links = []
+                    for idx, name in enumerate(names):
+                        escaped = name.replace("[", "\\[")
+                        links.append(
+                            f"[@click=app.show_vfs_file({snap_id}, {idx})]"
+                            f"[bold underline cyan]{escaped}[/bold underline cyan][/]"
+                        )
+                    markup = f"Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
+                    widget = Static(markup, classes="vfs-change")
+                else:
+                    file_parts: list[tuple[str, str] | str] = [f"Wrote {count} file{'s' if count != 1 else ''}: "]
+                    for i, name in enumerate(names):
+                        if i > 0:
+                            file_parts.append(", ")
+                        file_parts.append((name, "bold underline cyan"))
+                    widget = Static(Text.assemble(*file_parts), classes="vfs-change")
+                await self._mount_to(target, widget)
 
     async def progress_update(self, path: list[str], upd: ProgressUpdate):
         await self._mounted.wait()
@@ -514,20 +566,61 @@ class RichConsoleApp(App):
         input_widget.focus()
 
     def _setup_proposal(self, ty: ProposalType, prompt: Static, hint: Static) -> list[Validator]:
-        prompt.update(
-            Text.assemble(
-                ("SPEC CHANGE PROPOSAL\n\n", "bold"),
-                ("Explanation: ", "bold"),
-                ty["explanation"],
-                "\n\n",
-                ("Note: Full diff view available in VS Code extension.", "dim italic"),
-            )
-        )
+        parts: list[tuple[str, str] | str] = [
+            ("SPEC CHANGE PROPOSAL\n\n", "bold"),
+            ("Explanation: ", "bold"),
+            ty["explanation"],
+            "\n\n",
+        ]
+
+        if self._ide is not None:
+            # Fire-and-forget diff in VS Code
+            self.run_worker(self._show_proposal_diff(ty), thread=False)
+            parts.append(("Diff opened in VS Code.\n", "dim italic"))
+        else:
+            # Inline unified diff fallback
+            current_lines = ty["current_spec"].splitlines(keepends=True)
+            proposed_lines = ty["proposed_spec"].splitlines(keepends=True)
+            diff_lines = list(difflib.unified_diff(
+                current_lines, proposed_lines,
+                fromfile="current", tofile="proposed",
+            ))
+            if diff_lines:
+                diff_text = Text()
+                for line in diff_lines:
+                    stripped = line.rstrip("\n")
+                    if line.startswith("+++") or line.startswith("---"):
+                        diff_text.append(stripped + "\n", style="bold white")
+                    elif line.startswith("@@"):
+                        diff_text.append(stripped + "\n", style="cyan")
+                    elif line.startswith("+"):
+                        diff_text.append(stripped + "\n", style="green")
+                    elif line.startswith("-"):
+                        diff_text.append(stripped + "\n", style="red")
+                    else:
+                        diff_text.append(stripped + "\n")
+                parts.append(("Diff:\n", "bold"))
+                # Flush current parts, then append the diff Text object separately
+                prompt.update(Text.assemble(*parts, diff_text))
+                hint.update("Response must start with ACCEPTED, REJECTED, or REFINE")
+                return [Function(
+                    lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
+                    "Response must begin with ACCEPTED/REJECTED/REFINE",
+                )]
+
+        prompt.update(Text.assemble(*parts))
         hint.update("Response must start with ACCEPTED, REJECTED, or REFINE")
         return [Function(
             lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
             "Response must begin with ACCEPTED/REJECTED/REFINE",
         )]
+
+    async def _show_proposal_diff(self, ty: ProposalType) -> None:
+        try:
+            assert self._ide is not None
+            await self._ide.show_diff(ty["current_spec"], ty["proposed_spec"], "Spec Change Proposal")
+        except Exception:
+            self.notify("Failed to open diff in VS Code", severity="warning")
 
     def _setup_question(self, ty: QuestionType, prompt: Static, hint: Static) -> list[Validator]:
         parts: list[tuple[str, str] | str] = [
@@ -601,8 +694,19 @@ class RichConsoleApp(App):
         for rule_name, row_key in self._rule_row_keys.items():
             if row_key == event.cell_key.row_key:
                 if rule_name in self._rule_analyses:
-                    self.notify("VS Code integration pending")
+                    text = self._rule_analyses[rule_name]
+                    if self._ide is not None:
+                        self.run_worker(self._ide_show_analysis(rule_name, text), thread=False)
+                    else:
+                        self.notify(text[:200] + "...", title=f"Analysis: {rule_name}", timeout=10)
                 return
+
+    async def _ide_show_analysis(self, rule_name: str, analysis: str) -> None:
+        try:
+            assert self._ide is not None
+            await self._ide.show_webview(analysis, title=f"Analysis: {rule_name}")
+        except Exception:
+            self.notify("Failed to show analysis in VS Code", severity="warning")
 
     async def output(
         self,
@@ -618,25 +722,102 @@ class RichConsoleApp(App):
             Static(Text("━━ CODE GENERATION COMPLETED ━━", style="bold green"))
         )
 
+        # Build files dict for both paths
+        files: dict[str, str] = {}
         for path in res.source:
             file_contents = mat.get(st, path)
             assert file_contents is not None
-            content = file_contents.decode("utf-8")
+            files[path] = file_contents.decode("utf-8")
 
-            # Guess lexer from extension
-            lexer = "cvl" if path.endswith(".spec") else "solidity"
-            syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
-            coll = Collapsible(Static(syntax), title=path, collapsed=False)
-            await self._mount_to(target, coll)
+        if self._ide is not None:
+            # Show files collapsed in TUI for reference
+            for path, content in files.items():
+                lexer = "cvl" if path.endswith(".spec") else "solidity"
+                syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
+                coll = Collapsible(Static(syntax), title=path, collapsed=True)
+                await self._mount_to(target, coll)
 
-        if res.comments:
+            if res.comments:
+                await self._mount_to(
+                    target,
+                    Static(Text.assemble(("\nComments: ", "bold"), res.comments))
+                )
+
+            # Preview in VS Code
+            preview_id: str | None = None
+            try:
+                preview_id = await self._ide.preview_results(files)
+            except Exception:
+                self.notify("Failed to preview results in VS Code", severity="warning")
+
+            if preview_id is not None:
+                # Show ACCEPT/REJECT prompt using interaction panel
+                panel = self.query_one("#interaction-panel", Container)
+                prompt_widget = self.query_one("#interaction-prompt", Static)
+                hint_widget = self.query_one("#input-hint", Static)
+                input_widget = self.query_one("#user-input", Input)
+
+                prompt_widget.update(Text.assemble(
+                    ("Results previewed in VS Code.\n", "bold"),
+                    ("Type ACCEPT to write files or REJECT to discard.", "dim"),
+                ))
+                hint_widget.update("Response must be ACCEPT or REJECT")
+                input_widget.validators = [Function(
+                    lambda x: x.strip().upper() in ("ACCEPT", "REJECT"),
+                    "Response must be ACCEPT or REJECT",
+                )]
+                input_widget.value = ""
+                panel.styles.display = "block"
+                input_widget.focus()
+
+                response = await self._input_queue.get()
+                decision = response.strip().upper()
+
+                if decision == "ACCEPT":
+                    try:
+                        written = await self._ide.accept_results(preview_id)
+                        await self._mount_to(
+                            target,
+                            Static(Text(f"Results accepted — wrote {len(written)} file(s).", style="bold green"))
+                        )
+                    except Exception:
+                        self.notify("Failed to accept results in VS Code", severity="warning")
+                else:
+                    try:
+                        await self._ide.reject_results(preview_id)
+                    except Exception:
+                        pass
+                    await self._mount_to(
+                        target,
+                        Static(Text("Results rejected.", style="yellow"))
+                    )
+            else:
+                await self._mount_to(
+                    target,
+                    Static(Text("Preview unavailable — results shown above.", style="dim"))
+                )
+
+            self._graph_done = True
             await self._mount_to(
                 target,
-                Static(Text.assemble(("\nComments: ", "bold"), res.comments))
+                Static(Text("Press q to quit.", style="dim"))
             )
+        else:
+            # No IDE — current behavior: show files expanded
+            for path, content in files.items():
+                lexer = "cvl" if path.endswith(".spec") else "solidity"
+                syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
+                coll = Collapsible(Static(syntax), title=path, collapsed=False)
+                await self._mount_to(target, coll)
 
-        self._graph_done = True
-        await self._mount_to(
-            target,
-            Static(Text("Press q to quit.", style="dim"))
-        )
+            if res.comments:
+                await self._mount_to(
+                    target,
+                    Static(Text.assemble(("\nComments: ", "bold"), res.comments))
+                )
+
+            self._graph_done = True
+            await self._mount_to(
+                target,
+                Static(Text("Press q to quit.", style="dim"))
+            )

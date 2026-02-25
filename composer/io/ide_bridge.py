@@ -9,7 +9,7 @@ Usage::
 
     bridge = await IDEBridge.connect()  # None if env vars are missing
     if bridge:
-        result = await bridge.read_file("contracts/Token.sol")
+        root = await bridge.workspace_folder()
         await bridge.close()
 
 Or as an async context manager::
@@ -20,18 +20,11 @@ Or as an async context manager::
 
 import json
 import os
-from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
 
 import websockets
 from websockets.asyncio.client import ClientConnection
-
-
-@dataclass(frozen=True, slots=True)
-class FileContent:
-    """Contents of a single workspace file."""
-    content: str
-    language: str | None = None
 
 
 class IDEBridgeError(Exception):
@@ -115,25 +108,10 @@ class IDEBridge:
 
     # -- public API ----------------------------------------------------------
 
-    async def read_file(self, path: str) -> FileContent:
-        """Read a workspace file."""
-        result = await self._call("workspace/readFile", {"path": path})
-        return FileContent(content=result["content"], language=result.get("language"))
-
-    async def list_files(
-        self, path: str | None = None, pattern: str | None = None
-    ) -> list[str]:
-        """List files in the workspace.
-
-        Pass *path* for a directory listing or *pattern* for a glob search.
-        """
-        params: dict = {}
-        if path is not None:
-            params["path"] = path
-        if pattern is not None:
-            params["pattern"] = pattern
-        result = await self._call("workspace/listFiles", params)
-        return result.get("files", [])
+    async def workspace_folder(self) -> Path:
+        """Return the VS Code workspace root as a local path."""
+        result = await self._call("workspace/getRoot")
+        return Path(result["path"])
 
     async def show_file(
         self, content: str, path: str, lang: str | None = None
