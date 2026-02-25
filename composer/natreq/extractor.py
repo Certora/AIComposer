@@ -91,7 +91,7 @@ def get_requirements(
         memory_tool(mem_backend),
         results_tool,
         human_in_the_loop,
-        cvl_manual_search
+        cvl_manual_search(ExtractionContext)
     ]
     built : CompiledStateGraph[ExtractionState, ExtractionContext, FlowInput, Any] = build_workflow(
         state_class=ExtractionState,

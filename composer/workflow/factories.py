@@ -1,91 +1,24 @@
-import os
-import psycopg
-from psycopg.rows import dict_row, DictRow, RowFactory
-
 from typing import Any
 
-from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langchain_anthropic import ChatAnthropic
 from langgraph.graph import StateGraph
-from langgraph.store.postgres import PostgresStore
 
 from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig, VFSState
-from graphcore.tools.memory import PostgresMemoryBackend
 
 from composer.workflow.types import Input, PromptParams
 from composer.core.context import AIComposerContext
 from composer.core.state import AIComposerState
-from composer.input.types import ModelOptions
 
 from composer.templates.loader import load_jinja_template
 from composer.workflow.summarization import SummaryGeneration
 
+from composer.workflow.services import get_checkpointer, get_store, get_memory, create_llm
 
-def _get_composer_connection(
-    *,
-    user: str,
-    password: str,
-    database: str,
-    autocommit: bool = False,
-    row_factory: RowFactory[DictRow] | None = None
-) -> psycopg.Connection[Any]:
-    """Create a PostgreSQL connection for composer services.
-
-    Args:
-        user: Database user name
-        password: Database password
-        database: Database name
-        autocommit: Whether to enable autocommit mode (default: False)
-        row_factory: Row factory for result formatting (default: None)
-
-    Returns:
-        psycopg.Connection: Configured database connection
-    """
-    host = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
-    port = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
-    conn_string = f"postgresql://{user}:{password}@{host}:{port}/{database}"
-    if row_factory is not None:
-        return psycopg.connect(conn_string, autocommit=autocommit, row_factory=row_factory)
-    return psycopg.connect(conn_string, autocommit=autocommit)
-
-
-def get_checkpointer() -> PostgresSaver:
-    conn = _get_composer_connection(
-        user="langgraph_checkpoint_user",
-        password="langgraph_checkpoint_password",
-        database="langgraph_checkpoint_db",
-        autocommit=True,
-        row_factory=dict_row
-    )
-    checkpointer = PostgresSaver(conn)
-    checkpointer.setup()
-    return checkpointer
-
-def get_store() -> PostgresStore:
-    conn = _get_composer_connection(
-        user="langgraph_store_user",
-        password="langgraph_store_password",
-        database="langgraph_store_db",
-        autocommit=True,
-        row_factory=dict_row
-    )
-    store = PostgresStore(conn)
-    store.setup()
-    return store
 
 def get_memory_ns(thread_id: str, ns: str) -> str:
     return f"ai-composer-{thread_id}-{ns}"
-
-def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
-    conn = _get_composer_connection(
-        user="memory_tool_user",
-        password="memory_tool_password",
-        database="memory_tool_db"
-    )
-    return PostgresMemoryBackend(ns, conn, init_from)
 
 def get_system_prompt() -> str:
     """Load and render the system prompt from Jinja template"""
@@ -94,25 +27,6 @@ def get_system_prompt() -> str:
 def get_initial_prompt(prompt: PromptParams) -> str:
     """Load and render the initial prompt from Jinja template"""
     return load_jinja_template("synthesis_prompt.j2", **prompt)
-
-
-def create_llm(args: ModelOptions) -> BaseChatModel:
-    """Create and configure the LLM."""
-    return ChatAnthropic(
-        model_name=args.model,
-        max_tokens_to_sample=args.tokens,
-        temperature=1,
-        timeout=None,
-        max_retries=2,
-        stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
-        betas=([
-            "files-api-2025-04-14",
-            "context-management-2025-06-27"
-        ] if args.memory_tool else [
-            "files-api-2025-04-14"
-        ])
-    )
 
 def get_vfs_tools(
     fs_layer: str | None,
@@ -155,7 +69,7 @@ def get_cryptostate_builder(
     from composer.tools.result import code_result
     from composer.tools.search import cvl_manual_search
 
-    crypto_tools = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search, *vfs_tooling]
+    crypto_tools: list[BaseTool] = [certora_prover, propose_spec_change, human_in_the_loop, code_result, cvl_manual_search(AIComposerContext), *vfs_tooling]
     crypto_tools.extend(extra_tools)
 
     conf : SummaryGeneration | None = SummaryGeneration(
