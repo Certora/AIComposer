@@ -1,6 +1,7 @@
 -- init-db.sql
 -- Create separate users for each application
 CREATE USER rag_user WITH PASSWORD 'rag_password';
+CREATE USER extended_rag_user WITH PASSWORD 'rag_password';
 CREATE USER langgraph_store_user WITH PASSWORD 'langgraph_store_password';
 CREATE USER langgraph_checkpoint_user WITH PASSWORD 'langgraph_checkpoint_password';
 CREATE USER audit_db_user WITH PASSWORD 'audit_db_password';
@@ -8,6 +9,7 @@ CREATE USER memory_tool_user WITH PASSWORD 'memory_tool_password';
 
 -- Create application-specific databases
 CREATE DATABASE rag_db OWNER rag_user;
+CREATE DATABASE extended_rag_db OWNER extended_rag_user;
 CREATE DATABASE langgraph_store_db OWNER langgraph_store_user;
 CREATE DATABASE langgraph_checkpoint_db OWNER langgraph_checkpoint_user;
 CREATE DATABASE audit_db OWNER audit_db_user;
@@ -17,6 +19,11 @@ CREATE DATABASE memory_tool_db OWNER memory_tool_user;
 CREATE EXTENSION IF NOT EXISTS vector;
 GRANT ALL PRIVILEGES ON DATABASE rag_db TO rag_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO rag_user;
+
+\c extended_rag_db
+CREATE EXTENSION IF NOT EXISTS vector;
+GRANT ALL PRIVILEGES ON DATABASE extended_rag_db TO extended_rag_user;
+GRANT ALL PRIVILEGES ON SCHEMA public TO extended_rag_user;
 
 \c langgraph_store_db
 CREATE EXTENSION IF NOT EXISTS vector;

@@ -337,6 +337,8 @@ def sanity_checker(s: BlockChunk) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG database from HTML documentation')
     parser.add_argument('html_file', help='Path to the HTML file to process')
+    parser.add_argument('--connection', type=str, default=DEFAULT_CONNECTION,
+                        help='Database connection string (default: rag_db)')
     args = parser.parse_args()
 
     with open(args.html_file, "r") as f:
@@ -348,16 +350,17 @@ def main() -> None:
         s.decompose()
 
     # delete documentation of changes, not interesting to the LLM
+    # (only exists in CVL manual, not in extended manual)
     changes = m.find("section", {"id": "changes-since-cvl-1"})
-    assert isinstance(changes, Tag)
-    changes.decompose()
+    if isinstance(changes, Tag):
+        changes.decompose()
 
     main_body = m.find("div", {"itemprop": "articleBody"})
     assert isinstance(main_body, Tag), str(main_body)
 
     main_body_ctx.set(main_body)
 
-    db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model(), skip_test=False)
+    db = PostgreSQLRAGDatabase(args.connection, get_model(), skip_test=False)
     buffer : List[BlockChunk] = []
 
     for s in main_body.select("div.compound > section"):
