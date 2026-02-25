@@ -64,8 +64,7 @@ async def _queue_drainer(
                 if d["type"] == "summarization_raw":
                     if audit is not None:
                         audit.on_summarization(checkpoint_id=inner.checkpoint_id, summary=d["summary"])
-                elif is_audit_update(d):
-                    if audit is not None:
+                elif is_audit_update(d) and audit is not None:
                         match d["type"]:
                             case "rule_result":
                                 audit.on_rule_result(
@@ -103,7 +102,7 @@ async def with_handler(
         background_task.cancel()
         try:
             await background_task
-        except:
+        except asyncio.CancelledError:
             pass
         _io_handler.reset(tok)
 

@@ -156,6 +156,7 @@ def get_judge_tool(
             within_tool=tool_call_id
         )
         skipped = state.get("skipped_reqs", set())
+        assert "result" in judge_state
         res = cast(JudgeResult, judge_state["result"])
         all_satisfied = True
         for j in res.judgement_result:

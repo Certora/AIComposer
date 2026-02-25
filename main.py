@@ -6,6 +6,7 @@ from composer.input.parsing import fresh_workflow_argument_parser
 from composer.workflow.factories import create_llm
 from composer.input.files import upload_input
 from composer.workflow.executor import execute_ai_composer_workflow
+from composer.io.console import ConsoleHandler
 from composer.diagnostics.debug import setup_logging, dump_fs
 
 async def main() -> int:
@@ -29,6 +30,7 @@ async def main() -> int:
 
     print("Starting AI Composer workflow...")
     return await execute_ai_composer_workflow(
+        handler=ConsoleHandler(),
         llm=llm,
         input=input_data,
         workflow_options=args

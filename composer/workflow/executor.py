@@ -24,7 +24,7 @@ from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.tools.relaxation import requirements_relaxation
 from composer.templates.loader import load_jinja_template
-from composer.io.console import ConsoleHandler
+from composer.io.protocol import IOHandler
 from composer.io.context import with_handler, run_graph
 
 
@@ -141,6 +141,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
 
 
 async def execute_ai_composer_workflow(
+    handler: IOHandler,
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
     workflow_options: WorkflowOptions
@@ -155,11 +156,9 @@ async def execute_ai_composer_workflow(
 
     thread_id = workflow_options.thread_id
 
-    console = ConsoleHandler()
-
     if thread_id is None:
         thread_id = "crypto_session_" + str(uuid.uuid1())
-        await console.log_thread_id(thread_id, chosen=True)
+        await handler.log_thread_id(thread_id, chosen=True)
         logger.info(f"Selected thread id: {thread_id}")
 
     prompt_params: PromptParams
@@ -226,7 +225,7 @@ async def execute_ai_composer_workflow(
         else:
             print("Analyzing requirements...")
             reqs = await get_requirements(
-                console,
+                handler,
                 workflow_options,
                 llm,
                 system_doc,
@@ -312,7 +311,7 @@ async def execute_ai_composer_workflow(
 
     audit_sink = AuditDBSink(audit_db, thread_id)
 
-    async with with_handler(console, audit=audit_sink):
+    async with with_handler(handler, audit=audit_sink):
         final_state = await run_graph(workflow_exec, work_context, flow_input, config)
 
     result = final_state.get("generated_code", None)
@@ -324,5 +323,5 @@ async def execute_ai_composer_workflow(
         thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
     )
 
-    await console.output(result, materializer, final_state)
+    await handler.output(result, materializer, final_state)
     return 0

@@ -1,4 +1,4 @@
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, override
 import asyncio
 from pathlib import Path
 
@@ -7,7 +7,7 @@ from langgraph.runtime import get_runtime
 
 from langgraph.config import get_store
 
-from composer.diagnostics.stream import ProgressUpdate, AuditUpdate
+from composer.diagnostics.stream import ProgressUpdate, AuditUpdate, RuleAnalysisResult
 from composer.prover.ptypes import RuleResult
 from composer.prover.core import (
     RawReport, SummarizedReport, ProverOptions as CoreProverOptions,
@@ -25,10 +25,12 @@ class _AuditCallbacks(ProverCallbacks):
         self._tool_call_id = tool_call_id
         self._capture_output = capture_output
 
+    @override
     async def on_stdout_line(self, line: str) -> None:
         if not self._capture_output:
             print(line)
 
+    @override
     async def on_prover_run(self, args: list[str]) -> None:
         run_message: ProgressUpdate = {
             "type": "prover_run",
@@ -36,10 +38,20 @@ class _AuditCallbacks(ProverCallbacks):
         }
         self._writer(run_message)
 
+    @override
     async def on_prover_result(self, results: dict[str, RuleResult]) -> None:
         result_message = {
             "type": "prover_result",
             "status": {k: v.status for k, v in results.items()},
+        }
+        self._writer(result_message)
+
+    @override
+    async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None:
+        result_message: RuleAnalysisResult = {
+            "type": "rule_analysis",
+            "rule": rule.path.pprint(),
+            "analysis": analysis
         }
         self._writer(result_message)
 

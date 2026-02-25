@@ -58,7 +58,7 @@ class ProverCallbacks:
     async def on_prover_result(self, results: dict[str, RuleResult]) -> None: pass
     async def on_analysis_start(self, rule: RuleResult) -> None: pass
     async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None: pass
-
+    async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None: pass
 
 class AnalysisCache(Protocol):
     def get(self, rule: RuleResult) -> str | None: ...
@@ -215,6 +215,8 @@ async def run_prover(
     messages = state["messages"]
 
     async def _analyze(rule: RuleResult) -> tuple[RuleResult, str | None]:
+        if rule.status != "VIOLATED":
+            return (rule, None)
         if analysis_cache is not None:
             cached = analysis_cache.get(rule)
             if cached is not None:
@@ -223,6 +225,8 @@ async def run_prover(
         analysis = await analyze_cex_raw(llm, messages, rule, tool_call_id)
         if analysis is not None and analysis_cache is not None:
             analysis_cache.put(rule, analysis)
+        if analysis is not None:
+            await callbacks.on_analysis_complete(rule, analysis)
         return (rule, analysis)
 
     jobs = [_analyze(res) for res in parsed.values()]
