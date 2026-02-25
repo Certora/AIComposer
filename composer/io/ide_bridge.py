@@ -161,7 +161,7 @@ class IDEBridge:
         Returns the list of paths that were written.
         """
         result = await self._call("results/accept", {"previewId": preview_id})
-        return result.get("written", [])
+        return result.get("writtenFiles", [])
 
     async def reject_results(self, preview_id: str) -> None:
         """Reject and discard a preview."""

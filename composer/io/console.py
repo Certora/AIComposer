@@ -13,19 +13,16 @@ from composer.core.state import ResultStateSchema, AIComposerState
 
 from graphcore.tools.vfs import VFSAccessor
 
-class ConsoleHandler:
+
+class BaseConsoleHandler[H, P]:
+    """Common console-based IOHandler functionality shared across workflows."""
+
     async def log_thread_id(self, tid: str, chosen: bool):
         if chosen:
             print(f"Selected thread id: {tid}")
 
     async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str):
         print("current checkpoint: " + checkpoint_id)
-
-    async def log_state_update(self, path: list[str], st: dict):
-        summarize_update(st)
-
-    async def progress_update(self, path: list[str], upd: ProgressUpdate):
-        print_prover_updates(upd)
 
     async def log_start(self, *, path: list[str], tool_id: str | None):
         if len(path) > 1:
@@ -44,6 +41,14 @@ class ConsoleHandler:
         print("\n" + "=" * 80)
         print(topic)
         print("=" * 80)
+
+
+class ConsoleHandler(BaseConsoleHandler[HumanInteractionType, ProgressUpdate]):
+    async def log_state_update(self, path: list[str], st: dict):
+        summarize_update(st)
+
+    async def progress_update(self, path: list[str], upd: ProgressUpdate):
+        print_prover_updates(upd)
 
     def handle_proposal_interrupt(self, interrupt_ty: ProposalType, debug_thunk: Callable[[], None]) -> str:
         self._print_header("SPEC CHANGE PROPOSAL")

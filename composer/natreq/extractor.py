@@ -29,6 +29,7 @@ from composer.natreq.automation import requirements_oracle
 from composer.human.types import HumanInteractionType
 from composer.io.protocol import IOHandler
 from composer.io.context import with_handler, run_graph
+from composer.io.event_handler import NullEventHandler
 
 
 class ExtractionState(MessagesState):
@@ -173,7 +174,7 @@ spec).
     graph_input = FlowInput(input=input_text)
 
     handler = OracleHandler(io, req_oracle)
-    async with with_handler(handler):  # type: ignore[arg-type]
+    async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
         final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config)
     assert "reqs" in final_state
     return final_state["reqs"]

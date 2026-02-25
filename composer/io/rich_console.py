@@ -81,7 +81,21 @@ _SUPPRESS_TOOL_RESULT: set[str] = {
     "human_in_the_loop",
     "propose_spec_change",
     "requirement_relaxation_request",
+    "certora_prover",
 }
+
+
+_DOT = "\u25cf "  # ● filled circle
+
+
+def _dot(style: str, text: Text | str) -> Text:
+    """Prepend a colored dot to a Text or string for visual structure."""
+    if isinstance(text, str):
+        text = Text(text)
+    result = Text()
+    result.append(_DOT, style=style)
+    result.append_text(text)
+    return result
 
 
 def _friendly_tool_call(name: str, input: dict) -> str:
@@ -239,9 +253,7 @@ class RichConsoleApp(App):
 
     @staticmethod
     def _guess_lang(path: str) -> str | None:
-        if path.endswith(".spec"):
-            return "cvl"
-        elif path.endswith(".sol"):
+        if path.endswith(".sol"):
             return "solidity"
         elif path.endswith(".json"):
             return "json"
@@ -276,7 +288,7 @@ class RichConsoleApp(App):
                 case "text":
                     text = c["text"]
                     if text.strip():
-                        widgets.append(Static(text))
+                        widgets.append(Static(_dot("blue", text)))
                 case "tool_use":
                     name = c["name"]
                     input_args = c.get("input", {})
@@ -291,7 +303,7 @@ class RichConsoleApp(App):
                             self._last_tool_items.append("")
                         new_text = self._render_collapsed_text(group, self._last_tool_items)
                         if self._last_tool_widget is not None:
-                            self._last_tool_widget.update(Text(new_text, style="dim"))
+                            self._last_tool_widget.update(_dot("green", Text(new_text, style="dim")))
                         # Don't append a new widget
                     elif group is not None:
                         # New collapsible group
@@ -299,14 +311,14 @@ class RichConsoleApp(App):
                         self._last_tool_group = group
                         self._last_tool_items = [detail] if detail else [""]
                         display_text = self._render_collapsed_text(group, self._last_tool_items)
-                        w = Static(Text(display_text, style="dim"))
+                        w = Static(_dot("green", Text(display_text, style="dim")))
                         self._last_tool_widget = w
                         widgets.append(w)
                     else:
                         # Non-collapsible tool — reset and emit standalone
                         self._reset_tool_collapsing()
                         friendly = _friendly_tool_call(name, input_args)
-                        widgets.append(Static(Text(friendly, style="dim")))
+                        widgets.append(Static(_dot("green", Text(friendly, style="dim"))))
                 case other:
                     widgets.append(Static(f"Unknown block: {other}"))
 
@@ -448,10 +460,10 @@ class RichConsoleApp(App):
                             f"[@click=app.show_vfs_file({snap_id}, {idx})]"
                             f"[bold underline cyan]{escaped}[/bold underline cyan][/]"
                         )
-                    markup = f"Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
+                    markup = f"[cyan]{_DOT}[/cyan]Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
                     widget = Static(markup, classes="vfs-change")
                 else:
-                    file_parts: list[tuple[str, str] | str] = [f"Wrote {count} file{'s' if count != 1 else ''}: "]
+                    file_parts: list[tuple[str, str] | str] = [(_DOT, "cyan"), f"Wrote {count} file{'s' if count != 1 else ''}: "]
                     for i, name in enumerate(names):
                         if i > 0:
                             file_parts.append(", ")
@@ -534,18 +546,18 @@ class RichConsoleApp(App):
         await hint_widget.remove()
         await self._mount_to(
             target,
-            Static(Text.assemble(("You: ", "bold green"), response))
+            Static(_dot("green", Text.assemble(("You: ", "bold green"), response)))
         )
 
         return response
 
     def _build_interaction(self, ty: HumanInteractionType) -> tuple[Text, str, list[Validator]]:
         """Return (prompt_renderable, hint_text, validators) for the interaction type."""
-        _PROPOSAL_VALIDATOR = [Function(
+        _PROPOSAL_VALIDATOR : list[Validator] = [Function(
             lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
             "Response must begin with ACCEPTED/REJECTED/REFINE",
         )]
-        _REQ_VALIDATOR = [Function(
+        _REQ_VALIDATOR : list[Validator] = [Function(
             lambda r: r.startswith("ACCEPTED") or r.startswith("REJECTED"),
             "Response must begin with ACCEPTED/REJECTED",
         )]

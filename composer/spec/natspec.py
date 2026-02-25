@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import tempfile
 import subprocess
 import hashlib
@@ -34,7 +35,10 @@ from composer.spec.cvl_tools import (
 )
 from composer.tools.search import cvl_manual_search
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
-from composer.human.handlers import prompt_input
+from composer.io.console import BaseConsoleHandler
+from composer.io.prompt import prompt_input
+from composer.io.context import with_handler, run_graph
+from composer.io.event_handler import NullEventHandler
 from composer.templates.loader import load_jinja_template
 
 from graphcore.tools.human import human_interaction_tool
@@ -519,7 +523,21 @@ stderr:
 {run_res.stderr}
 """
 
-def execute(args: NatSpecArgs) -> int:
+class NatSpecConsoleHandler(BaseConsoleHandler[HumanQuestionSchema, Any]):
+    async def log_state_update(self, path: list[str], st: dict):
+        print(st)
+
+    async def progress_update(self, path: list[str], upd: Any):
+        pass
+
+    async def human_interaction(self, ty: HumanQuestionSchema, debug_thunk: Callable[[], None]) -> str:
+        self._print_header("HUMAN ASSISTANCE REQUESTED")
+        print(f"Question:\n{ty.question}")
+        print(f"Context:\n{ty.context}")
+        return prompt_input("Enter your response", debug_thunk)
+
+
+async def execute(args: NatSpecArgs) -> int:
     llm = create_llm(args)
 
     thread_id : str
@@ -580,62 +598,24 @@ def execute(args: NatSpecArgs) -> int:
         ]
     )[0].compile(checkpointer=checkpointer)
 
-    def fresh_config() -> RunnableConfig:
-        return {
-            "recursion_limit": args.recursion_limit,
-            "configurable": {
-                "thread_id": thread_id
-            }
+    runnable_conf : RunnableConfig = {
+        "recursion_limit": args.recursion_limit,
+        "configurable": {
+            "thread_id": thread_id
         }
-
-    runnable_conf : RunnableConfig = fresh_config()
+    }
 
     if args.checkpoint_id is not None:
-        assert "configurable" in runnable_conf
         runnable_conf["configurable"]["checkpoint_id"] = args.checkpoint_id
 
-    graph_input : Command | NatSpecInput | None = NatSpecInput(input=[
+    graph_input = NatSpecInput(input=[
         "The system/design document is as follows",
         document
     ], curr_intf=None, curr_spec=None, validations={})
 
-    if args.checkpoint_id is not None:
-        graph_input = None
-    
-    while True:
-        t = graph_input
-        graph_input = None
-        for (tag, payload) in graph.stream(
-            input=t,
-            config=runnable_conf,
-            context=ctxt,
-            stream_mode=["updates", "checkpoints"]
-        ):
-            assert isinstance(payload, dict)
-            if tag == "checkpoints":
-                assert isinstance(payload, dict)
-                print("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
-                continue
-            if "__interrupt__" in payload:
-                runnable_conf = fresh_config()
-                data = payload["__interrupt__"][0].value
-                assert isinstance(data, HumanQuestionSchema)
-                print("=" * 80)
-                print("HUMAN ASSISTANCE REQUESTED")
-                print("=" * 80)
-                print(f"Question:\n{data.question}")
-                print(f"Context:\n{data.context}")
-                res = prompt_input("Enter your response", lambda: None)
-                graph_input = Command(
-                    resume=res
-                )
-                break
-            else:
-                print(payload)
-        if graph_input is None:
-            break
-
-    final_state = cast(NatSpecState, graph.get_state(fresh_config()).values)
+    handler = NatSpecConsoleHandler()
+    async with with_handler(handler, NullEventHandler()):
+        final_state = await run_graph(graph, ctxt, graph_input, runnable_conf)
     if "result" not in final_state:
         return 1
     
@@ -656,4 +636,4 @@ def main() -> int:
     parser.add_argument("input_file", help="The input file to use for the spec generation")
 
     args = cast(NatSpecArgs, parser.parse_args())
-    return execute(args)
+    return asyncio.run(execute(args))

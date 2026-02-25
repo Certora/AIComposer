@@ -24,8 +24,9 @@ from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.tools.relaxation import requirements_relaxation
 from composer.templates.loader import load_jinja_template
-from composer.io.protocol import IOHandler
+from composer.io.protocol import CodeGenIOHandler
 from composer.io.context import with_handler, run_graph
+from composer.io.codegen_events import CodeGenEventHandler
 
 
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
@@ -141,7 +142,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
 
 
 async def execute_ai_composer_workflow(
-    handler: IOHandler,
+    handler: CodeGenIOHandler,
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
     workflow_options: WorkflowOptions
@@ -311,7 +312,7 @@ async def execute_ai_composer_workflow(
 
     audit_sink = AuditDBSink(audit_db, thread_id)
 
-    async with with_handler(handler, audit=audit_sink):
+    async with with_handler(handler, CodeGenEventHandler(handler, audit_sink)):
         final_state = await run_graph(workflow_exec, work_context, flow_input, config)
 
     result = final_state.get("generated_code", None)

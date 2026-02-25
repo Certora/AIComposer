@@ -5,11 +5,9 @@ import asyncio
 
 from composer.io.protocol import IOHandler
 from composer.io.stream import EventQueue
-from composer.audit.sink import AuditSink
+from composer.io.event_handler import EventHandler
 
-from typing import Any, cast
-
-from composer.human.types import HumanInteractionType
+from typing import Any
 
 from composer.io.events import (
     AllEvents, InnerEvent, Nested, NextCheckpoint,
@@ -21,13 +19,10 @@ from langgraph.graph.state import CompiledStateGraph
 
 from langchain_core.runnables import RunnableConfig
 
-from composer.diagnostics.stream import PartialUpdates, SummarizationNotice
-from composer.diagnostics.handlers import is_user_update, is_audit_update
-
 from composer.io.graph_runner import SinkProtocol, run_graph as _run_graph
 
 
-_io_handler : ContextVar[None | tuple[EventQueue, IOHandler, AuditSink | None]] = ContextVar("_io_handler", default=None)
+_io_handler : ContextVar[None | tuple[EventQueue, IOHandler[Any, Any], EventHandler]] = ContextVar("_io_handler", default=None)
 
 # Tracks the current event sink and thread_id for nesting detection.
 # Set by run_graph; if non-None when a new run_graph starts, the new
@@ -46,8 +41,8 @@ def _unwrap(event: AllEvents) -> tuple[list[str], InnerEvent]:
 
 async def _queue_drainer(
     q: EventQueue,
-    h: IOHandler,
-    audit: AuditSink | None
+    h: IOHandler[Any, Any],
+    event_handler: EventHandler
 ):
     async for e in q.stream_events():
         (parents, inner) = _unwrap(e)
@@ -60,43 +55,22 @@ async def _queue_drainer(
                 await h.log_checkpoint_id(path=parents + [inner.thread_id], checkpoint_id=inner.checkpoint_id)
             case CustomUpdate():
                 full_path = parents + [inner.thread_id]
-                d = cast(PartialUpdates, inner.payload)
-                if d["type"] == "summarization_raw":
-                    if audit is not None:
-                        audit.on_summarization(checkpoint_id=inner.checkpoint_id, summary=d["summary"])
-                    notice: SummarizationNotice = {"type": "summarization_notice", "summary": d["summary"]}
-                    await h.progress_update(full_path, notice)
-                elif is_audit_update(d) and audit is not None:
-                        match d["type"]:
-                            case "rule_result":
-                                audit.on_rule_result(
-                                    rule=d["rule"],
-                                    status=d["status"],
-                                    analysis=d["analysis"],
-                                    tool_id=d["tool_id"]
-                                )
-                            case "manual_search":
-                                audit.on_manual_search(
-                                    tool_id=d["tool_id"],
-                                    ref=d["ref"]
-                                )
-                elif is_user_update(d):
-                    await h.progress_update(full_path, d)
+                await event_handler.handle_event(inner.payload, full_path, inner.checkpoint_id)
             case StateUpdate():
                 await h.log_state_update(parents + [inner.thread_id], inner.payload)
 
 @asynccontextmanager
 async def with_handler(
-    h: IOHandler,
-    audit: AuditSink | None = None
+    h: IOHandler[Any, Any],
+    event_handler: EventHandler
 ):
     ev_queue = EventQueue(
         asyncio.Event(),
         []
     )
-    tok = _io_handler.set((ev_queue, h, audit))
+    tok = _io_handler.set((ev_queue, h, event_handler))
     background_task = asyncio.create_task(
-        _queue_drainer(ev_queue, h, audit)
+        _queue_drainer(ev_queue, h, event_handler)
     )
     try:
         yield
@@ -137,7 +111,7 @@ async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     tok = _current_sink.set((sink, tid))
 
     async def handle_human(
-        h: HumanInteractionType,
+        h: Any,
         st: S
     ) -> str:
         return await handle.human_interaction(h, lambda: None)
