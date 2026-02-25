@@ -56,6 +56,7 @@ PRECEDENCE = {
     # Literals and identifiers (highest precedence)
     "bool_literal": 16,
     "number_literal": 16,
+    "hex_literal": 16,
     "string_literal": 16,
     "array_literal": 16,
     "identifier": 16,
@@ -186,11 +187,16 @@ class CVLPrettyPrinter:
                 return self._print_function_call(expr)
             case "signature_literal":
                 return self._print_signature_literal(expr)
+            case "hex_literal":
+                return self._print_hex_literal(expr)
 
     def _print_bool_literal(self, expr: BoolLiteral) -> str:
         return "true" if expr.value else "false"
     
     def _print_number_literal(self, expr: NumberLiteral) -> str:
+        return expr.value
+    
+    def _print_hex_literal(self, expr: HexLiteral) -> str:
         return expr.value
     
     def _print_string_literal(self, expr: StringLiteral) -> str:

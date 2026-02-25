@@ -108,6 +108,10 @@ class NumberLiteral(BaseModel):
     type: Literal["number_literal"]
     value: str = Field(description="Number as string in base 10 to preserve precision")
 
+class HexLiteral(BaseModel):
+    type: Literal["hex_literal"]
+    value: str = Field(description="A hexadecimal literal. Must be prefixed with `0x`")
+
 class StringLiteral(BaseModel):
     type: Literal["string_literal"]
     value: str = Field(description="String value")
@@ -181,7 +185,7 @@ class SignatureLiteral(BaseModel):
     parameter_types: list[VMType] = Field(description="Parameter types")
 
 Expression = Annotated[
-    BoolLiteral | NumberLiteral | StringLiteral | ArrayLiteral | Identifier | BinaryOp | UnaryOp | 
+    BoolLiteral | NumberLiteral | HexLiteral | StringLiteral | ArrayLiteral | Identifier | BinaryOp | UnaryOp | 
     ConditionalExp | QuantifierExp | SumExp | ArrayAccess | FieldAccess | FunctionCall |  SignatureLiteral,
     Discriminator("type")
 ]
