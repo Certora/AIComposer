@@ -14,7 +14,7 @@ class MappingType(BaseModel):
     """
     type: Literal["mapping"]
     key_type: "CVLType" = Field(description="The type of the keys. Only primitive types (uint256, etc.), `bytes`, and `string` are valid.")
-    value_type: "CVLType" = Field(description="The codomain of the mapping.")
+    value_type: "CVLType" = Field(description="The codomain of the mapping. Only other mappings and primitives types (uint256, etc.) are allowed.")
 
 class ArrayType(BaseModel):
     """
@@ -52,7 +52,21 @@ class PrimitiveType(BaseModel):
     of Solidity, plus `bytes` and `string`
     """
     type: Literal["primitive"]
-    type_name: str = Field(description="The name of the type, e.g., `uint256` of `bool`")
+    type_name: Literal[
+        "uint8", "uint16", "uint24", "uint32", "uint40", "uint48", "uint56", "uint64",
+        "uint72", "uint80", "uint88", "uint96", "uint104", "uint112", "uint120", "uint128",
+        "uint136", "uint144", "uint152", "uint160", "uint168", "uint176", "uint184", "uint192",
+        "uint200", "uint208", "uint216", "uint224", "uint232", "uint240", "uint248", "uint256",
+        "int8", "int16", "int24", "int32", "int40", "int48", "int56", "int64",
+        "int72", "int80", "int88", "int96", "int104", "int112", "int120", "int128",
+        "int136", "int144", "int152", "int160", "int168", "int176", "int184", "int192",
+        "int200", "int208", "int216", "int224", "int232", "int240", "int248", "int256",
+        "bytes1", "bytes2", "bytes3", "bytes4", "bytes5", "bytes6", "bytes7", "bytes8",
+        "bytes9", "bytes10", "bytes11", "bytes12", "bytes13", "bytes14", "bytes15", "bytes16",
+        "bytes17", "bytes18", "bytes19", "bytes20", "bytes21", "bytes22", "bytes23", "bytes24",
+        "bytes25", "bytes26", "bytes27", "bytes28", "bytes29", "bytes30", "bytes31", "bytes32",
+        "bool", "address", "bytes", "string"
+    ] = Field(description="The name of the type, e.g., `uint256` or `bool`")
 
 CVLType = Annotated[
     MappingType | ArrayType | StaticArrayType | ContractType | StorageType | PrimitiveType,
@@ -177,7 +191,7 @@ class FilteredBlock(BaseModel):
     The filter expression `e` to apply to method parameter with name `method_param`
     """
     e: Expression = Field(description="The filtering expression. Must be a boolean expression, closed over `method_param`. " \
-    "Only methods which pass this filter as used in the rule/invariant")
+    "Only methods which pass this filter are used in the rule/invariant")
     method_param: str = Field(description="The name of a method parameter to a rule/invariant")
 
 class FunctionApplication(BaseModel):
@@ -185,9 +199,12 @@ class FunctionApplication(BaseModel):
     Any function like application. This is used for cast operators, built in functions, CVL functions, macros, and
     contract functions.
     """
-    annotation: Literal["withrevert", "norevert"] | None = Field(description="Annotation indicating whether the function should revert. Must be None for any application which is not a CVL function or method application. norevert is the default, and can usually be omitted.")
+    annotation: Literal["withrevert", "norevert"] | None = Field(description="Annotation indicating whether to allow the function to revert. " \
+        "`norevert` means that the function is *assumed* to not revert, `withrevert` allows reverting. " \
+        "Must be None for any application which is not a CVL function or method application. `norevert` is the default, and can usually be omitted.")
     name: str = Field(description="The name of the function-like object to invoke.")
-    host_contract: str | None = Field(description="The name of the contract declaring this method. None if this is not a contract application")
+    host_contract: str | None = Field(description="The name of the contract alias (not the contract type) declaring this method. " \
+        "None if this is not a contract application.")
     params: list[Expression] = Field(description="The arguments to the function")
     state: str | None = Field(description="Optional state binding (AT clause)", default=None)
 
@@ -335,7 +352,7 @@ class WithBlock(BaseModel):
 
 class ProofBlock(BaseModel):
     """
-    A preserved of "proof block" that controls how the invariant is checked
+    A preserved or "proof block" that controls how the invariant is checked
     for given methods
     """
     target: ProofTarget = Field(description="The target of the proof block")
@@ -364,17 +381,21 @@ class SortDef(BaseModel):
 class GhostFunction(BaseModel):
     """
     The type of ghost functions. This is considered slightly deprecated; in most
-    cases a ghost mapping is appropriate.
+    cases a ghost mapping/variable is appropriate.
     """
     type: Literal["ghost_fun"]
     params: list[CVLType] = Field(description="The arguments to the ghost function.")
     result_type: CVLType = Field(description="The (single) type returned by the function")
 
-class BasicGhostType(BaseModel):
+class GhostVariable(BaseModel):
+    """
+    The type of ghost variables which can be primitives or mappings.
+    """
     type: Literal["ghost_type"]
-    base_type: Annotated[PrimitiveType | MappingType, Discriminator("type")] = Field(description="A basic type. Only primitives and mappings can be used.")
+    base_type: Annotated[PrimitiveType | MappingType, Discriminator("type")] = Field(description="The type of the ghost variable. " \
+        "Only primitives and mappings can be used.")
 
-GhostType = Annotated[GhostFunction | BasicGhostType, Discriminator("type")]
+GhostType = Annotated[GhostFunction | GhostVariable, Discriminator("type")]
 
 class GhostAxiom(BaseModel):
     initial: bool = Field(description="Whether this axiom only holds on the initial state (true), or at all points (false)")
@@ -632,6 +653,6 @@ BasicBlock = Annotated[
 ]
 
 class CVLFile(BaseModel):
-    #import_specs: list[ImportSpec] = Field(description="A list of spec files to import")
+    import_specs: list[ImportSpec] = Field(description="A list of spec files to import")
     import_contract: list[ContractImport] = Field(description="A list of contracts to bind in the CVL namespace")
     blocks: list[BasicBlock] = Field(description="The top-level blocks making up the spec file")

@@ -72,8 +72,10 @@ def get_precedence(expr: Expression) -> int:
         return PRECEDENCE.get(expr.operator, 0)
     elif expr.type == "unary_op":
         return PRECEDENCE.get(expr.operator, 12)
+    elif expr.type in PRECEDENCE:
+        return PRECEDENCE[expr.type]
     else:
-        return PRECEDENCE.get(expr.type, 16)
+        raise ValueError(f"Unknown expression type {expr.type}")
 
 def needs_parentheses(expr: Expression, parent_expr: Expression, is_right_operand: bool = False) -> bool:
     """
@@ -856,10 +858,15 @@ class CVLPrettyPrinter:
 
     def print_contract_import(self, imp: ContractImport) -> str:
         return f"using {imp.contract_name} as {imp.as_name};"
+    
+    def print_spec_import(self, imp: ImportSpec) -> str:
+        return f"import \"{imp.spec_file}\";"
 
 def pretty_print(obj: CVLFile) -> str:
     printer = CVLPrettyPrinter()
     to_ret = []
+    for imp in obj.import_specs:
+        to_ret.append(printer.print_spec_import(imp))
     for imp in obj.import_contract:
         to_ret.append(printer.print_contract_import(imp))
     for bb in obj.blocks:
