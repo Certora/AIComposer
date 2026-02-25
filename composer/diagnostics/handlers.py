@@ -97,7 +97,7 @@ def summarize_update(
 # Custom update handler
 # +++++++++++++++++++++++++++
 
-user_guard: set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run", "rule_analysis"}
+user_guard: set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run", "rule_analysis", "summarization_notice"}
 
 def is_user_update(x: AllUpdates) -> TypeGuard[ProgressUpdate]:
     return x["type"] in user_guard
@@ -110,6 +110,8 @@ def print_prover_updates(payload: ProgressUpdate) -> None:
         print("\n".join([f" * {k}: {v}" for (k, v) in payload["status"].items()]))
     elif payload["type"] == "rule_analysis":
         pass
+    elif payload["type"] == "summarization_notice":
+        print("Context compacted (summarization applied)")
     else:
         assert payload["type"] == "prover_run"
         print(f"Running prover with args: {' '.join(payload['args'])}")

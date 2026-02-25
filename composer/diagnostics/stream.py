@@ -4,9 +4,9 @@ from composer.prover.ptypes import StatusCodes
 from composer.rag.types import ManualRef
 
 
-UserUpdateTy = Literal["prover_result", "cex_analysis", "prover_run", "rule_analysis"]
+UserUpdateTy = Literal["prover_result", "cex_analysis", "prover_run", "rule_analysis", "summarization_notice"]
 
-UserUpdateTV = TypeVar("UserUpdateTV", Literal["prover_result"], Literal["prover_run"], Literal["cex_analysis"], Literal["rule_analysis"])
+UserUpdateTV = TypeVar("UserUpdateTV", Literal["prover_result"], Literal["prover_run"], Literal["cex_analysis"], Literal["rule_analysis"], Literal["summarization_notice"])
 
 class UserUpdateData(TypedDict, Generic[UserUpdateTV]):
     type: UserUpdateTV
@@ -23,6 +23,9 @@ class RuleAnalysisResult(UserUpdateData[Literal["rule_analysis"]]):
 
 class CEXAnalysis(UserUpdateData[Literal["cex_analysis"]]):
     rule_name: str
+
+class SummarizationNotice(UserUpdateData[Literal["summarization_notice"]]):
+    summary: str
 
 AuditUpdateTy = Literal["rule_result", "manual_search", "summarization"]
 
@@ -50,7 +53,7 @@ class ManualSearchResult(AuditResult[Literal["manual_search"]]):
     ref: ManualRef
 
 ProgressUpdate = Annotated[
-    Union[CEXAnalysis, ProverResult, ProverRun, RuleAnalysisResult], Discriminator("type")
+    Union[CEXAnalysis, ProverResult, ProverRun, RuleAnalysisResult, SummarizationNotice], Discriminator("type")
 ]
 
 AuditUpdate = Annotated[

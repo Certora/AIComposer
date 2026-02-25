@@ -38,24 +38,120 @@ _STATUS_STYLES: dict[StatusCodes, str] = {
     "SANITY_FAILED": "magenta",
 }
 
+# ── Friendly tool display names ─────────────────────────────
+
+_TOOL_DISPLAY: dict[str, str] = {
+    "certora_prover": "Running prover",
+    "put_file": "Writing files",
+    "get_file": "Reading file",
+    "list_files": "Listing files",
+    "grep_files": "Searching files",
+    "propose_spec_change": "Proposing spec change",
+    "human_in_the_loop": "Asking for input",
+    "code_result": "Finalizing result",
+    "cvl_manual_search": "Searching CVL manual",
+    "requirements_evaluation": "Evaluating requirements",
+    "requirement_relaxation_request": "Requesting requirement relaxation",
+    "memory": "Accessing memory",
+}
+
+_TOOL_RESULT_DISPLAY: dict[str, str] = {
+    "certora_prover": "Prover results",
+    "put_file": "File write result",
+    "get_file": "File contents",
+    "list_files": "File listing",
+    "grep_files": "Search results",
+    "cvl_manual_search": "Manual search results",
+    "requirements_evaluation": "Requirements evaluation",
+    "requirement_relaxation_request": "Relaxation result",
+    "propose_spec_change": "Spec change result",
+    "human_in_the_loop": "Human response",
+    "code_result": "Final result",
+    "memory": "Memory result",
+}
+
+_TOOL_COLLAPSE_GROUP: dict[str, str] = {
+    "get_file": "read",
+    "put_file": "write",
+    "memory": "memory",
+}
+
+_SUPPRESS_TOOL_RESULT: set[str] = {
+    "human_in_the_loop",
+    "propose_spec_change",
+    "requirement_relaxation_request",
+}
+
+
+def _friendly_tool_call(name: str, input: dict) -> str:
+    base = _TOOL_DISPLAY.get(name, f"Tool: {name}")
+    match name:
+        case "certora_prover":
+            target = input.get("target_contract", "")
+            rule = input.get("rule")
+            detail = f": {target}" + (f" — rule {rule}" if rule else "")
+            return base + detail
+        case "get_file":
+            return f"{base}: {input.get('path', '?')}"
+        case "grep_files":
+            return f"{base} for: {input.get('search_string', '?')}"
+        case "cvl_manual_search":
+            q = input.get("question", "?")[:60]
+            return f"{base}: {q}"
+        case "put_file":
+            files = input.get("files", {})
+            return f"{base}: {', '.join(files.keys())}"
+        case "memory":
+            cmd = input.get("command", "?")
+            path = input.get("path", "")
+            return f"{base}: {cmd} {path}".strip()
+        case "human_in_the_loop":
+            q = input.get("question", "")
+            return f"{base}: {q}" if q else base
+        case "propose_spec_change":
+            expl = input.get("explanation", "")
+            return f"{base}: {expl}" if expl else base
+        case "requirement_relaxation_request":
+            num = input.get("req_number", "?")
+            req = input.get("req_text", "")
+            return f"{base} #{num}: {req}" if req else base
+        case _:
+            return base
+
+
+def _collapse_detail(name: str, input: dict) -> str:
+    """Extract the detail item for collapsing (e.g. file path)."""
+    match name:
+        case "get_file":
+            return input.get("path", "?")
+        case "put_file":
+            files = input.get("files", {})
+            return ", ".join(files.keys())
+        case _:
+            return ""
+
+
 class RichConsoleApp(App):
     CSS = """
     #status-bar { dock: top; height: 1; background: $surface; padding: 0 1; }
     #event-log { height: 1fr; padding: 0 1; }
+    #event-log > * { margin-bottom: 1; }
     #interaction-panel { dock: bottom; height: auto; max-height: 50%; border-top: double $accent; padding: 1; display: none; }
     #interaction-prompt { height: auto; max-height: 15; margin-bottom: 1; }
     #user-input { width: 1fr; }
     #input-hint { color: $text-muted; padding: 0 1; }
     .nested-workflow { margin-left: 2; border-left: solid $secondary; padding-left: 1; }
     .vfs-change { color: cyan; }
-    .token-stats { color: $text-muted; }
+    Collapsible { background: transparent; border: none; padding: 0; }
+    CollapsibleTitle { padding: 0 1; }
+    Collapsible Contents { padding: 0 0 0 3; }
     """
 
     BINDINGS = [
         Binding("q", "quit_app", "Quit", show=True),
     ]
 
-    def __init__(self):
+    def __init__(self, show_checkpoints: bool = False):
         super().__init__()
         self._input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._mounted: asyncio.Event = asyncio.Event()
@@ -69,6 +165,17 @@ class RichConsoleApp(App):
         self._rule_row_keys: dict[str, RowKey] = {}
         self._rule_analyses: dict[str, str] = {}
         self._work_fn: Callable[[], Coroutine[None, None, None]] | None = None
+        self._show_checkpoints = show_checkpoints
+
+        # Token stats accumulators
+        self._total_input: int = 0
+        self._total_output: int = 0
+        self._total_cache_read: int = 0
+
+        # Consecutive tool call collapsing state
+        self._last_tool_group: str | None = None
+        self._last_tool_items: list[str] = []
+        self._last_tool_widget: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Session: — | Checkpoint: —", id="status-bar")
@@ -108,45 +215,96 @@ class RichConsoleApp(App):
         await target.mount_all(widgets)
         await self._auto_scroll()
 
-    def _render_ai_turn(self, msg: AIMessage) -> Collapsible:
-        parts: list[str] = []
-        children: list[Static] = []
+    def _reset_tool_collapsing(self):
+        """Reset consecutive tool call collapsing state."""
+        self._last_tool_group = None
+        self._last_tool_items = []
+        self._last_tool_widget = None
+
+    def _render_collapsed_text(self, group: str, items: list[str]) -> str:
+        """Build the display text for a collapsed group of tool calls."""
+        match group:
+            case "read":
+                return f"Reading: {', '.join(items)}"
+            case "write":
+                return f"Wrote: {', '.join(items)}"
+            case "memory":
+                count = len(items)
+                if count == 1:
+                    return "Accessing memory"
+                return f"Accessing memory (×{count})"
+            case _:
+                return f"Tools: {', '.join(items)}"
+
+    def _render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
+        """Render an AI turn as a list of widgets (not a single collapsible)."""
+        widgets: list[Static | Collapsible] = []
 
         for c in normalize_content(msg.content):
             match c["type"]:
                 case "thinking":
-                    parts.append("Thinking...")
-                    children.append(Static(Text("Thinking...", style="dim")))
+                    full_text = c.get("thinking", "")
+                    widgets.append(
+                        Collapsible(Static(full_text), title="Thinking...", collapsed=True)
+                    )
                 case "text":
-                    preview = c["text"][:80].replace("\n", " ")
-                    parts.append(f"Text: {preview}...")
-                    children.append(Static(c["text"]))
+                    text = c["text"]
+                    if text.strip():
+                        widgets.append(Static(text))
                 case "tool_use":
                     name = c["name"]
-                    parts.append(f"Call tool: {name}")
-                    children.append(Static(Text(f"Call tool: {name}", style="bold cyan")))
-                case other:
-                    parts.append(f"Unknown: {other}")
-                    children.append(Static(f"Unknown block: {other}"))
+                    input_args = c.get("input", {})
+                    group = _TOOL_COLLAPSE_GROUP.get(name)
 
+                    if group is not None and group == self._last_tool_group:
+                        # Same group — update existing widget
+                        detail = _collapse_detail(name, input_args)
+                        if detail:
+                            self._last_tool_items.append(detail)
+                        else:
+                            self._last_tool_items.append("")
+                        new_text = self._render_collapsed_text(group, self._last_tool_items)
+                        if self._last_tool_widget is not None:
+                            self._last_tool_widget.update(Text(new_text, style="dim"))
+                        # Don't append a new widget
+                    elif group is not None:
+                        # New collapsible group
+                        detail = _collapse_detail(name, input_args)
+                        self._last_tool_group = group
+                        self._last_tool_items = [detail] if detail else [""]
+                        display_text = self._render_collapsed_text(group, self._last_tool_items)
+                        w = Static(Text(display_text, style="dim"))
+                        self._last_tool_widget = w
+                        widgets.append(w)
+                    else:
+                        # Non-collapsible tool — reset and emit standalone
+                        self._reset_tool_collapsing()
+                        friendly = _friendly_tool_call(name, input_args)
+                        widgets.append(Static(Text(friendly, style="dim")))
+                case other:
+                    widgets.append(Static(f"Unknown block: {other}"))
+
+        # Accumulate token stats
         if isinstance(msg.response_metadata, dict) and "usage" in msg.response_metadata:
             usage = msg.response_metadata["usage"]
-            stats = (
-                f"cache_read: {usage.get('cache_read_input_tokens', 0)} | "
-                f"input: {usage.get('input_tokens', 0)} | "
-                f"cache_write: {usage.get('cache_creation', {}).get('ephemeral_5m_input_tokens', 0)}"
-            )
-            children.append(Static(Text(stats, style="dim"), classes="token-stats"))
+            self._total_input += usage.get("input_tokens", 0)
+            self._total_output += usage.get("output_tokens", 0)
+            self._total_cache_read += usage.get("cache_read_input_tokens", 0)
+            self._update_status_bar()
 
-        title = "AI: " + " | ".join(parts) if parts else "AI turn"
-        coll = Collapsible(*children, title=title, collapsed=True)
-        return coll
+        return widgets
 
     # ── IOHandler protocol ────────────────────────────────────
 
     def _update_status_bar(self):
         bar = self.query_one("#status-bar", Static)
-        bar.update(f"Session: {self._session_id} | Checkpoint: {self._checkpoint_id}")
+        parts = [
+            f"Session: {self._session_id}",
+            f"Checkpoint: {self._checkpoint_id}",
+        ]
+        if self._total_input > 0 or self._total_output > 0:
+            parts.append(f"in:{self._total_input} out:{self._total_output} cache:{self._total_cache_read}")
+        bar.update(" | ".join(parts))
 
     async def log_thread_id(self, tid: str, chosen: bool):
         await self._mounted.wait()
@@ -157,11 +315,12 @@ class RichConsoleApp(App):
         await self._mounted.wait()
         self._checkpoint_id = checkpoint_id
         self._update_status_bar()
-        target = self._get_mount_target(path)
-        await self._mount_to(
-            target,
-            Static(Text(f"checkpoint: {checkpoint_id}", style="dim"))
-        )
+        if self._show_checkpoints:
+            target = self._get_mount_target(path)
+            await self._mount_to(
+                target,
+                Static(Text(f"checkpoint: {checkpoint_id}", style="dim"))
+            )
 
     async def log_start(self, *, path: list[str], tool_id: str | None):
         await self._mounted.wait()
@@ -177,7 +336,7 @@ class RichConsoleApp(App):
             tool_info = f" (tool={tool_id})" if tool_id else ""
             label = " > ".join(path) + tool_info
             inner = VerticalScroll(classes="nested-workflow")
-            coll = Collapsible(inner, title=f"Nested: {label}", collapsed=False)
+            coll = Collapsible(inner, title=f"Nested: {label}", collapsed=True)
             self._nested_containers[path[-1]] = inner
             await self._mount_to(target, coll)
 
@@ -211,29 +370,50 @@ class RichConsoleApp(App):
                 for m in v["messages"]:
                     match m:
                         case AIMessage():
-                            widget = self._render_ai_turn(m)
-                            await self._mount_to(target, widget)
+                            widgets = self._render_ai_turn(m)
+                            if widgets:
+                                await self._mount_to(target, *widgets)
                         case SystemMessage():
-                            content = m.content if isinstance(m.content, str) else str(m.content)
-                            coll = Collapsible(Static(content), title="System prompt", collapsed=True)
+                            self._reset_tool_collapsing()
+                            coll = Collapsible(Static(m.text()), title="System prompt", collapsed=True)
                             await self._mount_to(target, coll)
                         case HumanMessage():
-                            content = m.content if isinstance(m.content, str) else str(m.content)
-                            coll = Collapsible(Static(content), title="Initial prompt", collapsed=True)
+                            self._reset_tool_collapsing()
+                            content = m.text()
+                            # Injected prover violation summary (not from the human)
+                            if "prover output was too large" in content:
+                                title = "Prover violation summary"
+                                collapsed = False
+                            else:
+                                title = "Initial prompt"
+                                collapsed = True
+                            coll = Collapsible(Static(content), title=title, collapsed=collapsed)
                             await self._mount_to(target, coll)
                         case ToolMessage():
-                            content = m.content if isinstance(m.content, str) else str(m.content)
                             name = getattr(m, "name", None) or "Tool result"
-                            coll = Collapsible(Static(content), title=name, collapsed=True)
+                            # Suppress results for collapsed tools and redundant human responses
+                            if name in _TOOL_COLLAPSE_GROUP or name in _SUPPRESS_TOOL_RESULT:
+                                continue
+                            self._reset_tool_collapsing()
+                            friendly = _TOOL_RESULT_DISPLAY.get(name, name)
+                            coll = Collapsible(Static(m.text()), title=friendly, collapsed=True)
                             await self._mount_to(target, coll)
                         case _:
+                            self._reset_tool_collapsing()
                             await self._mount_to(target, Static(Text(f"[Message: {type(m).__name__}]", style="dim")))
 
             if "vfs" in v:
-                files = ", ".join(v["vfs"].keys())
+                self._reset_tool_collapsing()
+                count = len(v["vfs"])
+                names = list(v["vfs"].keys())
+                file_parts: list[tuple[str, str] | str] = [f"Wrote {count} file{'s' if count != 1 else ''}: "]
+                for i, name in enumerate(names):
+                    if i > 0:
+                        file_parts.append(", ")
+                    file_parts.append((name, "bold underline cyan"))
                 await self._mount_to(
                     target,
-                    Static(Text(f"VFS write: {files}", style="cyan"), classes="vfs-change")
+                    Static(Text.assemble(*file_parts), classes="vfs-change")
                 )
 
     async def progress_update(self, path: list[str], upd: ProgressUpdate):
@@ -242,11 +422,7 @@ class RichConsoleApp(App):
 
         match upd["type"]:
             case "prover_run":
-                args_str = " ".join(upd["args"])
-                await self._mount_to(
-                    target,
-                    Static(Text(f"▶ Prover run: {args_str}", style="bold yellow"))
-                )
+                pass  # tool call already shows target contract + rule
             case "prover_result":
                 table = DataTable()
                 _, _, self._analysis_col = table.add_columns("Rule", "Status", "Analysis")
@@ -282,6 +458,11 @@ class RichConsoleApp(App):
                         Text("View Analysis", style="bold underline cyan"),
                         update_width=True,
                     )
+            case "summarization_notice":
+                await self._mount_to(
+                    target,
+                    Static(Text("Context compacted (summarization applied)", style="dim italic"))
+                )
 
     class _InteractionRequest(Message):
         def __init__(self, ty: HumanInteractionType):
@@ -303,7 +484,7 @@ class RichConsoleApp(App):
         target = self.query_one("#event-log", VerticalScroll)
         await self._mount_to(
             target,
-            Static(Text(f"[Human response: {response[:60]}...]", style="dim"))
+            Static(Text.assemble(("You: ", "bold green"), response))
         )
 
         return response

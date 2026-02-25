@@ -21,7 +21,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from langchain_core.runnables import RunnableConfig
 
-from composer.diagnostics.stream import PartialUpdates
+from composer.diagnostics.stream import PartialUpdates, SummarizationNotice
 from composer.diagnostics.handlers import is_user_update, is_audit_update
 
 from composer.io.graph_runner import SinkProtocol, run_graph as _run_graph
@@ -64,6 +64,8 @@ async def _queue_drainer(
                 if d["type"] == "summarization_raw":
                     if audit is not None:
                         audit.on_summarization(checkpoint_id=inner.checkpoint_id, summary=d["summary"])
+                    notice: SummarizationNotice = {"type": "summarization_notice", "summary": d["summary"]}
+                    await h.progress_update(full_path, notice)
                 elif is_audit_update(d) and audit is not None:
                         match d["type"]:
                             case "rule_result":
