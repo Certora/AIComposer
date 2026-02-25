@@ -9,7 +9,7 @@ import sys
 
 from dataclasses import dataclass
 import types
-from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence
+from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
 from langgraph.prebuilt import InjectedState
+from langgraph.graph.state import CompiledStateGraph
 
 from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
@@ -45,9 +46,9 @@ from graphcore.summary import SummaryConfig
 
 type ValidationToken = Literal["guidelines", "suggestion", "typecheck"]
 
-guidelines = "guidelines"
-suggestions = "suggestion"
-typecheck = "typecheck"
+guidelines : ValidationToken = "guidelines"
+suggestions : ValidationToken = "suggestion"
+typecheck : ValidationToken = "typecheck"
 
 all_validations : list[ValidationToken] = [guidelines, suggestions, typecheck]
 
@@ -129,7 +130,7 @@ def gen_feedback_tool(
         exec_body=fill_state
     )
 
-    work = build_workflow(
+    work : CompiledStateGraph[MessagesState, NatSpecContext, FlowInput, Any] = build_workflow(
         state_class=state_class,
         input_type=FlowInput,
         tools_list=[mem, search_tool, result],
@@ -448,7 +449,7 @@ stdout:
         result_tool
     ]
 
-    gen = build_workflow(
+    gen : CompiledStateGraph[TypeCheckState, Any, FlowInput, Any] = build_workflow(
         state_class=TypeCheckState,
         context_schema=None,
         input_type=FlowInput,
@@ -554,7 +555,7 @@ def execute(args: NatSpecArgs) -> int:
 
     ctxt = NatSpecContext(orig_doc=document, rag_db=rag_db, unbound_llm=llm)
 
-    graph = build_workflow(
+    graph : CompiledStateGraph[NatSpecState, NatSpecContext, NatSpecInput, Any] = build_workflow(
         context_schema=NatSpecContext,
         initial_prompt=load_jinja_template("cvl_generation_prompt.j2"),
         sys_prompt=load_jinja_template("cvl_system_prompt.j2"),
