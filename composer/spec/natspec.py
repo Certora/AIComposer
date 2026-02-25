@@ -26,7 +26,7 @@ from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.spec.ptypes import NatSpecState, Result, NatSpecInput
+from composer.spec.ptypes import NatSpecState, Result, NatSpecInput, HumanQuestionSchema
 from composer.spec.cvl_tools import (
     put_cvl_description,
     PutCVLSchemaModel,
@@ -47,6 +47,8 @@ from graphcore.tools.memory import memory_tool
 from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import build_workflow, FlowInput, MessagesState, tool_state_update
 from graphcore.summary import SummaryConfig
+
+from composer.io.protocol import NatSpecIOHandler
 
 type ValidationToken = Literal["guidelines", "suggestion", "typecheck"]
 
@@ -362,15 +364,6 @@ generation_complete = result_tool_generator(
     validator=(NatSpecState, validate_spec_completion)
 )
 
-class HumanQuestionSchema(BaseModel):
-    """
-    Use to pose a question to the user. You should *not* assume the user is necessarily familiar with
-    CVL. The primary usage of this tool should be to clarify intent over ambiguities in the natural language
-    specification.
-    """
-    question: str = Field(description="The question to pose to the user")
-    context: str = Field(description="Any additional context to the question, e.g. a citation from the natural language spec.")
-
 human_question_tool = human_interaction_tool(
     HumanQuestionSchema,
     NatSpecState,
@@ -536,9 +529,20 @@ class NatSpecConsoleHandler(BaseConsoleHandler[HumanQuestionSchema, Any]):
         print(f"Context:\n{ty.context}")
         return prompt_input("Enter your response", debug_thunk)
 
+    async def display_result(self, final_state: NatSpecState) -> None:
+        print("Spec file generation complete")
+        print(final_state["curr_spec"])
+        print(final_state["curr_intf"])
+        print("Expected contract name: " + final_state["result"].expected_contract_name)
+        print("Expected solidity version: " + final_state["result"].expected_solc)
+        print("Notes:\n" + final_state["result"].implementation_notes)
 
-async def execute(args: NatSpecArgs) -> int:
+
+async def execute(args: NatSpecArgs, handler: NatSpecIOHandler | None = None) -> int:
     llm = create_llm(args)
+
+    if handler is None:
+        handler = NatSpecConsoleHandler()
 
     thread_id : str
     if args.thread_id is None:
@@ -546,7 +550,7 @@ async def execute(args: NatSpecArgs) -> int:
         print(f"Selected {thread_id}")
     else:
         thread_id = args.thread_id
-    
+
     judge = get_judge_tool(
         thread_id=thread_id,
         llm=llm
@@ -613,19 +617,12 @@ async def execute(args: NatSpecArgs) -> int:
         document
     ], curr_intf=None, curr_spec=None, validations={})
 
-    handler = NatSpecConsoleHandler()
     async with with_handler(handler, NullEventHandler()):
         final_state = await run_graph(graph, ctxt, graph_input, runnable_conf)
     if "result" not in final_state:
         return 1
-    
-    print("Spec file generation complete")
-    print(final_state["curr_spec"])
-    print(final_state["curr_intf"])
-    print("Expected contract name: " + final_state["result"].expected_contract_name)
-    print("Expected solidity version: " + final_state["result"].expected_solc)
-    print("Notes:\n" + final_state["result"].implementation_notes)
 
+    await handler.display_result(final_state)
     return 0
 
 def main() -> int:

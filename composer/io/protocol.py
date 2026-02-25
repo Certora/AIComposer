@@ -1,10 +1,11 @@
-from typing import Protocol, Callable
+from typing import Any, Protocol, Callable
 
 from graphcore.tools.vfs import VFSAccessor
 
 from composer.diagnostics.stream import ProgressUpdate
 from composer.human.types import HumanInteractionType
 from composer.core.state import ResultStateSchema, AIComposerState
+from composer.spec.ptypes import NatSpecState, HumanQuestionSchema
 
 
 class IOHandler[H, P](Protocol):
@@ -33,3 +34,7 @@ class CodeGenIOHandler(IOHandler[HumanInteractionType, ProgressUpdate], Protocol
         mat: VFSAccessor[AIComposerState],
         st: AIComposerState
     ): ...
+
+
+class NatSpecIOHandler(IOHandler[HumanQuestionSchema, Any], Protocol):
+    async def display_result(self, final_state: NatSpecState) -> None: ...

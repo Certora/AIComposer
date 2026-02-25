@@ -131,7 +131,8 @@ def certora_prover(
                             content=[
                                 "The prover output was too large for the context window. A TODO list extracted from its output is as follows",
                                 result.todo_list
-                            ]
+                            ],
+                            display_tag="prover_summary"
                         )
 
                     ]

@@ -27,7 +27,8 @@ def check_completion(
                         HumanMessage(
                             content="You have apparently become confused about the status of your task. Evaluate the current "
                             "state of your implementation, enumerate any unaddressed feedback, and create a TODO list to address "
-                            "that feedback."
+                            "that feedback.",
+                            display_tag="scolding"
                         )
                     ]
                 }

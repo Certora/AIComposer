@@ -319,7 +319,7 @@ async def execute_ai_composer_workflow(
     if result is None:
         return 1
 
-    res_commentary = create_resume_commentary(final_state, llm=llm)
+    res_commentary = await create_resume_commentary(final_state, llm=llm)
     audit_db.register_complete(
         thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
     )

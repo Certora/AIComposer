@@ -18,7 +18,7 @@ class ResumeCommentary(BaseModel):
 
     interface_path: str = Field(description="The path of the interface file on the VFS")
 
-def create_resume_commentary(state: AIComposerState, llm: BaseChatModel) -> ResumeCommentary:
+async def create_resume_commentary(state: AIComposerState, llm: BaseChatModel) -> ResumeCommentary:
     bound = llm.with_structured_output(ResumeCommentary)
     messages = state["messages"].copy()
 
@@ -27,6 +27,6 @@ def create_resume_commentary(state: AIComposerState, llm: BaseChatModel) -> Resu
 
     messages.append(HumanMessage(load_jinja_template("final_commentary_prompt.j2")))
 
-    res = bound.invoke(messages)
+    res = await bound.ainvoke(messages)
     assert isinstance(res, ResumeCommentary)
     return res
