@@ -1,0 +1,110 @@
+<background>
+You have been tasked with formalizing {{ what_formal }} within the context of a larger Web3 application.
+</background>
+
+<task>
+Given the following {{ thing }} description:
+
+<{{thing_tag}}>
+  {{ thing_descr}}
+</{{ thing_tag }}>
+
+Follow procedure exactly:
+
+## Step 0
+
+Gather information about the Web3 application and its relationship with {{ thing }}. Use this information to inform how you plan
+to formalize {{ what_formal }}.
+{% if has_source %}
+
+When collecting broad information about the source code (e.g., "where is X modified?", "what entry points are responsible
+for implementing feature Y") prefer using the code exploration tool instead of exploring the source code directly.
+
+Do NOT use the exploration tool to answer questions like "What is the type signature of X" or "what is the implementation of function F",
+these are better answered by "reading" the code directly.
+
+IMPORTANT: you may assume that the source code has not changed in any way that invalidates the the exploration tool's answers.
+{% endif %}
+
+
+## Step 1
+
+Write a CVL (Certora Verification Language) specification which shows {% if thing_tag == "attack_vector" %}
+the described attack/exploit cannot occur{% else %}that the {{ thing }} holds.{%endif%}
+{% if has_source %}
+
+When writing your specification, you may consult the implementation of the application to, e.g., understand the role
+of external arguments, etc.
+{% endif %}
+
+If you are facing a specific issue, use the knowledge base articles to search for help.
+
+When you need to understand CVL syntax, patterns, or language features — especially for
+non-obvious constructs or features — delegate to the cvl_research tool rather than searching the manual yourself.
+
+Before writing your specification, use the `extended_reasoning` tool for in-context analysis of your collected information.
+
+## Step 2
+
+Seek feedback on your specification from the feedback tool. If it indicates that your spec needs work, address its feedback,
+and reinvoke the tool until it is satisfied with your specification.
+{% if has_prover %}
+
+## Step 3
+
+Use the provided `verify_spec` tool to test your spec. If there are verification failures
+that point to errors in your specification, refine your specification, and return to step 2.
+
+If there are failures from `HAVOC` from unresolved calls, use the `unresolved_call_guidance` tool for advice.
+
+If the prover feedback requires non-trivial changes, be sure to use the `extended_reasoning` tool to reflect on
+and appropriately digest the feedback from the prover before actually editing your specification.
+
+As in step 2, if you are facing specific issues, use the knowledge base articles to search for help.
+{% endif %}
+
+## Step {{ "4" if has_prover else "3" }}
+
+Deliver your CVL specification and an explanation using the "result" tool.
+
+IMPORTANT: Do not try to reason yourself about whether the {{ thing }} is true or possible, focus solely on authoring CVL which will *demonstrate* the desired property.
+
+{% if resources %}
+You may also make use of the following CVL resources, available as CVL files.
+
+{% for res in resources %}
+   <resource>
+      Description: {{ res.description }}
+      Import with: `import "{{ res.import_path }}";`
+
+      {% if res.required %}
+      You MUST ensure your final specification imports this file.
+      {% else %}
+      You may use this import at your discretion (e.g., it defines an invariant necessary to prove your rule/invariant).
+      {% endif %}
+   </resource>
+{% endfor %}
+{% endif %}
+
+{% if memory %}
+<state>
+Use the available memory tools to track your progress through this algorithm, any important lessons about CVL you may have learned,
+or any other significant, relevant information to this task.{% if has_prover %} In particular, be sure to update your memory before calling the prover to summarize
+your current approach.{% endif %}
+</state>
+{% endif %}
+</task>
+
+<context>
+  {% include "application_context.j2" %}
+</context>
+
+<guidance>
+{% include "cvl_guidelines.j2" %}
+{% include "cvl_additions.j2" %}
+  <tools>
+    When choosing between using the `memory` tool or the `extended_reasoning` tool:
+       extended_reasoning: synthesize information you've gathered in this conversation before making a decision.
+       memory: record lessons that should persist across runs (e.g., "this contract requires strengthened invariants for X").
+  </tools>
+</guidance>
