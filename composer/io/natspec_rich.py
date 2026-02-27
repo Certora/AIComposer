@@ -24,7 +24,7 @@ class NatSpecRichApp(BaseRichConsoleApp[HumanQuestionSchema, Any]):
             ide=ide,
         )
         # Snapshot map: snap_id → (content, filename, lang)
-        self._snapshots: dict[int, tuple[str, str, str]] = {}
+        self._snapshots: dict[int, tuple[str, str, str | None]] = {}
         self._next_snap_id: int = 0
         # Track latest for display_result
         self._latest_spec: str | None = None
@@ -45,7 +45,7 @@ class NatSpecRichApp(BaseRichConsoleApp[HumanQuestionSchema, Any]):
 
     # ── Snapshot helpers ──────────────────────────────────────
 
-    def _save_snapshot(self, content: str, filename: str, lang: str) -> int:
+    def _save_snapshot(self, content: str, filename: str, lang: str | None) -> int:
         snap_id = self._next_snap_id
         self._next_snap_id += 1
         self._snapshots[snap_id] = (content, filename, lang)
@@ -59,7 +59,7 @@ class NatSpecRichApp(BaseRichConsoleApp[HumanQuestionSchema, Any]):
             self._latest_spec = spec
             self._reset_tool_collapsing()
             if self._ide is not None:
-                snap_id = self._save_snapshot(spec, "rules.spec", "cvl")
+                snap_id = self._save_snapshot(spec, "rules.spec", None)
                 markup = (
                     f"[cyan]{_DOT}[/cyan]"
                     f"[@click=app.show_snapshot({snap_id})]"
@@ -88,12 +88,6 @@ class NatSpecRichApp(BaseRichConsoleApp[HumanQuestionSchema, Any]):
                 coll = Collapsible(Static(syntax), title="Interface updated", collapsed=True)
                 await self._mount_to(target, coll)
 
-        if "validations" in node_data:
-            for key in node_data["validations"]:
-                await self._mount_to(
-                    target,
-                    Static(Text(f"Validation passed: {key}", style="green"))
-                )
 
     # ── IDE action methods ────────────────────────────────────
 

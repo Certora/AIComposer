@@ -188,6 +188,25 @@ class NatSpecToolDisplay(ToolDisplayConfig):
             case _:
                 return base
 
+    def collapse_detail(self, name: str, input: dict) -> str:
+        match name:
+            case "memory":
+                cmd = input.get("command", "?")
+                path = input.get("path", "")
+                return f"{cmd} {path}".strip()
+            case _:
+                return ""
+
+    def render_collapsed_text(self, group: str, items: list[str]) -> str:
+        match group:
+            case "memory":
+                count = len(items)
+                if count == 1:
+                    return "Accessing memory"
+                return f"Accessing memory (×{count})"
+            case _:
+                return f"Tools: {', '.join(items)}"
+
     def should_show_result(self, name: str, content: str) -> bool:
         if not super().should_show_result(name, content):
             return False

@@ -123,4 +123,10 @@ store your work. You have tools to read, modify, and query this VFS.
   <advice>The automatically generated "getter" functions for complex data types can frequently cause stack too deep errors. However, contract storage fields DO NOT need to be public for direct
     storage access within specs to work. Avoid declaring your storage fields as public unless
     there is an explicit call to the auto-generated getters.</advice>
+  <hard_requirement>
+    `SANITY_FAILED` is considered a rule failure and your code generation task is not complete until all rules are VERIFIED.
+    `SANITY_FAILED` means that the current rule is "vacuous", that is, it passes trivially. This can happen when a set of
+    preconditions/assumptions are unsatisfiable. For example, a rule that calls some function `f` and *assumes* that function does
+    not revert, but the implementation of `f` (perhaps mistakenly) always reverts will trivially pass.
+  </hard_requirement>
 </guidance>

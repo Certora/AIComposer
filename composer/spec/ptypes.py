@@ -20,6 +20,7 @@ class NatSpecState(MessagesState):
     curr_intf: str | None
     curr_spec: str | None
     result: NotRequired[Result]
+    did_read: NotRequired[bool]
 
 class HumanQuestionSchema(BaseModel):
     """

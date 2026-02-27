@@ -10,7 +10,7 @@ import sys
 
 from dataclasses import dataclass
 import types
-from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any
+from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -32,8 +32,10 @@ from composer.spec.cvl_tools import (
     PutCVLSchemaModel,
     put_cvl,
     put_cvl_raw,
+    get_cvl,
 )
 from composer.tools.search import cvl_manual_search
+from composer.tools.thinking import explicit_thinking
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
 from composer.io.console import BaseConsoleHandler
 from composer.io.prompt import prompt_input
@@ -58,7 +60,7 @@ typecheck : ValidationToken = "typecheck"
 
 all_validations : list[ValidationToken] = [guidelines, suggestions, typecheck]
 
-class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
+class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions, Protocol):
     input_file: str
 
 @dataclass
@@ -281,20 +283,6 @@ def get_document() -> str:
     """
     return get_runtime(NatSpecContext).context.orig_doc
 
-class GetCVLSchema(BaseModel):
-    """
-    View the (pretty-printed) version of the CVL file.
-    """
-    state: Annotated[NatSpecState, InjectedState]
-
-@tool(args_schema=GetCVLSchema)
-def get_cvl(
-    state: Annotated[NatSpecState, InjectedState]
-) -> str:
-    if state["curr_spec"] is None:
-        return "No spec file on VFS"
-    return state["curr_spec"]
-
 class PutInterfaceSchema(BaseModel):
     """
     Put the proposed interface file for the system entry point on the VFS.
@@ -344,6 +332,8 @@ def validate_spec_completion(
     m: Result,
     id: str
 ) -> ValidationResult:
+    if not st.get("did_read", False):
+        return "You must review the current spec before completing. Call get_cvl first."
     if st["curr_intf"] is None:
         return "No interface file has been placed yet."
     if st["curr_spec"] is None:
@@ -458,7 +448,8 @@ stdout:
 Using the provided interface file and implementation notes, 
 generate a *stub* implementation of the interface.
 That is, generate a contract which implements the interface with a name of your choosing, 
-that satisfies any of the noted implementation constraints, but otherwise has NO executable code.
+that satisfies any of the noted implementation constraints, but otherwise has NO executable code,
+besides returning dummy/default values.
 
 IMPORTANT: You can ignore any natural language requirements listed in the interface,
 the stub simply needs to be type-correct.
@@ -593,7 +584,7 @@ async def execute(args: NatSpecArgs, handler: NatSpecIOHandler | None = None) ->
             generation_complete,
             put_interface,
             get_document,
-            get_cvl,
+            get_cvl(NatSpecState, set_did_read=True),
             put_cvl_raw,
             judge,
             mem_tool,

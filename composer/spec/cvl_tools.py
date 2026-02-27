@@ -9,7 +9,7 @@ source_spec (source-based spec generation) workflows.
 import os
 import subprocess
 import tempfile
-from typing import Annotated, TypedDict, NotRequired, cast
+from typing import Annotated, Literal, TypedDict, NotRequired, overload
 
 from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langgraph.types import Command
@@ -57,7 +57,8 @@ class PutCVLRaw(BaseModel):
 
 def _maybe_update_cvl(
     tool_call_id: str,
-    pp: str
+    pp: str,
+    ast_json: dict | None = None,
 ) -> str | Command:
     """
     Validate CVL syntax and update state if valid.
@@ -78,6 +79,12 @@ def _maybe_update_cvl(
                 stderr=subprocess.PIPE
             )
             if res.returncode != 0:
+                import json as _json
+                with tempfile.NamedTemporaryFile("w", suffix=".spec", prefix="pp_fail_", delete=False, dir="/tmp") as dbg_pp:
+                    dbg_pp.write(pp)
+                if ast_json is not None:
+                    with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="pp_fail_", delete=False, dir="/tmp") as dbg_json:
+                        _json.dump(ast_json, dbg_json, indent=2)
                 return f"""
 Update rejected, the syntax checker exited with non-zero status
 
@@ -92,7 +99,8 @@ stderr:
     return tool_state_update(
         tool_call_id=tool_call_id,
         content="Accepted",
-        curr_spec=pp
+        curr_spec=pp,
+        did_read=False,
     )
 
 
@@ -107,7 +115,7 @@ def put_cvl(
         pp = pretty_print(CVLFile.model_validate(cvl_file))
     except Exception:
         return "Failed to pretty print the AST"
-    return _maybe_update_cvl(tool_call_id, pp)
+    return _maybe_update_cvl(tool_call_id, pp, ast_json=cvl_file)
 
 
 @tool(args_schema=PutCVLRaw)
@@ -121,27 +129,63 @@ def put_cvl_raw(
 class WithCurrSpec(TypedDict):
     curr_spec: NotRequired[str]
 
+class WithCurrSpecNullable(TypedDict):
+    curr_spec: str | None
+
+class WithCurrSpecNullableAndDidRead(TypedDict):
+    curr_spec: str | None
+    did_read: NotRequired[bool]
+
 class GetCVLSchemaTemplate(BaseModel):
     """
     Retrive the textual representation of the current specification.
     """
 
+@overload
+def get_cvl[S: WithCurrSpecNullableAndDidRead](
+    ty: type[S],
+    *,
+    set_did_read: Literal[True],
+) -> BaseTool: ...
+
+@overload
+def get_cvl[S: WithCurrSpecNullable](
+    ty: type[S],
+) -> BaseTool: ...
+
+@overload
 def get_cvl[S: WithCurrSpec](
-    ty: type[S]
+    ty: type[S],
+) -> BaseTool: ...
+
+def get_cvl(
+    ty: type,
+    *,
+    set_did_read: bool = False,
 ) -> BaseTool:
+    extra_fields: dict = {}
+    if set_did_read:
+        extra_fields["tool_call_id"] = (Annotated[str, InjectedToolCallId], ...)
     schema = create_model(
         "GetCVL",
         __base__=GetCVLSchemaTemplate,
         __doc__=GetCVLSchemaTemplate.__doc__,
-        state=Annotated[ty, InjectedState]
+        state=(Annotated[ty, InjectedState], ...),
+        **extra_fields,
     )
     @tool(args_schema=schema)
     def get_cvl(
         **args
-    ) -> str:
-        st = cast(S, args["state"])
-        if "curr_spec" not in st:
+    ) -> str | Command:
+        st = args["state"]
+        if "curr_spec" not in st or st["curr_spec"] is None:
             return "No spec file written yet"
-        else:
-            return st["curr_spec"]
+        spec = st["curr_spec"]
+        if set_did_read:
+            return tool_state_update(
+                tool_call_id=args["tool_call_id"],
+                content=spec,
+                did_read=True,
+            )
+        return spec
     return get_cvl

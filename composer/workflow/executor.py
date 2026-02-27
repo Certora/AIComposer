@@ -259,7 +259,7 @@ async def execute_ai_composer_workflow(
         extra_tools.append(memory)
 
 
-    (workflow_builder, bound_llm, materializer) = get_cryptostate_builder(
+    (workflow_builder, _, materializer) = get_cryptostate_builder(
         llm=llm,
         fs_layer=fs_layer,
         prompt_params=prompt_params,
@@ -308,7 +308,7 @@ async def execute_ai_composer_workflow(
     if reqs_list is not None:
         required_validations.append(req_type)
 
-    work_context = AIComposerContext(llm=bound_llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
+    work_context = AIComposerContext(llm=llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
 
     audit_sink = AuditDBSink(audit_db, thread_id)
 

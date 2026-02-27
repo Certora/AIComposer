@@ -1,0 +1,119 @@
+import composer.certora as _
+
+import argparse
+import asyncio
+import uuid
+from pathlib import Path
+
+from rich.console import Console
+
+from langchain_core.runnables import RunnableConfig
+
+from graphcore.graph import FlowInput
+
+from composer.assistant.agent import build_orchestrator
+from composer.assistant.handler import OrchestratorHandler
+from composer.assistant.types import OrchestratorContext
+from composer.io.ide_bridge import IDEBridge
+from composer.io.stream import EventQueue
+from composer.workflow.factories import create_llm
+from composer.io.graph_runner import run_graph
+
+
+async def _drain_events(queue: EventQueue, handler: OrchestratorHandler) -> None:
+    """Pull events from the queue and render them via the handler."""
+    async for event in queue.stream_events():
+        handler.on_event(event)
+
+
+async def main() -> int:
+    parser = argparse.ArgumentParser(description="AI-assisted formal verification orchestrator")
+    parser.add_argument("--model", default="claude-opus-4-6", help="Model to use")
+    parser.add_argument("--tokens", type=int, default=10_000, help="Token budget")
+    parser.add_argument("--thinking-tokens", type=int, default=2048, help="Thinking token budget")
+    args = parser.parse_args()
+
+    model_args = {
+        "model": args.model,
+        "tokens": args.tokens,
+        "thinking_tokens": args.thinking_tokens,
+        "memory_tool": True,
+    }
+
+    # Create an LLM for the orchestrator agent itself
+    class _OrchestratorModelArgs:
+        model = args.model
+        tokens = args.tokens
+        thinking_tokens = args.thinking_tokens
+        memory_tool = True
+
+    llm = create_llm(_OrchestratorModelArgs())  # type: ignore[arg-type]
+
+    # Connect IDE bridge if available
+    ide = await IDEBridge.connect()
+
+    # Determine workspace
+    workspace: Path
+    if ide is not None:
+        workspace = await ide.workspace_folder()
+    else:
+        workspace = Path.cwd()
+
+    console = Console()
+    console.print(f"[bold]Workspace:[/bold] {workspace}")
+
+    # Build orchestrator graph
+    compiled = build_orchestrator(llm, workspace, ide)
+    ctxt = OrchestratorContext(workspace=workspace, ide=ide, llm=llm)
+
+    # Set up handler
+    handler = OrchestratorHandler(
+        console=console,
+        workspace=workspace,
+        ide=ide,
+        llm=llm,
+        model_args=model_args,
+    )
+
+    # Set up event queue for async rendering
+    ev_queue = EventQueue(asyncio.Event(), [])
+    drainer = asyncio.create_task(_drain_events(ev_queue, handler))
+
+    thread_id = f"orchestrator_{uuid.uuid4().hex[:12]}"
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": 50,
+    }
+
+    flow_input: FlowInput = {"input": []}
+
+    try:
+        final_state = await run_graph(
+            event_sink=ev_queue.push,
+            graph=compiled,
+            ctxt=ctxt,
+            input=flow_input,
+            run_conf=config,
+            description="Orchestrator",
+            human_handler=handler.on_interrupt,
+        )
+    finally:
+        drainer.cancel()
+        try:
+            await drainer
+        except asyncio.CancelledError:
+            pass
+
+    if ide is not None:
+        await ide.close()
+
+    result = final_state.get("result")
+    if result:
+        console.print(f"\n[bold]{result}[/bold]")
+
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(asyncio.run(main()))

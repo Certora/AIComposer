@@ -20,6 +20,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import get_runtime
 
 from composer.templates.loader import load_jinja_template
+from composer.tools.thinking import explicit_thinking, get_rough_draft_tools
 from composer.core.state import AIComposerState
 from composer.core.validation import reqs as req_key
 from composer.core.context import AIComposerContext, compute_state_digest
@@ -51,6 +52,8 @@ class JudgeResult(BaseModel):
 class JudgeState(MessagesState, VFSState):
     result: NotRequired[JudgeResult]
     orig_reqs: list[str]
+    memory: NotRequired[str]
+    did_read: NotRequired[bool]
 
 def _gen_workflow(
     vfs_tools: list[BaseTool],
@@ -76,7 +79,7 @@ BEFORE calling this tool.
         context_schema=None,
         state_class=JudgeState,
         unbound_llm=llm,
-        tools_list=[mem_tool, *vfs_tools, res],
+        tools_list=[mem_tool, *vfs_tools, res, explicit_thinking, *get_rough_draft_tools(JudgeState)],
         sys_prompt=load_jinja_template("req_role_prompt.j2"),
         initial_prompt=load_jinja_template("req_judge_prompt.j2")
     )[0]
@@ -119,6 +122,8 @@ def judge_res_checker(
     r: JudgeResult,
     _: str
 ) -> str | None:
+    if "memory" in st and not st.get("did_read", False):
+        return "Completion REJECTED: You must read your rough draft before submitting. Call read_rough_draft first."
     reqs = st["orig_reqs"]
     if len(reqs) != len(r.judgement_result):
         return f"Completion REJECTED: Incorrect number of requirement results: expected {len(reqs)} received {len(r.judgement_result)}"

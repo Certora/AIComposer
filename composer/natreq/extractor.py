@@ -24,6 +24,7 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.workflow.factories import get_checkpointer
 from composer.tools.search import cvl_manual_search
+from composer.tools.thinking import explicit_thinking, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
 from composer.natreq.automation import requirements_oracle
 from composer.human.types import HumanInteractionType
@@ -34,6 +35,8 @@ from composer.io.event_handler import NullEventHandler
 
 class ExtractionState(MessagesState):
     reqs: NotRequired[list[str]]
+    memory: NotRequired[str]
+    did_read: NotRequired[bool]
 
 @dataclass
 class ExtractionContext:
@@ -68,6 +71,15 @@ def human_in_the_loop(
     })
     return response
 
+def _extraction_res_checker(
+    st: ExtractionState,
+    _r: list[str],
+    _id: str
+) -> str | None:
+    if "memory" in st and not st.get("did_read", False):
+        return "Completion REJECTED: You must read your rough draft before submitting. Call read_rough_draft first."
+    return None
+
 results_tool = result_tool_generator(
     "reqs",
     (list[str], "The list of natural language requirements you extracted during this process."),
@@ -75,7 +87,8 @@ results_tool = result_tool_generator(
 Tool used to indicate your analysis is complete and communicate the generated requirements back to the user.
 
 REMINDER: You should call this tool only AFTER you have updated your memories.
-"""
+""",
+    validator=(ExtractionState, _extraction_res_checker)
 )
 
 
@@ -121,7 +134,9 @@ async def get_requirements(
         memory_tool(mem_backend),
         results_tool,
         human_in_the_loop,
-        cvl_manual_search(ExtractionContext)
+        cvl_manual_search(ExtractionContext),
+        explicit_thinking,
+        *get_rough_draft_tools(ExtractionState),
     ]
     built : CompiledStateGraph[ExtractionState, ExtractionContext, FlowInput, Any] = build_async_workflow(
         state_class=ExtractionState,
