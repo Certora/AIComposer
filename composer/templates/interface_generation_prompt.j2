@@ -1,0 +1,54 @@
+{% from "component_detail.j2" import render_component %}
+
+<background>
+You are generating a Solidity interface file for formal verification of a Web3 application.
+The interface should capture all external entry points identified in the component analysis.
+</background>
+
+<application>
+The Web3 application is described as: {{ summary.application_type }}
+
+{% for component in summary.components %}
+{{ render_component(component) }}
+{% endfor %}
+</application>
+
+<task>
+Given the application analysis above and the system/design document (provided as input),
+generate a complete Solidity interface that covers all external entry points across all components.
+
+Follow these steps:
+
+## Step 1
+
+Review the components to identify all external entry points. Group related methods logically.
+
+## Step 2
+
+Generate a Solidity interface file that:
+- Uses pragma solidity ^0.{{ solc_version }};
+- Declares a single interface (e.g., `IContract`) containing all identified entry points
+- Includes function signatures with appropriate parameter types, names, and visibility
+- Includes relevant events and custom errors if mentioned in the analysis
+- Adds brief NatSpec comments for each function explaining its purpose
+
+## Step 3
+
+Deliver the complete Solidity interface source code using the result tool.
+The interface must compile successfully with solc{{ solc_version }}.
+</task>
+
+<guidance>
+  <hard_requirement>
+    The interface must be syntactically valid Solidity that compiles without errors.
+    Use only standard Solidity types. Do not import external dependencies.
+  </hard_requirement>
+  <hard_requirement>
+    Include ALL external entry points from the analysis — do not omit any.
+    If a method appears in multiple components, include it once.
+  </hard_requirement>
+  <reminder>
+    For methods where parameter types are ambiguous from the analysis, use reasonable
+    defaults (address for actors, uint256 for amounts, bytes for arbitrary data).
+  </reminder>
+</guidance>

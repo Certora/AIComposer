@@ -2,12 +2,12 @@
 CVL generation agent: generates CVL specifications for security properties.
 
 Parameterized by:
-- input: SourceCode | SystemDoc — determines source availability and provides system doc
-- prover_tool: optional prover (only valid with SourceCode)
+- env: GenerationEnv — bundles input, builders, capabilities, and tools
 - with_memory: whether to persist memory across runs
 """
 
 import sqlite3
+from dataclasses import dataclass, field
 from typing import Callable, Awaitable, NotRequired, override, Literal
 
 from pydantic import BaseModel, Field
@@ -41,6 +41,55 @@ FEEDBACK_KEY = CacheKey[CVLJudge, Feedback]("feedback")
 type ExplorationTool = Callable[[str], Awaitable[str]]
 
 
+# ---------------------------------------------------------------------------
+# GenerationEnv — unified configuration for CVL generation
+# ---------------------------------------------------------------------------
+
+class CVLResource(BaseModel):
+    import_path: str = Field(description="the path to the resource (relative to `certora/`)")
+    required: bool = Field(description="whether this resource *must* be used in the verification process")
+    description: str = Field(description="A description of this resource")
+    sort: Literal["import"]
+
+
+@dataclass
+class GenerationEnv:
+    """Environment configuration for CVL generation.
+
+    Bundles input, builders, and optional capabilities. Each capability
+    adds tools and template conditionals.
+    """
+    input: SourceCode | SystemDoc
+    builders: Builders
+
+    # Optional capabilities
+    prover_tool: BaseTool | None = None
+    resources: list[CVLResource] = field(default_factory=list)
+    extra_tools: list[BaseTool] = field(default_factory=list)
+    extra_input: list[str | dict] = field(default_factory=list)
+    result_tools: tuple[BaseTool, ...] | None = None
+
+    @property
+    def has_source(self) -> bool:
+        return isinstance(self.input, SourceCode)
+
+    @property
+    def has_prover(self) -> bool:
+        return self.prover_tool is not None
+
+    @property
+    def has_publish(self) -> bool:
+        return self.result_tools is not None
+
+    @property
+    def base_builder(self):
+        return self.builders.cvl if self.has_source else self.builders.cvl_only
+
+
+# ---------------------------------------------------------------------------
+# Feedback types
+# ---------------------------------------------------------------------------
+
 class PropertyFeedback(BaseModel):
     """
     The feedback on the properties
@@ -54,16 +103,15 @@ type FeedbackTool = Callable[[str], Awaitable[PropertyFeedback]]
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
-    builders: Builders,
+    env: GenerationEnv,
     inst: ComponentInst | None,
     prop: PropertyFormulation,
     with_memory: bool,
-    input: SourceCode | SystemDoc,
 ) -> FeedbackTool:
 
     child = ctx.child(FEEDBACK_KEY)
-    has_source = isinstance(input, SourceCode)
-    builder = builders.cvl if has_source else builders.cvl_only
+    has_source = env.has_source
+    builder = env.builders.cvl if has_source else env.builders.cvl_only
 
     class ST(MessagesState):
         memory: NotRequired[str]
@@ -93,8 +141,9 @@ def property_feedback_judge(
         **prop.to_template_args(),
     }
     if has_source:
-        template_kwargs["contract_name"] = input.contract_name
-        template_kwargs["relative_path"] = input.relative_path
+        assert isinstance(env.input, SourceCode)
+        template_kwargs["contract_name"] = env.input.contract_name
+        template_kwargs["relative_path"] = env.input.relative_path
 
     workflow = bind_standard(
         builder, ST, validator=did_rough_draft_read
@@ -115,7 +164,7 @@ def property_feedback_judge(
         input_parts: list[str | dict] = []
         if not has_source:
             input_parts.append("The following is the design document for the application:")
-            input_parts.append(input.content)
+            input_parts.append(env.input.content)
         input_parts.append("The proposed CVL file is")
         input_parts.append(cvl)
         res = await run_to_completion(
@@ -177,13 +226,6 @@ def _code_explorer(
     return explore
 
 
-class CVLResource(BaseModel):
-    import_path: str = Field(description="the path to the resource (relative to `certora/`)")
-    required: bool = Field(description="whether this resource *must* be used in the verification process")
-    description: str = Field(description="A description of this resource")
-    sort: Literal["import"]
-
-
 class UnresolvedCallGuidance(WithImplementation[Command], WithInjectedId):
     """
 Invoke this tool to receive guidance on how to deal with verification failures due to havocs caused by
@@ -216,28 +258,24 @@ async def generate_property_cvl(
     ctx: WorkflowContext[CVLGeneration],
     prop: PropertyFormulation,
     feat: ComponentInst | None,
-    builders: Builders,
+    env: GenerationEnv,
     with_memory: bool,
-    input: SourceCode | SystemDoc,
-    *,
-    prover_tool: BaseTool | None = None,
-    resources: list[CVLResource] | None = None,
 ) -> GeneratedCVL:
 
     class ST(MessagesState):
         curr_spec: NotRequired[str]
         result: NotRequired[str]
 
-    has_source = isinstance(input, SourceCode)
-    has_prover = prover_tool is not None
-    base_builder = builders.cvl if has_source else builders.cvl_only
+    has_source = env.has_source
+    has_prover = env.has_prover
+    has_publish = env.has_publish
+    base_builder = env.base_builder
 
     feedback = property_feedback_judge(
-        ctx.child(CVL_JUDGE_KEY), builders, feat, prop, with_memory,
-        input=input,
+        ctx.child(CVL_JUDGE_KEY), env, feat, prop, with_memory,
     )
 
-    researcher = cvl_researcher(ctx, builders.cvl_only)
+    researcher = cvl_researcher(ctx, env.builders.cvl_only)
 
     class FeedbackSchema(WithInjectedState[ST], WithAsyncImplementation[str]):
         """
@@ -286,15 +324,18 @@ Feedback {t.feedback}
 
     template_kwargs: dict = {
         "context": feat,
-        "resources": resources or [],
+        "resources": env.resources,
         "has_source": has_source,
         "has_prover": has_prover,
+        "has_publish": has_publish,
+        "has_stub_tools": len(env.extra_tools) > 0,
         **prop.to_template_args(),
         "memory": with_memory,
     }
 
     if has_source:
-        explorer = _code_explorer(ctx, builders.source, ctx.checkpointer)
+        assert isinstance(env.input, SourceCode)
+        explorer = _code_explorer(ctx, env.builders.source, ctx.checkpointer)
 
         class ExploreCodeSchema(WithAsyncImplementation[str]):
             """
@@ -315,12 +356,15 @@ Feedback {t.feedback}
                 return await explorer(self.question)
 
         tools.append(ExploreCodeSchema.as_tool("explore_code"))
-        template_kwargs["contract_name"] = input.contract_name
-        template_kwargs["relative_path"] = input.relative_path
+        template_kwargs["contract_name"] = env.input.contract_name
+        template_kwargs["relative_path"] = env.input.relative_path
 
-    if prover_tool is not None:
-        tools.append(prover_tool)
+    if env.prover_tool is not None:
+        tools.append(env.prover_tool)
         tools.append(UnresolvedCallGuidance.as_tool("unresolved_call_guidance"))
+
+    # Add extra tools from env (e.g., stub read, field request, typecheck)
+    tools.extend(env.extra_tools)
 
     tools.extend(ctx.kb_tools(read_only=False))
 
@@ -329,26 +373,51 @@ Feedback {t.feedback}
 
     extra_inputs: list[str | dict] = []
 
+    # Prepend env.extra_input (e.g., current stub content)
+    extra_inputs.extend(env.extra_input)
+
     if with_memory:
         last_attempt = ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
         if last_attempt is not None:
             extra_inputs.append("Your last working draft was:")
             extra_inputs.append(last_attempt.cvl)
 
-    d = bind_standard(
-        base_builder, ST, "A description of your generated CVL"
-    ).with_input(
-        FlowInput
-    ).with_tools(
-        tools
-    ).with_sys_prompt_template(
-        "cvl_system_prompt.j2"
-    ).with_initial_prompt_template(
-        "property_generation_prompt.j2",
-        **template_kwargs
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
+    # Builder configuration: if result_tools provided, use manual config
+    if env.result_tools is not None:
+        tools.extend(env.result_tools)
+        d = base_builder.with_state(
+            ST
+        ).with_output_key(
+            "result"
+        ).with_default_summarizer(
+            max_messages=50
+        ).with_input(
+            FlowInput
+        ).with_tools(
+            tools
+        ).with_sys_prompt_template(
+            "cvl_system_prompt.j2"
+        ).with_initial_prompt_template(
+            "property_generation_prompt.j2",
+            **template_kwargs
+        ).compile_async(
+            checkpointer=ctx.checkpointer
+        )
+    else:
+        d = bind_standard(
+            base_builder, ST, "A description of your generated CVL"
+        ).with_input(
+            FlowInput
+        ).with_tools(
+            tools
+        ).with_sys_prompt_template(
+            "cvl_system_prompt.j2"
+        ).with_initial_prompt_template(
+            "property_generation_prompt.j2",
+            **template_kwargs
+        ).compile_async(
+            checkpointer=ctx.checkpointer
+        )
 
     try:
         r = await run_to_completion(
@@ -361,9 +430,18 @@ Feedback {t.feedback}
         if "curr_spec" in last_state and with_memory:
             ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=last_state["curr_spec"]))
 
-    assert "result" in r and "curr_spec" in r
+    assert "result" in r
 
-    return GeneratedCVL(
-        commentary=r["result"],
-        cvl=r["curr_spec"]
-    )
+    if has_publish:
+        # With publish tools, curr_spec may not be in final state (it was merged into master).
+        # The result contains the commentary (or GAVE_UP: reason).
+        return GeneratedCVL(
+            commentary=r["result"],
+            cvl=r.get("curr_spec", ""),
+        )
+    else:
+        assert "curr_spec" in r
+        return GeneratedCVL(
+            commentary=r["result"],
+            cvl=r["curr_spec"]
+        )
