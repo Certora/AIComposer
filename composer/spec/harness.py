@@ -28,6 +28,7 @@ class ExternalActor(BaseModel):
     name and description of its role relative to the contract under verification.
     """
     name: str = Field(description="A short, descriptive name of the external contract being interacted with")
+    contract_name: str = Field(description="The exact name of the external contract being interacted with")
     description: str = Field(description="A short, precise description of what the external actor does and its interaction with the main contract")
 
 class Summarizable(ExternalActor):
@@ -65,6 +66,13 @@ class Singleton(SourceAvailable):
     contract instance; no harnesses are needed.
     """
     l: Literal["SINGLETON"]
+    linked_fields: list[str] = Field(
+        description="Full storage path expression(s) in the main contract that hold "
+                    "a reference to this singleton instance. Use Solidity-style access "
+                    "paths including array indices where applicable. "
+                    "Examples: ['cozyManager'], ['receiptTokenFactory'].",
+        default_factory=list
+    )
 
 class HarnessDef(BaseModel):
     """A generated harness file that creates a uniquely-named contract extending an external contract.
@@ -77,6 +85,13 @@ class HarnessDef(BaseModel):
     path: str = Field(description="Path to the harness definition")
     harness_name: str = Field(description="The name of the contract defined in the harness file")
     suggested_role: str = Field(description="The suggested role of this harness; e.g., 'the first token' of the pool, etc.")
+    linked_fields: list[str] = Field(
+        description="Full storage path expression(s) in the main contract that hold "
+                    "a reference to this harness instance. Use Solidity-style access "
+                    "paths including array indices where applicable. "
+                    "Examples: ['token0'], ['tokens[0]'], ['pools[0].rewardToken'].",
+        default_factory=list
+    )
 
 
 class WithHarnesses(BaseModel):
@@ -233,7 +248,7 @@ class LLMParams:
     tokens: int
     thinking_tokens: int
     memory_tool: bool
-    
+
 
 async def analyze_external_interactions(
     basic_ctx: HarnessProtocol,
@@ -264,14 +279,14 @@ async def analyze_external_interactions(
     class SVC():
         def memory_tool(self) -> None:
             return None
-        
+
         def tid(self) -> str:
             return "harness-generation"
-        
+
         def get_checkpointer(self) -> Checkpointer:
             from langgraph.checkpoint.memory import InMemorySaver
             return InMemorySaver()
-            
+
         def vfs_tools[T: VFSState](
             self,
             ty: type[T],
@@ -280,13 +295,14 @@ async def analyze_external_interactions(
         ) -> tuple[list[BaseTool], VFSAccessor[T]]:
             from graphcore.tools.vfs import VFSToolConfig, vfs_tools
             conf = VFSToolConfig(
-                immutable=False, forbidden_read=forbidden_reads
+                immutable=False, forbidden_read=forbidden_reads,
+                fs_layer=basic_ctx.project_root
             )
             if forbidden_write:
                 conf["forbidden_write"] = forbidden_write
             if put_doc_extra:
                 conf["put_doc_extra"] = put_doc_extra
-            
+
             return vfs_tools(conf=conf, ty=ty)
 
         async def graph_runner[S: StateLike, I: StateLike](
@@ -394,24 +410,24 @@ async def _harness_setup(
     harness_ctx = ctx.child(HARNESS_KEY)
     if (cached := harness_ctx.cache_get(HarnessSetup)) is not None:
         return cached
-    
+
     class SVC():
         def tid(self) -> str:
             return harness_ctx.thread_id
-        
+
         def get_checkpointer(self) -> Checkpointer:
             return ctx.checkpointer
 
         def memory_tool(self) -> BaseTool:
             return harness_ctx.get_memory_tool()
-        
+
         def vfs_tools[T: VFSState](self,
             ty: type[T],
             forbidden_write: str | None = None,
             put_doc_extra: str | None = None
         ) -> tuple[list[BaseTool], VFSAccessor[T]]:
             return ctx.vfs_tools(ty, forbidden_write, put_doc_extra)
-    
+
         async def graph_runner[S: StateLike, I: StateLike](self,
             graph: CompiledStateGraph[S, None, I, Any],
             input: I,
@@ -419,7 +435,7 @@ async def _harness_setup(
             recursion_limit: int
         ) -> S:
             return await run_to_completion(graph, input, thread_id, recursion_limit=recursion_limit)
-    
+
     svc : _ServiceProtocol = SVC()
 
     to_ret = await _harness_setup_inner(
