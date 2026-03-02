@@ -68,7 +68,7 @@ class TaskInfo:
     phase: Phase
 
 
-type HandlerFactory = Callable[[TaskInfo], tuple[IOHandler[Any, Any], EventHandler]]
+type HandlerFactory = Callable[[TaskInfo], Awaitable[tuple[IOHandler[Any, Any], EventHandler]]]
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +336,6 @@ async def _run_task[T](
     fn: Callable[[], Awaitable[T]],
 ) -> T:
     """Run ``fn`` inside a per-task ``with_handler`` from the factory."""
-    h, eh = factory(info)
+    h, eh = await factory(info)
     async with with_handler(h, eh):
         return await fn()

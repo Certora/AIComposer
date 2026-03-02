@@ -10,7 +10,8 @@ from rich.text import Text
 
 from composer.io.ide_bridge import IDEBridge
 from composer.io.tool_display import CodeGenToolDisplay
-from composer.io.rich_console import BaseRichConsoleApp, _DOT
+from composer.io.rich_console import BaseRichConsoleApp
+from composer.io.message_renderer import _DOT
 
 from langchain_core.messages import HumanMessage
 

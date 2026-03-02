@@ -13,26 +13,9 @@ from rich.text import Text
 
 from composer.io.ide_bridge import IDEBridge
 from composer.io.tool_display import ToolDisplayConfig
-
-from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
+from composer.io.message_renderer import MessageRenderer, dot, KNOWN_NODES
 
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
-
-from composer.diagnostics.handlers import normalize_content
-
-_KNOWN_NODES = {INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE}
-
-_DOT = "\u25cf "  # ● filled circle
-
-
-def _dot(style: str, text: Text | str) -> Text:
-    """Prepend a colored dot to a Text or string for visual structure."""
-    if isinstance(text, str):
-        text = Text(text)
-    result = Text()
-    result.append(_DOT, style=style)
-    result.append_text(text)
-    return result
 
 
 class BaseRichConsoleApp[H, P](App):
@@ -62,9 +45,9 @@ class BaseRichConsoleApp[H, P](App):
     ):
         super().__init__()
         self._tool_config = tool_config
+        self._renderer = MessageRenderer(tool_config)
         self._input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._mounted: asyncio.Event = asyncio.Event()
-        self._nested_containers: dict[str, VerticalScroll] = {}
         self._graph_done = False
         self.result_code = 1
         self._session_id = "—"
@@ -72,16 +55,6 @@ class BaseRichConsoleApp[H, P](App):
         self._work_fn: Callable[[], Coroutine[None, None, None]] | None = None
         self._show_checkpoints = show_checkpoints
         self._ide: IDEBridge | None = ide
-
-        # Token stats accumulators
-        self._total_input: int = 0
-        self._total_output: int = 0
-        self._total_cache_read: int = 0
-
-        # Consecutive tool call collapsing state
-        self._last_tool_group: str | None = None
-        self._last_tool_items: list[str] = []
-        self._last_tool_widget: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Session: — | Checkpoint: —", id="status-bar")
@@ -104,9 +77,7 @@ class BaseRichConsoleApp[H, P](App):
     # ── Helpers ───────────────────────────────────────────────
 
     def _get_mount_target(self, path: list[str]) -> VerticalScroll:
-        if len(path) > 1 and path[-1] in self._nested_containers:
-            return self._nested_containers[path[-1]]
-        return self.query_one("#event-log", VerticalScroll)
+        return self._renderer.get_mount_target(self.query_one("#event-log", VerticalScroll), path)
 
     async def _auto_scroll(self):
         log = self.query_one("#event-log", VerticalScroll)
@@ -119,9 +90,7 @@ class BaseRichConsoleApp[H, P](App):
 
     def _reset_tool_collapsing(self):
         """Reset consecutive tool call collapsing state."""
-        self._last_tool_group = None
-        self._last_tool_items = []
-        self._last_tool_widget = None
+        self._renderer.reset_tool_collapsing()
 
     async def _ide_show_file(self, content: str, path: str, lang: str | None) -> None:
         try:
@@ -140,58 +109,10 @@ class BaseRichConsoleApp[H, P](App):
 
     def _render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
         """Render an AI turn as a list of widgets (not a single collapsible)."""
-        widgets: list[Static | Collapsible] = []
-        tc = self._tool_config
-
-        for c in normalize_content(msg.content):
-            match c["type"]:
-                case "thinking":
-                    full_text = c.get("thinking", "")
-                    widgets.append(
-                        Collapsible(Static(full_text), title="Thinking...", collapsed=True)
-                    )
-                case "text":
-                    text = c["text"]
-                    if text.strip():
-                        widgets.append(Static(_dot("blue", text)))
-                case "tool_use":
-                    name = c["name"]
-                    input_args = c.get("input", {})
-                    group = tc.collapse_groups.get(name)
-
-                    if group is not None and group == self._last_tool_group:
-                        # Same group — update existing widget
-                        detail = tc.collapse_detail(name, input_args)
-                        self._last_tool_items.append(detail)
-                        new_text = tc.render_collapsed_text(group, self._last_tool_items)
-                        if self._last_tool_widget is not None:
-                            self._last_tool_widget.update(_dot("green", Text(new_text, style="dim")))
-                        # Don't append a new widget
-                    elif group is not None:
-                        # New collapsible group
-                        detail = tc.collapse_detail(name, input_args)
-                        self._last_tool_group = group
-                        self._last_tool_items = [detail]
-                        display_text = tc.render_collapsed_text(group, self._last_tool_items)
-                        w = Static(_dot("green", Text(display_text, style="dim")))
-                        self._last_tool_widget = w
-                        widgets.append(w)
-                    else:
-                        # Non-collapsible tool — reset and emit standalone
-                        self._reset_tool_collapsing()
-                        friendly = tc.format_tool_call(name, input_args)
-                        widgets.append(Static(_dot("green", Text(friendly, style="dim"))))
-                case other:
-                    widgets.append(Static(f"Unknown block: {other}"))
-
-        # Accumulate token stats
-        if isinstance(msg.response_metadata, dict) and "usage" in msg.response_metadata:
-            usage = msg.response_metadata["usage"]
-            self._total_input += usage.get("input_tokens", 0)
-            self._total_output += usage.get("output_tokens", 0)
-            self._total_cache_read += usage.get("cache_read_input_tokens", 0)
+        widgets = self._renderer.render_ai_turn(msg)
+        # Update status bar if token stats changed
+        if self._renderer.total_input > 0 or self._renderer.total_output > 0:
             self._update_status_bar()
-
         return widgets
 
     # ── Abstract / overridable methods ────────────────────────
@@ -218,12 +139,13 @@ class BaseRichConsoleApp[H, P](App):
 
     def _update_status_bar(self):
         bar = self.query_one("#status-bar", Static)
+        r = self._renderer
         parts = [
             f"Session: {self._session_id}",
             f"Checkpoint: {self._checkpoint_id}",
         ]
-        if self._total_input > 0 or self._total_output > 0:
-            parts.append(f"in:{self._total_input} out:{self._total_output} cache:{self._total_cache_read}")
+        if r.total_input > 0 or r.total_output > 0:
+            parts.append(f"in:{r.total_input} out:{r.total_output} cache:{r.total_cache_read}")
         bar.update(" | ".join(parts))
 
     async def log_thread_id(self, tid: str, chosen: bool):
@@ -254,7 +176,7 @@ class BaseRichConsoleApp[H, P](App):
         else:
             inner = VerticalScroll(classes="nested-workflow")
             coll = Collapsible(inner, title=description, collapsed=True)
-            self._nested_containers[path[-1]] = inner
+            self._renderer.nested_containers[path[-1]] = inner
             await self._mount_to(target, coll)
 
     async def log_end(self, path: list[str]):
@@ -269,8 +191,8 @@ class BaseRichConsoleApp[H, P](App):
         else:
             # Collapse the nested workflow
             tid = path[-1]
-            if tid in self._nested_containers:
-                container = self._nested_containers.pop(tid)
+            if tid in self._renderer.nested_containers:
+                container = self._renderer.nested_containers.pop(tid)
                 parent_coll = container.parent
                 if isinstance(parent_coll, Collapsible):
                     parent_coll.collapsed = True
@@ -281,7 +203,7 @@ class BaseRichConsoleApp[H, P](App):
         tc = self._tool_config
 
         for node_name, v in st.items():
-            if node_name not in _KNOWN_NODES:
+            if node_name not in KNOWN_NODES:
                 continue
 
             if "messages" in v:
@@ -350,7 +272,7 @@ class BaseRichConsoleApp[H, P](App):
         await hint_widget.remove()
         await self._mount_to(
             target,
-            Static(_dot("green", Text.assemble(("You: ", "bold green"), response)))
+            Static(dot("green", Text.assemble(("You: ", "bold green"), response)))
         )
 
         return response
