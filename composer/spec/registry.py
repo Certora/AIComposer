@@ -175,6 +175,7 @@ async def run_registry_agent(
         FlowInput(input=input_parts),
         thread_id=ctx.uniq_thread_id(),
         recursion_limit=20,
+        description="Stub update",
     )
     assert "result" in res
     return res["result"]

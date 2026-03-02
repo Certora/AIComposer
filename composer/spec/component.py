@@ -61,6 +61,8 @@ class ComponentInst:
 
 SOURCE_ANALYSIS_KEY = CacheKey[None, ApplicationSummary]("source-analysis")
 
+DESCRIPTION = "Component analysis"
+
 
 async def run_component_analysis(
     context: WorkflowContext[None],
@@ -116,7 +118,8 @@ async def run_component_analysis(
         graph,
         flow_input,
         thread_id=child_ctxt.thread_id,
-        recursion_limit=50
+        recursion_limit=50,
+        description=DESCRIPTION,
     )
     assert "result" in res
     result: ApplicationSummary = res["result"]

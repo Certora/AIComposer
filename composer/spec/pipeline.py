@@ -38,11 +38,12 @@ from composer.spec.component import (
     ApplicationComponent,
     ComponentInst,
     run_component_analysis,
+    DESCRIPTION as COMPONENT_ANALYSIS_DESC,
 )
 from composer.spec.bug import run_bug_analysis
 from composer.spec.prop import PropertyFormulation
-from composer.spec.interface_gen import generate_interface
-from composer.spec.stub_gen import generate_stub
+from composer.spec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC
+from composer.spec.stub_gen import generate_stub, DESCRIPTION as STUB_GEN_DESC
 from composer.spec.registry import StubRegistry
 from composer.spec.merge import make_publish_tools, make_advisory_typecheck_tool
 from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_property_cvl
@@ -68,7 +69,17 @@ class TaskInfo:
     phase: Phase
 
 
-type HandlerFactory = Callable[[TaskInfo], Awaitable[tuple[IOHandler[Any, Any], EventHandler]]]
+@dataclass(frozen=True)
+class TaskHandle:
+    """Returned by the handler factory — bundles IO with lifecycle callbacks."""
+    handler: IOHandler[Any, Any]
+    event_handler: EventHandler
+    on_start: Callable[[], None] = lambda: None
+    on_done: Callable[[], None] = lambda: None
+    on_error: Callable[[str], None] = lambda _: None
+
+
+type HandlerFactory = Callable[[TaskInfo], Awaitable[TaskHandle]]
 
 
 # ---------------------------------------------------------------------------
@@ -159,15 +170,16 @@ async def run_natspec_pipeline(
         max_concurrent: Maximum concurrent LLM agents.
     """
     semaphore = asyncio.Semaphore(max_concurrent)
-    base_builder: PlainBuilder | CVLOnlyBuilder = builders.cvl_only
-    analysis_input = (system_doc, base_builder)
+    plain_builder = builders.source
+    cvl_builder: PlainBuilder | CVLOnlyBuilder = builders.cvl_only
+    analysis_input = (system_doc, plain_builder)
 
     # ------------------------------------------------------------------
     # Phase 1: Component analysis
     # ------------------------------------------------------------------
     summary = await _run_task(
         handler_factory,
-        TaskInfo("component-analysis", "Component analysis", "component_analysis"),
+        TaskInfo("component-analysis", COMPONENT_ANALYSIS_DESC, "component_analysis"),
         lambda: run_component_analysis(ctx, analysis_input),
     )
     if summary is None:
@@ -178,8 +190,8 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
     interface = await _run_task(
         handler_factory,
-        TaskInfo("interface-gen", "Interface generation", "interface_gen"),
-        lambda: generate_interface(ctx, summary, system_doc, base_builder, solc_version),
+        TaskInfo("interface-gen", INTERFACE_GEN_DESC, "interface_gen"),
+        lambda: generate_interface(ctx, summary, system_doc, plain_builder, solc_version),
     )
 
     # ------------------------------------------------------------------
@@ -187,8 +199,8 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
     initial_stub = await _run_task(
         handler_factory,
-        TaskInfo("stub-gen", "Stub generation", "stub_gen"),
-        lambda: generate_stub(ctx, interface, contract_name, base_builder, solc_version),
+        TaskInfo("stub-gen", STUB_GEN_DESC, "stub_gen"),
+        lambda: generate_stub(ctx, interface, contract_name, plain_builder, solc_version),
     )
 
     # ------------------------------------------------------------------
@@ -198,7 +210,7 @@ async def run_natspec_pipeline(
         store, MASTER_SPEC_NS, "master", initial_content="",
     )
     registry = StubRegistry.create(
-        store, STUB_NS, base_builder, ctx, interface, initial_stub, solc_version,
+        store, STUB_NS, cvl_builder, ctx, interface, initial_stub, solc_version,
     )
 
     # ------------------------------------------------------------------
@@ -223,14 +235,11 @@ async def run_natspec_pipeline(
             },
         )
 
-        async def _extract() -> list[PropertyFormulation] | None:
-            async with semaphore:
-                return await run_bug_analysis(feat_ctx, feat, analysis_input)
-
         props = await _run_task(
             handler_factory,
             TaskInfo(f"bug-{component_idx}", name, "bug_analysis"),
-            _extract,
+            lambda: run_bug_analysis(feat_ctx, feat, analysis_input),
+            semaphore,
         )
 
         if props is None:
@@ -266,7 +275,7 @@ async def run_natspec_pipeline(
         )
         publish, give_up = make_publish_tools(
             master_spec, registry.read_stub, interface,
-            contract_name, solc_version, base_builder, prop_ctx,
+            contract_name, solc_version, cvl_builder, prop_ctx,
         )
 
         stub_content = registry.read_stub()
@@ -281,17 +290,15 @@ async def run_natspec_pipeline(
             result_tools=(publish, give_up),
         )
 
-        async def _gen() -> GeneratedCVL:
-            async with semaphore:
-                return await generate_property_cvl(
-                    prop_ctx, prop, feat, env, with_memory=False,
-                )
-
         label = f"{feat.component.name}: {prop.description[:50]}"
         return await _run_task(
             handler_factory,
             TaskInfo(f"cvl-{prop_idx}", label, "cvl_gen"),
-            _gen,
+            lambda: generate_property_cvl(
+                prop_ctx, prop, feat, env, with_memory=False,
+                description=label,
+            ),
+            semaphore,
         )
 
     generation_results = await asyncio.gather(
@@ -334,8 +341,28 @@ async def _run_task[T](
     factory: HandlerFactory,
     info: TaskInfo,
     fn: Callable[[], Awaitable[T]],
+    semaphore: asyncio.Semaphore | None = None,
 ) -> T:
-    """Run ``fn`` inside a per-task ``with_handler`` from the factory."""
-    h, eh = await factory(info)
-    async with with_handler(h, eh):
-        return await fn()
+    """Run ``fn`` inside a per-task ``with_handler`` from the factory.
+
+    If *semaphore* is provided the task is created immediately (PENDING)
+    but only transitions to RUNNING (via ``handle.on_start``) once the
+    semaphore is acquired.
+    """
+    handle = await factory(info)
+    try:
+        if semaphore is not None:
+            async with semaphore:
+                handle.on_start()
+                async with with_handler(handle.handler, handle.event_handler):
+                    result = await fn()
+        else:
+            handle.on_start()
+            async with with_handler(handle.handler, handle.event_handler):
+                result = await fn()
+    except Exception as exc:
+        handle.on_error(str(exc))
+        raise
+    else:
+        handle.on_done()
+        return result

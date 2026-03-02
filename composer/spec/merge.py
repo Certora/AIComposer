@@ -78,7 +78,6 @@ def typecheck_spec(
 class MergeResult:
     success: bool
     merged_spec: str = ""
-    version: int = 0
     feedback: str = ""
 
 
@@ -148,6 +147,7 @@ async def run_merge_agent(
             FlowInput(input=input_parts),
             thread_id=ctx.uniq_thread_id(),
             recursion_limit=30,
+            description="Spec merge",
         )
         if "result" not in res:
             return MergeResult(
@@ -158,7 +158,6 @@ async def run_merge_agent(
         return MergeResult(
             success=True,
             merged_spec=merged.spec,
-            version=master_version,
         )
     except Exception as e:
         return MergeResult(
@@ -265,7 +264,7 @@ def make_publish_tools(
                     )
 
                 cas_result = await master_spec.cas_update(
-                    merge_result.version, merge_result.merged_spec,
+                    master_version, merge_result.merged_spec,
                 )
                 if cas_result.success:
                     return tool_output(

@@ -79,6 +79,7 @@ def cvl_researcher(
             workflow,
             FlowInput(input=[question]),
             thread_id=ctx.uniq_thread_id(),
+            description="CVL research",
         )
         assert "result" in res
         return res["result"]

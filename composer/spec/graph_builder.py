@@ -83,7 +83,7 @@ async def run_to_completion[I: StateLike, S: StateLike](
     *,
     checkpoint_id: str | None = None,
     recursion_limit: int = 100,
-    description: str = "Sub-workflow",
+    description: str,
 ) -> S:
     """Run a compiled state graph to completion.
 

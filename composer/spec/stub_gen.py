@@ -16,6 +16,8 @@ from langgraph.graph import MessagesState
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 
+DESCRIPTION = "Stub generation"
+
 
 async def generate_stub(
     ctx: WorkflowContext,
@@ -88,6 +90,7 @@ async def generate_stub(
         FlowInput(input=input_parts),
         thread_id=ctx.uniq_thread_id(),
         recursion_limit=20,
+        description=DESCRIPTION,
     )
     assert "result" in res
     return res["result"]

@@ -17,6 +17,8 @@ from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder,
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.component import ApplicationSummary
 
+DESCRIPTION = "Interface generation"
+
 
 async def generate_interface(
     ctx: WorkflowContext,
@@ -83,6 +85,7 @@ async def generate_interface(
         FlowInput(input=input_parts),
         thread_id=ctx.uniq_thread_id(),
         recursion_limit=30,
+        description=DESCRIPTION,
     )
     assert "result" in res
     return res["result"]

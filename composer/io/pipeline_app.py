@@ -26,9 +26,8 @@ from langchain_core.messages import (
 
 from composer.io.message_renderer import MessageRenderer, dot, KNOWN_NODES
 from composer.io.tool_display import ToolDisplayConfig
-from composer.io.event_handler import NullEventHandler, EventHandler
-from composer.io.protocol import IOHandler
-from composer.spec.pipeline import Phase, TaskInfo, PipelineResult
+from composer.io.event_handler import NullEventHandler
+from composer.spec.pipeline import Phase, TaskInfo, TaskHandle, PipelineResult
 from composer.spec.ptypes import HumanQuestionSchema
 
 
@@ -68,33 +67,53 @@ _SECTION_ORDER: list[str] = [
 def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
     """Return the appropriate ``ToolDisplayConfig`` for *phase*."""
     match phase:
-        case "component_analysis" | "bug_analysis":
+        case "component_analysis":
             return ToolDisplayConfig(
-                tool_display={"result": "Delivering result", "memory": "Accessing memory"},
+                tool_display={
+                    "result": "Delivering result",
+                    "memory": "Accessing memory",
+                },
                 collapse_groups={"memory": "memory"},
                 suppress_results={"memory"},
             )
+        case "bug_analysis":
+            return ToolDisplayConfig(
+                tool_display={
+                    "result": "Delivering result",
+                },
+            )
         case "interface_gen" | "stub_gen":
             return ToolDisplayConfig(
-                tool_display={"result": "Delivering result"},
+                tool_display={
+                    "result": "Delivering result",
+                },
             )
         case "cvl_gen":
             return ToolDisplayConfig(
                 tool_display={
+                    "put_cvl": "Writing spec",
+                    "put_cvl_raw": "Writing spec",
+                    "get_cvl": "Reading spec",
+                    "feedback_tool": "Getting feedback",
+                    "cvl_research": "Researching CVL",
+                    "extended_reasoning": "Reasoning",
                     "publish_spec": "Publishing to master spec",
                     "give_up": "Giving up on property",
                     "read_stub": "Reading verification stub",
                     "request_stub_field": "Requesting stub field",
                     "advisory_typecheck": "Type-checking spec",
-                    "cvl_manual_search": "Searching CVL manual",
-                    "put_cvl": "Writing spec",
-                    "put_cvl_raw": "Writing spec",
-                    "get_cvl": "Reading spec",
+                    "scan_knowledge_base": "Scanning knowledge base",
+                    "get_knowledge_base_article": "Reading KB article",
+                    "knowledge_base_contribute": "Contributing to KB",
                     "result": "Delivering result",
-                    "memory": "Accessing memory",
                 },
-                collapse_groups={"memory": "memory"},
-                suppress_results={"get_cvl", "memory", "read_stub"},
+                collapse_groups={
+                    "scan_knowledge_base": "kb",
+                    "get_knowledge_base_article": "kb",
+                },
+                suppress_results={
+                    "get_cvl", "read_stub", "extended_reasoning",
+                },
             )
 
 
@@ -348,7 +367,7 @@ class PipelineApp(App):
 
     # ── HandlerFactory implementation ─────────────────────────
 
-    async def make_handler(self, info: TaskInfo) -> tuple[IOHandler[Any, Any], EventHandler]:
+    async def make_handler(self, info: TaskInfo) -> TaskHandle:
         """``HandlerFactory`` implementation — creates per-task panel, handler, summary row."""
         task_id = info.task_id
         label = info.label
@@ -358,28 +377,37 @@ class PipelineApp(App):
         section_label = PHASE_LABELS[phase]
         section = await self._ensure_phase_section(section_label)
 
-        # 2. Create summary row
+        # 2. Create summary row (starts PENDING)
         row = Static(
-            _render_row(label, TaskStatus.RUNNING),
+            _render_row(label, TaskStatus.PENDING),
             id=f"row-{task_id}",
             classes="task-row",
         )
         await section.query_one("Contents").mount(row)
 
         # 3. Create detail panel and add to content switcher
+        #    ContentSwitcher doesn't auto-hide dynamically mounted children,
+        #    so we must hide the panel explicitly. watch_current will show it
+        #    when the user drills in.
         panel = VerticalScroll(id=task_id, classes="task-panel")
+        panel.display = False
         switcher = self.query_one("#switcher", ContentSwitcher)
         await switcher.mount(panel)
 
         # 4. Create handler with phase-appropriate tool config
         tc = tool_config_for_phase(phase)
         handler = PipelineTaskHandler(task_id, label, panel, self, tc)
-        handler.mark_running()
 
         self._handlers[task_id] = handler
         self._task_labels[task_id] = label
 
-        return handler, NullEventHandler()
+        return TaskHandle(
+            handler=handler,
+            event_handler=NullEventHandler(),
+            on_start=handler.mark_running,
+            on_done=handler.mark_done,
+            on_error=handler.mark_error,
+        )
 
     # ── HITL routing ──────────────────────────────────────────
 
@@ -423,13 +451,19 @@ class PipelineApp(App):
             return self._phase_sections[section_label]
 
         section = Collapsible(title=section_label, collapsed=False)
+
+        # Register BEFORE awaiting mount — concurrent make_handler calls for
+        # the same phase will see the section and reuse it rather than racing
+        # past this check while mount is in progress.
+        self._phase_sections[section_label] = section
+
         summary = self.query_one("#summary", VerticalScroll)
 
-        # Insert in canonical order
+        # Insert in canonical order (exclude the section we just registered)
         existing_indices = {
             lbl: _SECTION_ORDER.index(lbl)
             for lbl in self._phase_sections
-            if lbl in _SECTION_ORDER
+            if lbl in _SECTION_ORDER and lbl != section_label
         }
         new_idx = _SECTION_ORDER.index(section_label) if section_label in _SECTION_ORDER else len(_SECTION_ORDER)
 
@@ -444,8 +478,6 @@ class PipelineApp(App):
             await summary.mount(section, before=insert_before)
         else:
             await summary.mount(section)
-
-        self._phase_sections[section_label] = section
         return section
 
     def _on_task_status_change(self, task_id: str, label: str, status: TaskStatus) -> None:
@@ -464,7 +496,6 @@ class PipelineApp(App):
 
         summary = self.query_one("#summary", VerticalScroll)
 
-        n_success = len(result.spec.strip().split("\n")) if result.spec.strip() else 0
         n_fail = len(result.failures)
 
         banner_text = Text()

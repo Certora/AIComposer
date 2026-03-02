@@ -171,6 +171,7 @@ def property_feedback_judge(
             workflow,
             SpecJudgeInput(input=input_parts, curr_spec=cvl),
             thread_id=child.uniq_thread_id(),
+            description="Property feedback judge",
         )
         assert "result" in res
         return res["result"]
@@ -219,6 +220,7 @@ def _code_explorer(
             workflow,
             FlowInput(input=[question]),
             thread_id=ctx.uniq_thread_id(),
+            description="Code exploration",
         )
         assert "result" in res
         return res["result"]
@@ -253,6 +255,8 @@ class _LastAttemptCache(BaseModel):
 
 LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 
+DESCRIPTION = "CVL generation"
+
 
 async def generate_property_cvl(
     ctx: WorkflowContext[CVLGeneration],
@@ -260,6 +264,7 @@ async def generate_property_cvl(
     feat: ComponentInst | None,
     env: GenerationEnv,
     with_memory: bool,
+    description: str,
 ) -> GeneratedCVL:
 
     class ST(MessagesState):
@@ -423,7 +428,8 @@ Feedback {t.feedback}
         r = await run_to_completion(
             d,
             FlowInput(input=extra_inputs),
-            thread_id=ctx.thread_id
+            thread_id=ctx.thread_id,
+            description=description,
         )
     finally:
         last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values

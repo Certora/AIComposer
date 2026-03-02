@@ -104,7 +104,7 @@ class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
 
 class ModelOptions(Protocol):
     model: Annotated[str, Arg(
-        help="Model to use for code generation (default: {default})", default="claude-sonnet-4-20250514"
+        help="Model to use for code generation (default: {default})", default="claude-opus-4-6"
         )]
     tokens: Annotated[int, Arg(
         help="Token budget for code generation (default: {default})",

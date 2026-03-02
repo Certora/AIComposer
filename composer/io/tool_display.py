@@ -11,19 +11,33 @@ class ToolDisplayConfig:
 
     def format_tool_call(self, name: str, input: dict) -> str:
         """Return a user-friendly description of a tool call."""
-        return self.tool_display.get(name, f"Tool: {name}")
+        base = self.tool_display.get(name, f"Tool: {name}")
+        if name == "memory":
+            cmd = input.get("command", "?")
+            path = input.get("path", "")
+            return f"{base}: {cmd} {path}".strip()
+        return base
 
     def collapse_detail(self, name: str, input: dict) -> str:
         """Extract the detail item for collapsing (e.g. file path)."""
+        if name == "memory":
+            cmd = input.get("command", "?")
+            path = input.get("path", "")
+            return f"{cmd} {path}".strip()
         return ""
 
     def render_collapsed_text(self, group: str, items: list[str]) -> str:
         """Build the display text for a collapsed group of tool calls."""
+        if group == "memory":
+            count = len(items)
+            return "Accessing memory" if count == 1 else f"Accessing memory (\u00d7{count})"
         return f"Tools: {', '.join(items)}"
 
     def should_show_result(self, name: str, content: str) -> bool:
         """Return whether a tool result should be displayed. Override to add content-based filtering."""
-        return name not in self.suppress_results
+        if name not in self.suppress_results:
+            return name != "result" or content != "Success"
+        return False
 
 
 class CodeGenToolDisplay(ToolDisplayConfig):
@@ -90,10 +104,6 @@ class CodeGenToolDisplay(ToolDisplayConfig):
             case "put_file":
                 files = input.get("files", {})
                 return f"{base}: {', '.join(files.keys())}"
-            case "memory":
-                cmd = input.get("command", "?")
-                path = input.get("path", "")
-                return f"{base}: {cmd} {path}".strip()
             case "human_in_the_loop":
                 q = input.get("question", "")
                 return f"{base}: {q}" if q else base
@@ -105,7 +115,7 @@ class CodeGenToolDisplay(ToolDisplayConfig):
                 req = input.get("req_text", "")
                 return f"{base} #{num}: {req}" if req else base
             case _:
-                return base
+                return super().format_tool_call(name, input)
 
     def collapse_detail(self, name: str, input: dict) -> str:
         match name:
@@ -115,7 +125,7 @@ class CodeGenToolDisplay(ToolDisplayConfig):
                 files = input.get("files", {})
                 return ", ".join(files.keys())
             case _:
-                return ""
+                return super().collapse_detail(name, input)
 
     def render_collapsed_text(self, group: str, items: list[str]) -> str:
         match group:
@@ -123,13 +133,8 @@ class CodeGenToolDisplay(ToolDisplayConfig):
                 return f"Reading: {', '.join(items)}"
             case "write":
                 return f"Wrote: {', '.join(items)}"
-            case "memory":
-                count = len(items)
-                if count == 1:
-                    return "Accessing memory"
-                return f"Accessing memory (×{count})"
             case _:
-                return f"Tools: {', '.join(items)}"
+                return super().render_collapsed_text(group, items)
 
 
 class NatSpecToolDisplay(ToolDisplayConfig):
@@ -178,34 +183,11 @@ class NatSpecToolDisplay(ToolDisplayConfig):
             case "cvl_manual_search":
                 q = input.get("question", "?")[:60]
                 return f"{base}: {q}"
-            case "memory":
-                cmd = input.get("command", "?")
-                path = input.get("path", "")
-                return f"{base}: {cmd} {path}".strip()
             case "human_in_the_loop":
                 q = input.get("question", "")
                 return f"{base}: {q}" if q else base
             case _:
-                return base
-
-    def collapse_detail(self, name: str, input: dict) -> str:
-        match name:
-            case "memory":
-                cmd = input.get("command", "?")
-                path = input.get("path", "")
-                return f"{cmd} {path}".strip()
-            case _:
-                return ""
-
-    def render_collapsed_text(self, group: str, items: list[str]) -> str:
-        match group:
-            case "memory":
-                count = len(items)
-                if count == 1:
-                    return "Accessing memory"
-                return f"Accessing memory (×{count})"
-            case _:
-                return f"Tools: {', '.join(items)}"
+                return super().format_tool_call(name, input)
 
     def should_show_result(self, name: str, content: str) -> bool:
         if not super().should_show_result(name, content):

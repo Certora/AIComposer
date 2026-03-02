@@ -21,6 +21,8 @@ class _BugAnalysisCache(BaseModel):
 
 BUG_ANALYSIS_KEY = CacheKey[ComponentGroup, _BugAnalysisCache]("bug_analysis")
 
+DESCRIPTION = "Property extraction"
+
 
 async def run_bug_analysis(
     ctx: WorkflowContext[ComponentGroup],
@@ -57,7 +59,8 @@ async def run_bug_analysis(
     r = await run_to_completion(
         d,
         FlowInput(input=[]),
-        thread_id=component_analysis.thread_id
+        thread_id=component_analysis.thread_id,
+        description=DESCRIPTION,
     )
     assert "result" in r
 
