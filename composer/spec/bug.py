@@ -14,6 +14,7 @@ from composer.spec.context import WorkflowContext, CacheKey, ComponentGroup, Sou
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.prop import PropertyFormulation
 from composer.spec.component import ComponentInst
+from composer.tools.thinking import get_rough_draft_tools
 
 
 class _BugAnalysisCache(BaseModel):
@@ -45,13 +46,17 @@ async def run_bug_analysis(
 
     class ST(MessagesState):
         result: NotRequired[list[PropertyFormulation]]
+        memory: NotRequired[str]
+        did_read: NotRequired[bool]
 
     d = bind_standard(
         builder, ST, "The security properties you have extracted about the component"
     ).with_initial_prompt_template(
         "property_analysis_prompt.j2",
         context=component,
-        has_source=has_source,
+        has_source=has_source
+    ).with_tools(
+        get_rough_draft_tools(ST)
     ).with_sys_prompt(
         "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
     ).compile_async(checkpointer=component_analysis.checkpointer)

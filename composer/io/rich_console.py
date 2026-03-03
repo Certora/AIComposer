@@ -44,7 +44,7 @@ class BaseRichConsoleApp[H, P](App):
         ide: IDEBridge | None = None,
     ):
         super().__init__()
-        self._tool_config = tool_config
+
         self._renderer = MessageRenderer(tool_config)
         self._input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._mounted: asyncio.Event = asyncio.Event()
@@ -200,7 +200,6 @@ class BaseRichConsoleApp[H, P](App):
     async def log_state_update(self, path: list[str], st: dict):
         await self._mounted.wait()
         target = self._get_mount_target(path)
-        tc = self._tool_config
 
         for node_name, v in st.items():
             if node_name not in KNOWN_NODES:
@@ -224,15 +223,9 @@ class BaseRichConsoleApp[H, P](App):
                             coll = Collapsible(Static(content), title=title, collapsed=collapsed)
                             await self._mount_to(target, coll)
                         case ToolMessage():
-                            name = getattr(m, "name", None) or "Tool result"
-                            if name in tc.collapse_groups:
+                            coll = self._renderer.render_tool_result(m)
+                            if coll is None:
                                 continue
-                            content = m.text()
-                            if not tc.should_show_result(name, content):
-                                continue
-                            self._reset_tool_collapsing()
-                            friendly = tc.tool_result_display.get(name, name)
-                            coll = Collapsible(Static(content), title=friendly, collapsed=True)
                             await self._mount_to(target, coll)
                         case _:
                             self._reset_tool_collapsing()

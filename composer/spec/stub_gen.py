@@ -8,6 +8,7 @@ No storage variables — those come from the semantic registry during CVL genera
 import subprocess
 import tempfile
 from typing import NotRequired
+from pydantic import BaseModel
 
 from graphcore.graph import FlowInput
 
@@ -15,12 +16,18 @@ from langgraph.graph import MessagesState
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
+from composer.spec.context import CacheKey
+from composer.spec.util import string_hash
 
 DESCRIPTION = "Stub generation"
 
+class _CachedStub(BaseModel):
+    stub: str
+
+STUB_KEY = CacheKey[None, _CachedStub]("STUB")
 
 async def generate_stub(
-    ctx: WorkflowContext,
+    ctx: WorkflowContext[None],
     interface: str,
     contract_name: str,
     builder: PlainBuilder | CVLOnlyBuilder,
@@ -30,6 +37,13 @@ async def generate_stub(
 
     Returns validated Solidity stub source code.
     """
+
+    key = CacheKey[None, _CachedStub](f"stub-for-{string_hash(interface)}")
+
+    child = ctx.child(key, {"intf": interface})
+
+    if (c := child.cache_get(_CachedStub)) is not None:
+        return c.stub
 
     solc_name = f"solc{solc_version}"
 
@@ -93,4 +107,5 @@ async def generate_stub(
         description=DESCRIPTION,
     )
     assert "result" in res
+    child.cache_put(_CachedStub(stub=res["result"]))
     return res["result"]

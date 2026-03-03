@@ -14,11 +14,9 @@ Available tools:
 - `advisory_typecheck`: Run the CVL typechecker on your working specification against
   the current stub. Use this to catch type errors before attempting to publish.
 
-## Workflow
+## Intended Use
 
 1. Before writing CVL, read the stub to see available fields
 2. If you need a storage variable not in the stub, use `request_stub_field`
 3. Write your CVL using the field names from the stub
-4. Use `advisory_typecheck` to verify your spec compiles
-5. When satisfied, use `publish_spec` to merge your work into the master spec
 </stub_tools>

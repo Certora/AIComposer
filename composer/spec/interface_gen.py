@@ -7,21 +7,25 @@ covers all external entry points, and validates it with the Solidity compiler.
 
 import subprocess
 import tempfile
+from pydantic import BaseModel
 from typing import NotRequired
 
 from graphcore.graph import FlowInput
 
 from langgraph.graph import MessagesState
 
-from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder, SystemDoc
+from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder, SystemDoc, CacheKey
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.component import ApplicationSummary
+from composer.spec.util import string_hash
 
 DESCRIPTION = "Interface generation"
 
+class _CachedInterface(BaseModel):
+    intf: str
 
 async def generate_interface(
-    ctx: WorkflowContext,
+    ctx: WorkflowContext[None],
     summary: ApplicationSummary,
     input: SystemDoc,
     builder: PlainBuilder | CVLOnlyBuilder,
@@ -31,6 +35,14 @@ async def generate_interface(
 
     Returns validated Solidity interface source code.
     """
+    cache_key = CacheKey[None, _CachedInterface](
+        f"interface-{string_hash(summary.model_dump_json())}"
+    )
+
+    child = ctx.child(cache_key, summary.model_dump())
+
+    if (cached := child.cache_get(_CachedInterface)) is not None:
+        return cached.intf
 
     solc_name = f"solc{solc_version}"
 
@@ -88,4 +100,5 @@ async def generate_interface(
         description=DESCRIPTION,
     )
     assert "result" in res
+    child.cache_put(_CachedInterface(intf=res["result"]))
     return res["result"]

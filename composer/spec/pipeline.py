@@ -17,7 +17,7 @@ individual task event streams.
 """
 
 import asyncio
-import hashlib
+import traceback
 from collections.abc import Callable, Awaitable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -34,6 +34,7 @@ from composer.spec.context import (
     SystemDoc, PlainBuilder, CVLOnlyBuilder,
     CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
+from composer.spec.util import string_hash
 from composer.spec.component import (
     ApplicationComponent,
     ComponentInst,
@@ -43,7 +44,7 @@ from composer.spec.component import (
 from composer.spec.bug import run_bug_analysis
 from composer.spec.prop import PropertyFormulation
 from composer.spec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC
-from composer.spec.stub_gen import generate_stub, DESCRIPTION as STUB_GEN_DESC
+from composer.spec.stub_gen import generate_stub, DESCRIPTION as STUB_GEN_DESC, STUB_KEY
 from composer.spec.registry import StubRegistry
 from composer.spec.merge import make_publish_tools, make_advisory_typecheck_tool
 from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_property_cvl
@@ -74,9 +75,9 @@ class TaskHandle:
     """Returned by the handler factory — bundles IO with lifecycle callbacks."""
     handler: IOHandler[Any, Any]
     event_handler: EventHandler
+    on_error: Callable[[Exception, str], Awaitable[None]]
     on_start: Callable[[], None] = lambda: None
     on_done: Callable[[], None] = lambda: None
-    on_error: Callable[[str], None] = lambda _: None
 
 
 type HandlerFactory = Callable[[TaskInfo], Awaitable[TaskHandle]]
@@ -88,21 +89,16 @@ type HandlerFactory = Callable[[TaskInfo], Awaitable[TaskHandle]]
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 
-
-def _string_hash(s: str) -> str:
-    return hashlib.sha256(s.encode()).hexdigest()[:16]
-
-
 def _component_cache_key(
     component: ApplicationComponent,
     app_type: str,
 ) -> CacheKey[Properties, ComponentGroup]:
     combined = "|".join([component.model_dump_json(), app_type])
-    return CacheKey(_string_hash(combined))
+    return CacheKey(string_hash(combined))
 
 
 def _property_cache_key(prop: PropertyFormulation) -> CacheKey[ComponentGroup, GeneratedCVL]:
-    return CacheKey(_string_hash(prop.model_dump_json()))
+    return CacheKey(string_hash(prop.model_dump_json()))
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +291,7 @@ async def run_natspec_pipeline(
             handler_factory,
             TaskInfo(f"cvl-{prop_idx}", label, "cvl_gen"),
             lambda: generate_property_cvl(
-                prop_ctx, prop, feat, env, with_memory=False,
+                prop_ctx, prop, feat, env, with_memory=True,
                 description=label,
             ),
             semaphore,
@@ -320,7 +316,7 @@ async def run_natspec_pipeline(
                 results.append(result)
 
     # Read final master spec and stub
-    final_spec, _ = await master_spec.read()
+    final_spec = master_spec.read_unsync() or ""
     final_stub = registry.read_stub()
 
     return PipelineResult(
@@ -361,7 +357,7 @@ async def _run_task[T](
             async with with_handler(handle.handler, handle.event_handler):
                 result = await fn()
     except Exception as exc:
-        handle.on_error(str(exc))
+        await handle.on_error(exc, traceback.format_exc())
         raise
     else:
         handle.on_done()

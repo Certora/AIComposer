@@ -10,7 +10,7 @@ from textual.widgets import Static, Collapsible
 
 from rich.text import Text
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from composer.diagnostics.handlers import normalize_content
 from composer.io.tool_display import ToolDisplayConfig
@@ -72,27 +72,28 @@ class MessageRenderer:
                 case "tool_use":
                     name = c["name"]
                     input_args = c.get("input", {})
-                    group = tc.collapse_groups.get(name)
+                    grouped = tc.get_group(name)
 
-                    if group is not None and group == self._last_tool_group:
-                        # Same group — update existing widget
-                        detail = tc.collapse_detail(name, input_args)
-                        self._last_tool_items.append(detail)
-                        new_text = tc.render_collapsed_text(group, self._last_tool_items)
-                        if self._last_tool_widget is not None:
-                            self._last_tool_widget.update(dot("green", Text(new_text, style="dim")))
-                        # Don't append a new widget
-                    elif group is not None:
-                        # New collapsible group
-                        detail = tc.collapse_detail(name, input_args)
-                        self._last_tool_group = group
-                        self._last_tool_items = [detail]
-                        display_text = tc.render_collapsed_text(group, self._last_tool_items)
-                        w = Static(dot("green", Text(display_text, style="dim")))
-                        self._last_tool_widget = w
-                        widgets.append(w)
+                    if grouped is not None:
+                        raw = grouped.extract_group_items(input_args)
+                        new_items = [raw] if isinstance(raw, str) else list(raw)
+
+                        if grouped.group_id == self._last_tool_group:
+                            # Same group — update existing widget
+                            self._last_tool_items.extend(new_items)
+                            new_text = grouped.render_group(self._last_tool_items)
+                            if self._last_tool_widget is not None:
+                                self._last_tool_widget.update(dot("green", Text(new_text, style="dim")))
+                        else:
+                            # New group
+                            self._last_tool_group = grouped.group_id
+                            self._last_tool_items = new_items
+                            display_text = grouped.render_group(self._last_tool_items)
+                            w = Static(dot("green", Text(display_text, style="dim")))
+                            self._last_tool_widget = w
+                            widgets.append(w)
                     else:
-                        # Non-collapsible tool — reset and emit standalone
+                        # Non-grouped tool — reset and emit standalone
                         self.reset_tool_collapsing()
                         friendly = tc.format_tool_call(name, input_args)
                         widgets.append(Static(dot("green", Text(friendly, style="dim"))))
@@ -107,6 +108,16 @@ class MessageRenderer:
             self.total_cache_read += usage.get("cache_read_input_tokens", 0)
 
         return widgets
+
+    def render_tool_result(self, msg: ToolMessage) -> Collapsible | None:
+        """Render a tool result as a collapsible, or ``None`` to suppress."""
+        name = getattr(msg, "name", None) or "Tool result"
+        result_info = self.tool_config.format_result(name, msg)
+        if result_info is None:
+            return None
+        self.reset_tool_collapsing()
+        label, body = result_info
+        return Collapsible(Static(body, markup=False), title=label, collapsed=True)
 
     def reset_tool_collapsing(self):
         """Reset consecutive tool call collapsing state."""

@@ -1,197 +1,261 @@
+from langchain_core.messages import ToolMessage
 from dataclasses import dataclass, field
+from typing import Callable
 
 
 @dataclass
+class ToolDisplay:
+    """Declarative display config for a single tool."""
+
+    display_name: Callable[[dict], str] | str
+    """
+    Label shown when the tool is called.  ``str`` for a static name, callable
+    ``(input) -> str`` to vary based on the concrete arguments.
+    """
+
+    result: str | Callable[[str, ToolMessage], str | None | tuple[str, str]] | None
+    """
+    How to render the tool result.
+
+    * ``None`` — suppress the result entirely.
+    * ``str`` — static result label; tool message content shown as-is.
+    * ``callable(name, msg)`` — dynamic.  Return ``None`` to suppress,
+      ``str`` for a label (message content as body), or ``(label, body)``
+      to override both.
+    """
+
+
+@dataclass
+class GroupedTool:
+    """Tool where successive calls are collapsed into a single line."""
+
+    group_id: str
+    """Identifier shared by all tools that belong to this group."""
+
+    extract_group_items: Callable[[dict], str | list[str]]
+    """From the tool arguments, extract item label(s) for the collapsed display."""
+
+    group_display: Callable[[list[str]], str] | str
+    """
+    Build the collapsed display line.
+
+    * ``str`` — rendered as ``"{group_display}: item1, item2"``.
+    * ``callable(items)`` — full control.
+    """
+
+    def render_group(self, items: list[str]) -> str:
+        if isinstance(self.group_display, str):
+            return f"{self.group_display}: {', '.join(items)}"
+        return self.group_display(items)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _suppress_ack(label: str) -> Callable[[str, ToolMessage], str | None]:
+    """Factory: suppress results whose content is a bare ACK (``Success`` / ``Accepted``)."""
+    def _check(_name: str, msg: ToolMessage) -> str | None:
+        if msg.text() in ("Success", "Accepted"):
+            return None
+        return label
+    return _check
+
+
+def _format_cvl_result(_name: str, msg: ToolMessage) -> tuple[str, str] | None:
+    """Render CVL manual search results (returned as Anthropic content blocks)."""
+    raw = msg.content
+    if isinstance(raw, str):
+        return ("CVL Manual results", raw)
+    if not isinstance(raw, list):
+        return ("CVL Manual results", str(raw))
+    parts: list[str] = []
+    for block in raw:
+        if not isinstance(block, dict):
+            parts.append(str(block))
+            continue
+        title = block.get("title", "")
+        content_blocks = block.get("content", [])
+        texts = []
+        for cb in content_blocks:
+            if isinstance(cb, dict) and cb.get("type") == "text":
+                texts.append(cb.get("text", ""))
+            else:
+                texts.append(str(cb))
+        body = "\n".join(texts)
+        if title:
+            parts.append(f"## {title}\n{body}")
+        else:
+            parts.append(body)
+    if not parts:
+        return None
+    return ("CVL Manual results", "\n\n".join(parts))
+
+
+# ---------------------------------------------------------------------------
+# Reusable tool entries
+# ---------------------------------------------------------------------------
+
+class CommonTools:
+    cvl_manual = ToolDisplay(
+        lambda p: f"Searching CVL Manual: {p.get('question', '?')[:60]}",
+        _format_cvl_result,
+    )
+    memory = GroupedTool(
+        "memory",
+        lambda p: f'{p.get("command", "?")} {p.get("path", "")}'.strip(),
+        lambda items: f"Accessing memory x{len(items)}",
+    )
+    result = ToolDisplay("Delivering result", _suppress_ack("Result"))
+    get_file = GroupedTool(
+        "read",
+        lambda p: p.get("path", "?"),
+        lambda items: f"Reading: {', '.join(items)}",
+    )
+    put_file = GroupedTool(
+        "write",
+        lambda p: ", ".join(p.get("files", {}).keys()),
+        lambda items: f"Wrote: {', '.join(items)}",
+    )
+    list_files = ToolDisplay("Listing files", "File listing")
+    grep_files = ToolDisplay(
+        lambda p: f"Searching files for: {p.get('search_string', '?')}",
+        "Search results",
+    )
+    write_rough_draft = ToolDisplay("Write rough draft", None)
+    read_rough_draft = ToolDisplay("Read rough draft", "Rough Draft")
+
+
+# ---------------------------------------------------------------------------
+# Config wrapper
+# ---------------------------------------------------------------------------
+
+@dataclass
 class ToolDisplayConfig:
-    """Base configuration for how tool calls and results are displayed in the TUI."""
-    tool_display: dict[str, str] = field(default_factory=dict)
-    tool_result_display: dict[str, str] = field(default_factory=dict)
-    collapse_groups: dict[str, str] = field(default_factory=dict)
-    suppress_results: set[str] = field(default_factory=set)
+    """Declarative mapping from tool names to display rules."""
+
+    tool_display: dict[str, ToolDisplay | GroupedTool] = field(default_factory=dict)
+
+    # -- tool call formatting ------------------------------------------------
 
     def format_tool_call(self, name: str, input: dict) -> str:
-        """Return a user-friendly description of a tool call."""
-        base = self.tool_display.get(name, f"Tool: {name}")
-        if name == "memory":
-            cmd = input.get("command", "?")
-            path = input.get("path", "")
-            return f"{base}: {cmd} {path}".strip()
-        return base
+        """Return a user-friendly label for a tool invocation."""
+        entry = self.tool_display.get(name)
+        if entry is None or isinstance(entry, GroupedTool):
+            return f"Tool: {name}"
+        nm = entry.display_name
+        if isinstance(nm, str):
+            return nm
+        return nm(input)
 
-    def collapse_detail(self, name: str, input: dict) -> str:
-        """Extract the detail item for collapsing (e.g. file path)."""
-        if name == "memory":
-            cmd = input.get("command", "?")
-            path = input.get("path", "")
-            return f"{cmd} {path}".strip()
-        return ""
+    # -- grouping ------------------------------------------------------------
 
-    def render_collapsed_text(self, group: str, items: list[str]) -> str:
-        """Build the display text for a collapsed group of tool calls."""
-        if group == "memory":
-            count = len(items)
-            return "Accessing memory" if count == 1 else f"Accessing memory (\u00d7{count})"
-        return f"Tools: {', '.join(items)}"
+    def get_group(self, name: str) -> GroupedTool | None:
+        """Return the ``GroupedTool`` entry for *name*, or ``None``."""
+        entry = self.tool_display.get(name)
+        return entry if isinstance(entry, GroupedTool) else None
 
-    def should_show_result(self, name: str, content: str) -> bool:
-        """Return whether a tool result should be displayed. Override to add content-based filtering."""
-        if name not in self.suppress_results:
-            return name != "result" or content != "Success"
-        return False
+    # -- result formatting ---------------------------------------------------
 
+    def format_result(self, name: str, msg: ToolMessage) -> tuple[str, str] | None:
+        """Format a tool result for display.
+
+        Returns ``(label, body)`` for the collapsible, or ``None`` to suppress.
+        """
+        entry = self.tool_display.get(name)
+        content = msg.text()
+
+        if isinstance(entry, GroupedTool):
+            return None
+
+        if entry is None:
+            return (name, content)
+
+        r = entry.result
+        if r is None:
+            return None
+        if callable(r):
+            out = r(name, msg)
+            if out is None:
+                return None
+            if isinstance(out, tuple):
+                return out
+            return (out, content)
+        return (r, content)
+
+
+# ---------------------------------------------------------------------------
+# Concrete configs
+# ---------------------------------------------------------------------------
 
 class CodeGenToolDisplay(ToolDisplayConfig):
     """Tool display configuration for the code generation workflow."""
 
     def __init__(self):
-        super().__init__(
-            tool_display={
-                "certora_prover": "Running prover",
-                "put_file": "Writing files",
-                "get_file": "Reading file",
-                "list_files": "Listing files",
-                "grep_files": "Searching files",
-                "propose_spec_change": "Proposing spec change",
-                "human_in_the_loop": "Asking for input",
-                "code_result": "Finalizing result",
-                "cvl_manual_search": "Searching CVL manual",
-                "requirements_evaluation": "Evaluating requirements",
-                "requirement_relaxation_request": "Requesting requirement relaxation",
-                "memory": "Accessing memory",
-            },
-            tool_result_display={
-                "certora_prover": "Prover results",
-                "put_file": "File write result",
-                "get_file": "File contents",
-                "list_files": "File listing",
-                "grep_files": "Search results",
-                "cvl_manual_search": "Manual search results",
-                "requirements_evaluation": "Requirements evaluation",
-                "requirement_relaxation_request": "Relaxation result",
-                "propose_spec_change": "Spec change result",
-                "human_in_the_loop": "Human response",
-                "code_result": "Final result",
-                "memory": "Memory result",
-            },
-            collapse_groups={
-                "get_file": "read",
-                "put_file": "write",
-                "memory": "memory",
-            },
-            suppress_results={
-                "human_in_the_loop",
-                "propose_spec_change",
-                "requirement_relaxation_request",
-                "certora_prover",
-            },
-        )
-
-    def format_tool_call(self, name: str, input: dict) -> str:
-        base = self.tool_display.get(name, f"Tool: {name}")
-        match name:
-            case "certora_prover":
-                target = input.get("target_contract", "")
-                rule = input.get("rule")
-                detail = f": {target}" + (f" — rule {rule}" if rule else "")
-                return base + detail
-            case "get_file":
-                return f"{base}: {input.get('path', '?')}"
-            case "grep_files":
-                return f"{base} for: {input.get('search_string', '?')}"
-            case "cvl_manual_search":
-                q = input.get("question", "?")[:60]
-                return f"{base}: {q}"
-            case "put_file":
-                files = input.get("files", {})
-                return f"{base}: {', '.join(files.keys())}"
-            case "human_in_the_loop":
-                q = input.get("question", "")
-                return f"{base}: {q}" if q else base
-            case "propose_spec_change":
-                expl = input.get("explanation", "")
-                return f"{base}: {expl}" if expl else base
-            case "requirement_relaxation_request":
-                num = input.get("req_number", "?")
-                req = input.get("req_text", "")
-                return f"{base} #{num}: {req}" if req else base
-            case _:
-                return super().format_tool_call(name, input)
-
-    def collapse_detail(self, name: str, input: dict) -> str:
-        match name:
-            case "get_file":
-                return input.get("path", "?")
-            case "put_file":
-                files = input.get("files", {})
-                return ", ".join(files.keys())
-            case _:
-                return super().collapse_detail(name, input)
-
-    def render_collapsed_text(self, group: str, items: list[str]) -> str:
-        match group:
-            case "read":
-                return f"Reading: {', '.join(items)}"
-            case "write":
-                return f"Wrote: {', '.join(items)}"
-            case _:
-                return super().render_collapsed_text(group, items)
+        super().__init__(tool_display={
+            "certora_prover": ToolDisplay(
+                lambda p: (
+                    "Running prover: " + p.get("target_contract", "")
+                    + (f" — rule {p['rule']}" if p.get("rule") else "")
+                ),
+                None,
+            ),
+            "put_file": CommonTools.put_file,
+            "get_file": CommonTools.get_file,
+            "list_files": CommonTools.list_files,
+            "grep_files": CommonTools.grep_files,
+            "propose_spec_change": ToolDisplay(
+                lambda p: (
+                    f"Proposing spec change: {p['explanation']}"
+                    if p.get("explanation") else "Proposing spec change"
+                ),
+                None,
+            ),
+            "human_in_the_loop": ToolDisplay(
+                lambda p: (
+                    f"Asking for input: {p['question']}"
+                    if p.get("question") else "Asking for input"
+                ),
+                None,
+            ),
+            "code_result": ToolDisplay("Finalizing result", _suppress_ack("Final result")),
+            "cvl_manual_search": CommonTools.cvl_manual,
+            "requirements_evaluation": ToolDisplay(
+                "Evaluating requirements", "Requirements evaluation",
+            ),
+            "requirement_relaxation_request": ToolDisplay(
+                lambda p: (
+                    f"Requesting requirement relaxation #{p.get('req_number', '?')}: {p.get('req_text', '')}"
+                    if p.get("req_text")
+                    else "Requesting requirement relaxation"
+                ),
+                None,
+            ),
+            "memory": CommonTools.memory,
+        })
 
 
 class NatSpecToolDisplay(ToolDisplayConfig):
     """Tool display configuration for the NatSpec generation workflow."""
 
     def __init__(self):
-        super().__init__(
-            tool_display={
-                "cvl_manual_search": "Searching CVL manual",
-                "human_in_the_loop": "Asking for input",
-                "result": "Finalizing result",
-                "put_interface": "Writing interface",
-                "get_document": "Reading design doc",
-                "get_cvl": "Reading spec",
-                "put_cvl_raw": "Writing spec",
-                "put_cvl": "Writing spec",
-                "guidelines_judge": "Running guidelines judge",
-                "suggestion_oracle": "Getting suggestions",
-                "typecheck_spec": "Type-checking spec",
-                "memory": "Accessing memory",
-            },
-            tool_result_display={
-                "cvl_manual_search": "Manual search results",
-                "guidelines_judge": "Guidelines feedback",
-                "suggestion_oracle": "Suggestions",
-                "typecheck_spec": "Type-check result",
-                "result": "Generation result",
-                "get_document": "Design document",
-                "put_cvl": "Spec write result",
-                "put_cvl_raw": "Spec write result",
-                "put_interface": "Interface write result",
-            },
-            collapse_groups={
-                "memory": "memory",
-            },
-            suppress_results={
-                "human_in_the_loop",
-                "get_cvl",
-                "memory",
-            },
-        )
-
-    def format_tool_call(self, name: str, input: dict) -> str:
-        base = self.tool_display.get(name, f"Tool: {name}")
-        match name:
-            case "cvl_manual_search":
-                q = input.get("question", "?")[:60]
-                return f"{base}: {q}"
-            case "human_in_the_loop":
-                q = input.get("question", "")
-                return f"{base}: {q}" if q else base
-            case _:
-                return super().format_tool_call(name, input)
-
-    def should_show_result(self, name: str, content: str) -> bool:
-        if not super().should_show_result(name, content):
-            return False
-        if name in ("put_cvl", "put_cvl_raw", "put_interface") and content == "Accepted":
-            return False
-        return True
+        super().__init__(tool_display={
+            "cvl_manual_search": CommonTools.cvl_manual,
+            "human_in_the_loop": ToolDisplay(
+                lambda p: (
+                    f"Asking for input: {p['question']}"
+                    if p.get("question") else "Asking for input"
+                ),
+                None,
+            ),
+            "result": CommonTools.result,
+            "put_interface": ToolDisplay("Writing interface", _suppress_ack("Interface write result")),
+            "get_document": ToolDisplay("Reading design doc", "Design document"),
+            "get_cvl": ToolDisplay("Reading spec", None),
+            "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+            "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+            "guidelines_judge": ToolDisplay("Running guidelines judge", "Guidelines feedback"),
+            "suggestion_oracle": ToolDisplay("Getting suggestions", "Suggestions"),
+            "typecheck_spec": ToolDisplay("Type-checking spec", "Type-check result"),
+            "memory": CommonTools.memory,
+        })

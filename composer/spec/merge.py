@@ -47,27 +47,27 @@ def typecheck_spec(
     """Run certoraTypeCheck.py on spec + stub. Returns None on success, error string on failure."""
     solc_name = f"solc{solc_version}"
     with tempfile.TemporaryDirectory() as tmpdir:
-        with contextlib.chdir(tmpdir):
-            root = pathlib.Path(tmpdir)
-            (root / "input.spec").write_text(spec)
-            (root / "Intf.sol").write_text(interface)
-            (root / "Impl.sol").write_text(stub)
+        root = pathlib.Path(tmpdir)
+        (root / "input.spec").write_text(spec)
+        (root / "Intf.sol").write_text(interface)
+        (root / "Impl.sol").write_text(stub)
 
-            p = pathlib.Path(__file__).parent / "certoraTypeCheck.py"
-            result = subprocess.run(
-                [
-                    sys.executable, str(p),
-                    f"Impl.sol:{contract_name}",
-                    "--verify", f"{contract_name}:./input.spec",
-                    "--solc", solc_name,
-                    "--compilation_steps_only",
-                ],
-                text=True,
-                capture_output=True,
-            )
-            if result.returncode == 0:
-                return None
-            return f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+        p = (pathlib.Path(__file__).parent / "certoraTypeCheck.py").absolute()
+        result = subprocess.run(
+            [
+                sys.executable, str(p),
+                f"Impl.sol:{contract_name}",
+                "--verify", f"{contract_name}:./input.spec",
+                "--solc", solc_name,
+                "--compilation_steps_only",
+            ],
+            text=True,
+            capture_output=True,
+            cwd=tmpdir
+        )
+        if result.returncode == 0:
+            return None
+        return f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,6 @@ class MergedSpec(BaseModel):
 async def run_merge_agent(
     working_copy: str,
     master_content: str,
-    master_version: int,
     stub: str,
     interface: str,
     contract_name: str,
@@ -207,9 +206,6 @@ class _PropertyAgentState(MessagesState):
     result: NotRequired[str]
 
 
-MAX_CAS_RETRIES = 3
-
-
 def make_publish_tools(
     master_spec: SharedArtifact,
     stub_read: Callable[[], str],
@@ -221,8 +217,8 @@ def make_publish_tools(
 ) -> tuple[BaseTool, BaseTool]:
     """Construct PublishSpec + GiveUp tools for a property agent.
 
-    PublishSpec spawns a merge agent, then CAS-updates the master spec.
-    GiveUp lets the agent bail after repeated failures.
+    PublishSpec acquires the master spec lock, spawns a merge agent,
+    and writes the result. GiveUp lets the agent bail after repeated failures.
     """
 
     class PublishSpec(WithInjectedState[_PropertyAgentState], WithInjectedId, WithAsyncImplementation[Command]):
@@ -241,14 +237,12 @@ def make_publish_tools(
             if working_copy is None:
                 return tool_return(self.tool_call_id, content="No spec written yet. Use put_cvl first.")
 
-            for attempt in range(MAX_CAS_RETRIES):
-                master_content, master_version = await master_spec.read()
+            async with master_spec.locked() as (master_content, write_master):
                 stub_content = stub_read()
 
                 merge_result = await run_merge_agent(
                     working_copy=working_copy,
-                    master_content=master_content,
-                    master_version=master_version,
+                    master_content=master_content or "",
                     stub=stub_content,
                     interface=interface,
                     contract_name=contract_name,
@@ -263,20 +257,11 @@ def make_publish_tools(
                         content=f"Merge failed: {merge_result.feedback}",
                     )
 
-                cas_result = await master_spec.cas_update(
-                    master_version, merge_result.merged_spec,
+                write_master(merge_result.merged_spec)
+                return tool_output(
+                    self.tool_call_id,
+                    res={"result": self.commentary},
                 )
-                if cas_result.success:
-                    return tool_output(
-                        self.tool_call_id,
-                        res={"result": self.commentary},
-                    )
-                # CAS conflict — retry with updated master
-
-            return tool_return(
-                self.tool_call_id,
-                content="Failed to publish after multiple CAS retries due to concurrent edits. Try again.",
-            )
 
     class GiveUp(WithInjectedId, WithAsyncImplementation[Command]):
         """Call this if you cannot formalize the property after multiple merge attempts.

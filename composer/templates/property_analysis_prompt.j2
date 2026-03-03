@@ -47,10 +47,30 @@ Security properties fall into one of three categories:
     Bad example: "The protocol could be hacked" (overly broad)
     Bad example: "The underlying EVM consensus layer could be compromised allowing attackers to set arbitrary storage states" (implausible)
 
+You *must* limit your invariants/vectors/properties to those that can be plausibly formally stated or reasoned about in a symbolic reasoning tool (namely, the Certora Prover).
+The following is a list of types of properties which are difficult or impossible to prove using the Certora Prover:
+1. Attack vectors or invariants that reference off-chain events (like key compromising, phishing, etc.)
+2. Reasoning about hash function behavior or hash collisions (i.e., "invalid signatures should be rejected")
+3. Event emission (not impossible, simply difficult and tedious)
+
+In addition, due to the advent of checked arithmetic, properties that assert no overflow are considered uninteresting. Further, properties which assert
+properties implied by the type system are generally not considered interesting (e.g., a uint256 being non-negative, a uint128 field not exceeding 2^128 -1, etc.)
+
+Note: Safety properties can be quite and can (and should) include properties describing the intended, normal behavior of the smart contract. In other words, the properties
+described do not necessarily need to have some *immediate* security implication to be interesting. For example, a safety property which states a user depositing liquidity
+receives an appropriate amount of liquidity tokens is both valid and interesting.
+
+NB: you do **NOT** need to be able to formalize the properties yourself, that is out of scope for your task. Simply limit your analysis to those properties which can be
+reasonable formalized in a symbolic tool.
+
 ## Step 2
-For each security property you identified in step 1, double check that it satisfies the criteria for its type (invariant, safety property, attack vector).
+Write a rough draft list of your properties using the provided "write_rough_draft" tool.
 
 ## Step 3
+Review your rough draft. For each property/invariant in your rough draft, make sure it meets the guidelines and definitions described in step 1. Pay particular
+attention for properties/invariants explicitly described as being uninteresting or impossible to verify using the Certora Prover.
+
+## Step 4
 Output the results of your analysis using the result tool.
 </task>
 

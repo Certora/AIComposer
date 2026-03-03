@@ -25,7 +25,7 @@ from langchain_core.messages import (
 )
 
 from composer.io.message_renderer import MessageRenderer, dot, KNOWN_NODES
-from composer.io.tool_display import ToolDisplayConfig
+from composer.io.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
 from composer.io.event_handler import NullEventHandler
 from composer.spec.pipeline import Phase, TaskInfo, TaskHandle, PipelineResult
 from composer.spec.ptypes import HumanQuestionSchema
@@ -68,53 +68,44 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
     """Return the appropriate ``ToolDisplayConfig`` for *phase*."""
     match phase:
         case "component_analysis":
-            return ToolDisplayConfig(
-                tool_display={
-                    "result": "Delivering result",
-                    "memory": "Accessing memory",
-                },
-                collapse_groups={"memory": "memory"},
-                suppress_results={"memory"},
-            )
+            return ToolDisplayConfig(tool_display={
+                "result": CommonTools.result,
+                "memory": CommonTools.memory,
+            })
         case "bug_analysis":
-            return ToolDisplayConfig(
-                tool_display={
-                    "result": "Delivering result",
-                },
-            )
+            return ToolDisplayConfig(tool_display={
+                "result": CommonTools.result,
+                "write_rough_draft": CommonTools.write_rough_draft,
+                "read_rough_draft": CommonTools.read_rough_draft,
+            })
         case "interface_gen" | "stub_gen":
-            return ToolDisplayConfig(
-                tool_display={
-                    "result": "Delivering result",
-                },
-            )
+            return ToolDisplayConfig(tool_display={
+                "result": CommonTools.result,
+            })
         case "cvl_gen":
-            return ToolDisplayConfig(
-                tool_display={
-                    "put_cvl": "Writing spec",
-                    "put_cvl_raw": "Writing spec",
-                    "get_cvl": "Reading spec",
-                    "feedback_tool": "Getting feedback",
-                    "cvl_research": "Researching CVL",
-                    "extended_reasoning": "Reasoning",
-                    "publish_spec": "Publishing to master spec",
-                    "give_up": "Giving up on property",
-                    "read_stub": "Reading verification stub",
-                    "request_stub_field": "Requesting stub field",
-                    "advisory_typecheck": "Type-checking spec",
-                    "scan_knowledge_base": "Scanning knowledge base",
-                    "get_knowledge_base_article": "Reading KB article",
-                    "knowledge_base_contribute": "Contributing to KB",
-                    "result": "Delivering result",
-                },
-                collapse_groups={
-                    "scan_knowledge_base": "kb",
-                    "get_knowledge_base_article": "kb",
-                },
-                suppress_results={
-                    "get_cvl", "read_stub", "extended_reasoning",
-                },
-            )
+            return ToolDisplayConfig(tool_display={
+                "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+                "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+                "get_cvl": ToolDisplay("Reading spec", None),
+                "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
+                "cvl_research": ToolDisplay(lambda p: f"Researching CVL: {p.get('question', '?')}", "Research result"),
+                "extended_reasoning": ToolDisplay("Reasoning", None),
+                "cvl_manual_search": CommonTools.cvl_manual,
+                "get_cvl_manual_section": ToolDisplay(lambda p: f"Read CVL Manual: {" / ".join(p.get("headers", []))}", None),
+                "cvl_keyword_search": ToolDisplay(lambda p: f"CVL Manual Search: {p.get("query")}", "CVL Matching Sections"),
+                "publish_spec": ToolDisplay("Publishing to master spec", _suppress_ack("Publish result")),
+                "give_up": ToolDisplay("Giving up on property", _suppress_ack("Give up result")),
+                "read_stub": ToolDisplay("Reading verification stub", None),
+                "request_stub_field": ToolDisplay("Requesting stub field", "Stub field result"),
+                "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),
+                "scan_knowledge_base": ToolDisplay("Scanning knowledge base", "KB scan results"),
+                "get_knowledge_base_article": ToolDisplay("Reading KB article", "KB article"),
+                "knowledge_base_contribute": ToolDisplay("Contributing to KB", "KB contribution"),
+                "result": CommonTools.result,
+                "write_rough_draft": CommonTools.write_rough_draft,
+                "read_rough_draft": CommonTools.read_rough_draft,
+                "memory": CommonTools.memory,
+            })
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +166,12 @@ class PipelineTaskHandler:
     def mark_done(self) -> None:
         self._set_status(TaskStatus.DONE)
 
-    def mark_error(self, reason: str) -> None:
+    async def mark_error(self, exc: Exception, tb: str) -> None:
         self._set_status(TaskStatus.ERROR)
+        error_text = Text()
+        error_text.append(f"\n{type(exc).__name__}: {exc}\n\n", style="bold red")
+        error_text.append(tb, style="red dim")
+        await self._mount_to(self._panel, Static(error_text))
 
     # ── Mounting helpers ──────────────────────────────────────
 
@@ -221,7 +216,6 @@ class PipelineTaskHandler:
 
     async def log_state_update(self, path: list[str], st: dict) -> None:
         target = self._renderer.get_mount_target(self._panel, path)
-        tc = self._renderer.tool_config
 
         for node_name, v in st.items():
             if node_name not in KNOWN_NODES:
@@ -245,15 +239,9 @@ class PipelineTaskHandler:
                         coll = Collapsible(Static(m.text()), title="User input", collapsed=True)
                         await self._mount_to(target, coll)
                     case ToolMessage():
-                        name = getattr(m, "name", None) or "Tool result"
-                        if name in tc.collapse_groups:
+                        coll = self._renderer.render_tool_result(m)
+                        if coll is None:
                             continue
-                        content = m.text()
-                        if not tc.should_show_result(name, content):
-                            continue
-                        self._renderer.reset_tool_collapsing()
-                        friendly = tc.tool_result_display.get(name, name)
-                        coll = Collapsible(Static(content), title=friendly, collapsed=True)
                         await self._mount_to(target, coll)
                     case _:
                         self._renderer.reset_tool_collapsing()

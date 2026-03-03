@@ -293,6 +293,8 @@ class StubRegistry:
             deposit amounts"). The registry will either return an existing field that
             serves the same purpose, or create a new one.
             Returns the field name to use in your CVL specification.
+
+            You may *NOT* use this tool to request any change to the stub besides a new storage field.
             """
             purpose: str = PydanticField(
                 description="Natural language description of what the field should track"
