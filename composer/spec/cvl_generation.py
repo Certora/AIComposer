@@ -6,9 +6,11 @@ Parameterized by:
 - with_memory: whether to persist memory across runs
 """
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Annotated, Callable, Awaitable, NotRequired, override, Literal
+from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -18,7 +20,7 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command, Checkpointer
 from langgraph.graph import MessagesState
 
-from graphcore.graph import FlowInput, tool_state_update
+from graphcore.graph import FlowInput, tool_state_update, tool_return
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
@@ -27,11 +29,12 @@ from composer.spec.context import (
     CacheKey, CVLGeneration, CVLJudge, Feedback, ThreadProvider,
     SourceCode, SystemDoc,
 )
+from composer.core.state import merge_validation
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
 from composer.spec.component import ComponentInst
-from composer.tools.thinking import ExplicitThinking, get_rough_draft_tools
+from composer.tools.thinking import ExplicitThinking, RoughDraftState, get_rough_draft_tools
 from composer.spec.cvl_research import cvl_researcher
 from composer.templates.loader import load_jinja_template
 
@@ -67,7 +70,7 @@ class GenerationEnv:
     resources: list[CVLResource] = field(default_factory=list)
     extra_tools: list[BaseTool] = field(default_factory=list)
     extra_input: list[str | dict] = field(default_factory=list)
-    result_tools: tuple[BaseTool, ...] | None = None
+    result_tools: "ResultToolFactory | None" = None
 
     @property
     def has_source(self) -> bool:
@@ -113,19 +116,19 @@ def property_feedback_judge(
     has_source = env.has_source
     builder = env.builders.cvl if has_source else env.builders.cvl_only
 
-    class ST(MessagesState):
-        memory: NotRequired[str]
-        result: NotRequired[PropertyFeedback]
-        did_read: NotRequired[bool]
-        curr_spec: NotRequired[str]
-
-    class SpecJudgeInput(FlowInput):
+    class JudgeExtra(RoughDraftState):
         curr_spec: str
+
+    class ST(MessagesState, JudgeExtra):
+        result: NotRequired[PropertyFeedback]
+
+    class SpecJudgeInput(FlowInput, JudgeExtra):
+        pass
 
     rough_draft_tools = get_rough_draft_tools(ST)
 
     def did_rough_draft_read(s: ST, _) -> str | None:
-        if s.get("did_read", None) is None:
+        if not s["did_read"]:
             return "Completion REJECTED: never read rough draft for review"
         return None
 
@@ -174,7 +177,7 @@ def property_feedback_judge(
                 input_parts.append(f"  Property {s.property_index}: {s.reason}")
         res = await run_to_completion(
             workflow,
-            SpecJudgeInput(input=input_parts, curr_spec=cvl),
+            SpecJudgeInput(input=input_parts, curr_spec=cvl, memory=None, did_read=False),
             thread_id=child.uniq_thread_id(),
             description="Property feedback judge",
         )
@@ -280,6 +283,60 @@ class GeneratedCVL(BaseModel):
     skipped: list[SkippedProperty] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Completion validation
+# ---------------------------------------------------------------------------
+
+class CVLGenerationState(TypedDict):
+    curr_spec: str | None
+    skipped: Annotated[list[SkippedProperty], _merge_skips]
+    validations: Annotated[dict[str, str], merge_validation]
+
+
+def _compute_digest(curr_spec: str, skipped: list[SkippedProperty]) -> str:
+    digester = hashlib.md5()
+    digester.update(curr_spec.encode())
+    for s in skipped:
+        digester.update(f"{s.property_index}:{s.reason}".encode())
+    return digester.hexdigest()
+
+
+def check_completion(
+    state: CVLGenerationState, required: list[str],
+) -> str | None:
+    """Returns None if valid, error string if not."""
+    spec = state["curr_spec"]
+    if spec is None:
+        return "Completion REJECTED: no spec written yet."
+    digest = _compute_digest(spec, state["skipped"])
+    validations = state["validations"]
+    for key in required:
+        if key not in validations or validations[key] != digest:
+            return f"Completion REJECTED: {key} validation not satisfied or stale."
+    return None
+
+
+def make_validation_stamper(key: str) -> Callable[[CVLGenerationState], dict[str, str]]:
+    """Create a stamper for future prover tool integration.
+
+    The stamper reads curr_spec/skipped from state and returns
+    a dict suitable for merging into the validations state key.
+    """
+    def stamp(state: CVLGenerationState) -> dict[str, str]:
+        return {key: _compute_digest(
+            state["curr_spec"] or "",
+            state["skipped"],
+        )}
+    return stamp
+
+
+class CVLGenerationInput(FlowInput, CVLGenerationState):
+    pass
+
+type StateValidator = Callable[[CVLGenerationState], str | None]
+type ResultToolFactory = Callable[[StateValidator], tuple[BaseTool, ...]]
+
+
 class _LastAttemptCache(BaseModel):
     cvl: str
 
@@ -299,15 +356,19 @@ async def generate_batch_cvl(
 
     num_props = len(props)
 
-    class ST(MessagesState):
-        curr_spec: NotRequired[str]
+    class ST(MessagesState, CVLGenerationState):
         result: NotRequired[str]
-        skipped: Annotated[list[SkippedProperty], _merge_skips]
 
     has_source = env.has_source
     has_prover = env.has_prover
     has_publish = env.has_publish
     base_builder = env.base_builder
+
+    required_validations = ["feedback"]
+    if has_prover:
+        required_validations.append("prover")
+
+    validator: StateValidator = lambda s: check_completion(s, required_validations)
 
     feedback = property_feedback_judge(
         ctx.child(CVL_JUDGE_KEY), env, feat, props, with_memory,
@@ -315,24 +376,28 @@ async def generate_batch_cvl(
 
     researcher = cvl_researcher(ctx, env.builders.cvl_only)
 
-    class FeedbackSchema(WithInjectedState[ST], WithAsyncImplementation[str]):
+    class FeedbackSchema(WithInjectedState[ST], WithInjectedId, WithAsyncImplementation[Command]):
         """
         Receive feedback on your CVL and any skip declarations.
         The judge will evaluate coverage (all properties accounted for)
         and the validity of any skip justifications.
         """
         @override
-        async def run(self) -> str:
+        async def run(self) -> Command:
             st = self.state
-            spec = st.get("curr_spec", None)
+            spec = st["curr_spec"]
             if spec is None:
-                return "No spec put yet"
-            skipped = st.get("skipped", [])
+                return tool_return(self.tool_call_id, "No spec put yet")
+            skipped = st["skipped"]
             t = await feedback(spec, skipped)
-            return f"""
-Good? {str(t.good)}
-Feedback {t.feedback}
-"""
+            msg = f"Good? {t.good}\nFeedback {t.feedback}"
+            if t.good:
+                digest = _compute_digest(spec, skipped)
+                return tool_state_update(
+                    self.tool_call_id, msg,
+                    validations={"feedback": digest},
+                )
+            return tool_state_update(self.tool_call_id, msg)
 
     class RecordSkipSchema(WithInjectedState[ST], WithInjectedId, WithImplementation[Command]):
         """
@@ -492,7 +557,7 @@ Feedback {t.feedback}
 
     # Builder configuration: if result_tools provided, use manual config
     if env.result_tools is not None:
-        tools.extend(env.result_tools)
+        tools.extend(env.result_tools(validator))
         d = base_builder.with_state(
             ST
         ).with_output_key(
@@ -500,7 +565,7 @@ Feedback {t.feedback}
         ).with_default_summarizer(
             max_messages=50
         ).with_input(
-            FlowInput
+            CVLGenerationInput
         ).with_tools(
             tools
         ).with_sys_prompt_template(
@@ -513,9 +578,10 @@ Feedback {t.feedback}
         )
     else:
         d = bind_standard(
-            base_builder, ST, "A description of your generated CVL"
+            base_builder, ST, "A description of your generated CVL",
+            validator=lambda s, _r: validator(s),
         ).with_input(
-            FlowInput
+            CVLGenerationInput
         ).with_tools(
             tools
         ).with_sys_prompt_template(
@@ -530,29 +596,35 @@ Feedback {t.feedback}
     try:
         r = await run_to_completion(
             d,
-            FlowInput(input=extra_inputs),
+            CVLGenerationInput(
+                input=extra_inputs,
+                curr_spec=None,
+                skipped=[],
+                validations={},
+            ),
             thread_id=ctx.thread_id,
             description=description,
         )
     finally:
         last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values
-        if "curr_spec" in last_state and with_memory:
-            ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=last_state["curr_spec"]))
+        curr = last_state.get("curr_spec")
+        if curr is not None and with_memory:
+            ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=curr))
 
     assert "result" in r
 
-    skipped = r.get("skipped", [])
+    skipped = r["skipped"]
 
     if has_publish:
         # With publish tools, curr_spec may not be in final state (it was merged into master).
         # The result contains the commentary (or GAVE_UP: reason).
         return GeneratedCVL(
             commentary=r["result"],
-            cvl=r.get("curr_spec", ""),
+            cvl=r["curr_spec"] or "",
             skipped=skipped,
         )
     else:
-        assert "curr_spec" in r
+        assert r["curr_spec"] is not None
         return GeneratedCVL(
             commentary=r["result"],
             cvl=r["curr_spec"],

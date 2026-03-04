@@ -82,6 +82,15 @@ Verify that the specification covers all {{ properties | length }} listed proper
 - If the author declared a skip for a property: critically evaluate the justification. If the property IS expressible in CVL
   (e.g., using ghost state, invariants, or other CVL features), reject the skip and explain how it can be formalized.
   Only accept a skip if the property is genuinely beyond CVL's expressiveness.
+
+**Array quantification limitation**: The Certora Prover cannot universally quantify over
+dynamic-length arrays. Properties that reason about all elements of an array can only be
+verified by explicitly bounding the array size and adding element-wise logic for each case.
+This means:
+- Rules that `require` a bounded array size (e.g., `require arr.length <= 3`) and verify
+  element-wise are a *valid* approach — do not reject them for overconstrained inputs.
+- If a property fundamentally requires reasoning over arbitrary-length arrays with no
+  feasible bound, accept a skip citing this limitation.
 </criteria>
 
 When formulating your feedback, be sure to consider any feedback you gave previously.

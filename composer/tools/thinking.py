@@ -4,7 +4,8 @@ Ported from composer/spec/cvl_generation.py and composer/spec/draft.py on
 the jtoman/auto-prover branch.
 """
 
-from typing import TypedDict, NotRequired, override
+from typing import override
+from typing_extensions import TypedDict
 
 from langchain_core.messages import ToolMessage, HumanMessage
 from langchain_core.tools import BaseTool
@@ -59,12 +60,12 @@ class ExplicitThinking(
 explicit_thinking = ExplicitThinking.as_tool("extended_reasoning")
 
 
-class RoughDraftProtocol(TypedDict):
-    memory: NotRequired[str]
-    did_read: NotRequired[bool]
+class RoughDraftState(TypedDict):
+    memory: str | None
+    did_read: bool
 
 
-def get_rough_draft_tools[ST: RoughDraftProtocol](
+def get_rough_draft_tools[ST: RoughDraftState](
     ty: type[ST],
 ) -> list[BaseTool]:
     class GetMemory(WithInjectedState[ST], WithImplementation[Command | str], WithInjectedId):
@@ -73,7 +74,7 @@ def get_rough_draft_tools[ST: RoughDraftProtocol](
         """
         @override
         def run(self) -> str | Command:
-            mem = self.state.get("memory", None)
+            mem = self.state["memory"]
             if mem is None:
                 return "Rough draft not yet written"
             return Command(update={

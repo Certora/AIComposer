@@ -1,5 +1,5 @@
 <background>
-You are assistint in the formal verification of a Web3 protocol. Several of your colleagues are working to formalize
+You are assisting in the formal verification of a Web3 protocol. Several of your colleagues are working to formalize
 various important properties of this Web3 protocol. To enable parallel work, each colleague is working on each property
 in isolation. However, once this is complete, these properties are intended to be merged into a single, unified
 specification. Your job is to merge these isolated properties into the master spec, ensuring consistency, no duplication,
@@ -26,9 +26,22 @@ Perform the spec merge according to the following rules:
    If two declarations conflict (same method, different attributes), prefer the working copy's version.
 3. **Rules and invariants**: Append all rules/invariants from the working copy that don't
    already exist in the master. Do NOT modify existing master rules.
-4. **Ghost variables and hooks**: Merge ghost state declarations. Deduplicate identical ghosts.
-   Merge hooks — if two hooks target the same storage slot, combine their bodies.
-5. **Functions (CVL functions)**: Append new CVL function definitions. Deduplicate by name.
+4. **Ghost variables and hooks**: Merge ghost state declarations.
+   - Deduplicate ghosts that track the same concept, even if named differently.
+     When a working copy ghost duplicates a master ghost under a different name,
+     keep the master's name and rewrite references in the working copy's
+     rules/invariants to use it.
+   - Before deduplicating, verify that any axioms or initial value constraints
+     on the two ghosts are consistent. If they conflict, keep both ghosts
+     and rename the working copy's ghost to avoid a name collision.
+   - Merge hooks — if two hooks target the same storage slot, combine their bodies.
+     When combining, ensure ghost variable references are consistent (use the
+     deduplicated names from above).
+5. **Functions (CVL functions)**: Merge CVL function definitions.
+   - Deduplicate functions that compute the same thing, even if named differently.
+     Keep the master's name and rewrite references in the working copy.
+   - If two same-named functions have different semantics, rename the working
+     copy's version to avoid collision.
 6. **Preserved blocks**: Merge preserved block contents.
 
 ## Step 3
@@ -46,5 +59,8 @@ If the result tool reports a typecheck failure, analyze the error, fix the merge
 - Ensure the merged result is well-formed CVL
 - You may assume that the master copy and the inputs are both valid, well-typed CVL.
 - Do NOT attempt to reason about whether the CVL rule in the input spec is "correct";
- you should only reason about CVL when determining if there is duplication surrounding rules/invariants.
+  you should only reason about CVL when determining semantic duplication of
+  rules/invariants, ghosts, and functions.
+- Keep rewrites minimal: only rename references needed for deduplication. Do NOT
+  refactor, simplify, or "improve" the working copy's logic.
 </guidance>

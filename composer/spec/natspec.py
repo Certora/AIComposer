@@ -607,10 +607,10 @@ async def execute(args: NatSpecArgs, handler: NatSpecIOHandler | None = None) ->
     graph_input = NatSpecInput(input=[
         "The system/design document is as follows",
         document
-    ], curr_intf=None, curr_spec=None, validations={})
+    ], curr_intf=None, curr_spec=None, validations={}, did_read=False)
 
     async with with_handler(handler, NullEventHandler()):
-        final_state = await run_graph(graph, ctxt, graph_input, runnable_conf, description="NatSpec generation")
+        final_state = await run_graph(graph, ctxt, graph_input, runnable_conf, description="NatSpecx generation")
     if "result" not in final_state:
         return 1
 

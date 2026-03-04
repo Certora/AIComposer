@@ -24,7 +24,7 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.workflow.factories import get_checkpointer
 from composer.tools.search import cvl_manual_search
-from composer.tools.thinking import explicit_thinking, get_rough_draft_tools
+from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
 from composer.natreq.automation import requirements_oracle
 from composer.human.types import HumanInteractionType
@@ -33,10 +33,11 @@ from composer.io.context import with_handler, run_graph
 from composer.io.event_handler import NullEventHandler
 
 
-class ExtractionState(MessagesState):
+class ExtractionState(MessagesState, RoughDraftState):
     reqs: NotRequired[list[str]]
-    memory: NotRequired[str]
-    did_read: NotRequired[bool]
+
+class ExtractionInput(FlowInput, RoughDraftState):
+    pass
 
 @dataclass
 class ExtractionContext:
@@ -138,10 +139,10 @@ async def get_requirements(
         explicit_thinking,
         *get_rough_draft_tools(ExtractionState),
     ]
-    built : CompiledStateGraph[ExtractionState, ExtractionContext, FlowInput, Any] = build_async_workflow(
+    built : CompiledStateGraph[ExtractionState, ExtractionContext, ExtractionInput, Any] = build_async_workflow(
         state_class=ExtractionState,
         context_schema=ExtractionContext,
-        input_type=FlowInput,
+        input_type=ExtractionInput,
         output_key="reqs",
         tools_list=tools,
         unbound_llm=llm,
@@ -186,7 +187,7 @@ spec).
             [ pathlib.Path(p) for p in oracle ]
         )
 
-    graph_input = FlowInput(input=input_text)
+    graph_input = ExtractionInput(input=input_text, memory=None, did_read=False)
 
     handler = OracleHandler(io, req_oracle)
     async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]

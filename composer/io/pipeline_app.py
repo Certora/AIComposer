@@ -95,6 +95,14 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
                 "cvl_keyword_search": ToolDisplay(lambda p: f"CVL Manual Search: {p.get("query")}", "CVL Matching Sections"),
                 "publish_spec": ToolDisplay("Publishing to master spec", _suppress_ack("Publish result")),
                 "give_up": ToolDisplay("Giving up on property", _suppress_ack("Give up result")),
+                "record_skip": ToolDisplay(
+                    lambda p: f"Skipping property #{p.get('property_index', '?')}",
+                    _suppress_ack("Skip result", ("Recorded skip",)),
+                ),
+                "unskip_property": ToolDisplay(
+                    lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
+                    _suppress_ack("Unskip result", ("Removed skip",)),
+                ),
                 "read_stub": ToolDisplay("Reading verification stub", None),
                 "request_stub_field": ToolDisplay("Requesting stub field", "Stub field result"),
                 "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),

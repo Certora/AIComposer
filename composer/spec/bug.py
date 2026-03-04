@@ -14,7 +14,7 @@ from composer.spec.context import WorkflowContext, CacheKey, ComponentGroup, Sou
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.prop import PropertyFormulation
 from composer.spec.component import ComponentInst
-from composer.tools.thinking import get_rough_draft_tools
+from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 
 
 class _BugAnalysisCache(BaseModel):
@@ -44,13 +44,16 @@ async def run_bug_analysis(
     doc, builder = input
     has_source = isinstance(doc, SourceCode)
 
-    class ST(MessagesState):
+    class BugAnalysisInput(FlowInput, RoughDraftState):
+        pass
+
+    class ST(MessagesState, RoughDraftState):
         result: NotRequired[list[PropertyFormulation]]
-        memory: NotRequired[str]
-        did_read: NotRequired[bool]
 
     d = bind_standard(
         builder, ST, "The security properties you have extracted about the component"
+    ).with_input(
+        BugAnalysisInput
     ).with_initial_prompt_template(
         "property_analysis_prompt.j2",
         context=component,
@@ -63,7 +66,7 @@ async def run_bug_analysis(
 
     r = await run_to_completion(
         d,
-        FlowInput(input=[]),
+        BugAnalysisInput(input=[], memory=None, did_read=False),
         thread_id=component_analysis.thread_id,
         description=DESCRIPTION,
     )

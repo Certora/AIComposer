@@ -20,13 +20,13 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import get_runtime
 
 from composer.templates.loader import load_jinja_template
-from composer.tools.thinking import explicit_thinking, get_rough_draft_tools
+from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
 from composer.core.state import AIComposerState
 from composer.core.validation import reqs as req_key
 from composer.core.context import AIComposerContext, compute_state_digest
 from composer.io.context import run_graph
 
-class JudgeInput(FlowInput):
+class JudgeInput(FlowInput, RoughDraftState):
     vfs: dict[str, str]
     orig_reqs: list[str]
 
@@ -49,11 +49,9 @@ class RequirementAnalysis(BaseModel):
 class JudgeResult(BaseModel):
     judgement_result: list[RequirementAnalysis] = Field(description="A list of analysis results, with one element per original requirement.")
 
-class JudgeState(MessagesState, VFSState):
+class JudgeState(MessagesState, VFSState, RoughDraftState):
     result: NotRequired[JudgeResult]
     orig_reqs: list[str]
-    memory: NotRequired[str]
-    did_read: NotRequired[bool]
 
 def _gen_workflow(
     vfs_tools: list[BaseTool],
@@ -122,7 +120,7 @@ def judge_res_checker(
     r: JudgeResult,
     _: str
 ) -> str | None:
-    if "memory" in st and not st.get("did_read", False):
+    if st["memory"] is not None and not st["did_read"]:
         return "Completion REJECTED: You must read your rough draft before submitting. Call read_rough_draft first."
     reqs = st["orig_reqs"]
     if len(reqs) != len(r.judgement_result):
@@ -156,7 +154,7 @@ def get_judge_tool(
         judge_state = await run_graph(
             compiled_graph,
             None,
-            JudgeInput(input=[req_list], vfs=state["vfs"], orig_reqs=reqs),
+            JudgeInput(input=[req_list], vfs=state["vfs"], orig_reqs=reqs, memory=None, did_read=False),
             judge_config,
             description="Requirements evaluation",
             within_tool=tool_call_id

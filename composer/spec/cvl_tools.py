@@ -9,7 +9,8 @@ source_spec (source-based spec generation) workflows.
 import os
 import subprocess
 import tempfile
-from typing import Annotated, Literal, TypedDict, NotRequired, overload
+from typing import Annotated, Literal, overload
+from typing_extensions import TypedDict
 
 from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langgraph.types import Command
@@ -127,14 +128,13 @@ def put_cvl_raw(
     return _maybe_update_cvl(tool_call_id, cvl_file)
 
 class WithCurrSpec(TypedDict):
-    curr_spec: NotRequired[str]
-
-class WithCurrSpecNullable(TypedDict):
     curr_spec: str | None
 
-class WithCurrSpecNullableAndDidRead(TypedDict):
-    curr_spec: str | None
-    did_read: NotRequired[bool]
+class WithCurrSpecAndDidRead(WithCurrSpec):
+    did_read: bool
+
+class WithCurrSpecNonNull(TypedDict):
+    curr_spec: str
 
 class GetCVLSchemaTemplate(BaseModel):
     """
@@ -142,16 +142,17 @@ class GetCVLSchemaTemplate(BaseModel):
     """
 
 @overload
-def get_cvl[S: WithCurrSpecNullableAndDidRead](
+def get_cvl[S: WithCurrSpecAndDidRead](
     ty: type[S],
     *,
     set_did_read: Literal[True],
 ) -> BaseTool: ...
 
 @overload
-def get_cvl[S: WithCurrSpecNullable](
+def get_cvl[S: WithCurrSpecNonNull](
     ty: type[S],
 ) -> BaseTool: ...
+
 
 @overload
 def get_cvl[S: WithCurrSpec](
@@ -178,7 +179,7 @@ def get_cvl(
         **args
     ) -> str | Command:
         st = args["state"]
-        if "curr_spec" not in st or st["curr_spec"] is None:
+        if st["curr_spec"] is None:
             return "No spec file written yet"
         spec = st["curr_spec"]
         if set_did_read:

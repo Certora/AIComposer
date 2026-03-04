@@ -53,10 +53,16 @@ class GroupedTool:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _suppress_ack(label: str) -> Callable[[str, ToolMessage], str | None]:
-    """Factory: suppress results whose content is a bare ACK (``Success`` / ``Accepted``)."""
+def _suppress_ack(
+    label: str,
+    acks: tuple[str, ...] = ("Success", "Accepted"),
+) -> Callable[[str, ToolMessage], str | None]:
+    """Factory: suppress results whose content is a bare ACK.
+
+    *acks* lists the exact strings to treat as acknowledgements.
+    """
     def _check(_name: str, msg: ToolMessage) -> str | None:
-        if msg.text() in ("Success", "Accepted"):
+        if msg.text().startswith(acks):
             return None
         return label
     return _check

@@ -271,10 +271,6 @@ async def run_natspec_pipeline(
         typecheck_tool = make_advisory_typecheck_tool(
             registry.read_stub, interface, contract_name, solc_version,
         )
-        publish, give_up = make_publish_tools(
-            master_spec, registry.read_stub, interface,
-            contract_name, solc_version, cvl_builder, batch_ctx,
-        )
 
         stub_content = registry.read_stub()
         env = GenerationEnv(
@@ -285,7 +281,11 @@ async def run_natspec_pipeline(
                 "The current verification stub is:",
                 stub_content,
             ],
-            result_tools=(publish, give_up),
+            result_tools=lambda validator: make_publish_tools(
+                master_spec, registry.read_stub, interface,
+                contract_name, solc_version, cvl_builder, batch_ctx,
+                validator=validator,
+            ),
         )
 
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"

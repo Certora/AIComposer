@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NotRequired, override
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from langchain_core.tools import BaseTool
 from langgraph.graph import MessagesState
@@ -31,6 +31,7 @@ from graphcore.tools.schemas import WithInjectedState, WithInjectedId, WithAsync
 from composer.spec.cas import SharedArtifact
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
+from composer.spec.cvl_generation import CVLGenerationState, StateValidator
 
 
 # ---------------------------------------------------------------------------
@@ -81,11 +82,6 @@ class MergeResult:
     feedback: str = ""
 
 
-class MergedSpec(BaseModel):
-    """The merged CVL specification."""
-    spec: str = Field(description="The complete merged CVL specification")
-
-
 # ---------------------------------------------------------------------------
 # Merge agent
 # ---------------------------------------------------------------------------
@@ -108,18 +104,18 @@ async def run_merge_agent(
     """
 
     class ST(MessagesState):
-        result: NotRequired[MergedSpec]
+        result: NotRequired[str]
 
-    def validate_merge(_s: ST, res: MergedSpec) -> str | None:
+    def validate_merge(_s: ST, res: str) -> str | None:
         tc_result = typecheck_spec(
-            res.spec, stub, interface, contract_name, solc_version,
+            res, stub, interface, contract_name, solc_version,
         )
         if tc_result is not None:
             return f"Merged spec failed typecheck:\n{tc_result}\nPlease fix the merge and try again."
         return None
 
     workflow = bind_standard(
-        builder, ST, validator=validate_merge,
+        builder, ST, "The complete merged CVL specification", validator=validate_merge,
     ).with_input(
         FlowInput
     ).with_sys_prompt(
@@ -153,10 +149,9 @@ async def run_merge_agent(
                 success=False,
                 feedback="Merge agent did not produce a result.",
             )
-        merged: MergedSpec = res["result"]
         return MergeResult(
             success=True,
-            merged_spec=merged.spec,
+            merged_spec=res["result"],
         )
     except Exception as e:
         return MergeResult(
@@ -201,9 +196,9 @@ def make_advisory_typecheck_tool(
 # ---------------------------------------------------------------------------
 
 # State type for property agents (must have curr_spec)
-class _PropertyAgentState(MessagesState):
-    curr_spec: NotRequired[str]
-    result: NotRequired[str]
+# class _PropertyAgentState(MessagesState):
+#     curr_spec: NotRequired[str]
+#     result: NotRequired[str]
 
 
 def make_publish_tools(
@@ -214,14 +209,18 @@ def make_publish_tools(
     solc_version: str,
     builder: PlainBuilder | CVLOnlyBuilder,
     ctx: WorkflowContext,
+    validator: StateValidator = lambda _: None,
 ) -> tuple[BaseTool, BaseTool]:
     """Construct PublishSpec + GiveUp tools for a property agent.
 
     PublishSpec acquires the master spec lock, spawns a merge agent,
     and writes the result. GiveUp lets the agent bail after repeated failures.
+
+    ``validator`` is called before merge — if it returns a string, the publish
+    is rejected with that message.
     """
 
-    class PublishSpec(WithInjectedState[_PropertyAgentState], WithInjectedId, WithAsyncImplementation[Command]):
+    class PublishSpec(WithInjectedState[CVLGenerationState], WithInjectedId, WithAsyncImplementation[Command]):
         """Publish your working CVL to the master spec. This spawns a merge agent that
         combines your working copy with the current master spec. If the merge succeeds
         and typechecks, your contribution is recorded and this task completes.
@@ -233,6 +232,10 @@ def make_publish_tools(
 
         @override
         async def run(self) -> Command:
+            rejection = validator(self.state)
+            if rejection is not None:
+                return tool_return(self.tool_call_id, content=rejection)
+
             working_copy = self.state.get("curr_spec")
             if working_copy is None:
                 return tool_return(self.tool_call_id, content="No spec written yet. Use put_cvl first.")

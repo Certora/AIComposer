@@ -10,7 +10,7 @@ from graphcore.graph import FlowInput
 
 from composer.spec.context import WorkflowContext, CVLOnlyBuilder, CVLGeneration
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.tools.thinking import get_rough_draft_tools
+from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
 
 type ResearchTool = Callable[[str], Awaitable[str]]
 
@@ -48,10 +48,11 @@ def cvl_researcher(
     builder: CVLOnlyBuilder,
 ) -> ResearchTool:
 
-    class ST(MessagesState):
-        memory: NotRequired[str]
+    class CVLResearchInput(FlowInput, RoughDraftState):
+        pass
+
+    class ST(MessagesState, RoughDraftState):
         result: NotRequired[str]
-        did_read: NotRequired[bool]
 
     def did_read_draft(s: ST, _) -> str | None:
         if s.get("did_read", None) is None:
@@ -63,7 +64,7 @@ def cvl_researcher(
     workflow = bind_standard(
         builder, ST, "Your research findings", validator=did_read_draft
     ).with_input(
-        FlowInput
+        CVLResearchInput
     ).with_tools(
         [*ctx.kb_tools(read_only=True), *rough_draft_tools]
     ).with_sys_prompt_template(
@@ -77,7 +78,7 @@ def cvl_researcher(
     async def research(question: str) -> str:
         res = await run_to_completion(
             workflow,
-            FlowInput(input=[question]),
+            CVLResearchInput(input=[question], did_read=False, memory=None),
             thread_id=ctx.uniq_thread_id(),
             description="CVL research",
         )
