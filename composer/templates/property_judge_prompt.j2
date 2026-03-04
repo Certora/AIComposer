@@ -1,5 +1,5 @@
 <background>
-You are tasked with evaluating a fellow CVL engineer's attempt to formalize {{ what_formal }} within a larger
+You are tasked with evaluating a fellow CVL engineer's attempt to formalize a set of security properties within a larger
 application.
 </background>
 
@@ -11,7 +11,18 @@ If so, recall what your prior feedback may have been.
 
 ## Step 2
 
-Understand the {{ thing }} itself
+Understand the properties being formalized:
+
+{% for prop in properties %}
+<{{ prop.sort }}>
+  Property {{ loop.index }}: {{ prop.description }}
+  {% if prop.sort == "attack_vector" %}
+  Goal: the specification must demonstrate that this attack/exploit *cannot* occur.
+  {% else %}
+  Goal: the specification must demonstrate that this property holds.
+  {% endif %}
+</{{ prop.sort }}>
+{% endfor %}
 
 ## Step 3
 
@@ -32,12 +43,12 @@ Ensure that the CVL adheres to the following guidelines:
 
 ### Criteria 3: Precondition Validity
 
-In addition, evaluate the rule for its *precondition*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
-to consider all possible initial states of the smart contract and its dependencies. Consider whether the rule sufficiently constrains the input space
+Evaluate each rule for its *precondition*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
+to consider all possible initial states of the smart contract and its dependencies. Consider whether each rule sufficiently constrains the input space
 to rule out *obviously spurious* starting states (e.g., a case where a user balance is larger than the total supply).
-If you conclude that the rule will *LIKELY* fail due to a spurious starting state, propose what *invariants* are necessary to rule out those starting states.
+If you conclude that a rule will *LIKELY* fail due to a spurious starting state, propose what *invariants* are necessary to rule out those starting states.
 
-NOTE: portions of the input state may be unconstrained/undercontrained if they don't matter for the purposes of the property being verified.
+NOTE: portions of the input state may be unconstrained/underconstrained if they don't matter for the purposes of the property being verified.
 
 ### Criteria 4: Overconstrained Inputs
 
@@ -56,12 +67,21 @@ transfers a NO-OP trivializing any property that reasons about balances.
 ### Criteria 6: Manifest Errors
 
 {% if has_source %}
-Finally, audit the rule to determine if it is likely to fail because it is *OBVIOUSLY* wrong; it asserts that the contract does X, but the contract actually does Y
+Audit the rules to determine if any are likely to fail because they are *OBVIOUSLY* wrong; they assert that the contract does X, but the contract actually does Y
 (and Y is, with overwhelming probability, the correct outcome). For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
 {% else %}
-Finally, audit the rule to determine if it is likely to fail because it is *OBVIOUSLY* wrong; it asserts something that contradicts the expected behavior as described
+Audit the rules to determine if any are likely to fail because they are *OBVIOUSLY* wrong; they assert something that contradicts the expected behavior as described
 in the design document. For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
 {% endif %}
+
+### Criteria 7: Property Coverage
+
+Verify that the specification covers all {{ properties | length }} listed properties. For each property:
+- If the spec contains rules/invariants addressing it: evaluate those rules under criteria 1-6.
+- If the spec does NOT address a property AND the author has NOT declared a skip for it: reject the spec and flag the missing property.
+- If the author declared a skip for a property: critically evaluate the justification. If the property IS expressible in CVL
+  (e.g., using ghost state, invariants, or other CVL features), reject the skip and explain how it can be formalized.
+  Only accept a skip if the property is genuinely beyond CVL's expressiveness.
 </criteria>
 
 When formulating your feedback, be sure to consider any feedback you gave previously.
@@ -70,7 +90,7 @@ When formulating your feedback, be sure to consider any feedback you gave previo
 Using the write_rough_draft tool, create an initial draft of your analysis.
 
 ## Step 5
-Read back your rough draft, and compare every point of feedback against the 5 criteria. If the feedback is nonsensical, not actionable, or not in relation
+Read back your rough draft, and compare every point of feedback against the 7 criteria. If the feedback is nonsensical, not actionable, or not in relation
 to one of the criteria, discard it.
 
 ## Step 6
@@ -81,15 +101,11 @@ Update your memories, and then output the results of your feedback.
 <application>
 {% include "application_context.j2" %}
 </application>
-
-<{{ thing_tag }}>
-The {{ thing }} is described as: {{ thing_descr }}
-</{{thing_tag}}>
 </inputs>
 
 <guidance>
 <hard_requirement>
-Do not provide ANY feedback except for the 6 criteria above.
+Do not provide ANY feedback except for the 7 criteria above.
 </hard_requirement>
 <hard_requirement>
 Do NOT make assertions about the behavior of CVL without first checking the manual.

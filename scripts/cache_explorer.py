@@ -20,7 +20,7 @@ from composer.spec.interface_gen import _CachedInterface
 from composer.spec.stub_gen import _CachedStub
 from composer.spec.bug import _BugAnalysisCache, BUG_ANALYSIS_KEY
 from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, CVL_JUDGE_KEY, LAST_ATTEMPT_KEY, FEEDBACK_KEY
-from composer.spec.pipeline import PROPERTIES_KEY, _component_cache_key, _property_cache_key
+from composer.spec.pipeline import PROPERTIES_KEY, _component_cache_key, _batch_cache_key
 from composer.spec.util import string_hash
 
 
@@ -94,29 +94,30 @@ def build_tree(root_ctx: WorkflowContext) -> CacheNode[NatSpecCachedValue]:
             ))
 
             if bug_analysis is not None:
-                for prop in bug_analysis.items:
-                    prop_ctx = comp_ctx.child(_property_cache_key(prop))
+                batch_ctx = comp_ctx.child(
+                    _batch_cache_key(bug_analysis.items)
+                )
+                batch_node: CacheNode[NatSpecCachedValue] = CacheNode(
+                    label=f"batch ({len(bug_analysis.items)} properties)",
+                    ctx=batch_ctx,
+                    value=batch_ctx.cache_get(GeneratedCVL),
+                )
+                comp_node.children.append(batch_node)
 
-                    prop_node: CacheNode[NatSpecCachedValue] = CacheNode(
-                        label=prop.description, ctx=prop_ctx,
-                        value=prop_ctx.cache_get(GeneratedCVL),
-                    )
-                    comp_node.children.append(prop_node)
-
-                    prop_cvl_ctx = prop_ctx.abstract(CVLGeneration)
-                    prop_judge_ctx = prop_cvl_ctx.child(CVL_JUDGE_KEY)
-                    prop_judge_node: CacheNode[NatSpecCachedValue] = CacheNode(
-                        label="judge", ctx=prop_judge_ctx,
-                    )
-                    prop_judge_node.children.append(CacheNode(
-                        label="feedback", ctx=prop_judge_ctx.child(FEEDBACK_KEY),
-                    ))
-                    prop_node.children.append(prop_judge_node)
-                    la_ctx = prop_cvl_ctx.child(LAST_ATTEMPT_KEY)
-                    prop_node.children.append(CacheNode(
-                        label="last_attempt", ctx=la_ctx,
-                        value=la_ctx.cache_get(_LastAttemptCache),
-                    ))
+                cvl_ctx = batch_ctx.abstract(CVLGeneration)
+                judge_ctx = cvl_ctx.child(CVL_JUDGE_KEY)
+                judge_node: CacheNode[NatSpecCachedValue] = CacheNode(
+                    label="judge", ctx=judge_ctx,
+                )
+                judge_node.children.append(CacheNode(
+                    label="feedback", ctx=judge_ctx.child(FEEDBACK_KEY),
+                ))
+                batch_node.children.append(judge_node)
+                la_ctx = cvl_ctx.child(LAST_ATTEMPT_KEY)
+                batch_node.children.append(CacheNode(
+                    label="last_attempt", ctx=la_ctx,
+                    value=la_ctx.cache_get(_LastAttemptCache),
+                ))
 
     return root
 
@@ -130,13 +131,18 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
     lines: list[str] = []
 
     match val:
-        case GeneratedCVL(commentary=commentary, cvl=cvl):
+        case GeneratedCVL(commentary=commentary, cvl=cvl, skipped=skipped):
             lines.append("")
             lines.append("--- Commentary ---")
             lines.append(commentary)
             lines.append("")
             lines.append("--- CVL ---")
             lines.append(cvl)
+            if skipped:
+                lines.append("")
+                lines.append(f"--- Skipped ({len(skipped)}) ---")
+                for s in skipped:
+                    lines.append(f"  Property {s.property_index}: {s.reason}")
 
         case ApplicationSummary(application_type=app_type, components=comps):
             lines.append(f"Application type: {app_type}")

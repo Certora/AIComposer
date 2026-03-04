@@ -120,6 +120,17 @@ _STATUS_INDICATORS: dict[TaskStatus, tuple[str, str]] = {
     TaskStatus.ERROR:        ("\u2717", "red"),          # ✗
 }
 
+_ACTIVE_STATUSES = {TaskStatus.RUNNING, TaskStatus.WAITING_HITL}
+_TERMINAL_STATUSES = {TaskStatus.DONE, TaskStatus.ERROR}
+
+_STATUS_SORT_KEY: dict[TaskStatus, int] = {
+    TaskStatus.RUNNING: 0,
+    TaskStatus.WAITING_HITL: 0,
+    TaskStatus.PENDING: 1,
+    TaskStatus.DONE: 2,
+    TaskStatus.ERROR: 2,
+}
+
 
 def _render_row(label: str, status: TaskStatus) -> Text:
     """Build the Rich ``Text`` for a summary row."""
@@ -330,6 +341,9 @@ class PipelineApp(App):
         self._phase_sections: dict[str, Collapsible] = {}
         # Task label cache for summary row updates
         self._task_labels: dict[str, str] = {}
+        # Task → section and status tracking for reordering
+        self._task_sections: dict[str, str] = {}
+        self._task_statuses: dict[str, TaskStatus] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("NatSpec Pipeline | ESC: summary | q: quit (when done)", id="header")
@@ -388,6 +402,8 @@ class PipelineApp(App):
 
         self._handlers[task_id] = handler
         self._task_labels[task_id] = label
+        self._task_sections[task_id] = section_label
+        self._task_statuses[task_id] = TaskStatus.PENDING
 
         return TaskHandle(
             handler=handler,
@@ -469,12 +485,76 @@ class PipelineApp(App):
         return section
 
     def _on_task_status_change(self, task_id: str, label: str, status: TaskStatus) -> None:
-        """Update the summary row for a task."""
+        """Update the summary row for a task and reorder the summary."""
+        self._task_statuses[task_id] = status
         try:
             row = self.query_one(f"#row-{task_id}", Static)
         except Exception:
             return
         row.update(_render_row(label, status))
+        self._reorder_summary()
+
+    def _reorder_summary(self) -> None:
+        """Reorder sections (active first) and rows within sections (running first)."""
+        if len(self._phase_sections) <= 1:
+            return
+
+        summary = self.query_one("#summary", VerticalScroll)
+
+        def section_has_active(label: str) -> bool:
+            return any(
+                self._task_statuses.get(tid) in _ACTIVE_STATUSES
+                for tid, slabel in self._task_sections.items()
+                if slabel == label
+            )
+
+        # Sort sections: active first (in canonical order), then inactive
+        ordered = sorted(
+            self._phase_sections.keys(),
+            key=lambda lbl: (
+                0 if section_has_active(lbl) else 1,
+                _SECTION_ORDER.index(lbl) if lbl in _SECTION_ORDER else len(_SECTION_ORDER),
+            ),
+        )
+
+        # Reorder sections within the summary
+        children = list(summary.children)
+        first_section = children[0] if children else None
+        for i, label in enumerate(ordered):
+            section = self._phase_sections[label]
+            if i == 0:
+                if first_section is not None and section is not first_section:
+                    summary.move_child(section, before=first_section)
+            else:
+                prev = self._phase_sections[ordered[i - 1]]
+                summary.move_child(section, after=prev)
+
+        # Reorder rows within each section
+        for label, section in self._phase_sections.items():
+            task_ids = [
+                tid for tid, slabel in self._task_sections.items()
+                if slabel == label
+            ]
+            if len(task_ids) <= 1:
+                continue
+
+            task_ids.sort(key=lambda tid: _STATUS_SORT_KEY.get(self._task_statuses.get(tid, TaskStatus.PENDING), 1))
+
+            contents = section.query_one("Contents")
+            for i, tid in enumerate(task_ids):
+                row = self.query_one(f"#row-{tid}", Static)
+                if i == 0:
+                    continue
+                prev_row = self.query_one(f"#row-{task_ids[i - 1]}", Static)
+                contents.move_child(row, after=prev_row)
+
+            # Auto-collapse sections where all tasks are terminal
+            all_terminal = all(
+                self._task_statuses.get(tid) in _TERMINAL_STATUSES
+                for tid in task_ids
+            )
+            if all_terminal:
+                section.collapsed = True
 
     # ── Pipeline completion ───────────────────────────────────
 

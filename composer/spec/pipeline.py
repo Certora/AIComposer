@@ -6,7 +6,7 @@ Replaces the monolithic natspec workflow with a multi-agent pipeline:
 2. Per-component property extraction (parallel)
 3. Interface generation (single agent)
 4. Initial stub generation (single agent)
-5. Per-property CVL generation (parallel, semaphore-bounded) with merge
+5. Per-component batch CVL generation (parallel, semaphore-bounded) with merge
 
 This is a plain asyncio orchestrator, not a LangGraph graph.
 
@@ -47,7 +47,7 @@ from composer.spec.interface_gen import generate_interface, DESCRIPTION as INTER
 from composer.spec.stub_gen import generate_stub, DESCRIPTION as STUB_GEN_DESC, STUB_KEY
 from composer.spec.registry import StubRegistry
 from composer.spec.merge import make_publish_tools, make_advisory_typecheck_tool
-from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_property_cvl
+from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_batch_cvl
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +97,9 @@ def _component_cache_key(
     return CacheKey(string_hash(combined))
 
 
-def _property_cache_key(prop: PropertyFormulation) -> CacheKey[ComponentGroup, GeneratedCVL]:
-    return CacheKey(string_hash(prop.model_dump_json()))
+def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGroup, GeneratedCVL]:
+    combined = "|".join(p.model_dump_json() for p in props)
+    return CacheKey(string_hash(combined))
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +153,7 @@ async def run_natspec_pipeline(
           └── properties [Properties]
               └── <component-hash> [ComponentGroup]
                   ├── bug_analysis (internal to bug.py)
-                  └── <property-hash> [GeneratedCVL] → abstract(CVLGeneration)
+                  └── <batch-hash> [GeneratedCVL] → abstract(CVLGeneration)
 
     Args:
         system_doc: The design document for the application.
@@ -210,7 +211,7 @@ async def run_natspec_pipeline(
     )
 
     # ------------------------------------------------------------------
-    # Phase 2 + 5:  Per-component extraction → per-property CVL gen
+    # Phase 2 + 5:  Per-component extraction → per-component batch CVL gen
     # ------------------------------------------------------------------
 
     prop_context = ctx.child(PROPERTIES_KEY)
@@ -218,9 +219,14 @@ async def run_natspec_pipeline(
     results: list[GeneratedCVL] = []
     failures: list[PropertyFailure] = []
 
-    async def _analyze_component(
-        component_idx: int,
-    ) -> list[tuple[PropertyFormulation, ComponentInst, WorkflowContext[ComponentGroup]]]:
+    # Phase 2: per-component property extraction
+    @dataclass
+    class _ComponentBatch:
+        feat: ComponentInst
+        props: list[PropertyFormulation]
+        feat_ctx: WorkflowContext[ComponentGroup]
+
+    async def _analyze_component(component_idx: int) -> _ComponentBatch | None:
         feat = ComponentInst(summ=summary, ind=component_idx)
         name = feat.component.name
         feat_ctx = prop_context.child(
@@ -238,31 +244,27 @@ async def run_natspec_pipeline(
             semaphore,
         )
 
-        if props is None:
-            return []
-        return [(p, feat, feat_ctx) for p in props]
+        if not props:
+            return None
+        return _ComponentBatch(feat=feat, props=props, feat_ctx=feat_ctx)
 
     extraction_results = await asyncio.gather(*[
         _analyze_component(i) for i in range(len(summary.components))
     ])
 
-    all_properties: list[tuple[PropertyFormulation, ComponentInst, WorkflowContext[ComponentGroup]]] = []
-    for batch in extraction_results:
-        all_properties.extend(batch)
+    component_batches = [b for b in extraction_results if b is not None]
 
-    if not all_properties:
+    if not component_batches:
         raise ValueError("No properties extracted from any component.")
 
-    # Phase 5: per-property CVL generation, nested under component contexts
-    async def _generate_one(
-        prop_idx: int,
-        prop: PropertyFormulation,
-        feat: ComponentInst,
-        feat_ctx: WorkflowContext[ComponentGroup],
+    # Phase 5: per-component batch CVL generation
+    async def _generate_batch(
+        batch_idx: int,
+        batch: _ComponentBatch,
     ) -> GeneratedCVL:
-        prop_ctx = feat_ctx.child(
-            _property_cache_key(prop),
-            prop.model_dump(),
+        batch_ctx = batch.feat_ctx.child(
+            _batch_cache_key(batch.props),
+            {"properties": [p.model_dump() for p in batch.props]},
         ).abstract(CVLGeneration)
 
         stub_tools = registry.get_tools()
@@ -271,7 +273,7 @@ async def run_natspec_pipeline(
         )
         publish, give_up = make_publish_tools(
             master_spec, registry.read_stub, interface,
-            contract_name, solc_version, cvl_builder, prop_ctx,
+            contract_name, solc_version, cvl_builder, batch_ctx,
         )
 
         stub_content = registry.read_stub()
@@ -286,12 +288,12 @@ async def run_natspec_pipeline(
             result_tools=(publish, give_up),
         )
 
-        label = f"{feat.component.name}: {prop.description[:50]}"
+        label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
         return await _run_task(
             handler_factory,
-            TaskInfo(f"cvl-{prop_idx}", label, "cvl_gen"),
-            lambda: generate_property_cvl(
-                prop_ctx, prop, feat, env, with_memory=True,
+            TaskInfo(f"cvl-{batch_idx}", label, "cvl_gen"),
+            lambda: generate_batch_cvl(
+                batch_ctx, batch.props, batch.feat, env, with_memory=True,
                 description=label,
             ),
             semaphore,
@@ -299,21 +301,30 @@ async def run_natspec_pipeline(
 
     generation_results = await asyncio.gather(
         *[
-            _generate_one(i, prop, feat, feat_ctx)
-            for i, (prop, feat, feat_ctx) in enumerate(all_properties)
+            _generate_batch(i, batch)
+            for i, batch in enumerate(component_batches)
         ],
         return_exceptions=True,
     )
 
-    for (prop, _, _), result in zip(all_properties, generation_results):
+    for batch, result in zip(component_batches, generation_results):
         if isinstance(result, BaseException):
-            failures.append(PropertyFailure(prop=prop, reason=str(result)))
+            for prop in batch.props:
+                failures.append(PropertyFailure(prop=prop, reason=str(result)))
         elif isinstance(result, GeneratedCVL):
             if result.commentary.startswith("GAVE_UP:"):
                 reason = result.commentary.removeprefix("GAVE_UP:").strip()
-                failures.append(PropertyFailure(prop=prop, reason=reason))
+                for prop in batch.props:
+                    failures.append(PropertyFailure(prop=prop, reason=reason))
             else:
                 results.append(result)
+                # Record skipped properties as failures
+                for skip in result.skipped:
+                    if skip.property_index in range(1, len(batch.props) + 1):
+                        failures.append(PropertyFailure(
+                            prop=batch.props[skip.property_index - 1],
+                            reason=f"Skipped: {skip.reason}",
+                        ))
 
     # Read final master spec and stub
     final_spec = master_spec.read_unsync() or ""

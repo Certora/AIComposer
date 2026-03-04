@@ -8,7 +8,7 @@ Parameterized by:
 
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Callable, Awaitable, NotRequired, override, Literal
+from typing import Annotated, Callable, Awaitable, NotRequired, override, Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,7 +18,7 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command, Checkpointer
 from langgraph.graph import MessagesState
 
-from graphcore.graph import FlowInput
+from graphcore.graph import FlowInput, tool_state_update
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
@@ -98,14 +98,14 @@ class PropertyFeedback(BaseModel):
     feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
 
 
-type FeedbackTool = Callable[[str], Awaitable[PropertyFeedback]]
+type FeedbackTool = Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedback]]
 
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
     env: GenerationEnv,
     inst: ComponentInst | None,
-    prop: PropertyFormulation,
+    props: list[PropertyFormulation],
     with_memory: bool,
 ) -> FeedbackTool:
 
@@ -138,7 +138,7 @@ def property_feedback_judge(
     template_kwargs: dict = {
         "context": inst,
         "has_source": has_source,
-        **prop.to_template_args(),
+        "properties": props,
     }
     if has_source:
         assert isinstance(env.input, SourceCode)
@@ -159,7 +159,8 @@ def property_feedback_judge(
     )
 
     async def the_tool(
-        cvl: str
+        cvl: str,
+        skipped: list[SkippedProperty],
     ) -> PropertyFeedback:
         input_parts: list[str | dict] = []
         if not has_source:
@@ -167,6 +168,10 @@ def property_feedback_judge(
             input_parts.append(env.input.content)
         input_parts.append("The proposed CVL file is")
         input_parts.append(cvl)
+        if skipped:
+            input_parts.append("The following properties were explicitly skipped by the author:")
+            for s in skipped:
+                input_parts.append(f"  Property {s.property_index}: {s.reason}")
         res = await run_to_completion(
             workflow,
             SpecJudgeInput(input=input_parts, curr_spec=cvl),
@@ -245,9 +250,34 @@ You may NOT call this tool in parallel with other tools.
         })
 
 
+class SkippedProperty(BaseModel):
+    """A property the agent explicitly decided not to formalize."""
+    property_index: int = Field(description="1-indexed property number from the batch listing")
+    reason: str = Field(description="Justification for why this property was skipped")
+
+
+def _merge_skips(
+    left: list[SkippedProperty],
+    right: list[SkippedProperty],
+) -> list[SkippedProperty]:
+    """State reducer: merge by property_index (new justification replaces old).
+
+    An entry with an empty reason is a sentinel for "unskipped" — it removes
+    the property from the skip list.
+    """
+    by_index = {s.property_index: s for s in left}
+    for s in right:
+        by_index[s.property_index] = s
+    return sorted(
+        (s for s in by_index.values() if s.reason),
+        key=lambda s: s.property_index,
+    )
+
+
 class GeneratedCVL(BaseModel):
     commentary: str
     cvl: str
+    skipped: list[SkippedProperty] = Field(default_factory=list)
 
 
 class _LastAttemptCache(BaseModel):
@@ -258,18 +288,21 @@ LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 DESCRIPTION = "CVL generation"
 
 
-async def generate_property_cvl(
+async def generate_batch_cvl(
     ctx: WorkflowContext[CVLGeneration],
-    prop: PropertyFormulation,
+    props: list[PropertyFormulation],
     feat: ComponentInst | None,
     env: GenerationEnv,
     with_memory: bool,
     description: str,
 ) -> GeneratedCVL:
 
+    num_props = len(props)
+
     class ST(MessagesState):
         curr_spec: NotRequired[str]
         result: NotRequired[str]
+        skipped: Annotated[list[SkippedProperty], _merge_skips]
 
     has_source = env.has_source
     has_prover = env.has_prover
@@ -277,14 +310,16 @@ async def generate_property_cvl(
     base_builder = env.base_builder
 
     feedback = property_feedback_judge(
-        ctx.child(CVL_JUDGE_KEY), env, feat, prop, with_memory,
+        ctx.child(CVL_JUDGE_KEY), env, feat, props, with_memory,
     )
 
     researcher = cvl_researcher(ctx, env.builders.cvl_only)
 
     class FeedbackSchema(WithInjectedState[ST], WithAsyncImplementation[str]):
         """
-        Receive feedback on your CVL
+        Receive feedback on your CVL and any skip declarations.
+        The judge will evaluate coverage (all properties accounted for)
+        and the validity of any skip justifications.
         """
         @override
         async def run(self) -> str:
@@ -292,17 +327,83 @@ async def generate_property_cvl(
             spec = st.get("curr_spec", None)
             if spec is None:
                 return "No spec put yet"
-            t = await feedback(spec)
+            skipped = st.get("skipped", [])
+            t = await feedback(spec, skipped)
             return f"""
 Good? {str(t.good)}
 Feedback {t.feedback}
 """
 
+    class RecordSkipSchema(WithInjectedState[ST], WithInjectedId, WithImplementation[Command]):
+        """
+        Declare that you are skipping a property from the batch.
+        You must provide the 1-indexed property number and a justification.
+        The feedback judge will evaluate whether your justification is valid.
+        Only use this after genuinely attempting to formalize the property.
+        """
+        property_index: int = Field(
+            description="The 1-indexed property number from the batch listing"
+        )
+        reason: str = Field(
+            description="Justification for why this property cannot be formalized"
+        )
+
+        @override
+        def run(self) -> Command:
+            if not (1 <= self.property_index <= num_props):
+                return tool_state_update(
+                    self.tool_call_id,
+                    f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
+                )
+            if not self.reason.strip():
+                return tool_state_update(
+                    self.tool_call_id,
+                    "A non-empty justification is required when skipping a property.",
+                )
+            skip = SkippedProperty(
+                property_index=self.property_index,
+                reason=self.reason,
+            )
+            return tool_state_update(
+                self.tool_call_id,
+                f"Recorded skip for property {self.property_index}.",
+                skipped=[skip],
+            )
+
+    class UnskipSchema(WithInjectedId, WithImplementation[Command]):
+        """
+        Remove a previously declared skip for a property.
+        Use this if you later find a way to formalize a property you previously skipped.
+        """
+        property_index: int = Field(
+            description="The 1-indexed property number to un-skip"
+        )
+
+        @override
+        def run(self) -> Command:
+            if not (1 <= self.property_index <= num_props):
+                return tool_state_update(
+                    self.tool_call_id,
+                    f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
+                )
+            # Empty reason is the sentinel for "not skipped"
+            skip = SkippedProperty(
+                property_index=self.property_index,
+                reason="",
+            )
+            return tool_state_update(
+                self.tool_call_id,
+                f"Removed skip for property {self.property_index}.",
+                skipped=[skip],
+            )
+
     _cvl_research_doc = (
         "Delegate a question about CVL syntax, patterns, or techniques to a research sub-agent. "
         "The sub-agent searches the CVL manual and knowledge base, then delivers a synthesized answer.\n\n"
         "Use this when you need to understand how to express something in CVL, what patterns to "
-        "use, or how a specific CVL feature works."
+        "use, or how a specific CVL feature works. "
+        "Do not use this tool to ask questions about how to use other tools available to you; it only understands " \
+        "questions related to CVL authorship."
     )
     if has_source:
         _cvl_research_doc += " Do NOT use this for source code questions (use explore_code instead)."
@@ -322,6 +423,8 @@ Feedback {t.feedback}
     tools: list[BaseTool] = [
         put_cvl, put_cvl_raw,
         FeedbackSchema.as_tool("feedback_tool"),
+        RecordSkipSchema.as_tool("record_skip"),
+        UnskipSchema.as_tool("unskip_property"),
         CVLResearchSchema.as_tool("cvl_research"),
         get_cvl(ST),
         ExplicitThinking.as_tool("extended_reasoning"),
@@ -334,7 +437,7 @@ Feedback {t.feedback}
         "has_prover": has_prover,
         "has_publish": has_publish,
         "has_stub_tools": len(env.extra_tools) > 0,
-        **prop.to_template_args(),
+        "properties": props,
         "memory": with_memory,
     }
 
@@ -438,16 +541,20 @@ Feedback {t.feedback}
 
     assert "result" in r
 
+    skipped = r.get("skipped", [])
+
     if has_publish:
         # With publish tools, curr_spec may not be in final state (it was merged into master).
         # The result contains the commentary (or GAVE_UP: reason).
         return GeneratedCVL(
             commentary=r["result"],
             cvl=r.get("curr_spec", ""),
+            skipped=skipped,
         )
     else:
         assert "curr_spec" in r
         return GeneratedCVL(
             commentary=r["result"],
-            cvl=r["curr_spec"]
+            cvl=r["curr_spec"],
+            skipped=skipped,
         )

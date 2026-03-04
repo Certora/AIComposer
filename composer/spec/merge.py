@@ -228,7 +228,7 @@ def make_publish_tools(
         If the merge fails, you'll receive feedback — address it and try again.
         """
         commentary: str = Field(
-            description="A description of your generated CVL and what property it formalizes"
+            description="A description of your generated CVL and what properties it formalizes"
         )
 
         @override
