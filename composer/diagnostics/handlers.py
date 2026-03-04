@@ -65,7 +65,7 @@ def summarize_update(
                                 case "thinking":
                                     buff.append("Thinking...")
                                 case "text":
-                                    buff.append("Text: " + c["text"][:50] + "...")
+                                    buff.append("Text: " + c["text"])
                                 case "tool_use":
                                     buff.append("Call tool: " + c["name"])
                                 case _:

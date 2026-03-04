@@ -59,7 +59,7 @@ def bind_standard[_S: MessagesState, _C: StateLike | None, _I: FlowInput | None,
     if not is_basemodel and doc is None:
         raise ValueError(f"doc parameter is required when result type {result_type} is not a BaseModel")
 
-    tool_doc = "Used to indicate successful completion with result."
+    tool_doc = "Submit your final result. You MUST provide the result value as an argument."
 
     valid: tuple[type[_S], Callable[[_S, Any, str], ValidationResult]] | None = None
     if validator:

@@ -580,7 +580,7 @@ class PipelineApp(App):
         banner_text.append(f"Failures: {n_fail}\n" if n_fail else "All properties succeeded\n")
         if n_fail:
             for f in result.failures:
-                banner_text.append(f"  \u2717 {f.prop.description[:60]}: {f.reason[:40]}\n", style="red")
+                banner_text.append(f"  \u2717 {f.prop.description}: {f.reason}\n", style="red")
         banner_text.append("\nPress q to quit.", style="dim")
 
         await summary.mount(Static(banner_text))

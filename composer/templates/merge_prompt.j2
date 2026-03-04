@@ -46,9 +46,10 @@ Perform the spec merge according to the following rules:
 
 ## Step 3
 
-Deliver the complete merged specification using the result tool.
+Deliver the complete merged specification using the result tool. You MUST pass the full
+merged CVL file as the `value` argument. Do NOT call the result tool with empty arguments.
 
-If the result tool reports a typecheck failure, analyze the error, fix the merge, and retry
+If the result tool reports a typecheck failure, analyze the error, fix the merge, and retry.
 </task>
 
 <guidance>
