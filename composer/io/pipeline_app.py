@@ -26,7 +26,7 @@ from langchain_core.messages import (
     AIMessage, ToolMessage, HumanMessage, SystemMessage,
 )
 
-from composer.io.message_renderer import MessageRenderer, dot, KNOWN_NODES
+from composer.io.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
 from composer.io.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
 from composer.io.event_handler import EventHandler
 from composer.io.ide_bridge import IDEBridge
@@ -285,6 +285,7 @@ class PipelineTaskHandler:
                         widgets = self._renderer.render_ai_turn(m)
                         if widgets:
                             await self._mount_to(target, *widgets)
+                        self._app._tokens.update(m)
                     case SystemMessage():
                         self._renderer.reset_tool_collapsing()
                         coll = Collapsible(Static(m.text()), title="System prompt", collapsed=True)
@@ -306,7 +307,7 @@ class PipelineTaskHandler:
                         )
 
             # Detect working copy spec updates
-            if "curr_spec" in v and isinstance(v["curr_spec"], str):
+            if "curr_spec" in v and isinstance(v["curr_spec"], str) and len(path) == 1:
                 await self.render_content_link(
                     "Working copy updated", v["curr_spec"], "working.spec",
                 )
@@ -364,6 +365,7 @@ class PipelineApp(IDEContentMixin, App):
 
     CSS = """
     #header { dock: top; height: 1; background: $surface; padding: 0 1; }
+    #token-bar { dock: top; height: 1; background: $surface; padding: 0 1; }
     #summary { height: 1fr; padding: 0 1; }
     #summary > * { margin-bottom: 0; }
     .task-row { padding: 0 1; }
@@ -404,6 +406,7 @@ class PipelineApp(IDEContentMixin, App):
 
     def compose(self) -> ComposeResult:
         yield Static("NatSpec Pipeline | ESC: summary | q: quit (when done)", id="header")
+        yield Static("", id="token-bar")
         with ContentSwitcher(id="switcher", initial="summary"):
             yield VerticalScroll(id="summary")
 
@@ -411,6 +414,7 @@ class PipelineApp(IDEContentMixin, App):
         self._work_fn = fn
 
     def on_mount(self) -> None:
+        self._tokens = TokenStats(self.query_one("#token-bar", Static))
         if self._work_fn is not None:
             self.run_worker(self._work_fn(), thread=False)
 

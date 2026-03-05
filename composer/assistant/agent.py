@@ -2,21 +2,32 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import interrupt
 
-from graphcore.graph import build_workflow, FlowInput
+from graphcore.graph import Builder, FlowInput
 
-from composer.assistant.types import OrchestratorState, OrchestratorContext
+from composer.assistant.types import (
+    ConversationTurn,
+    OrchestratorContext,
+    OrchestratorState,
+)
 from composer.assistant.tools import build_tools
-from composer.io.ide_bridge import IDEBridge
 from composer.templates.loader import load_jinja_template
 
 
+def _conversation_node(state: OrchestratorState) -> dict[str, list[BaseMessage]]:
+    last = state["messages"][-1]
+    assert isinstance(last, AIMessage)
+    response = interrupt(ConversationTurn(message=last))
+    return {"messages": [HumanMessage(content=response)]}
+
+
 def build_orchestrator(
-    llm: BaseChatModel,
     workspace: Path,
-    ide: IDEBridge | None,
+    llm: BaseChatModel,
 ) -> CompiledStateGraph[OrchestratorState, OrchestratorContext, FlowInput, Any]:
     """Build and compile the orchestrator agent graph."""
     tools = build_tools(workspace)
@@ -25,18 +36,20 @@ def build_orchestrator(
     initial_prompt = load_jinja_template(
         "orchestrator_prompt.j2",
         workspace=str(workspace),
-        ide_connected=ide is not None,
     )
 
-    graph_builder = build_workflow(
-        state_class=OrchestratorState,
-        input_type=FlowInput,
-        tools_list=tools,
-        sys_prompt=sys_prompt,
-        initial_prompt=initial_prompt,
-        output_key="result",
-        unbound_llm=llm,
-        context_schema=OrchestratorContext,
+    graph = (
+        Builder()
+        .with_state(OrchestratorState)
+        .with_input(FlowInput)
+        .with_context(OrchestratorContext)
+        .with_tools(tools)
+        .with_sys_prompt(sys_prompt)
+        .with_initial_prompt(initial_prompt)
+        .with_output_key("result")
+        .with_llm(llm)
+        .with_conversation(fn=_conversation_node)
+        .compile(checkpointer=MemorySaver())
     )
 
-    return graph_builder[0].compile(checkpointer=MemorySaver())
+    return graph

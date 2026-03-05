@@ -14,7 +14,7 @@ from rich.text import Text
 from composer.io.ide_bridge import IDEBridge
 from composer.io.ide_content import IDEContentMixin
 from composer.io.tool_display import ToolDisplayConfig
-from composer.io.message_renderer import MessageRenderer, dot, KNOWN_NODES
+from composer.io.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
 
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
@@ -24,6 +24,7 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
 
     CSS = """
     #status-bar { dock: top; height: 1; background: $surface; padding: 0 1; }
+    #token-bar { dock: top; height: 1; background: $surface; padding: 0 1; }
     #event-log { height: 1fr; padding: 0 1; }
     #event-log > * { margin-bottom: 1; }
     .interaction-hint { color: $text-muted; padding: 0 1; }
@@ -59,12 +60,14 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
 
     def compose(self) -> ComposeResult:
         yield Static("Session: — | Checkpoint: —", id="status-bar")
+        yield Static("", id="token-bar")
         yield VerticalScroll(id="event-log")
 
     def set_work(self, fn: Callable[[], Coroutine[None, None, None]]):
         self._work_fn = fn
 
     def on_mount(self):
+        self._tokens = TokenStats(self.query_one("#token-bar", Static))
         self._mounted.set()
         if self._work_fn is not None:
             self.run_worker(self._work_fn(), thread=False)
@@ -96,9 +99,7 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
     def _render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
         """Render an AI turn as a list of widgets (not a single collapsible)."""
         widgets = self._renderer.render_ai_turn(msg)
-        # Update status bar if token stats changed
-        if self._renderer.total_input > 0 or self._renderer.total_output > 0:
-            self._update_status_bar()
+        self._tokens.update(msg)
         return widgets
 
     # ── Abstract / overridable methods ────────────────────────
@@ -125,14 +126,7 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
 
     def _update_status_bar(self):
         bar = self.query_one("#status-bar", Static)
-        r = self._renderer
-        parts = [
-            f"Session: {self._session_id}",
-            f"Checkpoint: {self._checkpoint_id}",
-        ]
-        if r.total_input > 0 or r.total_output > 0:
-            parts.append(f"in:{r.total_input} out:{r.total_output} cache:{r.total_cache_read}")
-        bar.update(" | ".join(parts))
+        bar.update(f"Session: {self._session_id} | Checkpoint: {self._checkpoint_id}")
 
     async def log_thread_id(self, tid: str, chosen: bool):
         await self._mounted.wait()

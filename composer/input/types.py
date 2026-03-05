@@ -120,10 +120,13 @@ class ModelOptions(Protocol):
         feature_flag=("memory", True) # default to use if this is not exposed on command line
     )]
 
-class CommandLineArgs(WorkflowOptions, ModelOptions, Protocol):
+class UploadPaths(Protocol):
     spec_file: str
     interface_file: str
     system_doc: str
+
+
+class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, Protocol):
     debug_fs: str
 
     debug: bool

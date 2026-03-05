@@ -2,7 +2,9 @@
 Extracted message rendering logic shared by BaseRichConsoleApp and PipelineTaskHandler.
 
 ``MessageRenderer`` holds per-stream rendering state (tool collapsing, nested
-containers, token stats) and exposes widget-producing methods.
+containers) and exposes widget-producing methods.
+
+``TokenStats`` accumulates token usage from AI messages and updates a display widget.
 """
 
 from textual.containers import VerticalScroll
@@ -32,6 +34,33 @@ def dot(style: str, text: Text | str) -> Text:
     return result
 
 
+class TokenStats:
+    """Accumulates token usage across AI messages and updates a display widget."""
+
+    def __init__(self, display: Static):
+        self._display = display
+        self.input: int = 0
+        self.output: int = 0
+        self.cache_read: int = 0
+        self.cache_write: int = 0
+
+    def update(self, msg: AIMessage) -> None:
+        """Extract usage from the message and refresh the display widget."""
+        if not isinstance(msg.response_metadata, dict):
+            return
+        usage = msg.response_metadata.get("usage")
+        if usage is None:
+            return
+        self.input += usage.get("input_tokens", 0)
+        self.output += usage.get("output_tokens", 0)
+        self.cache_read += usage.get("cache_read_input_tokens", 0)
+        self.cache_write += usage.get("cache_creation_input_tokens", 0)
+        self._display.update(
+            f"in:{self.input:,} out:{self.output:,} "
+            f"cache_read:{self.cache_read:,} cache_write:{self.cache_write:,}"
+        )
+
+
 class MessageRenderer:
     """Per-stream rendering state and widget-producing methods.
 
@@ -47,11 +76,6 @@ class MessageRenderer:
         self._last_tool_group: str | None = None
         self._last_tool_items: list[str] = []
         self._last_tool_widget: Static | None = None
-
-        # Token stats accumulators
-        self.total_input: int = 0
-        self.total_output: int = 0
-        self.total_cache_read: int = 0
 
     def render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
         """Render an AI turn as a list of widgets."""
@@ -99,13 +123,6 @@ class MessageRenderer:
                         widgets.append(Static(dot("green", Text(friendly, style="dim"))))
                 case other:
                     widgets.append(Static(f"Unknown block: {other}"))
-
-        # Accumulate token stats
-        if isinstance(msg.response_metadata, dict) and "usage" in msg.response_metadata:
-            usage = msg.response_metadata["usage"]
-            self.total_input += usage.get("input_tokens", 0)
-            self.total_output += usage.get("output_tokens", 0)
-            self.total_cache_read += usage.get("cache_read_input_tokens", 0)
 
         return widgets
 

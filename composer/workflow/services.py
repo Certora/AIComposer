@@ -198,8 +198,16 @@ def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
     )
     return PostgresMemoryBackend(ns, conn, init_from)
 
+_ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
+
+
 def create_llm(args: ModelOptions) -> BaseChatModel:
     """Create and configure the LLM."""
+    if args.model in _ADAPTIVE_MODELS:
+        thinking: dict[str, Any] = {"type": "adaptive"}
+    else:
+        thinking = {"type": "enabled", "budget_tokens": args.thinking_tokens}
+
     return ChatAnthropic(
         model_name=args.model,
         max_tokens_to_sample=args.tokens,
@@ -207,7 +215,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         timeout=None,
         max_retries=2,
         stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
+        thinking=thinking,
         betas=([
             "files-api-2025-04-14",
             "context-management-2025-06-27"

@@ -1,75 +1,112 @@
 from pathlib import Path
-from typing import Literal
-
-from pydantic import BaseModel, Field
 
 from langchain_core.tools import BaseTool
+from langgraph.runtime import get_runtime
+from langgraph.types import interrupt
 
 from graphcore.tools.vfs import fs_tools
-from graphcore.tools.human import human_interaction_tool
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.memory import FileSystemMemoryBackend, memory_tool
+from graphcore.tools.schemas import WithAsyncImplementation
 
-from composer.assistant.types import OrchestratorState
-
-
-class ProposeCodegen(BaseModel):
-    """Propose running the code generation workflow to synthesize an implementation."""
-    type: Literal["propose_codegen"]
-    explanation: str = Field(description="Why codegen was selected and how args were inferred")
-    spec_file: str = Field(description="Relative path to CVL spec file (.spec)")
-    interface_file: str = Field(description="Relative path to Solidity interface file (.sol)")
-    system_doc: str = Field(description="Relative path to system/design document (.md)")
-
-
-class ProposeNatSpec(BaseModel):
-    """Propose running the natural language to CVL specification generation workflow."""
-    type: Literal["propose_natspec"]
-    explanation: str = Field(description="Why natspec was selected and how args were inferred")
-    input_file: str = Field(description="Relative path to design/system document")
+from composer.assistant.types import OrchestratorContext
+from composer.assistant.launch_args import (
+    LaunchCodegenArgs,
+    LaunchNatSpecArgs,
+    LaunchResumeArgs,
+)
+from composer.assistant.codegen_launch import launch_codegen_workflow, launch_resume_workflow
+from composer.assistant.natspec_launch import launch_natspec_workflow
 
 
-class ProposeResume(BaseModel):
-    """Propose resuming a previous code generation workflow with updated files."""
-    type: Literal["propose_resume"]
-    explanation: str = Field(description="Human-readable description of what will be resumed")
-    thread_id: str = Field(description="Thread ID of the previous workflow (read from /memories/)")
-    working_dir: str = Field(description="Path to the directory with current/updated files")
-    commentary: str = Field(description="Description of changes since last run", default="")
+# ---------------------------------------------------------------------------
+# Confirmation gate
+# ---------------------------------------------------------------------------
+
+_APPROVED = "yes"
+_REJECTED = "no"
 
 
-class AskUser(BaseModel):
-    """Ask the user a question when you need clarification."""
-    type: Literal["ask_user"]
-    question: str = Field(description="The question to ask")
-    context: str = Field(description="Context for the question")
+def _check_confirmation(response: str) -> str | None:
+    """Return None if approved, or a rejection message string."""
+    if response == _APPROVED:
+        return None
+    if response == _REJECTED:
+        return "User rejected the launch."
+    return f"User rejected with feedback: {response}"
 
 
-ProposalType = ProposeCodegen | ProposeNatSpec | ProposeResume
-InteractionPayload = ProposalType | AskUser
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
 
+class LaunchCodegenTool(LaunchCodegenArgs, WithAsyncImplementation[str]):
+    """Launch the code generation workflow. The user will be asked to confirm before proceeding."""
+
+    async def run(self) -> str:
+        ctx = get_runtime(OrchestratorContext).context
+        response = interrupt(LaunchCodegenArgs(
+            spec_file=self.spec_file,
+            interface_file=self.interface_file,
+            system_doc=self.system_doc,
+        ))
+        if (r := _check_confirmation(response)) is not None:
+            return r
+        return await launch_codegen_workflow(self, ctx)
+
+
+class LaunchResumeTool(LaunchResumeArgs, WithAsyncImplementation[str]):
+    """Resume a previous code generation workflow. The user will be asked to confirm before proceeding."""
+
+    async def run(self) -> str:
+        ctx = get_runtime(OrchestratorContext).context
+        response = interrupt(LaunchResumeArgs(
+            thread_id=self.thread_id,
+            working_dir=self.working_dir,
+            commentary=self.commentary,
+        ))
+        if (r := _check_confirmation(response)) is not None:
+            return r
+        return await launch_resume_workflow(self, ctx)
+
+
+class LaunchNatSpecTool(LaunchNatSpecArgs, WithAsyncImplementation[str]):
+    """Launch the NatSpec multi-agent pipeline. The user will be asked to confirm before proceeding."""
+
+    async def run(self) -> str:
+        ctx = get_runtime(OrchestratorContext).context
+        response = interrupt(LaunchNatSpecArgs(
+            input_file=self.input_file,
+            contract_name=self.contract_name,
+            solc_version=self.solc_version,
+            cache_namespace=self.cache_namespace,
+            memory_namespace=self.memory_namespace
+        ))
+        if (r := _check_confirmation(response)) is not None:
+            return r
+        return await launch_natspec_workflow(self, ctx)
+
+
+# ---------------------------------------------------------------------------
+# Public
+# ---------------------------------------------------------------------------
 
 def build_tools(workspace: Path) -> list[BaseTool]:
     """Build all tools for the orchestrator agent."""
-    project_tools = fs_tools(str(workspace), cache_listing=False, forbidden_read=r"^\.composer/.+$")
-
+    project_tools = fs_tools(
+        str(workspace), cache_listing=False, forbidden_read=r"^\.composer/.+$"
+    )
     mem = memory_tool(FileSystemMemoryBackend(workspace / ".composer"))
-
-    propose_codegen = human_interaction_tool(
-        ProposeCodegen, OrchestratorState, "propose_codegen"
-    )
-    propose_natspec = human_interaction_tool(
-        ProposeNatSpec, OrchestratorState, "propose_natspec"
-    )
-    propose_resume = human_interaction_tool(
-        ProposeResume, OrchestratorState, "propose_resume"
-    )
-    ask_user = human_interaction_tool(
-        AskUser, OrchestratorState, "ask_user"
-    )
 
     done = result_tool_generator(
         "result", (str, "Exit message"), "Call when the user wants to quit."
     )
 
-    return [*project_tools, mem, propose_codegen, propose_natspec, propose_resume, ask_user, done]
+    return [
+        *project_tools,
+        mem,
+        LaunchCodegenTool.as_tool("launch_codegen"),
+        LaunchResumeTool.as_tool("launch_resume"),
+        LaunchNatSpecTool.as_tool("launch_natspec"),
+        done,
+    ]

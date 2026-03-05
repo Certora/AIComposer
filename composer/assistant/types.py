@@ -1,15 +1,38 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import NotRequired, Optional
+from typing import NotRequired
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage
 from langgraph.graph import MessagesState
 
 from composer.io.ide_bridge import IDEBridge
+from composer.assistant.launch_args import (
+    LaunchCodegenArgs,
+    LaunchNatSpecArgs,
+    LaunchResumeArgs,
+)
 
 
 class OrchestratorState(MessagesState):
     result: NotRequired[str]
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+@dataclass
+class OrchestratorModelConfig:
+    """Typed configuration for LLM + service options.
+
+    Satisfies both ``ModelOptions`` and ``RAGDBOptions`` protocols.
+    """
+    model: str
+    tokens: int
+    thinking_tokens: int
+    memory_tool: bool
+    rag_db: str
 
 
 @dataclass
@@ -17,38 +40,18 @@ class OrchestratorContext:
     workspace: Path
     ide: IDEBridge | None
     llm: BaseChatModel
+    config: OrchestratorModelConfig
 
 
-@dataclass
-class CodegenWorkflowArgs:
-    """Satisfies WorkflowOptions protocol for programmatic invocation."""
-    prover_capture_output: bool = True
-    prover_keep_folders: bool = False
-    debug_prompt_override: Optional[str] = None
-    recursion_limit: int = 50
-    audit_db: str = ""
-    summarization_threshold: Optional[int] = None
-    requirements_oracle: list[str] = field(default_factory=list)
-    set_reqs: Optional[str] = None
-    skip_reqs: bool = False
-    rag_db: str = ""
-    checkpoint_id: Optional[str] = None
-    thread_id: Optional[str] = None
-    model: str = "claude-opus-4-6"
-    tokens: int = 10_000
-    thinking_tokens: int = 2048
-    memory_tool: bool = True
+# ---------------------------------------------------------------------------
+# Interrupt payloads (discriminated union)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ConversationTurn:
+    """Conversation-mode interrupt: LLM emitted a message with no tool calls."""
+    message: AIMessage
 
 
-@dataclass
-class NatSpecWorkflowArgs:
-    """Satisfies NatSpecArgs protocol for programmatic invocation."""
-    input_file: str = ""
-    model: str = "claude-opus-4-6"
-    tokens: int = 10_000
-    thinking_tokens: int = 2048
-    memory_tool: bool = True
-    rag_db: str = ""
-    checkpoint_id: Optional[str] = None
-    thread_id: Optional[str] = None
-    recursion_limit: int = 50
+type ConfirmLaunch = LaunchCodegenArgs | LaunchNatSpecArgs | LaunchResumeArgs
+type OrchestratorInterrupt = ConversationTurn | ConfirmLaunch
