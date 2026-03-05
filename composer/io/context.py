@@ -1,3 +1,28 @@
+"""
+Context-scoped handler installation and graph execution.
+
+This module is the glue between graph execution and event handling.
+It provides two public entry points:
+
+``with_handler(io_handler, event_handler)``
+    Async context manager that installs a handler pair into a
+    ``ContextVar``, creates an ``EventQueue``, and runs a
+    background ``_queue_drainer`` task.  All ``run_graph()`` calls
+    within the scope push events to this queue.
+
+``run_graph(graph, ctxt, input, run_conf, description)``
+    High-level wrapper that reads the installed handlers from the
+    context, constructs an event sink (with automatic nesting
+    support), and delegates to ``graph_runner.run_graph()``.  Also
+    bridges HITL interrupts to ``IOHandler.human_interaction()``.
+
+Nesting is automatic: if ``run_graph()`` is called while another
+``run_graph()`` is already active (same ``with_handler`` scope),
+the inner call's sink wraps events with ``Nested(event,
+parent_id=outer_tid)`` before pushing to the queue.  The drainer
+peels these layers to reconstruct the full execution path.
+"""
+
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
 
@@ -24,10 +49,12 @@ from composer.io.graph_runner import SinkProtocol, run_graph as _run_graph
 
 _io_handler : ContextVar[None | tuple[EventQueue, IOHandler[Any, Any], EventHandler]] = ContextVar("_io_handler", default=None)
 
-# Tracks the current event sink and thread_id for nesting detection.
-# Set by run_graph; if non-None when a new run_graph starts, the new
-# call is nested and wraps the sink with Nested(...).
 _current_sink : ContextVar[tuple[SinkProtocol, str] | None] = ContextVar("_current_sink", default=None)
+"""Tracks the active event sink and thread_id for nesting detection.
+
+Set by ``run_graph()``; when non-None at the start of a new
+``run_graph()`` call, the new call is nested and wraps the parent's
+sink with ``Nested(...)``."""
 
 
 def _unwrap(event: AllEvents) -> tuple[list[str], InnerEvent]:
@@ -44,6 +71,13 @@ async def _queue_drainer(
     h: IOHandler[Any, Any],
     event_handler: EventHandler
 ):
+    """Background task: consume events and dispatch to handlers.
+
+    Structural events (``Start``, ``End``, ``StateUpdate``,
+    ``NextCheckpoint``) go to the ``IOHandler``.  ``CustomUpdate``
+    events go to the ``EventHandler``.  ``Nested`` wrappers are
+    peeled off to reconstruct the execution path.
+    """
     async for e in q.stream_events():
         (parents, inner) = _unwrap(e)
         match inner:
@@ -64,6 +98,12 @@ async def with_handler(
     h: IOHandler[Any, Any],
     event_handler: EventHandler
 ):
+    """Install a handler pair and run a background drainer for this scope.
+
+    All ``run_graph()`` calls within the scope push events to the
+    same ``EventQueue``.  On exit, the drainer is cancelled and
+    the context var is restored.
+    """
     ev_queue = EventQueue(
         asyncio.Event(),
         []
@@ -90,6 +130,15 @@ async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     description: str,
     within_tool: str | None = None,
 ) -> S:
+    """Execute a graph within the current ``with_handler`` scope.
+
+    Constructs an event sink that pushes to the scope's
+    ``EventQueue``.  If another ``run_graph()`` is already active
+    in the same scope, the sink wraps events with ``Nested`` so
+    the drainer can reconstruct the execution path.
+
+    HITL interrupts are bridged to ``IOHandler.human_interaction()``.
+    """
     curr_io = _io_handler.get()
     if curr_io is None:
         raise ValueError("No IO handler installed")

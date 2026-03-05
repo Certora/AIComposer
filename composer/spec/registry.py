@@ -17,6 +17,7 @@ from typing import NotRequired, override
 from pydantic import BaseModel, Field as PydanticField
 
 from langchain_core.tools import BaseTool
+from langgraph.config import get_stream_writer
 from langgraph.graph import MessagesState
 from langgraph.store.base import BaseStore
 
@@ -25,6 +26,7 @@ from graphcore.tools.schemas import WithAsyncImplementation
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
+from composer.spec.pipeline_events import StubUpdate
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +276,11 @@ class StubRegistry:
                 ))
                 self._write_field_metadata(field_metadata)
                 self._write_stub(result.updated_stub)
+                evt: StubUpdate = {
+                    "type": "stub_update",
+                    "stub": result.updated_stub,
+                }
+                get_stream_writer()(evt)
 
             return result.field_name
 

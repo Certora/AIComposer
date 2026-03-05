@@ -7,7 +7,7 @@ the jtoman/auto-prover branch.
 from typing import override
 from typing_extensions import TypedDict
 
-from langchain_core.messages import ToolMessage, HumanMessage
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 from pydantic import Field
@@ -50,10 +50,6 @@ class ExplicitThinking(
     def run(self) -> Command:
         return Command(update={"messages": [
             ToolMessage(tool_call_id=self.tool_call_id, content="Thought recorded."),
-            HumanMessage(
-                content="Now, consider your current thought process and carefully evaluate how to proceed.",
-                display_tag="thinking_nudge"
-            ),
         ]})
 
 

@@ -1,3 +1,16 @@
+"""
+Low-level graph execution with event emission.
+
+Streams a compiled LangGraph graph and translates each stream item
+into an event pushed to the caller-supplied sink.  Handles HITL
+interrupts by delegating to a ``human_handler`` callback.
+
+This module knows nothing about queues, handlers, or nesting — it
+just writes events to the sink it is given.  The higher-level
+``context.run_graph()`` sets up the sink (with nesting support)
+and connects it to the ``EventQueue`` / drainer infrastructure.
+"""
+
 from typing import Any, Protocol, Callable, Awaitable, cast
 
 from composer.io.events import AllEvents, NextCheckpoint, CustomUpdate, Start, End, StateUpdate
@@ -10,6 +23,7 @@ from langchain_core.runnables import RunnableConfig
 
 
 class SinkProtocol(Protocol):
+    """Write-only event sink.  Synchronous — must not block."""
     def __call__(self, event: AllEvents) -> None:
         ...
 
@@ -26,6 +40,16 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     human_handler: HumanHandler[H, S] | None = None,
     within_tool: str | None = None,
 ) -> S:
+    """Stream a graph to completion, emitting events to *event_sink*.
+
+    Emits ``Start`` on entry, ``End`` on exit (in ``finally``), and
+    ``StateUpdate`` / ``NextCheckpoint`` / ``CustomUpdate`` as the
+    graph produces output.
+
+    When the graph raises an ``__interrupt__``, calls
+    *human_handler* with the interrupt value and current state, then
+    resumes with the returned string.
+    """
     config = run_conf.get("configurable", None)
     if config is None or "thread_id" not in config:
         raise ValueError("`configurable` must be set in graph config with thread_id")

@@ -22,6 +22,7 @@ from typing import NotRequired, override
 from pydantic import Field
 
 from langchain_core.tools import BaseTool
+from langgraph.config import get_stream_writer
 from langgraph.graph import MessagesState
 from langgraph.types import Command
 
@@ -29,6 +30,7 @@ from graphcore.graph import FlowInput, tool_output, tool_return
 from graphcore.tools.schemas import WithInjectedState, WithInjectedId, WithAsyncImplementation
 
 from composer.spec.cas import SharedArtifact
+from composer.spec.pipeline_events import MasterSpecUpdate
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.cvl_generation import CVLGenerationState, StateValidator
@@ -261,6 +263,11 @@ def make_publish_tools(
                     )
 
                 write_master(merge_result.merged_spec)
+                evt: MasterSpecUpdate = {
+                    "type": "master_spec_update",
+                    "spec": merge_result.merged_spec,
+                }
+                get_stream_writer()(evt)
                 return tool_output(
                     self.tool_call_id,
                     res={"result": self.commentary},

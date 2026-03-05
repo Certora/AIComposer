@@ -12,13 +12,14 @@ from textual.validation import Validator
 from rich.text import Text
 
 from composer.io.ide_bridge import IDEBridge
+from composer.io.ide_content import IDEContentMixin
 from composer.io.tool_display import ToolDisplayConfig
 from composer.io.message_renderer import MessageRenderer, dot, KNOWN_NODES
 
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
 
-class BaseRichConsoleApp[H, P](App):
+class BaseRichConsoleApp[H, P](IDEContentMixin, App):
     """Base Textual TUI for workflow IO, parameterized by human interaction (H) and progress (P) types."""
 
     CSS = """
@@ -54,7 +55,7 @@ class BaseRichConsoleApp[H, P](App):
         self._checkpoint_id = "—"
         self._work_fn: Callable[[], Coroutine[None, None, None]] | None = None
         self._show_checkpoints = show_checkpoints
-        self._ide: IDEBridge | None = ide
+        self._init_ide_content(ide)
 
     def compose(self) -> ComposeResult:
         yield Static("Session: — | Checkpoint: —", id="status-bar")
@@ -91,21 +92,6 @@ class BaseRichConsoleApp[H, P](App):
     def _reset_tool_collapsing(self):
         """Reset consecutive tool call collapsing state."""
         self._renderer.reset_tool_collapsing()
-
-    async def _ide_show_file(self, content: str, path: str, lang: str | None) -> None:
-        try:
-            assert self._ide is not None
-            await self._ide.show_file(content, path, lang=lang)
-        except Exception as exc:
-            self.notify(f"Failed to open {path} (lang={lang}): {exc}", severity="warning")
-
-    @staticmethod
-    def _guess_lang(path: str) -> str | None:
-        if path.endswith(".sol"):
-            return "solidity"
-        elif path.endswith(".json"):
-            return "json"
-        return None
 
     def _render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
         """Render an AI turn as a list of widgets (not a single collapsible)."""

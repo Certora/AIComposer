@@ -47,8 +47,6 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         self._analysis_col: ColumnKey | None = None
         self._rule_row_keys: dict[str, RowKey] = {}
         self._rule_analyses: dict[str, str] = {}
-        self._vfs_snapshots: dict[int, tuple[list[str], dict[str, str]]] = {}
-        self._next_snap_id: int = 0
 
     # ── Abstract method implementations ───────────────────────
 
@@ -133,16 +131,10 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         }
 
         if self._ide is not None:
-            snap_id = self._next_snap_id
-            self._next_snap_id += 1
-            self._vfs_snapshots[snap_id] = (names, contents)
             links = []
-            for idx, name in enumerate(names):
-                escaped = name.replace("[", "\\[")
-                links.append(
-                    f"[@click=app.show_vfs_file({snap_id}, {idx})]"
-                    f"[bold underline cyan]{escaped}[/bold underline cyan][/]"
-                )
+            for name in names:
+                snap_id = self._store_snapshot(name, contents[name], name)
+                links.append(self._make_content_link_markup(snap_id, name))
             markup = f"[cyan]{_DOT}[/cyan]Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
             widget = Static(markup, classes="vfs-change")
         else:
@@ -171,20 +163,6 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         if "prover output was too large" in content:
             return ("Prover violation summary", False)
         return ("Initial prompt", True)
-
-    # ── VFS file actions ──────────────────────────────────────
-
-    def action_show_vfs_file(self, snap_id: int, file_idx: int) -> None:
-        snap = self._vfs_snapshots.get(snap_id)
-        if snap is None or self._ide is None:
-            return
-        names, contents = snap
-        if file_idx < 0 or file_idx >= len(names):
-            return
-        path = names[file_idx]
-        content = contents[path]
-        lang = self._guess_lang(path)
-        self.run_worker(self._ide_show_file(content, path, lang), thread=False)
 
     # ── DataTable cell click (analysis view) ──────────────────
 

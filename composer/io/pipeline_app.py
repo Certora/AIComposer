@@ -10,14 +10,16 @@ collapsible sections.
 
 import asyncio
 import enum
+import pathlib
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, cast
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static, Input, Collapsible, ContentSwitcher
 from textual.binding import Binding
 
+from rich.syntax import Syntax
 from rich.text import Text
 
 from langchain_core.messages import (
@@ -26,8 +28,11 @@ from langchain_core.messages import (
 
 from composer.io.message_renderer import MessageRenderer, dot, KNOWN_NODES
 from composer.io.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
-from composer.io.event_handler import NullEventHandler
+from composer.io.event_handler import EventHandler
+from composer.io.ide_bridge import IDEBridge
+from composer.io.ide_content import IDEContentMixin
 from composer.spec.pipeline import Phase, TaskInfo, TaskHandle, PipelineResult
+from composer.spec.pipeline_events import NatspecEvent
 from composer.spec.ptypes import HumanQuestionSchema
 
 
@@ -151,6 +156,29 @@ def _render_row(label: str, status: TaskStatus) -> Text:
 
 
 # ---------------------------------------------------------------------------
+# PipelineEventHandler — routes stream writer events to the task panel
+# ---------------------------------------------------------------------------
+
+class PipelineEventHandler(EventHandler):
+    """Routes ``NatspecEvent`` payloads to the task panel as content links."""
+
+    def __init__(self, handler: "PipelineTaskHandler"):
+        self._handler = handler
+
+    async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
+        evt = cast(NatspecEvent, payload)
+        match evt["type"]:
+            case "master_spec_update":
+                await self._handler.render_content_link(
+                    "Master spec updated", evt["spec"], "input.spec",
+                )
+            case "stub_update":
+                await self._handler.render_content_link(
+                    "Stub updated", evt["stub"], "Impl.sol",
+                )
+
+
+# ---------------------------------------------------------------------------
 # PipelineTaskHandler — per-task IOHandler
 # ---------------------------------------------------------------------------
 
@@ -199,6 +227,14 @@ class PipelineTaskHandler:
         # Auto-scroll the panel
         if target.max_scroll_y - target.scroll_y <= 3:
             target.scroll_end(animate=False)
+
+    # ── Content links ───────────────────────────────────────
+
+    async def render_content_link(self, label: str, content: str, filename: str) -> None:
+        """Mount a clickable content link in the task panel."""
+        snap_id = self._app._store_snapshot(label, content, filename)
+        widget = self._app._make_content_link_widget(snap_id, label, filename)
+        await self._mount_to(self._panel, widget)
 
     # ── IOHandler protocol ────────────────────────────────────
 
@@ -269,6 +305,12 @@ class PipelineTaskHandler:
                             Static(Text(f"[Message: {type(m).__name__}]", style="dim")),
                         )
 
+            # Detect working copy spec updates
+            if "curr_spec" in v and isinstance(v["curr_spec"], str):
+                await self.render_content_link(
+                    "Working copy updated", v["curr_spec"], "working.spec",
+                )
+
     async def progress_update(self, path: list[str], upd: Any) -> None:
         pass  # no-op for pipeline tasks
 
@@ -288,8 +330,9 @@ class PipelineTaskHandler:
         hint_widget = Static("Type your response and press Enter", classes="interaction-hint")
         input_widget = Input(placeholder="Type here...", validate_on=["submitted"])
 
-        # Register for HITL routing — direct object reference
-        self._app._active_inputs[input_widget] = self
+        # Register for input routing
+        self._app._active_inputs[input_widget] = self._input_queue
+        self._app._hitl_inputs[self._task_id] = input_widget
 
         await self._mount_to(self._panel, prompt_widget, input_widget, hint_widget)
         input_widget.focus()
@@ -299,6 +342,7 @@ class PipelineTaskHandler:
 
         # Deregister and clean up
         del self._app._active_inputs[input_widget]
+        self._app._hitl_inputs.pop(self._task_id, None)
         await prompt_widget.remove()
         await input_widget.remove()
         await hint_widget.remove()
@@ -315,7 +359,7 @@ class PipelineTaskHandler:
 # PipelineApp — top-level Textual app
 # ---------------------------------------------------------------------------
 
-class PipelineApp(App):
+class PipelineApp(IDEContentMixin, App):
     """Textual TUI for the NatSpec multi-agent pipeline."""
 
     CSS = """
@@ -326,6 +370,7 @@ class PipelineApp(App):
     .task-row:hover { background: $surface; }
     .task-panel { height: 1fr; padding: 0 1; }
     .task-panel > * { margin-bottom: 1; }
+    .content-pane { height: 1fr; padding: 0 1; }
     .nested-workflow { margin-left: 2; border-left: solid $secondary; padding-left: 1; }
     .interaction-hint { color: $text-muted; padding: 0 1; }
     Collapsible { background: transparent; border: none; padding: 0; }
@@ -338,12 +383,16 @@ class PipelineApp(App):
         Binding("q", "quit_app", "Quit", show=False),
     ]
 
-    def __init__(self):
+    def __init__(self, ide: IDEBridge | None = None):
         super().__init__()
+        self._init_ide_content(ide)
         self._handlers: dict[str, PipelineTaskHandler] = {}
-        self._active_inputs: dict[Input, PipelineTaskHandler] = {}
+        self._active_inputs: dict[Input, asyncio.Queue[str]] = {}
+        self._hitl_inputs: dict[str, Input] = {}
         self._work_fn: Callable[[], Coroutine[None, None, None]] | None = None
         self._pipeline_done = False
+        self._previous_view: str | None = None
+        self._content_pane_ids: set[str] = set()
 
         # Phase section tracking: section_label -> Collapsible widget
         self._phase_sections: dict[str, Collapsible] = {}
@@ -369,7 +418,48 @@ class PipelineApp(App):
 
     def action_go_back(self) -> None:
         switcher = self.query_one("#switcher", ContentSwitcher)
+        current = switcher.current
+
+        # If viewing a content pane, go back to where we came from and clean up
+        if current is not None and current in self._content_pane_ids:
+            pane = switcher.query_one(f"#{current}")
+            self._content_pane_ids.discard(current)
+            switcher.current = self._previous_view or "summary"
+            self._previous_view = None
+            pane.remove()
+            return
+
         switcher.current = "summary"
+
+    def _show_content_fallback(
+        self, snap_id: int, label: str, content: str, filename: str,
+    ) -> None:
+        """No-IDE fallback: open content in a temporary ContentSwitcher pane."""
+        self.run_worker(self._mount_content_pane(label, content, filename), thread=False)
+
+    async def _mount_content_pane(self, label: str, content: str, filename: str) -> None:
+        switcher = self.query_one("#switcher", ContentSwitcher)
+
+        pane_id = f"snap-{self._next_snap_id}"
+        self._content_pane_ids.add(pane_id)
+
+        lang = self._guess_lang(filename) or "text"
+        syntax = Syntax(content, lang, theme="monokai", line_numbers=True)
+
+        pane = VerticalScroll(id=pane_id, classes="content-pane")
+        pane.display = False
+        await switcher.mount(pane)
+        await pane.mount(
+            Static(Text.assemble(
+                (f"{label} ", "bold"),
+                (filename, "cyan"),
+                ("  (ESC to go back)", "dim"),
+            )),
+            Static(syntax),
+        )
+
+        self._previous_view = switcher.current
+        switcher.current = pane_id
 
     def action_quit_app(self) -> None:
         if self._pipeline_done:
@@ -415,7 +505,7 @@ class PipelineApp(App):
 
         return TaskHandle(
             handler=handler,
-            event_handler=NullEventHandler(),
+            event_handler=PipelineEventHandler(handler),
             on_start=handler.mark_running,
             on_done=handler.mark_done,
             on_error=handler.mark_error,
@@ -428,8 +518,8 @@ class PipelineApp(App):
         if not value:
             return
 
-        handler = self._active_inputs.get(event.input)
-        if handler is None:
+        queue = self._active_inputs.get(event.input)
+        if queue is None:
             return
 
         if event.validation_result and not event.validation_result.is_valid:
@@ -438,7 +528,7 @@ class PipelineApp(App):
             return
 
         event.input.disabled = True
-        handler._input_queue.put_nowait(value)
+        queue.put_nowait(value)
 
     # ── Navigation ────────────────────────────────────────────
 
@@ -448,12 +538,9 @@ class PipelineApp(App):
         switcher.current = task_id
 
         # If the task is waiting for HITL, focus its input
-        handler = self._handlers.get(task_id)
-        if handler and handler._status == TaskStatus.WAITING_HITL:
-            for inp, h in self._active_inputs.items():
-                if h is handler:
-                    inp.focus()
-                    break
+        inp = self._hitl_inputs.get(task_id)
+        if inp is not None:
+            inp.focus()
 
     # ── Summary management ────────────────────────────────────
 
@@ -567,10 +654,12 @@ class PipelineApp(App):
     # ── Pipeline completion ───────────────────────────────────
 
     async def on_pipeline_done(self, result: PipelineResult) -> None:
-        """Show completion banner and enable quit."""
+        """Show completion banner, preview results, and enable quit."""
         self._pipeline_done = True
 
         summary = self.query_one("#summary", VerticalScroll)
+        switcher = self.query_one("#switcher", ContentSwitcher)
+        switcher.current = "summary"
 
         n_fail = len(result.failures)
 
@@ -581,13 +670,86 @@ class PipelineApp(App):
         if n_fail:
             for f in result.failures:
                 banner_text.append(f"  \u2717 {f.prop.description}: {f.reason}\n", style="red")
-        banner_text.append("\nPress q to quit.", style="dim")
 
         await summary.mount(Static(banner_text))
 
-        # Switch back to summary so user sees the result
-        switcher = self.query_one("#switcher", ContentSwitcher)
-        switcher.current = "summary"
+        files: dict[str, str] = {
+            "input.spec": result.spec,
+            "Impl.sol": result.stub,
+            "Intf.sol": result.interface,
+        }
+
+        if self._ide is not None:
+            preview_id: str | None = None
+            try:
+                preview_id = await self._ide.preview_results(files)
+            except Exception:
+                self.notify("Failed to preview results in VS Code", severity="warning")
+
+            if preview_id is not None:
+                await self._show_accept_reject_prompt(summary, preview_id)
+            else:
+                await summary.mount(
+                    Static(Text("Preview unavailable.", style="dim"))
+                )
+        else:
+            # No IDE — write files to disk and show expanded
+            out_dir = pathlib.Path.cwd()
+            for path, content in files.items():
+                (out_dir / path).write_text(content)
+                lexer = self._guess_lang(path) or "text"
+                syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
+                coll = Collapsible(Static(syntax), title=path, collapsed=False)
+                await summary.mount(coll)
+            await summary.mount(
+                Static(Text(f"Wrote {len(files)} file(s) to {out_dir}", style="bold green"))
+            )
+
+        await summary.mount(Static(Text("Press q to quit.", style="dim")))
+
+    async def _show_accept_reject_prompt(
+        self,
+        summary: VerticalScroll,
+        preview_id: str,
+    ) -> None:
+        """Show ACCEPT/REJECT prompt and handle the IDE preview lifecycle."""
+        assert self._ide is not None
+
+        prompt_widget = Static(Text.assemble(
+            ("Results previewed in VS Code.\n", "bold"),
+            ("Type ACCEPT to write files or REJECT to discard.", "dim"),
+        ))
+        hint_widget = Static("Response must be ACCEPT or REJECT", classes="interaction-hint")
+        input_widget = Input(placeholder="ACCEPT / REJECT", validate_on=["submitted"])
+
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        self._active_inputs[input_widget] = queue
+
+        await summary.mount(prompt_widget, input_widget, hint_widget)
+        input_widget.focus()
+
+        response = await queue.get()
+        del self._active_inputs[input_widget]
+
+        await prompt_widget.remove()
+        await input_widget.remove()
+        await hint_widget.remove()
+
+        decision = response.strip().upper()
+        if decision == "ACCEPT":
+            try:
+                written = await self._ide.accept_results(preview_id)
+                await summary.mount(
+                    Static(Text(f"Results accepted — wrote {len(written)} file(s).", style="bold green"))
+                )
+            except Exception:
+                self.notify("Failed to accept results in VS Code", severity="warning")
+        else:
+            try:
+                await self._ide.reject_results(preview_id)
+            except Exception:
+                pass
+            await summary.mount(Static(Text("Results rejected.", style="yellow")))
 
     def on_click(self, event: Any) -> None:
         """Handle clicks on summary rows to drill into task panels."""
