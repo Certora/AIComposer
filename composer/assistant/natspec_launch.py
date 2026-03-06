@@ -6,7 +6,7 @@ from langchain_core.tools import BaseTool
 from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
-from graphcore.graph import Builder, FlowInput
+from graphcore.graph import Builder
 from graphcore.tools.memory import memory_tool as make_memory_tool
 
 from composer.assistant.launch_args import LaunchNatSpecArgs
@@ -16,7 +16,7 @@ from composer.kb.knowledge_base import kb_tools
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.context import (
-    WorkflowContext, Builders, SystemDoc, get_system_doc,
+    WorkflowContext, SystemDoc, PlainBuilder, CVLOnlyBuilder, get_system_doc,
 )
 from composer.spec.pipeline import run_natspec_pipeline, PipelineResult
 from composer.spec.util import string_hash
@@ -45,19 +45,11 @@ class _PipelineServices:
 
 def _make_builders(
     llm: BaseChatModel, rag_db: PostgreSQLRAGDatabase,
-) -> Builders:
-    base: Builder[None, None, FlowInput] = (
-        Builder()
-        .with_llm(llm)
-        .with_loader(load_jinja_template)
-        .with_input(FlowInput)
-    )
+) -> tuple[PlainBuilder, CVLOnlyBuilder, CVLOnlyBuilder]:
+    base = Builder().with_llm(llm).with_loader(load_jinja_template)
     cvl_tools = cvl_manual_tools(rag_db)
-    return Builders(
-        source=base,
-        cvl=base.with_tools(cvl_tools),
-        cvl_only=base.with_tools(cvl_tools),
-    )
+    cvl = base.with_tools(cvl_tools)
+    return base, cvl, cvl
 
 
 async def launch_natspec_workflow(
@@ -78,7 +70,7 @@ async def launch_natspec_workflow(
     )
 
     services = _PipelineServices(checkpointer, store)
-    builders = _make_builders(pipeline_llm, rag_db)
+    analysis_builder, cvl_authorship, cvl_research = _make_builders(pipeline_llm, rag_db)
 
     thread_id = f"pipeline_{uuid.uuid4().hex[:12]}"
     cache_root = (args.cache_namespace, string_hash(str(system_doc.content))) if args.cache_namespace else None
@@ -102,7 +94,9 @@ async def launch_natspec_workflow(
                 system_doc=system_doc,
                 contract_name=args.contract_name,
                 solc_version=args.solc_version,
-                builders=builders,
+                analysis_builder=analysis_builder,
+                cvl_authorship=cvl_authorship,
+                cvl_research=cvl_research,
                 ctx=wf_ctx,
                 store=store,
                 handler_factory=app.make_handler,

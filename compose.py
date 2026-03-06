@@ -89,6 +89,9 @@ async def main() -> int:
             description="Orchestrator",
             human_handler=handler.on_interrupt,
         )
+    except EOFError:
+        console.print("\n[dim]Goodbye.[/dim]")
+        return 0
     finally:
         drainer.cancel()
         try:

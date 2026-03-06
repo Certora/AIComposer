@@ -2,13 +2,13 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional
 
-from composer.assistant.launch_args import LaunchCodegenArgs, LaunchResumeArgs
+from composer.assistant.launch_args import LaunchCodegenArgs, LaunchResumeArgs, CommonCodeGen
 from composer.assistant.types import OrchestratorContext
 from composer.audit.db import DEFAULT_CONNECTION as AUDIT_DEFAULT
 from composer.input.files import upload_input
 from composer.input.types import ResumeFSData
 from composer.io.codegen_rich import CodeGenRichApp
-from composer.io.ide_bridge import IDEBridge
+from composer.io.protocol import WorkflowPurpose
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.workflow.services import create_llm
 
@@ -27,16 +27,17 @@ class _CodegenUploadPaths:
 @dataclass
 class CodegenWorkflowArgs:
     """Satisfies WorkflowOptions protocol for programmatic invocation."""
+    audit_db: str
+    rag_db: str
     prover_capture_output: bool = True
     prover_keep_folders: bool = False
+    local_prover: bool = False
     debug_prompt_override: Optional[str] = None
-    recursion_limit: int = 50
-    audit_db: str = ""
-    summarization_threshold: Optional[int] = None
+    recursion_limit: int = 100
+    summarization_threshold: Optional[int] = 50
     requirements_oracle: list[str] = field(default_factory=list)
     set_reqs: Optional[str] = None
     skip_reqs: bool = False
-    rag_db: str = ""
     checkpoint_id: Optional[str] = None
     thread_id: Optional[str] = None
     model: str = "claude-opus-4-6"
@@ -45,19 +46,7 @@ class CodegenWorkflowArgs:
     memory_tool: bool = True
 
 
-class ThreadIdCapture(CodeGenRichApp):
-    """CodeGen app that captures the assigned thread ID."""
-
-    def __init__(self, ide: IDEBridge | None = None):
-        super().__init__(ide=ide)
-        self.captured_thread_id: str | None = None
-
-    async def log_thread_id(self, tid: str, chosen: bool) -> None:
-        self.captured_thread_id = tid
-        await super().log_thread_id(tid, chosen)
-
-
-def _codegen_args(ctx: OrchestratorContext) -> CodegenWorkflowArgs:
+def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
     return CodegenWorkflowArgs(
         audit_db=AUDIT_DEFAULT,
         rag_db=ctx.config.rag_db,
@@ -66,7 +55,32 @@ def _codegen_args(ctx: OrchestratorContext) -> CodegenWorkflowArgs:
         thinking_tokens=ctx.config.thinking_tokens,
         memory_tool=ctx.config.memory_tool,
         recursion_limit=200,
+        debug_prompt_override=cg.prompt_addition
     )
+
+
+def _format_result(
+    label: str,
+    tid: str,
+    code: int,
+    error: Exception | None,
+    memory_namespace: str | None,
+    natreq_tid: str | None,
+) -> str:
+    ns_info = f" Memory namespace: {memory_namespace}." if memory_namespace else ""
+    natreq_info = f" NatReq thread ID: {natreq_tid}." if natreq_tid else ""
+    if error is not None:
+        tb = "".join(traceback.format_exception(error))
+        return (
+            f"{label} crashed with {type(error).__name__}: "
+            f"{error}\nTraceback:\n{tb}\nThread ID: {tid}.{ns_info}{natreq_info}"
+        )
+    if code == 0:
+        return (
+            f"{label} completed successfully. Thread ID: {tid}.{ns_info}{natreq_info} "
+            f"Save this to /memories/last_run.json for future resume."
+        )
+    return f"{label} finished with exit code {code}. Thread ID: {tid}.{ns_info}{natreq_info}"
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +98,10 @@ async def launch_codegen_workflow(
     )
     input_data = upload_input(paths)
 
-    wf_args = _codegen_args(ctx)
+    wf_args = _codegen_args(ctx, args)
     llm = create_llm(wf_args)
 
-    app = ThreadIdCapture(ide=ctx.ide)
+    app = CodeGenRichApp(ide=ctx.ide)
     captured_error: Exception | None = None
 
     async def work() -> None:
@@ -96,29 +110,27 @@ async def launch_codegen_workflow(
             result = await execute_ai_composer_workflow(
                 handler=app, llm=llm, input=input_data,
                 workflow_options=wf_args,
+                memory_namespace=args.memory_namespace,
             )
             app.result_code = result
         except Exception as exc:
             app.result_code = 1
             captured_error = exc
+            await app.show_error(exc)
 
     app.set_work(work)
     await app.run_async()
 
-    tid = app.captured_thread_id or "unknown"
+    tid = app.workflow_threads.get(WorkflowPurpose.CODEGEN, "unknown")
     code = app.result_code
-    if captured_error is not None:
-        tb = "".join(traceback.format_exception(captured_error))
-        return (
-            f"Code generation crashed with {type(captured_error).__name__}: "
-            f"{captured_error}\nTraceback:\n{tb}\nThread ID: {tid}."
-        )
-    if code == 0:
-        return (
-            f"Code generation completed successfully. Thread ID: {tid}. "
-            f"Save this to /memories/last_run.json for future resume."
-        )
-    return f"Code generation finished with exit code {code}. Thread ID: {tid}."
+    return _format_result(
+        label="Code generation",
+        tid=tid,
+        code=code,
+        error=captured_error,
+        memory_namespace=args.memory_namespace,
+        natreq_tid=app.workflow_threads.get(WorkflowPurpose.NATREQ),
+    )
 
 
 async def launch_resume_workflow(
@@ -132,10 +144,10 @@ async def launch_resume_workflow(
         new_system=None,
     )
 
-    wf_args = _codegen_args(ctx)
+    wf_args = _codegen_args(ctx, args)
     llm = create_llm(wf_args)
 
-    app = ThreadIdCapture(ide=ctx.ide)
+    app = CodeGenRichApp(ide=ctx.ide)
     captured_error: Exception | None = None
 
     async def work() -> None:
@@ -144,26 +156,24 @@ async def launch_resume_workflow(
             result = await execute_ai_composer_workflow(
                 handler=app, llm=llm, input=input_data,
                 workflow_options=wf_args,
+                memory_namespace=args.memory_namespace,
             )
             app.result_code = result
         except Exception as exc:
             app.result_code = 1
             captured_error = exc
+            await app.show_error(exc)
 
     app.set_work(work)
     await app.run_async()
 
-    tid = app.captured_thread_id or args.thread_id
+    tid = app.workflow_threads.get(WorkflowPurpose.CODEGEN, args.thread_id)
     code = app.result_code
-    if captured_error is not None:
-        tb = "".join(traceback.format_exception(captured_error))
-        return (
-            f"Resume crashed with {type(captured_error).__name__}: "
-            f"{captured_error}\nTraceback:\n{tb}\nThread ID: {tid}."
-        )
-    if code == 0:
-        return (
-            f"Resume completed successfully. Thread ID: {tid}. "
-            f"Save this to /memories/last_run.json for future resume."
-        )
-    return f"Resume finished with exit code {code}. Thread ID: {tid}."
+    return _format_result(
+        label="Resume",
+        tid=tid,
+        code=code,
+        error=captured_error,
+        memory_namespace=args.memory_namespace,
+        natreq_tid=app.workflow_threads.get(WorkflowPurpose.NATREQ),
+    )

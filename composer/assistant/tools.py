@@ -17,6 +17,7 @@ from composer.assistant.launch_args import (
 )
 from composer.assistant.codegen_launch import launch_codegen_workflow, launch_resume_workflow
 from composer.assistant.natspec_launch import launch_natspec_workflow
+from composer.assistant.post_mortem import PostMortemTool
 
 
 # ---------------------------------------------------------------------------
@@ -45,11 +46,7 @@ class LaunchCodegenTool(LaunchCodegenArgs, WithAsyncImplementation[str]):
 
     async def run(self) -> str:
         ctx = get_runtime(OrchestratorContext).context
-        response = interrupt(LaunchCodegenArgs(
-            spec_file=self.spec_file,
-            interface_file=self.interface_file,
-            system_doc=self.system_doc,
-        ))
+        response = interrupt(LaunchCodegenArgs.model_validate(self.model_dump()))
         if (r := _check_confirmation(response)) is not None:
             return r
         return await launch_codegen_workflow(self, ctx)
@@ -60,11 +57,7 @@ class LaunchResumeTool(LaunchResumeArgs, WithAsyncImplementation[str]):
 
     async def run(self) -> str:
         ctx = get_runtime(OrchestratorContext).context
-        response = interrupt(LaunchResumeArgs(
-            thread_id=self.thread_id,
-            working_dir=self.working_dir,
-            commentary=self.commentary,
-        ))
+        response = interrupt(LaunchResumeArgs.model_validate(self.model_dump()))
         if (r := _check_confirmation(response)) is not None:
             return r
         return await launch_resume_workflow(self, ctx)
@@ -108,5 +101,6 @@ def build_tools(workspace: Path) -> list[BaseTool]:
         LaunchCodegenTool.as_tool("launch_codegen"),
         LaunchResumeTool.as_tool("launch_resume"),
         LaunchNatSpecTool.as_tool("launch_natspec"),
+        PostMortemTool.as_tool("post_mortem"),
         done,
     ]
