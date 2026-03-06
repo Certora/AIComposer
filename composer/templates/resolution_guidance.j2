@@ -1,0 +1,63 @@
+Method summaries may be either "wildcard" or apply to a "specific" receiver contract.
+Whether a summary applies to a given method invocation thus depends on two factors:
+1. Whether the summary is wildcard or not, and
+2. Whether the calee contract of the method invocation is "resolved".
+
+If the summary is a "wildcard", then the summary is applied regardless of the resolution status
+of the callee.
+However, if the summary is not wildcard and only applies to a specific receiver contract,
+then the method invocation will only be summarized if the callee of the method call
+is "resolved" to be the same contract in the summary annotation.
+
+For the callee contract of an external method call to be resolved to some contract C, the following must all be true:
+1. The receiver contract C must be in the inputs to the prover
+2. There must be a "link" argument indicating that a state variable `v` in contract A references contract c
+3. The prover must be able to prove that the callee contract of the call aliases the value in `A.v`.
+
+For example, assume that we have some contract A, and a state variable `target` in contract B and within some method of `B`, we have:
+```
+target.theMethod();
+```
+
+Provided that both `A` and `B` are provided as inputs to the prover, and `B.target` is linked to `A`, the prover
+will be able to resolve the receiver of `theMethod` to be `A`. As a result, the summary:
+
+```
+function A.theMethod() external => ...;
+```
+
+will apply as expected.
+
+The prover can also reason about *some* dataflow when determining whether the callee contract aliases a linked field,
+although the more complex the flow, the less likely the prover is to successfully resolve the aliasing.
+
+For example, the following Solidity code in `B` will also be resolvable:
+
+```
+address upcast = target;
+A(upcast).theMethod();
+```
+and the specific summary will still apply.
+
+However, consider the following method in `B`:
+
+```
+function myEntryPoint(address someAddress) external {
+    A(someAddress).theMethod();
+}
+```
+
+`someAddress`, being caller controlled, clearly does not alias the `target` field of `B`, and thus
+the callee contract will not be resolved. In this case, a specific summary for `A.theMethod()` will NOT apply.
+However, a wildcard summary like:
+
+```
+function _.theMethod() external => ...;
+```
+
+*WOULD* apply.
+
+
+When considering whether to use a specific or wildcard summary for a component, consider all plausible invocation locations
+and determine whether the callee contract is resolved. If the callee contract is always resolvable, use a specific summary.
+Otherwise, use a wildcard summary.
