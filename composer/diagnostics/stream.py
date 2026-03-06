@@ -13,6 +13,7 @@ class UserUpdateData(TypedDict, Generic[UserUpdateTV]):
 
 class ProverRun(UserUpdateData[Literal["prover_run"]]):
     args: List[str]
+    tool_call_id: str
 
 class ProverResult(UserUpdateData[Literal["prover_result"]]):
     status: Dict[str, StatusCodes]

@@ -33,6 +33,13 @@ from composer.io.context import with_handler, run_graph
 from composer.io.event_handler import NullEventHandler
 
 
+@dataclass
+class ExtractionResult:
+    """Result of requirements extraction, including the thread_id for post-mortem introspection."""
+    reqs: list[str]
+    thread_id: str
+
+
 class ExtractionState(MessagesState, RoughDraftState):
     reqs: NotRequired[list[str]]
 
@@ -130,7 +137,7 @@ async def get_requirements(
     mem_backend: MemoryBackend,
     resume_artifact: ResumeArtifact | None,
     oracle: list[str]
-) -> list[str]:
+) -> ExtractionResult:
     tools = [
         memory_tool(mem_backend),
         results_tool,
@@ -193,4 +200,4 @@ spec).
     async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
         final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config, description="Requirements extraction")
     assert "reqs" in final_state
-    return final_state["reqs"]
+    return ExtractionResult(reqs=final_state["reqs"], thread_id=thread_id)

@@ -88,6 +88,8 @@ async def run_component_analysis(
     b = bind_standard(
         builder=builder,
         state_type=AnalysisState
+    ).with_input(
+        FlowInput
     ).with_sys_prompt(
         "You are an expert software analyst, who is very methodical in their work."
     ).with_tools(

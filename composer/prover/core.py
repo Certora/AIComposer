@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import AsyncIterator, Protocol, overload
 
 from langchain_core.messages import AnyMessage, ToolMessage, HumanMessage
+from langchain_core.language_models import BaseChatModel
 from langgraph.graph import MessagesState
 
 from graphcore.graph import LLM
@@ -54,7 +55,7 @@ class ProverCallbacks:
     """Base class with no-op defaults. Subclass and override only what you need."""
     async def on_stdout_line(self, line: str) -> None: pass
     async def on_cloud_poll(self, status: str, message: str) -> None: pass
-    async def on_prover_run(self, args: list[str]) -> None: pass
+    async def on_prover_run(self, args: list[str], tool_call_id: str) -> None: pass
     async def on_prover_result(self, results: dict[str, RuleResult]) -> None: pass
     async def on_analysis_start(self, rule: RuleResult) -> None: pass
     async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None: pass
@@ -73,25 +74,29 @@ async def _local_results(path: Path) -> AsyncIterator[Path]:
 
 async def _report_to_todo_list(
     llm: LLM,
-    messages: list[AnyMessage],
     report: str,
-    tool_call_id: str,
 ) -> str:
-    new_messages = messages.copy()
-    new_messages.append(ToolMessage(
-        content=report,
-        tool_call_id=tool_call_id,
-    ))
-    new_messages.append(HumanMessage(
-        content="""\
-Analyze the counterexamples returned by the prover.
-Investigate the rule-by-rule feedback and create a TODO list of the code changes you
-need to perform to address the identified issues.
-In particular, find common issues exhibited between the different counterexamples and identify
-the common root causes and what changes are necessary.""",
-    ))
-    res = await acached_invoke(llm, new_messages)
-    return res.text()
+    fresh_messages: list[AnyMessage] = [
+        HumanMessage(content=f"""\
+Below is a rule-by-rule prover report with counterexample analyses. Your job is to produce
+a detailed, actionable TODO list of code changes needed to fix the violations.
+
+For each TODO item:
+- Identify the root cause (which rules share it)
+- Describe the specific code change needed
+- Note which file/function to modify
+
+Group related violations that share a common root cause into a single TODO item.
+
+PROVER REPORT:
+{report}"""),
+    ]
+    # Disable thinking for summarization — adaptive thinking can burn the entire
+    # max_tokens budget on reasoning, leaving nothing for actual text output.
+    if isinstance(llm, BaseChatModel):
+        llm = llm.model_copy(update={"thinking": None})
+    res = await acached_invoke(llm, fresh_messages)
+    return res.text
 
 @overload
 async def run_prover(
@@ -150,7 +155,7 @@ async def run_prover(
         effective_args.extend(["--prover_version", options.cloud.prover_version])
 
     # 2. Notify callback
-    await callbacks.on_prover_run(effective_args)
+    await callbacks.on_prover_run(effective_args, tool_call_id)
 
     # 3-5. Spawn async subprocess, stream stdout, collect stderr
     wrapper_script = Path(__file__).parent / "certoraRunWrapper.py"
@@ -243,7 +248,7 @@ async def run_prover(
     failed_count = sum(1 for r, _ in results_with_analysis if r.status == "VIOLATED")
 
     if summarization_threshold is not None and failed_count > summarization_threshold:
-        todo_list = await _report_to_todo_list(llm, messages, report, tool_call_id)
+        todo_list = await _report_to_todo_list(llm, report)
         return SummarizedReport(report=report, todo_list=todo_list)
 
     # 14. Normal return

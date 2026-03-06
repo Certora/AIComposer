@@ -17,20 +17,18 @@ individual task event streams.
 """
 
 import asyncio
-import traceback
-from collections.abc import Callable, Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from langgraph.store.base import BaseStore
 
-from composer.io.context import with_handler
-from composer.io.protocol import IOHandler
-from composer.io.event_handler import EventHandler
+from composer.io.multi_job_app import (
+    TaskInfo, HandlerFactory, run_task,
+)
 
 from composer.spec.cas import SharedArtifact
 from composer.spec.context import (
-    WorkflowContext, Builders,
+    WorkflowContext,
     SystemDoc, PlainBuilder, CVLOnlyBuilder,
     CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
@@ -51,7 +49,7 @@ from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_b
 
 
 # ---------------------------------------------------------------------------
-# Handler factory types
+# Phase type
 # ---------------------------------------------------------------------------
 
 type Phase = Literal[
@@ -61,26 +59,6 @@ type Phase = Literal[
     "stub_gen",
     "cvl_gen",
 ]
-
-
-@dataclass(frozen=True)
-class TaskInfo:
-    task_id: str
-    label: str
-    phase: Phase
-
-
-@dataclass(frozen=True)
-class TaskHandle:
-    """Returned by the handler factory — bundles IO with lifecycle callbacks."""
-    handler: IOHandler[Any, Any]
-    event_handler: EventHandler
-    on_error: Callable[[Exception, str], Awaitable[None]]
-    on_start: Callable[[], None] = lambda: None
-    on_done: Callable[[], None] = lambda: None
-
-
-type HandlerFactory = Callable[[TaskInfo], Awaitable[TaskHandle]]
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +112,12 @@ async def run_natspec_pipeline(
     system_doc: SystemDoc,
     contract_name: str,
     solc_version: str,
-    builders: Builders,
+    analysis_builder: PlainBuilder,
+    cvl_authorship: CVLOnlyBuilder,
+    cvl_research: CVLOnlyBuilder,
     ctx: WorkflowContext[None],
     store: BaseStore,
-    handler_factory: HandlerFactory,
+    handler_factory: HandlerFactory[Phase],
     *,
     max_concurrent: int = 4,
 ) -> PipelineResult:
@@ -159,7 +139,9 @@ async def run_natspec_pipeline(
         system_doc: The design document for the application.
         contract_name: The expected contract name.
         solc_version: Solidity compiler version (e.g., "8.21").
-        builders: Pre-configured builder variants.
+        analysis_builder: Builder for component analysis, interface/stub gen, registry (no domain tools).
+        cvl_authorship: Builder for CVL generation agents (has CVL manual tools).
+        cvl_research: Builder for CVL research sub-agents and merge agent.
         ctx: Root workflow context.
         store: BaseStore for shared artifacts and caching.
         handler_factory: Creates per-task ``(IOHandler, EventHandler)``
@@ -167,14 +149,12 @@ async def run_natspec_pipeline(
         max_concurrent: Maximum concurrent LLM agents.
     """
     semaphore = asyncio.Semaphore(max_concurrent)
-    plain_builder = builders.source
-    cvl_builder: PlainBuilder | CVLOnlyBuilder = builders.cvl_only
-    analysis_input = (system_doc, plain_builder)
+    analysis_input = (system_doc, analysis_builder)
 
     # ------------------------------------------------------------------
     # Phase 1: Component analysis
     # ------------------------------------------------------------------
-    summary = await _run_task(
+    summary = await run_task(
         handler_factory,
         TaskInfo("component-analysis", COMPONENT_ANALYSIS_DESC, "component_analysis"),
         lambda: run_component_analysis(ctx, analysis_input),
@@ -185,19 +165,19 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
     # Phase 3: Interface generation
     # ------------------------------------------------------------------
-    interface = await _run_task(
+    interface = await run_task(
         handler_factory,
         TaskInfo("interface-gen", INTERFACE_GEN_DESC, "interface_gen"),
-        lambda: generate_interface(ctx, summary, system_doc, plain_builder, solc_version),
+        lambda: generate_interface(ctx, summary, system_doc, analysis_builder, solc_version),
     )
 
     # ------------------------------------------------------------------
     # Phase 4: Initial stub generation
     # ------------------------------------------------------------------
-    initial_stub = await _run_task(
+    initial_stub = await run_task(
         handler_factory,
         TaskInfo("stub-gen", STUB_GEN_DESC, "stub_gen"),
-        lambda: generate_stub(ctx, interface, contract_name, plain_builder, solc_version),
+        lambda: generate_stub(ctx, interface, contract_name, analysis_builder, solc_version),
     )
 
     # ------------------------------------------------------------------
@@ -207,7 +187,7 @@ async def run_natspec_pipeline(
         store, MASTER_SPEC_NS, "master", initial_content="",
     )
     registry = StubRegistry.create(
-        store, STUB_NS, cvl_builder, ctx, interface, initial_stub, solc_version,
+        store, STUB_NS, analysis_builder, ctx, interface, initial_stub, solc_version,
     )
 
     # ------------------------------------------------------------------
@@ -237,7 +217,7 @@ async def run_natspec_pipeline(
             },
         )
 
-        props = await _run_task(
+        props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{component_idx}", name, "bug_analysis"),
             lambda: run_bug_analysis(feat_ctx, feat, analysis_input),
@@ -275,7 +255,8 @@ async def run_natspec_pipeline(
         stub_content = registry.read_stub()
         env = GenerationEnv(
             input=system_doc,
-            builders=builders,
+            cvl_authorship=cvl_authorship,
+            cvl_research=cvl_research,
             extra_tools=[*stub_tools, typecheck_tool],
             extra_input=[
                 "The current verification stub is:",
@@ -283,13 +264,13 @@ async def run_natspec_pipeline(
             ],
             result_tools=lambda validator: make_publish_tools(
                 master_spec, registry.read_stub, interface,
-                contract_name, solc_version, cvl_builder, batch_ctx,
+                contract_name, solc_version, cvl_research, batch_ctx,
                 validator=validator,
             ),
         )
 
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
-        return await _run_task(
+        return await run_task(
             handler_factory,
             TaskInfo(f"cvl-{batch_idx}", label, "cvl_gen"),
             lambda: generate_batch_cvl(
@@ -338,38 +319,3 @@ async def run_natspec_pipeline(
         solc_version=solc_version,
         failures=failures,
     )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-async def _run_task[T](
-    factory: HandlerFactory,
-    info: TaskInfo,
-    fn: Callable[[], Awaitable[T]],
-    semaphore: asyncio.Semaphore | None = None,
-) -> T:
-    """Run ``fn`` inside a per-task ``with_handler`` from the factory.
-
-    If *semaphore* is provided the task is created immediately (PENDING)
-    but only transitions to RUNNING (via ``handle.on_start``) once the
-    semaphore is acquired.
-    """
-    handle = await factory(info)
-    try:
-        if semaphore is not None:
-            async with semaphore:
-                handle.on_start()
-                async with with_handler(handle.handler, handle.event_handler):
-                    result = await fn()
-        else:
-            handle.on_start()
-            async with with_handler(handle.handler, handle.event_handler):
-                result = await fn()
-    except Exception as exc:
-        await handle.on_error(exc, traceback.format_exc())
-        raise
-    else:
-        handle.on_done()
-        return result

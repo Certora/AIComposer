@@ -45,13 +45,7 @@ class End:
     """Graph execution ended (success or failure)."""
     thread_id: str
 
-@dataclass
-class ToolOutput:
-    """Streaming output line from a tool (e.g. subprocess stdout)."""
-    tool_id: str
-    output_line: str
-
-InnerEvent = StateUpdate | NextCheckpoint | CustomUpdate | Start | End | ToolOutput
+InnerEvent = StateUpdate | NextCheckpoint | CustomUpdate | Start | End
 
 @dataclass
 class Nested:

@@ -19,7 +19,7 @@ from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 from langchain_core.tools import BaseTool
 
-from graphcore.graph import Builder, FlowInput
+from graphcore.graph import Builder
 
 
 # ---------------------------------------------------------------------------
@@ -71,22 +71,14 @@ class SOURCE_TOOLS:
 class CVL_TOOLS:
     """Builder has cvl_manual_tools bound (CVL manual RAG search)."""
 
-type SourceBuilder = Annotated[Builder[None, None, FlowInput], SOURCE_TOOLS]
-type CVLOnlyBuilder = Annotated[Builder[None, None, FlowInput], CVL_TOOLS]
-type CVLBuilder = Annotated[Builder[None, None, FlowInput], SOURCE_TOOLS, CVL_TOOLS]
+type SourceBuilder = Annotated[Builder[None, None, None], SOURCE_TOOLS]
+type CVLOnlyBuilder = Annotated[Builder[None, None, None], CVL_TOOLS]
+type CVLBuilder = Annotated[Builder[None, None, None], SOURCE_TOOLS, CVL_TOOLS]
 
 
-type PlainBuilder = Builder[None, None, FlowInput]
+type PlainBuilder = Builder[None, None, None]
 
 type AnalysisInput = tuple[SourceCode, SourceBuilder] | tuple[SystemDoc, PlainBuilder]
-
-
-@dataclass
-class Builders:
-    """Pre-configured builder variants with different tool sets."""
-    source: SourceBuilder
-    cvl: CVLBuilder
-    cvl_only: CVLOnlyBuilder
 
 
 # ---------------------------------------------------------------------------

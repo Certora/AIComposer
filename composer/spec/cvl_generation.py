@@ -25,7 +25,7 @@ from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithI
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
 from composer.spec.context import (
-    WorkflowContext, Builders, SourceBuilder,
+    WorkflowContext, SourceBuilder, CVLBuilder, CVLOnlyBuilder,
     CacheKey, CVLGeneration, CVLJudge, Feedback, ThreadProvider,
     SourceCode, SystemDoc,
 )
@@ -59,11 +59,18 @@ class CVLResource(BaseModel):
 class GenerationEnv:
     """Environment configuration for CVL generation.
 
-    Bundles input, builders, and optional capabilities. Each capability
-    adds tools and template conditionals.
+    Bundles input, role-based builders, and optional capabilities.
+    Each capability adds tools and template conditionals.
+
+    Builder roles:
+    - cvl_authorship: main CVL generation agent and feedback judge
+    - cvl_research: CVL research sub-agents (manual/KB search only)
+    - source_tools: code exploration sub-agent (None if no source code)
     """
     input: SourceCode | SystemDoc
-    builders: Builders
+    cvl_authorship: CVLBuilder | CVLOnlyBuilder
+    cvl_research: CVLOnlyBuilder
+    source_tools: SourceBuilder | None = None
 
     # Optional capabilities
     prover_tool: BaseTool | None = None
@@ -86,7 +93,7 @@ class GenerationEnv:
 
     @property
     def base_builder(self):
-        return self.builders.cvl if self.has_source else self.builders.cvl_only
+        return self.cvl_authorship
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +121,7 @@ def property_feedback_judge(
 
     child = ctx.child(FEEDBACK_KEY)
     has_source = env.has_source
-    builder = env.builders.cvl if has_source else env.builders.cvl_only
+    builder = env.cvl_authorship
 
     class JudgeExtra(RoughDraftState):
         curr_spec: str
@@ -374,7 +381,7 @@ async def generate_batch_cvl(
         ctx.child(CVL_JUDGE_KEY), env, feat, props, with_memory,
     )
 
-    researcher = cvl_researcher(ctx, env.builders.cvl_only)
+    researcher = cvl_researcher(ctx, env.cvl_research)
 
     class FeedbackSchema(WithInjectedState[ST], WithInjectedId, WithAsyncImplementation[Command]):
         """
@@ -508,7 +515,8 @@ async def generate_batch_cvl(
 
     if has_source:
         assert isinstance(env.input, SourceCode)
-        explorer = _code_explorer(ctx, env.builders.source, ctx.checkpointer)
+        assert env.source_tools is not None
+        explorer = _code_explorer(ctx, env.source_tools, ctx.checkpointer)
 
         class ExploreCodeSchema(WithAsyncImplementation[str]):
             """

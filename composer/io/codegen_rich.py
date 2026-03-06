@@ -11,6 +11,7 @@ from rich.text import Text
 from composer.io.ide_bridge import IDEBridge
 from composer.io.tool_display import CodeGenToolDisplay
 from composer.io.rich_console import BaseRichConsoleApp
+from composer.io.protocol import WorkflowPurpose
 from composer.io.message_renderer import _DOT
 
 from langchain_core.messages import HumanMessage
@@ -47,6 +48,16 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         self._analysis_col: ColumnKey | None = None
         self._rule_row_keys: dict[str, RowKey] = {}
         self._rule_analyses: dict[str, str] = {}
+        self.workflow_threads: dict[WorkflowPurpose, str] = {}
+
+    # ── CodeGenIOHandler protocol ───────────────────────────────
+
+    async def log_workflow_thread(self, purpose: WorkflowPurpose, thread_id: str) -> None:
+        self.workflow_threads[purpose] = thread_id
+        if purpose == WorkflowPurpose.CODEGEN:
+            await self._mounted.wait()
+            self._session_id = thread_id
+            self._update_status_bar()
 
     # ── Abstract method implementations ───────────────────────
 

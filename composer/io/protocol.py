@@ -13,6 +13,7 @@ output methods called after the graph completes.
 See ``DESIGN.md`` in this directory for the full event flow.
 """
 
+import enum
 from typing import Any, Protocol, Callable
 
 from graphcore.tools.vfs import VFSAccessor
@@ -42,8 +43,6 @@ class IOHandler[H, P](Protocol):
     from outermost to innermost, reconstructed from ``Nested``
     event wrappers.  A top-level execution has ``len(path) == 1``.
     """
-
-    async def log_thread_id(self, tid: str, chosen: bool): ...
 
     async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str): ...
 
@@ -76,8 +75,19 @@ class IOHandler[H, P](Protocol):
         ...
 
 
+class WorkflowPurpose(enum.Enum):
+    """Identifies which sub-workflow a thread belongs to."""
+    CODEGEN = "codegen"
+    NATREQ = "natreq"
+
+
 class CodeGenIOHandler(IOHandler[HumanInteractionType, ProgressUpdate], Protocol):
     """Extended handler for the code-generation workflow."""
+
+    async def log_workflow_thread(self, purpose: WorkflowPurpose, thread_id: str) -> None:
+        """Record a thread ID for a specific sub-workflow purpose."""
+        ...
+
     async def output(
         self,
         res: ResultStateSchema,

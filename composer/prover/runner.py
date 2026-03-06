@@ -31,10 +31,11 @@ class _AuditCallbacks(ProverCallbacks):
             print(line)
 
     @override
-    async def on_prover_run(self, args: list[str]) -> None:
+    async def on_prover_run(self, args: list[str], tool_call_id: str) -> None:
         run_message: ProgressUpdate = {
             "type": "prover_run",
             "args": args,
+            "tool_call_id": tool_call_id,
         }
         self._writer(run_message)
 
@@ -129,7 +130,7 @@ def certora_prover(
                 args,
                 ctxt.llm,
                 tool_call_id,
-                CoreProverOptions(),
+                CoreProverOptions(cloud=ctxt.prover_opts.cloud),
                 _AuditCallbacks(writer, tool_call_id, ctxt.prover_opts.capture_output),
                 analysis_cache=cache,
                 summarization_threshold=10,
@@ -144,4 +145,4 @@ def certora_prover(
             print(e)
             import traceback
             traceback.print_exc()
-            sys.exit(1)
+            raise e

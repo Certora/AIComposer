@@ -13,21 +13,20 @@ the seam where workflows inject their own event vocabulary without
 modifying the core dispatch logic.
 """
 
-from abc import ABC, abstractmethod
+from typing import Protocol
 
 
-class EventHandler(ABC):
+class EventHandler(Protocol):
     """Receives custom event payloads emitted by agent tools via ``get_stream_writer()``.
 
     ``path`` is the list of thread IDs from outermost to innermost,
     identifying which (possibly nested) graph execution emitted the
     event.
     """
-    @abstractmethod
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None: ...
 
 
-class NullEventHandler(EventHandler):
+class NullEventHandler:
     """No-op handler — ignores all custom events."""
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         pass

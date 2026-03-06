@@ -90,6 +90,7 @@ class LangraphOptions(Protocol):
 class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
     prover_capture_output: bool
     prover_keep_folders: bool
+    local_prover: bool
 
     debug_prompt_override: Optional[str]
 

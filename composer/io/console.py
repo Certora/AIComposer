@@ -8,6 +8,7 @@ from composer.diagnostics.handlers import summarize_update, print_prover_updates
 from composer.diagnostics.stream import ProgressUpdate
 from composer.human.types import HumanInteractionType, ProposalType, QuestionType, RequirementRelaxationType, ExtractionQuestionType
 from composer.io.prompt import prompt_input
+from composer.io.protocol import WorkflowPurpose
 from composer.core.state import ResultStateSchema, AIComposerState
 
 
@@ -16,10 +17,6 @@ from graphcore.tools.vfs import VFSAccessor
 
 class BaseConsoleHandler[H, P]:
     """Common console-based IOHandler functionality shared across workflows."""
-
-    async def log_thread_id(self, tid: str, chosen: bool):
-        if chosen:
-            print(f"Selected thread id: {tid}")
 
     async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str):
         print("current checkpoint: " + checkpoint_id)
@@ -40,6 +37,9 @@ class BaseConsoleHandler[H, P]:
 
 
 class ConsoleHandler(BaseConsoleHandler[HumanInteractionType, ProgressUpdate]):
+    async def log_workflow_thread(self, purpose: WorkflowPurpose, thread_id: str) -> None:
+        print(f"[{purpose.value}] thread: {thread_id}")
+
     async def log_state_update(self, path: list[str], st: dict):
         summarize_update(st)
 

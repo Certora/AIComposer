@@ -16,6 +16,7 @@ from composer.workflow.types import Input, PromptParams
 from composer.workflow.meta import create_resume_commentary
 from composer.core.state import AIComposerState  # used by VFSAccessor type param
 from composer.core.context import AIComposerContext, ProverOptions
+from composer.prover.core import CloudConfig
 from composer.core.validation import ValidationType, prover, reqs as req_type
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model as get_rag_model
@@ -24,7 +25,7 @@ from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.tools.relaxation import requirements_relaxation
 from composer.templates.loader import load_jinja_template
-from composer.io.protocol import CodeGenIOHandler
+from composer.io.protocol import CodeGenIOHandler, WorkflowPurpose
 from composer.io.context import with_handler, run_graph
 from composer.io.codegen_events import CodeGenEventHandler
 
@@ -145,7 +146,8 @@ async def execute_ai_composer_workflow(
     handler: CodeGenIOHandler,
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
-    workflow_options: WorkflowOptions
+    workflow_options: WorkflowOptions,
+    memory_namespace: str | None = None,
 ) -> int:
     """Execute the AI Composer workflow with interrupt handling."""
     logger = logging.getLogger(__name__)
@@ -159,8 +161,10 @@ async def execute_ai_composer_workflow(
 
     if thread_id is None:
         thread_id = "crypto_session_" + str(uuid.uuid1())
-        await handler.log_thread_id(thread_id, chosen=True)
+        await handler.log_workflow_thread(WorkflowPurpose.CODEGEN, thread_id)
         logger.info(f"Selected thread id: {thread_id}")
+
+    mem_root = memory_namespace or thread_id
 
     prompt_params: PromptParams
     fs_layer: str | None = None
@@ -201,13 +205,12 @@ async def execute_ai_composer_workflow(
     from_previous_ns : str | None = None
     match input:
         case ResumeFSData(thread_id=src_id) | ResumeIdData(thread_id=src_id):
-            from_previous_ns = get_memory_ns(src_id, "natreq")
+            from_previous_ns = get_memory_ns(memory_namespace or src_id, "natreq")
         case InputData():
-            # here for completeness of matching...
             pass
 
     req_memories = get_memory(
-        get_memory_ns(thread_id, "natreq"),
+        get_memory_ns(mem_root, "natreq"),
         from_previous_ns
     )
 
@@ -225,7 +228,7 @@ async def execute_ai_composer_workflow(
                 reqs_list = [ v for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if (v := l.strip()) ]
         else:
             print("Analyzing requirements...")
-            reqs = await get_requirements(
+            extraction = await get_requirements(
                 handler,
                 workflow_options,
                 llm,
@@ -235,7 +238,8 @@ async def execute_ai_composer_workflow(
                 resume_art,
                 workflow_options.requirements_oracle
             )
-            reqs_list = reqs
+            reqs_list = extraction.reqs
+            await handler.log_workflow_thread(WorkflowPurpose.NATREQ, extraction.thread_id)
         store.put((thread_id,), "requirements", {"reqs": reqs_list})
     else:
         print("Read requirements from store")
@@ -255,7 +259,7 @@ async def execute_ai_composer_workflow(
         extra_tools.append(requirements_relaxation)
 
     if "context-management-2025-06-27" in getattr(llm, "betas"):
-        memory = memory_tool(get_memory(thread_id, "composer"))
+        memory = memory_tool(get_memory(get_memory_ns(mem_root, "composer"), "composer"))
         extra_tools.append(memory)
 
 
@@ -300,7 +304,8 @@ async def execute_ai_composer_workflow(
 
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,
-        keep_folder=workflow_options.prover_keep_folders
+        keep_folder=workflow_options.prover_keep_folders,
+        cloud=None if workflow_options.local_prover else CloudConfig(),
     )
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)

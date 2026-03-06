@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 from abc import abstractmethod
 from collections.abc import Coroutine
 from typing import Callable
@@ -72,6 +73,19 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
         if self._work_fn is not None:
             self.run_worker(self._work_fn(), thread=False)
 
+    async def show_error(self, error: Exception) -> None:
+        """Display a fatal error in the event log and enable quit."""
+        await self._mounted.wait()
+        target = self.query_one("#event-log", VerticalScroll)
+        tb = "".join(traceback.format_exception(error))
+        error_text = Text()
+        error_text.append("\n━━ WORKFLOW ERROR ━━\n\n", style="bold red")
+        error_text.append(f"{type(error).__name__}: {error}\n\n", style="red")
+        error_text.append(tb, style="red dim")
+        error_text.append("\nPress q to quit.", style="dim")
+        await self._mount_to(target, Static(error_text))
+        self._graph_done = True
+
     # ── Key bindings ──────────────────────────────────────────
 
     def action_quit_app(self):
@@ -127,11 +141,6 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
     def _update_status_bar(self):
         bar = self.query_one("#status-bar", Static)
         bar.update(f"Session: {self._session_id} | Checkpoint: {self._checkpoint_id}")
-
-    async def log_thread_id(self, tid: str, chosen: bool):
-        await self._mounted.wait()
-        self._session_id = tid
-        self._update_status_bar()
 
     async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str):
         await self._mounted.wait()

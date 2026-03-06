@@ -130,6 +130,7 @@ class CommonTools:
     )
     write_rough_draft = ToolDisplay("Write rough draft", None)
     read_rough_draft = ToolDisplay("Read rough draft", "Rough Draft")
+    extended_reasoning = ToolDisplay("Reasoning", None)
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +238,9 @@ class CodeGenToolDisplay(ToolDisplayConfig):
                 ),
                 None,
             ),
+            "write_rough_draft": CommonTools.write_rough_draft,
+            "read_rough_draft": CommonTools.read_rough_draft,
+            "extended_reasoning": CommonTools.extended_reasoning,
             "memory": CommonTools.memory,
         })
 
