@@ -9,24 +9,28 @@ import json
 import pathlib
 import subprocess
 import sys
-from typing import NotRequired, override
+from typing import NotRequired, override, Protocol, Callable
 
 from typing_extensions import TypedDict
 from pydantic import Field
 
-from langgraph.types import Command
+from langgraph.types import Command, Checkpointer
 from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import BaseTool
 
 from graphcore.graph import FlowInput, MessagesState, tool_state_update
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId
 
-from composer.spec.harness import Configuration, ERC20TokenGuidance
+from composer.spec.harness import Configuration, ERC20TokenGuidance, ContractClassification
+from composer.spec.api import ProjectParamProtocol, LLMParams
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.cvl_tools import get_cvl, put_cvl, put_cvl_raw
 from composer.spec.cvl_generation import CVLResource
-from composer.spec.context import WorkflowContext, CVLBuilder, SourceCode
+from composer.spec.context import WorkflowContext, CVLBuilder, SourceCode, ThreadProvider
 from composer.spec.util import temp_certora_file
 from composer.templates.loader import load_jinja_template
+from composer.rag.db import PostgreSQLRAGDatabase
 
 
 # ---------------------------------------------------------------------------
@@ -92,40 +96,123 @@ def _format_types(udts: list[dict]) -> str:
             to_format.append(r)
     return "\n".join(to_format)
 
+# Summary API
 
-# ---------------------------------------------------------------------------
-# Agent
-# ---------------------------------------------------------------------------
+class SummaryInput(Protocol):
+    @property
+    def user_types(self) -> list[dict]:
+        """
+        List of UDTs defined in the "scene", as defined by udts.json
+        """
+        ...
 
-async def setup_summaries(
-    ctx: WorkflowContext[None],
-    source: SourceCode,
-    config: Configuration,
-    cvl_authorship: CVLBuilder,
-) -> CVLResource:
-    """Generate custom CVL summaries for SUMMARIZABLE external contracts.
+    @property
+    def config(self) -> dict:
+        """
+        The dictionary of the prover configuration
+        """
+        ...
 
-    Runs an LLM agent that reads the summarization instructions from the harness
-    classification and produces a type-checked CVL specification file containing
-    the appropriate summaries.
+    @property
+    def external_contracts(self) -> list[ContractClassification]:
+        """
+        The contract information returned by the harness agent
+        """
+        ...
 
-    Args:
-        ctx: Workflow context for threading, memory, and checkpointing.
-        source: Source code metadata.
-        config: Harness configuration with external contract classifications.
-        cvl_authorship: Builder with CVL + source tools for the summary author.
+async def summary_generation(
+    source: ProjectParamProtocol,
+    external_contracts: list[ContractClassification],
+    prover_config: dict,
+    llm_params: LLMParams | BaseChatModel,
+    user_types : list[dict] | None = None,
+    rag_db: PostgreSQLRAGDatabase | None = None
+) -> str:
+    import uuid
+    from dataclasses import dataclass
+    class Provider():
+        def uniq_thread_id(self) -> str:
+            return uuid.uuid4().hex
+    
+    @dataclass
+    class Data():
+        user_types: list[dict]
+        external_contracts: list[ContractClassification]
+        config: dict
 
-    Returns:
-        CVLResource pointing to the generated ``custom_summaries.spec`` file.
-    """
-    result_path = pathlib.Path(source.project_root) / "certora" / "custom_summaries.spec"
-
-    to_ret = CVLResource(
-        import_path="custom_summaries.spec",
-        required=True,
-        description="Protocol specific summaries",
-        sort="import",
+    payload = Data(
+        user_types=user_types or [],
+        external_contracts=external_contracts,
+        config=prover_config
     )
+    from composer.io.context import with_handler
+    from composer.io.protocol import IOHandler
+    from composer.io.event_handler import NullEventHandler
+
+    class NullHandler(IOHandler):
+        
+        async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str):
+            pass
+
+        async def log_state_update(self, path: list[str], st: dict):
+            pass
+
+        async def progress_update(self, path: list[str], upd: None):
+            pass
+
+        async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
+            pass
+
+        async def log_end(self, path: list[str]):
+            pass
+
+        async def human_interaction(
+            self,
+            ty: None,
+            debug_thunk: Callable[[], None]
+        ) -> str:
+            raise NotImplementedError("No human interaction for this pass")
+
+    if not rag_db:
+        from composer.rag.models import get_model
+        from composer.rag.db import DEFAULT_CONNECTION
+        rag_db = PostgreSQLRAGDatabase(conn_string=DEFAULT_CONNECTION, model=get_model(), skip_test=True)
+    llm = llm_params
+    if not isinstance(llm, BaseChatModel):
+        from composer.workflow.factories import create_llm
+        llm = create_llm(llm)
+    
+    from graphcore.graph import Builder
+    from composer.tools.search import cvl_manual_tools
+
+    builder = Builder().with_llm(llm).with_loader(load_jinja_template).with_tools(
+        cvl_manual_tools(rag_db)
+    )
+
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    async with with_handler(
+        NullHandler(),
+        NullEventHandler()
+    ):
+        return await _setup_summaries_impl(
+            Provider(),
+            builder,
+            payload,
+            source,
+            None,
+            InMemorySaver()
+        )
+        
+
+async def _setup_summaries_impl(
+    ctx: ThreadProvider,
+    cvl_authorship: CVLBuilder,
+    config: SummaryInput,
+    source: ProjectParamProtocol,
+    memory: BaseTool | None,
+    checkpoint: Checkpointer
+) -> str:
 
     class SummarizerExtra(TypedDict):
         plan: str | None
@@ -204,6 +291,20 @@ async def setup_summaries(
             return "Spec has not been typechecked"
         return None
 
+    tools = [
+        get_cvl(ST),
+        put_cvl_raw,
+        put_cvl,
+        PlanReader.as_tool("read_plan"),
+        PlanWrite.as_tool("plan_write"),
+        TypeChecker.as_tool("typechecker"),
+        ERC20TokenGuidance.as_tool("erc20_guidance"),
+        ResolutionGuidance.as_tool("resolution_guidance"),
+    ]
+
+    if memory is not None:
+        tools.append(memory)
+
     graph = bind_standard(
         cvl_authorship, ST, "The commentary on the generated specification", _validator
     ).with_sys_prompt_template(
@@ -211,18 +312,8 @@ async def setup_summaries(
     ).with_initial_prompt_template(
         "cvl_setup_prompt.j2"
     ).with_tools(
-        [
-            get_cvl(ST),
-            put_cvl_raw,
-            put_cvl,
-            PlanReader.as_tool("read_plan"),
-            PlanWrite.as_tool("plan_write"),
-            TypeChecker.as_tool("typechecker"),
-            ERC20TokenGuidance.as_tool("erc20_guidance"),
-            ctx.get_memory_tool(),
-            ResolutionGuidance.as_tool("resolution_guidance"),
-        ]
-    ).with_input(Input).compile_async(checkpointer=ctx.checkpointer)
+        tools
+    ).with_input(Input).compile_async(checkpointer=checkpoint)
 
     inputs: list[str] = []
     for ext in config.external_contracts:
@@ -258,7 +349,47 @@ Summarization instructions: {ext.suggested_summaries}
         thread_id=ctx.uniq_thread_id(),
         description="Custom summaries",
     )
-
     assert st["curr_spec"] is not None
-    result_path.write_text(st["curr_spec"])
+    return st["curr_spec"]
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
+
+async def setup_summaries(
+    ctx: WorkflowContext[None],
+    source: SourceCode,
+    config: Configuration,
+    cvl_authorship: CVLBuilder,
+) -> CVLResource:
+    """Generate custom CVL summaries for SUMMARIZABLE external contracts.
+
+    Runs an LLM agent that reads the summarization instructions from the harness
+    classification and produces a type-checked CVL specification file containing
+    the appropriate summaries.
+
+    Args:
+        ctx: Workflow context for threading, memory, and checkpointing.
+        source: Source code metadata.
+        config: Harness configuration with external contract classifications.
+        cvl_authorship: Builder with CVL + source tools for the summary author.
+
+    Returns:
+        CVLResource pointing to the generated ``custom_summaries.spec`` file.
+    """
+    result_path = pathlib.Path(source.project_root) / "certora" / "custom_summaries.spec"
+
+    to_ret = CVLResource(
+        import_path="custom_summaries.spec",
+        required=True,
+        description="Protocol specific summaries",
+        sort="import",
+    )
+
+    result = await _setup_summaries_impl(
+        ctx, cvl_authorship, config, source, ctx.get_memory_tool(), ctx.checkpointer
+    )
+
+    result_path.write_text(result)
     return to_ret
