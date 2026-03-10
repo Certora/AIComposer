@@ -40,6 +40,7 @@ from composer.templates.loader import load_jinja_template
 from composer.spec.graph_builder import run_to_completion
 from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
 from composer.spec.context import WorkflowContext, SourceCode
+from composer.spec.api import ProjectParamProtocol, LLMParams
 
 
 # ---------------------------------------------------------------------------
@@ -134,35 +135,6 @@ class Configuration(ContractSetup):
 
 
 # ---------------------------------------------------------------------------
-# Protocols and standalone params
-# ---------------------------------------------------------------------------
-
-class HarnessProtocol(Protocol):
-    """Minimum context needed for harness analysis.
-
-    ``SourceCode`` satisfies this structurally.
-    """
-    @property
-    def project_root(self) -> str: ...
-    @property
-    def contract_name(self) -> str: ...
-    @property
-    def relative_path(self) -> str: ...
-
-
-@dataclass
-class LLMParams:
-    """Parameters to construct an LLM via ``create_llm`` for standalone use.
-
-    Satisfies the ``ModelOptions`` protocol.
-    """
-    model: str
-    tokens: int
-    thinking_tokens: int
-    memory_tool: bool
-
-
-# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -199,7 +171,7 @@ type _HarnessGraph = CompiledStateGraph[_HarnessST, None, VFSInput, Any]
 
 def _build_harness_graph(
     llm: BaseChatModel,
-    source: HarnessProtocol,
+    source: ProjectParamProtocol,
     vfs_conf: VFSToolConfig,
     memory: BaseTool | None,
     checkpointer: Checkpointer,
@@ -280,7 +252,7 @@ def _extract_harness_setup(
 # ---------------------------------------------------------------------------
 
 async def analyze_external_interactions(
-    source: HarnessProtocol,
+    source: ProjectParamProtocol,
     forbidden_reads: str,
     llm: BaseChatModel | LLMParams,
 ) -> HarnessSetup:
