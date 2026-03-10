@@ -7,6 +7,7 @@ import json
 from langgraph.graph import MessagesState
 from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables.config import RunnableConfig
+from pydantic import BaseModel, Field
 
 from composer.rag.db import PostgreSQLRAGDatabase, VACUITY_DEFAULT_CONNECTION
 from composer.rag.models import get_model
@@ -29,10 +30,13 @@ class VacuityExplainerContext:
 class VacuityState(VFSState, MessagesState):
     result: NotRequired[str]
 
-
-vacuity_analysis_output_tool = result_tool_generator(
-    "result",
-    (str, """The textual analysis explaining the vacuity issue in the following structured format:
+class VacuityAnalysisMitigation(BaseModel):
+    config_changes: list[tuple[str,str]] = Field(description="If there is a fix via changing the configuration, list the necessary config values as tuples of key and value.")
+class VacuityAnalysisResult(BaseModel):
+    issue_type: str = Field(description='Category of the cause of the vacuity issue like "Prover Configuration", "Specification Issue", etc.')
+    mitigation_options: list[VacuityAnalysisMitigation] = Field(description="A list of possible fixes that can be expressed as a VacuityAnalysisMitigation. Can be empty if the fix is of a more complicated form.")
+    short_summary: str = Field(description="A short summary of the issue and possible fixes.")
+    detailed_result: str = Field(description="""The textual analysis explaining the vacuity issue in the following structured format:
 
 ## Root Cause: [Brief title describing the main issue]
 [2-3 sentence summary of what's causing the unsatisfiability]
@@ -59,7 +63,11 @@ vacuity_analysis_output_tool = result_tool_generator(
 - Fix: [Concrete action items]
 - Expected Result: [What should happen after the fix]
 
-Use markdown formatting for readability."""),
+Use markdown formatting for readability.""")
+                                 
+vacuity_analysis_output_tool = result_tool_generator(
+    "result",
+    VacuityAnalysisResult,
     "Tool to communicate the result of your vacuity analysis in a structured format.")
 
 
@@ -145,7 +153,9 @@ Examples:
     )
 
     args = parser.parse_args()
-    return analyze(cast(VacuityAnalysisArgs, args))
+    res, details = analyze(cast(VacuityAnalysisArgs, args))
+    print(details)
+    return res
 
 
 def parse_vacuity_filename(filename: str) -> tuple[str | None, str | None]:
@@ -187,7 +197,7 @@ def parse_vacuity_filename(filename: str) -> tuple[str | None, str | None]:
     return rule, None
 
 
-def analyze(args: VacuityAnalysisArgs) -> int:
+def analyze(args: VacuityAnalysisArgs) -> tuple[int, VacuityAnalysisResult | None]:
     vacuity_txt_path = pathlib.Path(args.vacuity_txt_path).resolve()
 
     # Extract report directory - check if txt file is in Reports subdirectory
@@ -195,16 +205,16 @@ def analyze(args: VacuityAnalysisArgs) -> int:
         report_dir = vacuity_txt_path.parent.parent
     else:
         print(f"Error: Expected txt file to be in 'Reports' directory, but found: {vacuity_txt_path.parent}")
-        return 1
+        return 1, None
 
     # Verify paths exist
     if not report_dir.exists():
         print(f"Report directory not found: {report_dir}")
-        return 1
+        return 1, None
 
     if not vacuity_txt_path.exists():
         print(f"Unsat txt file not found: {vacuity_txt_path}")
-        return 1
+        return 1, None
 
     # Extract rule and method from arguments or filename
     rule = args.rule
@@ -219,7 +229,7 @@ def analyze(args: VacuityAnalysisArgs) -> int:
 
     if rule is None:
         print(f"Error: Could not determine rule name from arguments or filename: {vacuity_txt_path.name}")
-        return 1
+        return 1, None
 
     print(f"Analyzing vacuity issue: {vacuity_txt_path.name}")
     print(f"Rule: {rule}")
@@ -232,7 +242,7 @@ def analyze(args: VacuityAnalysisArgs) -> int:
             vacuity_txt_content = f.read()
     except FileNotFoundError as e:
         print(f"Error reading unsat core file: {e}")
-        return 1
+        return 1, None
     
     # Set up VFS tools for accessing source files
     (v_tools, _) = vfs_tools(
@@ -301,5 +311,4 @@ def analyze(args: VacuityAnalysisArgs) -> int:
                 print(d)
 
     final_result = graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
-    print(final_result)
-    return 0
+    return 0, final_result
