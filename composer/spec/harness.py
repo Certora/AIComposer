@@ -51,6 +51,7 @@ class ExternalActor(BaseModel):
     """Base class for any external contract that the main contract directly interacts with."""
     name: str = Field(description="A short, descriptive name of the external contract being interacted with")
     description: str = Field(description="A short, precise description of what the external actor does and its interaction with the main contract")
+    contract_name: str = Field(description="The exact name of the external contract being interacted with")
 
 
 class Summarizable(ExternalActor):
@@ -78,6 +79,13 @@ class Singleton(SourceAvailable):
     """An external contract for which exactly one instance is sufficient to model the
     protocol in a non-trivial state."""
     l: Literal["SINGLETON"]
+    linked_fields: list[str] = Field(
+        description="Full storage path expression(s) in the main contract that hold "
+                    "a reference to this singleton instance. Use Solidity-style access "
+                    "paths including array indices where applicable. "
+                    "Examples: ['cozyManager'], ['receiptTokenFactory'].",
+        default_factory=list
+    )
 
 
 class HarnessDef(BaseModel):
@@ -85,6 +93,13 @@ class HarnessDef(BaseModel):
     path: str = Field(description="Path to the harness definition")
     harness_name: str = Field(description="The name of the contract defined in the harness file")
     suggested_role: str = Field(description="The suggested role of this harness; e.g., 'the first token' of the pool, etc.")
+    linked_fields: list[str] = Field(
+        description="Full storage path expression(s) in the main contract that hold "
+                    "a reference to this harness instance. Use Solidity-style access "
+                    "paths including array indices where applicable. "
+                    "Examples: ['token0'], ['tokens[0]'], ['pools[0].rewardToken'].",
+        default_factory=list
+    )
 
 
 class WithHarnesses(BaseModel):
@@ -280,6 +295,7 @@ async def analyze_external_interactions(
         forbidden_read=forbidden_reads,
         forbidden_write=r"^(?!certora/)",
         put_doc_extra="You may only write files in the certora/ subdirectory",
+        fs_layer=source.project_root
     )
 
     graph, mat = _build_harness_graph(
