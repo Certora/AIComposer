@@ -66,12 +66,13 @@ async def main() -> int:
     llm = create_llm(args)
 
     print("Starting AI Composer resumption workflow...")
-    return await execute_ai_composer_workflow(
+    result = await execute_ai_composer_workflow(
         handler=ConsoleHandler(),
         llm=llm,
         input=input_data,
         workflow_options=args
     )
+    return result.exit_code
 
 if __name__ == "__main__":
     import sys

@@ -44,6 +44,21 @@ class TokenStats:
         self.cache_read: int = 0
         self.cache_write: int = 0
 
+    # Prices in $/MTok
+    _PRICE_INPUT = 5.0
+    _PRICE_OUTPUT = 25.0
+    _PRICE_CACHE_READ = 0.50
+    _PRICE_CACHE_WRITE = 6.25
+
+    def _cost(self) -> float:
+        """Estimated cost in dollars."""
+        return (
+            self.input * self._PRICE_INPUT
+            + self.output * self._PRICE_OUTPUT
+            + self.cache_read * self._PRICE_CACHE_READ
+            + self.cache_write * self._PRICE_CACHE_WRITE
+        ) / 1_000_000
+
     def update(self, msg: AIMessage) -> None:
         """Extract usage from the message and refresh the display widget."""
         if not isinstance(msg.response_metadata, dict):
@@ -55,9 +70,11 @@ class TokenStats:
         self.output += usage.get("output_tokens", 0)
         self.cache_read += usage.get("cache_read_input_tokens", 0)
         self.cache_write += usage.get("cache_creation_input_tokens", 0)
+        cost = self._cost()
         self._display.update(
             f"in:{self.input:,} out:{self.output:,} "
-            f"cache_read:{self.cache_read:,} cache_write:{self.cache_write:,}"
+            f"cache_read:{self.cache_read:,} cache_write:{self.cache_write:,} "
+            f"| ${cost:.2f}"
         )
 
 

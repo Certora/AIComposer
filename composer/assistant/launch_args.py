@@ -8,6 +8,7 @@ class LaunchCodegenArgs(CommonCodeGen):
     interface_file: str = Field(description="Relative path to Solidity interface file (.sol)")
     system_doc: str = Field(description="Relative path to system/design document")
     memory_namespace: str | None = Field(description="Namespace for persistent agent memory. When set, memory persists across thread changes (including crashes and relaunches).", default=None)
+    resume_work_key: str | None = Field(description="Key to recover in-progress work from a crashed run. Provided in the crash result of a previous launch.", default=None)
 
 
 class LaunchResumeArgs(CommonCodeGen):
@@ -15,6 +16,7 @@ class LaunchResumeArgs(CommonCodeGen):
     working_dir: str = Field(description="Path to directory with current/updated files")
     commentary: str = Field(description="Description of changes since last run", default="")
     memory_namespace: str | None = Field(description="Namespace for persistent agent memory. Should match the memory_namespace used in the original codegen run.", default=None)
+    resume_work_key: str | None = Field(description="Key to recover in-progress work from a crashed run. Provided in the crash result of a previous launch.", default=None)
 
 
 class LaunchNatSpecArgs(BaseModel):

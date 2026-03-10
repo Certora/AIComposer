@@ -52,7 +52,6 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
         self._input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._mounted: asyncio.Event = asyncio.Event()
         self._graph_done = False
-        self.result_code = 1
         self._session_id = "—"
         self._checkpoint_id = "—"
         self._work_fn: Callable[[], Coroutine[None, None, None]] | None = None

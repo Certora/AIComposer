@@ -9,8 +9,9 @@ Communicate with the user in natural language. When you've gathered all required
 Synthesizes a Solidity implementation from a CVL specification, a Solidity interface, and a system design document.
 - **Inputs**: `.spec` file (CVL specification), `.sol` file (Solidity interface), `.md` file (system/design document)
 - **When to use**: The project has a spec, interface, and system doc, but no implementation yet (or the user wants to regenerate)
-- **Tool**: `launch_codegen(spec_file, interface_file, system_doc, memory_namespace=null)` — all paths relative to the workspace root
+- **Tool**: `launch_codegen(spec_file, interface_file, system_doc, memory_namespace=null, resume_work_key=null)` — all paths relative to the workspace root
 - **`memory_namespace`**: Optional. Namespace for persistent agent memory. When set, memory persists across thread changes, including crashes and relaunches. Use a descriptive name like the contract name (e.g., `"stablecoin"`).
+- **`resume_work_key`**: Optional. If a previous codegen run crashed and returned a resume work key, pass it here to recover in-progress files. The key is included in the crash error message.
 
 ### 2. NatSpec Generation (natspec)
 Generates a CVL specification and Solidity interface from a natural language system/design document.
@@ -24,8 +25,9 @@ Generates a CVL specification and Solidity interface from a natural language sys
 Resumes a previous code generation workflow with updated files.
 - **Inputs**: Thread ID from a prior run + directory with current files
 - **When to use**: A prior codegen run exists (recorded in `/memories/last_run.json`) and the user wants to continue with changes
-- **Tool**: `launch_resume(thread_id, working_dir, commentary="", memory_namespace=null)` — `working_dir` relative to the workspace root
+- **Tool**: `launch_resume(thread_id, working_dir, commentary="", memory_namespace=null, resume_work_key=null)` — `working_dir` relative to the workspace root
 - **`memory_namespace`**: Optional. Should match the `memory_namespace` from the original codegen run.
+- **`resume_work_key`**: Optional. Same as in codegen — pass the key from a crash to recover in-progress files.
 
 ### 4. Post-Mortem Analysis
 Extracts key decisions from a completed or failed workflow into persistent memory so they survive across relaunches.
@@ -56,8 +58,9 @@ Use these heuristics when scanning the project:
 When a codegen or resume workflow fails (crash, context limit, recursion limit):
 
 1. Run `post_mortem` with the failed thread ID(s) and the `memory_namespace` to extract decisions
-2. Relaunch with the same `memory_namespace` — the new agent will pick up prior decisions from persistent memory
-3. This avoids re-asking the user the same questions about requirements and implementation choices
+2. Note the `resume_work_key` if one was returned in the crash message
+3. Relaunch with the same `memory_namespace` and the `resume_work_key` — the new agent will pick up prior decisions from persistent memory and recover in-progress files from the crash
+4. This avoids re-asking the user the same questions and lets the agent resume from where it left off
 
 Always suggest running post-mortem before relaunching a failed workflow.
 

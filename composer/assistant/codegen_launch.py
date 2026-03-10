@@ -10,6 +10,7 @@ from composer.input.types import ResumeFSData
 from composer.io.codegen_rich import CodeGenRichApp
 from composer.io.protocol import WorkflowPurpose
 from composer.workflow.executor import execute_ai_composer_workflow
+from composer.workflow.types import WorkflowResult, WorkflowSuccess, WorkflowFailure, WorkflowCrash
 from composer.workflow.services import create_llm
 
 
@@ -62,25 +63,27 @@ def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflo
 def _format_result(
     label: str,
     tid: str,
-    code: int,
-    error: Exception | None,
+    result: WorkflowResult,
     memory_namespace: str | None,
     natreq_tid: str | None,
 ) -> str:
     ns_info = f" Memory namespace: {memory_namespace}." if memory_namespace else ""
     natreq_info = f" NatReq thread ID: {natreq_tid}." if natreq_tid else ""
-    if error is not None:
-        tb = "".join(traceback.format_exception(error))
-        return (
-            f"{label} crashed with {type(error).__name__}: "
-            f"{error}\nTraceback:\n{tb}\nThread ID: {tid}.{ns_info}{natreq_info}"
-        )
-    if code == 0:
-        return (
-            f"{label} completed successfully. Thread ID: {tid}.{ns_info}{natreq_info} "
-            f"Save this to /memories/last_run.json for future resume."
-        )
-    return f"{label} finished with exit code {code}. Thread ID: {tid}.{ns_info}{natreq_info}"
+    match result:
+        case WorkflowCrash(resume_work_key=key, error=error):
+            tb = "".join(traceback.format_exception(error))
+            key_info = f" Resume work key: {key}." if key else ""
+            return (
+                f"{label} crashed with {type(error).__name__}: "
+                f"{error}\nTraceback:\n{tb}\nThread ID: {tid}.{ns_info}{natreq_info}{key_info}"
+            )
+        case WorkflowSuccess():
+            return (
+                f"{label} completed successfully. Thread ID: {tid}.{ns_info}{natreq_info} "
+                f"Save this to /memories/last_run.json for future resume."
+            )
+        case WorkflowFailure():
+            return f"{label} finished without producing output. Thread ID: {tid}.{ns_info}{natreq_info}"
 
 
 # ---------------------------------------------------------------------------
@@ -102,32 +105,23 @@ async def launch_codegen_workflow(
     llm = create_llm(wf_args)
 
     app = CodeGenRichApp(ide=ctx.ide)
-    captured_error: Exception | None = None
 
     async def work() -> None:
-        nonlocal captured_error
-        try:
-            result = await execute_ai_composer_workflow(
-                handler=app, llm=llm, input=input_data,
-                workflow_options=wf_args,
-                memory_namespace=args.memory_namespace,
-            )
-            app.result_code = result
-        except Exception as exc:
-            app.result_code = 1
-            captured_error = exc
-            await app.show_error(exc)
+        app.result = await execute_ai_composer_workflow(
+            handler=app, llm=llm, input=input_data,
+            workflow_options=wf_args,
+            memory_namespace=args.memory_namespace,
+            resume_work_key=args.resume_work_key,
+        )
 
     app.set_work(work)
     await app.run_async()
 
     tid = app.workflow_threads.get(WorkflowPurpose.CODEGEN, "unknown")
-    code = app.result_code
     return _format_result(
         label="Code generation",
         tid=tid,
-        code=code,
-        error=captured_error,
+        result=app.result or WorkflowFailure(),
         memory_namespace=args.memory_namespace,
         natreq_tid=app.workflow_threads.get(WorkflowPurpose.NATREQ),
     )
@@ -148,32 +142,23 @@ async def launch_resume_workflow(
     llm = create_llm(wf_args)
 
     app = CodeGenRichApp(ide=ctx.ide)
-    captured_error: Exception | None = None
 
     async def work() -> None:
-        nonlocal captured_error
-        try:
-            result = await execute_ai_composer_workflow(
-                handler=app, llm=llm, input=input_data,
-                workflow_options=wf_args,
-                memory_namespace=args.memory_namespace,
-            )
-            app.result_code = result
-        except Exception as exc:
-            app.result_code = 1
-            captured_error = exc
-            await app.show_error(exc)
+        app.result = await execute_ai_composer_workflow(
+            handler=app, llm=llm, input=input_data,
+            workflow_options=wf_args,
+            memory_namespace=args.memory_namespace,
+            resume_work_key=args.resume_work_key,
+        )
 
     app.set_work(work)
     await app.run_async()
 
     tid = app.workflow_threads.get(WorkflowPurpose.CODEGEN, args.thread_id)
-    code = app.result_code
     return _format_result(
         label="Resume",
         tid=tid,
-        code=code,
-        error=captured_error,
+        result=app.result or WorkflowFailure(),
         memory_namespace=args.memory_namespace,
         natreq_tid=app.workflow_threads.get(WorkflowPurpose.NATREQ),
     )

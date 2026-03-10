@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, cast
 import logging
 import uuid
 from dataclasses import dataclass
@@ -9,10 +9,11 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from graphcore.tools.memory import memory_tool
+from graphcore.tools.vfs import VFSState
 
 from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
 from composer.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools, get_memory_ns
-from composer.workflow.types import Input, PromptParams
+from composer.workflow.types import Input, PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
 from composer.workflow.meta import create_resume_commentary
 from composer.core.state import AIComposerState  # used by VFSAccessor type param
 from composer.core.context import AIComposerContext, ProverOptions
@@ -148,7 +149,8 @@ async def execute_ai_composer_workflow(
     input: InputData | ResumeFSData | ResumeIdData,
     workflow_options: WorkflowOptions,
     memory_namespace: str | None = None,
-) -> int:
+    resume_work_key: str | None = None,
+) -> WorkflowResult:
     """Execute the AI Composer workflow with interrupt handling."""
     logger = logging.getLogger(__name__)
 
@@ -287,6 +289,13 @@ async def execute_ai_composer_workflow(
     {"\n".join(f"{i}. {r}" for (i, r) in enumerate(reqs_list, start = 1))}
     """)
 
+    if resume_work_key is not None:
+        snapshot = store.get(("crash_recovery",), resume_work_key)
+        if snapshot is not None:
+            vfs_files = list(snapshot.value["vfs"].items())
+            recovery_msg = load_jinja_template("crash_recovery_context.j2", vfs_files=vfs_files)
+            flow_input["input"].insert(0, recovery_msg)
+
     try:
         import grandalf # type: ignore
         layout = workflow_exec.get_graph().draw_ascii()
@@ -317,17 +326,33 @@ async def execute_ai_composer_workflow(
 
     audit_sink = AuditDBSink(audit_db, thread_id)
 
-    async with with_handler(handler, CodeGenEventHandler(handler, audit_sink)):
-        final_state = await run_graph(workflow_exec, work_context, flow_input, config, description="Code generation")
+    try:
+        async with with_handler(handler, CodeGenEventHandler(handler, audit_sink)):
+            final_state = await run_graph(workflow_exec, work_context, flow_input, config, description="Code generation")
 
-    result = final_state.get("generated_code", None)
-    if result is None:
-        return 1
+        result = final_state.get("generated_code", None)
+        if result is None:
+            return WorkflowFailure()
 
-    res_commentary = await create_resume_commentary(final_state, llm=llm)
-    audit_db.register_complete(
-        thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
-    )
+        res_commentary = await create_resume_commentary(final_state, llm=llm)
+        audit_db.register_complete(
+            thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
+        )
 
-    await handler.output(result, materializer, final_state)
-    return 0
+        await handler.output(result, materializer, final_state)
+        return WorkflowSuccess()
+    except Exception as exc:
+        await handler.show_error(exc)
+        # Attempt to capture VFS from last checkpoint
+        resume_key: str | None = None
+        try:
+            ct = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+            if ct is not None:
+                channel_values = cast(VFSState, ct.checkpoint["channel_values"])
+                vfs_snapshot = {path: content.decode("utf-8") for path, content in materializer.iterate(channel_values)}
+                resume_key = f"crash_{thread_id}_{uuid.uuid4().hex[:8]}"
+                store.put(("crash_recovery",), resume_key, {"vfs": vfs_snapshot})
+                logger.info(f"Saved crash recovery snapshot: {resume_key}")
+        except Exception as snapshot_exc:
+            logger.warning(f"Failed to capture crash snapshot: {snapshot_exc}")
+        return WorkflowCrash(resume_work_key=resume_key, error=exc)

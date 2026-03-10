@@ -19,6 +19,7 @@ class ResumeCommentary(BaseModel):
     interface_path: str = Field(description="The path of the interface file on the VFS")
 
 async def create_resume_commentary(state: AIComposerState, llm: BaseChatModel) -> ResumeCommentary:
+    llm = llm.copy(update={"thinking": None})
     bound = llm.with_structured_output(ResumeCommentary)
     messages = state["messages"].copy()
 

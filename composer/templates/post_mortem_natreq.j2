@@ -1,6 +1,12 @@
 {% if existing_memories %}
-The agent's current memory contents are shown below. Do NOT re-extract information that the agent has already captured — focus on decisions and knowledge that are missing from these files:
+The agent's current memory contents are shown below. Your output REPLACES the existing file, so you MUST preserve all existing decisions.
 
+Rules for merging:
+- Copy all existing decisions into your output verbatim unless the conversation below EXPLICITLY contradicts them with a human-confirmed change.
+- Add any NEW decisions from the conversation that are not already captured.
+- Only remove or modify an existing decision if the human explicitly directed a change. The agent trying a different approach that failed is NOT a reason to remove a prior decision.
+
+EXISTING MEMORIES:
 {{ existing_memories }}
 
 ---

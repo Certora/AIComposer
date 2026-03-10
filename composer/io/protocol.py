@@ -88,6 +88,10 @@ class CodeGenIOHandler(IOHandler[HumanInteractionType, ProgressUpdate], Protocol
         """Record a thread ID for a specific sub-workflow purpose."""
         ...
 
+    async def show_error(self, error: Exception) -> None:
+        """Display a fatal workflow error (crash, recursion limit, etc.)."""
+        ...
+
     async def output(
         self,
         res: ResultStateSchema,

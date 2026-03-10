@@ -40,6 +40,12 @@ class ConsoleHandler(BaseConsoleHandler[HumanInteractionType, ProgressUpdate]):
     async def log_workflow_thread(self, purpose: WorkflowPurpose, thread_id: str) -> None:
         print(f"[{purpose.value}] thread: {thread_id}")
 
+    async def show_error(self, error: Exception) -> None:
+        import traceback
+        self._print_header("WORKFLOW ERROR")
+        print(f"{type(error).__name__}: {error}\n")
+        traceback.print_exception(error)
+
     async def log_state_update(self, path: list[str], st: dict):
         summarize_update(st)
 
