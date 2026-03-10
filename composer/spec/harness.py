@@ -18,8 +18,7 @@ Two entry points:
     compilation, and returns a ``Configuration``.
 """
 
-from dataclasses import dataclass
-from typing import Any, Literal, Annotated, cast, override, NotRequired, Protocol
+from typing import Any, Literal, Annotated, cast, override, NotRequired
 from pathlib import Path
 
 from pydantic import Field, BaseModel, Discriminator
