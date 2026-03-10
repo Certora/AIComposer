@@ -1,48 +1,35 @@
 from typing import Protocol, Literal
+from dataclasses import dataclass
+
+from composer.input.types import ModelOptions, LangraphOptions, RAGDBOptions
 
 Ecosystem = Literal["evm", "soroban", "move", "solana"]
 
-class AnalysisArgs(Protocol):
-    @property
-    def folder(self) -> str:
-        ...
+class AnalysisArgs(ModelOptions, LangraphOptions, RAGDBOptions, Protocol):
+    folder: str
+    rule: str
+    method: str | None
+    quiet: bool
+    ecosystem: Ecosystem
 
-    @property
-    def rule(self) -> str:
-        ...
+@dataclass
+class AnalysisArgsD():
+    folder: str
+    rule: str
+    quiet: bool
+    recursion_limit: int
+    thinking_tokens: int
+    tokens: int
+    ecosystem: Ecosystem
+    rag_db: str
+    model: str
+    method: str | None = None
+    thread_id: str | None = None
+    checkpoint_id: str | None = None
+    memory_tool: bool = False
 
-    @property
-    def method(self) -> str | None:
-        ...
+def __typechecker_stub(s: AnalysisArgs):
+    pass
 
-    @property
-    def quiet(self) -> bool:
-        ...
-
-    @property
-    def recursion_limit(self) -> int:
-        ...
-    
-    @property
-    def thread_id(self) -> str | None:
-        ...
-
-    @property
-    def checkpoint_id(self) -> str | None:
-        ...
-
-    @property
-    def thinking_tokens(self) -> int:
-        ...
-    
-    @property
-    def tokens(self) -> int:
-        ...
-    
-    @property
-    def ecosystem(self) -> Ecosystem:
-        ...
-
-    @property
-    def rag_db(self) -> str:
-        ...
+def __typechecker_sanity(s: AnalysisArgsD):
+    __typechecker_stub(s)

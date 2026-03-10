@@ -1,0 +1,28 @@
+<cvl_advice>
+<advice>
+The following is an *exhaustive* list of built-in cast functions, and their conversion behavior:
+    * `require_(u)intK`/`assert_(u)intK`: `mathint` -> `uintK`; `address` -> `(u)intK`; `(u)intJ` -> `(u)intK`
+    * `require_uint256`/`assert_uint256`: `bytes32` -> `uint256` 
+    * `to_bytesL`: `uint(L * 8)` -> `bytesL`
+    * `to_bytes32`: `address` -> `bytes32`
+    * `to_address`: `bytes32` -> `address`; `address -> address`
+
+    where `;` indicates multiple signatures for each cast operator. `K` and `J` should be assumed to range over multiples of 8 from 8 to 256 (inclusive).
+    `L` ranges from 1 to 32. `(u)` denotes an optional "u" prefix in the identifier.
+
+</advice>
+<advice>
+In addition to the built-in Solidity types, types imported from contracts, and user defined sorts, CVL defines its own set of types.
+    * `storage`: the type of the entire blockchain state and non-persistent ghosts
+    * `calldataarg`: an arbitrary calldata buffer that can be passed to contract functions or `method` variables.
+    * `method`: an arbitrary method defined in one of the contracts under verification. Must be invoked with just `env` and `calldataarg` parameters
+    * `env`: the type of the environment to use for a call
+</advice>
+<advice>
+While the `to_mathint` function does exist, it is rarely needed: CVL automatically promotes numeric types to `mathint`
+where necessary.
+</advice>
+<advice>
+Reverting behavior is reasoned about by using the `@withrevert` annotation and examining the value of the `lastReverted` flag.
+</advice>
+</cvl_advice>
