@@ -216,9 +216,16 @@ class StubRegistry:
         initial_stub: str,
         solc_version: str,
     ) -> "StubRegistry":
-        """Create a new StubRegistry with initial stub content."""
-        store.put(namespace, STUB_STORE_KEY, {"content": initial_stub})
-        store.put(namespace, FIELDS_STORE_KEY, {"fields": []})
+        """Create or resume a StubRegistry.
+
+        If the store already contains stub content and field metadata for this
+        namespace, they are preserved (resume after crash/restart). Otherwise
+        the store is initialized with the provided initial_stub.
+        """
+        if store.get(namespace, STUB_STORE_KEY) is None:
+            store.put(namespace, STUB_STORE_KEY, {"content": initial_stub})
+        if store.get(namespace, FIELDS_STORE_KEY) is None:
+            store.put(namespace, FIELDS_STORE_KEY, {"fields": []})
         return StubRegistry(
             _store=store,
             _builder=builder,

@@ -118,6 +118,9 @@ class MessageRenderer:
         self._last_tool_items: list[str] = []
         self._last_tool_widget: Static | None = None
 
+        # Tool call anchor tracking for live output panes
+        self._tool_call_anchors: dict[str, Static] = {}
+
     def render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
         """Render an AI turn as a list of widgets."""
         widgets: list[Static | Collapsible] = []
@@ -135,6 +138,7 @@ class MessageRenderer:
                     if text.strip():
                         widgets.append(Static(dot("blue", text)))
                 case "tool_use":
+                    tool_call_id = c.get("id")
                     name = c["name"]
                     input_args = c.get("input", {})
                     grouped = tc.get_group(name)
@@ -149,6 +153,7 @@ class MessageRenderer:
                             new_text = grouped.render_group(self._last_tool_items)
                             if self._last_tool_widget is not None:
                                 self._last_tool_widget.update(dot("green", Text(new_text, style="dim")))
+                            w = self._last_tool_widget
                         else:
                             # New group
                             self._last_tool_group = grouped.group_id
@@ -157,11 +162,17 @@ class MessageRenderer:
                             w = Static(dot("green", Text(display_text, style="dim")))
                             self._last_tool_widget = w
                             widgets.append(w)
+
+                        if tool_call_id is not None and w is not None:
+                            self._tool_call_anchors[tool_call_id] = w
                     else:
                         # Non-grouped tool — reset and emit standalone
                         self.reset_tool_collapsing()
                         friendly = tc.format_tool_call(name, input_args)
-                        widgets.append(Static(dot("green", Text(friendly, style="dim"))))
+                        w = Static(dot("green", Text(friendly, style="dim")))
+                        if tool_call_id is not None:
+                            self._tool_call_anchors[tool_call_id] = w
+                        widgets.append(w)
                 case other:
                     widgets.append(Static(f"Unknown block: {other}"))
 
@@ -176,6 +187,10 @@ class MessageRenderer:
         self.reset_tool_collapsing()
         label, body = result_info
         return Collapsible(Static(body, markup=False), title=label, collapsed=True)
+
+    def get_tool_call_anchor(self, tool_call_id: str) -> Static | None:
+        """Return the widget for a tool call, if tracked."""
+        return self._tool_call_anchors.get(tool_call_id)
 
     def reset_tool_collapsing(self):
         """Reset consecutive tool call collapsing state."""

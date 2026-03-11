@@ -67,7 +67,7 @@ async def main() -> int:
 
     print("Starting AI Composer resumption workflow...")
     result = await execute_ai_composer_workflow(
-        handler=ConsoleHandler(),
+        handler=ConsoleHandler(capture_prover_output=args.prover_capture_output),
         llm=llm,
         input=input_data,
         workflow_options=args

@@ -14,7 +14,7 @@ import os
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Callable, Literal, NotRequired, TypedDict, Iterator
+from typing import Annotated, Callable, NotRequired, TypedDict, Iterator
 
 from langchain_core.messages import AnyMessage
 from langchain_core.tools import InjectedToolCallId, tool, BaseTool
@@ -27,19 +27,7 @@ from graphcore.graph import LLM
 from composer.prover.core import (
     CloudConfig, ProverOptions, ProverCallbacks, run_prover,
 )
-
-
-class ProverOutputEvent(TypedDict):
-    type: Literal["prover_output"]
-    tool_call_id: str
-    line: str
-
-
-class CloudPollingEvent(TypedDict):
-    type: Literal["cloud_polling"]
-    tool_call_id: str
-    status: str
-    message: str
+from composer.diagnostics.stream import ProverOutputEvent, CloudPollingEvent
 
 
 class WithCVL(TypedDict):

@@ -37,6 +37,9 @@ class BaseConsoleHandler[H, P]:
 
 
 class ConsoleHandler(BaseConsoleHandler[HumanInteractionType, ProgressUpdate]):
+    def __init__(self, capture_prover_output: bool = False):
+        self._capture_prover_output = capture_prover_output
+
     async def log_workflow_thread(self, purpose: WorkflowPurpose, thread_id: str) -> None:
         print(f"[{purpose.value}] thread: {thread_id}")
 
@@ -50,6 +53,8 @@ class ConsoleHandler(BaseConsoleHandler[HumanInteractionType, ProgressUpdate]):
         summarize_update(st)
 
     async def progress_update(self, path: list[str], upd: ProgressUpdate):
+        if self._capture_prover_output and upd["type"] in ("prover_output", "cloud_polling"):
+            return
         print_prover_updates(upd)
 
     def handle_proposal_interrupt(self, interrupt_ty: ProposalType, debug_thunk: Callable[[], None]) -> str:
