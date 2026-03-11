@@ -15,8 +15,6 @@ from composer.io.protocol import WorkflowPurpose
 from composer.workflow.types import WorkflowResult, WorkflowSuccess
 from composer.io.message_renderer import _DOT
 
-from langchain_core.messages import HumanMessage
-
 from graphcore.tools.vfs import VFSAccessor
 
 from composer.diagnostics.stream import ProgressUpdate
@@ -162,24 +160,6 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                 file_parts.append((name, "bold underline cyan"))
             widget = Static(Text.assemble(*file_parts), classes="vfs-change")
         await self._mount_to(target, widget)
-
-    _HUMAN_TAG_DISPLAY: dict[str, tuple[str, bool]] = {
-        "initial_prompt": ("Initial prompt", True),
-        "resume": ("Resume context", True),
-        "summarization": ("Summarization", True),
-        "scolding": ("System correction", True),
-        "prover_summary": ("Prover violation summary", False),
-    }
-
-    def classify_human_message(self, m: HumanMessage) -> tuple[str, bool]:
-        tag = getattr(m, "display_tag", None)
-        if tag is not None:
-            return self._HUMAN_TAG_DISPLAY.get(tag, ("User input", True))
-        # Fallback for untagged messages (e.g., older checkpoints)
-        content = m.text()
-        if "prover output was too large" in content:
-            return ("Prover violation summary", False)
-        return ("Initial prompt", True)
 
     # ── DataTable cell click (analysis view) ──────────────────
 

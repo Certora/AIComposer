@@ -35,9 +35,9 @@ There are three layers, each with a distinct role:
                ▼
 ┌────────────────────────────────────┐
 │    _queue_drainer (background)     │  Consumes the queue and
-│         ┌─────────┐               │  dispatches to two consumers:
-│         │         │               │
-│         ▼         ▼               │
+│         ┌─────────┐                │  dispatches to two consumers:
+│         │         │                │
+│         ▼         ▼                │
 │    IOHandler  EventHandler         │
 └────────────────────────────────────┘
 ```

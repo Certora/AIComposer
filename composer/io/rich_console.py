@@ -6,7 +6,7 @@ from typing import Callable
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Static, Input, Collapsible
+from textual.widgets import Static, Input
 from textual.binding import Binding
 from textual.validation import Validator
 
@@ -16,8 +16,6 @@ from composer.io.ide_bridge import IDEBridge
 from composer.io.ide_content import IDEContentMixin
 from composer.io.tool_display import ToolDisplayConfig
 from composer.io.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
-
-from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
 
 class BaseRichConsoleApp[H, P](IDEContentMixin, App):
@@ -48,7 +46,11 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
     ):
         super().__init__()
 
-        self._renderer = MessageRenderer(tool_config)
+        self._renderer = MessageRenderer(
+            tool_config,
+            mount_to=self._mount_to,
+            on_tokens=lambda msg: self._tokens.update(msg),
+        )
         self._input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._mounted: asyncio.Event = asyncio.Event()
         self._graph_done = False
@@ -109,12 +111,6 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
         """Reset consecutive tool call collapsing state."""
         self._renderer.reset_tool_collapsing()
 
-    def _render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
-        """Render an AI turn as a list of widgets (not a single collapsible)."""
-        widgets = self._renderer.render_ai_turn(msg)
-        self._tokens.update(msg)
-        return widgets
-
     # ── Abstract / overridable methods ────────────────────────
 
     @abstractmethod
@@ -130,10 +126,6 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
     async def render_state_extras(self, target: VerticalScroll, node_name: str, node_data: dict) -> None:
         """Handle non-message state data (e.g. VFS changes). Override in subclasses."""
         pass
-
-    def classify_human_message(self, m: HumanMessage) -> tuple[str, bool]:
-        """Return (title, collapsed) for a HumanMessage. Override for workflow-specific classification."""
-        return ("User input", True)
 
     # ── IOHandler protocol ────────────────────────────────────
 
@@ -154,36 +146,13 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
 
     async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
         await self._mounted.wait()
-        target = self._get_mount_target(path)
-
-        if len(path) == 1:
-            banner = Static(
-                Text(f"━━ {description} ━━", style="bold"),
-            )
-            await self._mount_to(target, banner)
-        else:
-            inner = VerticalScroll(classes="nested-workflow")
-            coll = Collapsible(inner, title=description, collapsed=True)
-            self._renderer.nested_containers[path[-1]] = inner
-            await self._mount_to(target, coll)
+        root = self.query_one("#event-log", VerticalScroll)
+        await self._renderer.render_start(root, path=path, description=description)
 
     async def log_end(self, path: list[str]):
         await self._mounted.wait()
-        target = self._get_mount_target(path)
-
-        if len(path) == 1:
-            banner = Static(
-                Text(f"━━ Workflow end: {path[0]} ━━", style="bold"),
-            )
-            await self._mount_to(target, banner)
-        else:
-            # Collapse the nested workflow
-            tid = path[-1]
-            if tid in self._renderer.nested_containers:
-                container = self._renderer.nested_containers.pop(tid)
-                parent_coll = container.parent
-                if isinstance(parent_coll, Collapsible):
-                    parent_coll.collapsed = True
+        root = self.query_one("#event-log", VerticalScroll)
+        await self._renderer.render_end(root, path=path)
 
     async def log_state_update(self, path: list[str], st: dict):
         await self._mounted.wait()
@@ -192,33 +161,8 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
         for node_name, v in st.items():
             if node_name not in KNOWN_NODES:
                 continue
-
             if "messages" in v:
-                for m in v["messages"]:
-                    match m:
-                        case AIMessage():
-                            widgets = self._render_ai_turn(m)
-                            if widgets:
-                                await self._mount_to(target, *widgets)
-                        case SystemMessage():
-                            self._reset_tool_collapsing()
-                            coll = Collapsible(Static(m.text()), title="System prompt", collapsed=True)
-                            await self._mount_to(target, coll)
-                        case HumanMessage():
-                            self._reset_tool_collapsing()
-                            title, collapsed = self.classify_human_message(m)
-                            content = m.text()
-                            coll = Collapsible(Static(content), title=title, collapsed=collapsed)
-                            await self._mount_to(target, coll)
-                        case ToolMessage():
-                            coll = self._renderer.render_tool_result(m)
-                            if coll is None:
-                                continue
-                            await self._mount_to(target, coll)
-                        case _:
-                            self._reset_tool_collapsing()
-                            await self._mount_to(target, Static(Text(f"[Message: {type(m).__name__}]", style="dim")))
-
+                await self._renderer.render_messages(target, v["messages"])
             await self.render_state_extras(target, node_name, v)
 
     async def progress_update(self, path: list[str], upd: P):

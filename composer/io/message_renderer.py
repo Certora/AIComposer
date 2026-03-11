@@ -1,18 +1,21 @@
 """
-Extracted message rendering logic shared by BaseRichConsoleApp and PipelineTaskHandler.
+Extracted message rendering logic shared by BaseRichConsoleApp and MultiJobTaskHandler.
 
 ``MessageRenderer`` holds per-stream rendering state (tool collapsing, nested
-containers) and exposes widget-producing methods.
+containers) and exposes both widget-producing and widget-mounting methods.
 
 ``TokenStats`` accumulates token usage from AI messages and updates a display widget.
 """
 
+from typing import Callable, Protocol
+
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Static, Collapsible
 
 from rich.text import Text
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from composer.diagnostics.handlers import normalize_content
 from composer.io.tool_display import ToolDisplayConfig
@@ -78,15 +81,36 @@ class TokenStats:
         )
 
 
+class MountFn(Protocol):
+    """Callback for mounting widgets into a scrollable container."""
+    async def __call__(self, target: VerticalScroll, *widgets: Widget) -> None: ...
+
+
+_HUMAN_TAG_DISPLAY: dict[str, tuple[str, bool]] = {
+    "initial_prompt": ("Initial prompt", True),
+    "resume": ("Resume context", True),
+    "summarization": ("Summarization", True),
+    "scolding": ("System correction", True),
+    "prover_summary": ("Prover violation summary", False),
+}
+
+
 class MessageRenderer:
-    """Per-stream rendering state and widget-producing methods.
+    """Per-stream rendering state, widget production, and mounting.
 
     Used by both ``BaseRichConsoleApp`` (single-stream) and
-    ``PipelineTaskHandler`` (per-task stream).
+    ``MultiJobTaskHandler`` (per-task stream).
     """
 
-    def __init__(self, tool_config: ToolDisplayConfig):
+    def __init__(
+        self,
+        tool_config: ToolDisplayConfig,
+        mount_to: MountFn,
+        on_tokens: Callable[[AIMessage], None],
+    ):
         self.tool_config = tool_config
+        self._mount_to = mount_to
+        self._on_tokens = on_tokens
         self.nested_containers: dict[str, VerticalScroll] = {}
 
         # Consecutive tool call collapsing state
@@ -168,3 +192,69 @@ class MessageRenderer:
         if len(path) > 1 and path[-1] in self.nested_containers:
             return self.nested_containers[path[-1]]
         return root
+
+    # ── Shared rendering methods ─────────────────────────────
+
+    def classify_human(self, m: HumanMessage) -> tuple[str, bool]:
+        """Classify a human message for display. Returns (title, collapsed)."""
+        tag = getattr(m, "display_tag", None)
+        if tag is not None:
+            return _HUMAN_TAG_DISPLAY.get(tag, ("User input", True))
+        return ("User input", True)
+
+    async def render_start(self, root: VerticalScroll, *, path: list[str], description: str) -> None:
+        """Render a workflow start banner or nested collapsible."""
+        target = self.get_mount_target(root, path)
+        if len(path) == 1:
+            banner = Static(Text(f"━━ {description} ━━", style="bold"))
+            await self._mount_to(target, banner)
+        else:
+            inner = VerticalScroll(classes="nested-workflow")
+            coll = Collapsible(inner, title=description, collapsed=True)
+            self.nested_containers[path[-1]] = inner
+            await self._mount_to(target, coll)
+
+    async def render_end(self, root: VerticalScroll, *, path: list[str]) -> None:
+        """Render a workflow end banner or collapse a nested workflow."""
+        if len(path) == 1:
+            target = self.get_mount_target(root, path)
+            banner = Static(Text("━━ end ━━", style="bold dim"))
+            await self._mount_to(target, banner)
+        else:
+            tid = path[-1]
+            if tid in self.nested_containers:
+                container = self.nested_containers.pop(tid)
+                parent_coll = container.parent
+                if isinstance(parent_coll, Collapsible):
+                    parent_coll.collapsed = True
+
+    async def render_messages(self, target: VerticalScroll, messages: list) -> None:
+        """Render a list of LangChain messages, mounting widgets to *target*."""
+        for m in messages:
+            match m:
+                case AIMessage():
+                    widgets = self.render_ai_turn(m)
+                    if widgets:
+                        await self._mount_to(target, *widgets)
+                    self._on_tokens(m)
+                case SystemMessage():
+                    self.reset_tool_collapsing()
+                    coll = Collapsible(Static(m.text()), title="System prompt", collapsed=True)
+                    await self._mount_to(target, coll)
+                case HumanMessage():
+                    self.reset_tool_collapsing()
+                    title, collapsed = self.classify_human(m)
+                    content = m.text()
+                    coll = Collapsible(Static(content), title=title, collapsed=collapsed)
+                    await self._mount_to(target, coll)
+                case ToolMessage():
+                    coll = self.render_tool_result(m)
+                    if coll is None:
+                        continue
+                    await self._mount_to(target, coll)
+                case _:
+                    self.reset_tool_collapsing()
+                    await self._mount_to(
+                        target,
+                        Static(Text(f"[Message: {type(m).__name__}]", style="dim")),
+                    )

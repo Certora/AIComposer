@@ -22,15 +22,14 @@ from typing import Any, Protocol
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Static, Input, Collapsible, ContentSwitcher
 from textual.binding import Binding
 
 from rich.syntax import Syntax
 from rich.text import Text
 
-from langchain_core.messages import (
-    AIMessage, ToolMessage, HumanMessage, SystemMessage,
-)
+from langchain_core.messages import AIMessage
 
 from composer.io.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
 from composer.io.tool_display import ToolDisplayConfig
@@ -190,7 +189,11 @@ class MultiJobTaskHandler[H]:
         self._label = label
         self._panel = panel
         self._host = host
-        self._renderer = MessageRenderer(tool_config)
+        self._renderer = MessageRenderer(
+            tool_config,
+            mount_to=self._mount_to,
+            on_tokens=lambda msg: self._host.update_tokens(msg),
+        )
         self._status = TaskStatus.PENDING
 
     # ── Status management ─────────────────────────────────────
@@ -214,7 +217,7 @@ class MultiJobTaskHandler[H]:
 
     # ── Mounting helpers ──────────────────────────────────────
 
-    async def _mount_to(self, target: VerticalScroll, *widgets: Any) -> None:
+    async def _mount_to(self, target: VerticalScroll, *widgets: Widget) -> None:
         await target.mount_all(widgets)
         if target.max_scroll_y - target.scroll_y <= 3:
             target.scroll_end(animate=False)
@@ -249,29 +252,10 @@ class MultiJobTaskHandler[H]:
         pass
 
     async def log_start(self, *, path: list[str], description: str, tool_id: str | None) -> None:
-        target = self._renderer.get_mount_target(self._panel, path)
-
-        if len(path) == 1:
-            banner = Static(Text(f"━━ {description} ━━", style="bold"))
-            await self._mount_to(target, banner)
-        else:
-            inner = VerticalScroll(classes="nested-workflow")
-            coll = Collapsible(inner, title=description, collapsed=True)
-            self._renderer.nested_containers[path[-1]] = inner
-            await self._mount_to(target, coll)
+        await self._renderer.render_start(self._panel, path=path, description=description)
 
     async def log_end(self, path: list[str]) -> None:
-        if len(path) == 1:
-            target = self._renderer.get_mount_target(self._panel, path)
-            banner = Static(Text("━━ end ━━", style="bold dim"))
-            await self._mount_to(target, banner)
-        else:
-            tid = path[-1]
-            if tid in self._renderer.nested_containers:
-                container = self._renderer.nested_containers.pop(tid)
-                parent_coll = container.parent
-                if isinstance(parent_coll, Collapsible):
-                    parent_coll.collapsed = True
+        await self._renderer.render_end(self._panel, path=path)
 
     async def log_state_update(self, path: list[str], st: dict) -> None:
         target = self._renderer.get_mount_target(self._panel, path)
@@ -279,35 +263,8 @@ class MultiJobTaskHandler[H]:
         for node_name, v in st.items():
             if node_name not in KNOWN_NODES:
                 continue
-
             if "messages" in v:
-                for m in v["messages"]:
-                    match m:
-                        case AIMessage():
-                            widgets = self._renderer.render_ai_turn(m)
-                            if widgets:
-                                await self._mount_to(target, *widgets)
-                            self._host.update_tokens(m)
-                        case SystemMessage():
-                            self._renderer.reset_tool_collapsing()
-                            coll = Collapsible(Static(m.text()), title="System prompt", collapsed=True)
-                            await self._mount_to(target, coll)
-                        case HumanMessage():
-                            self._renderer.reset_tool_collapsing()
-                            coll = Collapsible(Static(m.text()), title="User input", collapsed=True)
-                            await self._mount_to(target, coll)
-                        case ToolMessage():
-                            coll = self._renderer.render_tool_result(m)
-                            if coll is None:
-                                continue
-                            await self._mount_to(target, coll)
-                        case _:
-                            self._renderer.reset_tool_collapsing()
-                            await self._mount_to(
-                                target,
-                                Static(Text(f"[Message: {type(m).__name__}]", style="dim")),
-                            )
-
+                await self._renderer.render_messages(target, v["messages"])
             await self.on_node_state(path, node_name, v)
 
     async def progress_update(self, path: list[str], upd: Any) -> None:

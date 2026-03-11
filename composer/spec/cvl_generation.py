@@ -35,7 +35,7 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
 from composer.spec.component import ComponentInst
 from composer.tools.thinking import ExplicitThinking, RoughDraftState, get_rough_draft_tools
-from composer.spec.cvl_research import cvl_researcher
+from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.templates.loader import load_jinja_template
 
 CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
@@ -381,8 +381,6 @@ async def generate_batch_cvl(
         ctx.child(CVL_JUDGE_KEY), env, feat, props, with_memory,
     )
 
-    researcher = cvl_researcher(ctx, env.cvl_research)
-
     class FeedbackSchema(WithInjectedState[ST], WithInjectedId, WithAsyncImplementation[Command]):
         """
         Receive feedback on your CVL and any skip declarations.
@@ -469,35 +467,16 @@ async def generate_batch_cvl(
                 skipped=[skip],
             )
 
-    _cvl_research_doc = (
-        "Delegate a question about CVL syntax, patterns, or techniques to a research sub-agent. "
-        "The sub-agent searches the CVL manual and knowledge base, then delivers a synthesized answer.\n\n"
-        "Use this when you need to understand how to express something in CVL, what patterns to "
-        "use, or how a specific CVL feature works. "
-        "Do not use this tool to ask questions about how to use other tools available to you; it only understands " \
-        "questions related to CVL authorship."
-    )
+    _cvl_research_doc = CVL_RESEARCH_BASE_DOC
     if has_source:
         _cvl_research_doc += " Do NOT use this for source code questions (use explore_code instead)."
-
-    class CVLResearchSchema(WithAsyncImplementation[str]):
-        __doc__ = _cvl_research_doc
-        question: str = Field(
-            description="A specific question about CVL. "
-            "Good: 'How do I use ghost state to track cumulative token transfers?' "
-            "Good: 'What is the correct syntax for a preserved block with require statements?' "
-            "Bad: 'How does the withdraw function work?' (not a CVL question)"
-        )
-        @override
-        async def run(self) -> str:
-            return await researcher(self.question)
 
     tools: list[BaseTool] = [
         put_cvl, put_cvl_raw,
         FeedbackSchema.as_tool("feedback_tool"),
         RecordSkipSchema.as_tool("record_skip"),
         UnskipSchema.as_tool("unskip_property"),
-        CVLResearchSchema.as_tool("cvl_research"),
+        cvl_research_tool(ctx, env.cvl_research, _cvl_research_doc),
         get_cvl(ST),
         ExplicitThinking.as_tool("extended_reasoning"),
     ]

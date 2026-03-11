@@ -7,13 +7,20 @@ import psycopg
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import BaseTool
 
+from langgraph.store.base import BaseStore
+from langgraph.types import Checkpointer
+
+from graphcore.graph import Builder
 from graphcore.tools.memory import memory_tool
 from graphcore.tools.vfs import VFSState
 
 from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
+from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools
 from composer.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools, get_memory_ns
 from composer.workflow.types import Input, PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
+from composer.workflow.services import get_indexed_store
 from composer.workflow.meta import create_resume_commentary
 from composer.core.state import AIComposerState  # used by VFSAccessor type param
 from composer.core.context import AIComposerContext, ProverOptions
@@ -24,11 +31,35 @@ from composer.rag.models import get_model as get_rag_model
 from composer.audit.db import AuditDB, AuditDBSink, ResumeArtifact, InputFileLike
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
+from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.tools.relaxation import requirements_relaxation
+from composer.tools.search import cvl_manual_tools
 from composer.templates.loader import load_jinja_template
 from composer.io.protocol import CodeGenIOHandler, WorkflowPurpose
 from composer.io.context import with_handler, run_graph
 from composer.io.codegen_events import CodeGenEventHandler
+
+
+_KB_NS = ("natspec_pipeline", "kb")
+
+
+@dataclass
+class _CodegenResearchContext:
+    """Satisfies ResearchContext protocol for the CVL research sub-agent."""
+    _store: BaseStore
+    _kb_ns: tuple[str, ...]
+    _checkpointer: Checkpointer
+    _thread_prefix: str
+
+    def kb_tools(self, read_only: bool) -> list[BaseTool]:
+        return make_kb_tools(self._store, self._kb_ns, read_only)
+
+    @property
+    def checkpointer(self) -> Checkpointer:
+        return self._checkpointer
+
+    def uniq_thread_id(self) -> str:
+        return f"{self._thread_prefix}-{uuid.uuid4().hex[:16]}"
 
 
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
@@ -264,6 +295,18 @@ async def execute_ai_composer_workflow(
         memory = memory_tool(get_memory(get_memory_ns(mem_root, "composer"), "composer"))
         extra_tools.append(memory)
 
+    # CVL research sub-agent — KB needs indexed store for semantic search
+    rag_db = PostgreSQLRAGDatabase(workflow_options.rag_db, get_rag_model(), skip_test=True)
+    indexed_store = get_indexed_store(DefaultEmbedder())
+    research_ctx = _CodegenResearchContext(
+        _store=indexed_store,
+        _kb_ns=_KB_NS,
+        _checkpointer=checkpointer,
+        _thread_prefix=thread_id,
+    )
+    cvl_builder = Builder().with_llm(llm).with_loader(load_jinja_template).with_tools(cvl_manual_tools(rag_db))
+    research_doc = CVL_RESEARCH_BASE_DOC + " Do NOT use this for source code questions — use the VFS tools for that."
+    extra_tools.append(cvl_research_tool(research_ctx, cvl_builder, research_doc))
 
     (workflow_builder, _, materializer) = get_cryptostate_builder(
         llm=llm,
@@ -309,15 +352,11 @@ async def execute_ai_composer_workflow(
     if workflow_options.checkpoint_id is not None:
         config["configurable"]["checkpoint_id"] = workflow_options.checkpoint_id
 
-    rag_connection = workflow_options.rag_db
-
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,
         keep_folder=workflow_options.prover_keep_folders,
         cloud=None if workflow_options.local_prover else CloudConfig(),
     )
-
-    rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
     required_validations : list[ValidationType] = [prover]
     if reqs_list is not None:
         required_validations.append(req_type)
