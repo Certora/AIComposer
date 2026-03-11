@@ -254,7 +254,7 @@ def analyze(args: VacuityAnalysisArgs) -> tuple[int, VacuityAnalysisResult | Non
         )
     )
 
-    tools = [cvl_manual_search, vacuity_analysis_output_tool, *v_tools]
+    tools = [cvl_manual_search(VacuityExplainerContext), vacuity_analysis_output_tool, *v_tools]
 
     llm = ChatAnthropic(
         model_name="claude-sonnet-4-5-20250929",
