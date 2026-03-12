@@ -28,6 +28,7 @@ do_pop=1
 python3 -m venv $venv_dir
 source $venv_dir/bin/activate
 pip install -r requirements.txt
+pip install beautifulsoup4
 
 # Build existing CVL documentation (unchanged)
 echo "Building CVL documentation..."
