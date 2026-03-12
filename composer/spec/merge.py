@@ -174,17 +174,20 @@ def make_advisory_typecheck_tool(
 ) -> BaseTool:
     """Create an advisory typecheck tool for property agents."""
 
-    class AdvisoryTypecheck(WithAsyncImplementation[str]):
+    class AdvisoryTypecheck(WithInjectedState[CVLGenerationState], WithAsyncImplementation[str]):
         """Run the CVL typechecker on your current working specification against the shared stub.
         This is advisory — use it to catch issues before attempting to publish.
+        Reads the current spec from state (written via put_cvl / put_cvl_raw).
         """
-        spec: str = Field(description="The CVL specification to typecheck")
 
         @override
         async def run(self) -> str:
+            spec = self.state.get("curr_spec")
+            if spec is None:
+                return "No spec written yet. Use put_cvl or put_cvl_raw first."
             stub_content = read_stub()
             result = typecheck_spec(
-                self.spec, stub_content, interface, contract_name, solc_version,
+                spec, stub_content, interface, contract_name, solc_version,
             )
             if result is None:
                 return "Typecheck passed."

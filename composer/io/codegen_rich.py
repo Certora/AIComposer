@@ -1,5 +1,7 @@
 import difflib
 
+from rich.spinner import Spinner
+
 from textual.containers import VerticalScroll
 from textual.widgets import Static, Input, Collapsible, DataTable
 from textual.widgets.data_table import RowKey, ColumnKey
@@ -34,6 +36,23 @@ _STATUS_STYLES: dict[StatusCodes, str] = {
 }
 
 
+class _ProverSpinner(Static):
+    """Animated spinner for cloud polling status."""
+
+    def __init__(self, message: str):
+        super().__init__("")
+        self._spinner = Spinner("dots", message)
+
+    def on_mount(self) -> None:
+        self.set_interval(1 / 12, self._tick)
+
+    def update_message(self, message: str) -> None:
+        self._spinner.text = message
+
+    def _tick(self) -> None:
+        self.update(self._spinner)
+
+
 class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
     """Textual TUI for the code generation workflow."""
 
@@ -47,6 +66,8 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         self._analysis_col: ColumnKey | None = None
         self._rule_row_keys: dict[str, RowKey] = {}
         self._rule_analyses: dict[str, str] = {}
+        self._tool_output_panes: dict[str, VerticalScroll] = {}
+        self._tool_spinners: dict[str, _ProverSpinner] = {}
         self.workflow_threads: dict[WorkflowPurpose, str] = {}
         self.result: WorkflowResult | None = None
 
@@ -90,8 +111,41 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
     async def render_progress(self, target: VerticalScroll, path: list[str], upd: ProgressUpdate) -> None:
         match upd["type"]:
             case "prover_run":
-                pass  # tool call already shows target contract + rule
+                tool_call_id = upd["tool_call_id"]
+                anchor = self._renderer.get_tool_call_anchor(tool_call_id)
+                if anchor is not None:
+                    inner = VerticalScroll()
+                    coll = Collapsible(inner, title="Prover output", collapsed=False)
+                    parent = anchor.parent
+                    assert isinstance(parent, VerticalScroll)
+                    await parent.mount(coll, after=anchor)
+                    await self._auto_scroll()
+                    self._tool_output_panes[tool_call_id] = inner
+            case "prover_output":
+                pane = self._tool_output_panes.get(upd["tool_call_id"])
+                if pane is not None:
+                    await self._mount_to(pane, Static(Text(upd["line"], style="dim")))
+            case "cloud_polling":
+                tool_call_id = upd["tool_call_id"]
+                pane = self._tool_output_panes.get(tool_call_id)
+                if pane is not None:
+                    existing = self._tool_spinners.get(tool_call_id)
+                    if existing is not None:
+                        existing.update_message(f"Waiting for cloud: {upd['message']}")
+                    else:
+                        spinner = _ProverSpinner(f"Waiting for cloud: {upd['message']}")
+                        self._tool_spinners[tool_call_id] = spinner
+                        await self._mount_to(pane, spinner)
             case "prover_result":
+                tool_call_id = upd["tool_call_id"]
+                # Collapse the stdout output pane
+                self._tool_spinners.pop(tool_call_id, None)
+                pane = self._tool_output_panes.pop(tool_call_id, None)
+                if pane is not None:
+                    parent_coll = pane.parent
+                    if isinstance(parent_coll, Collapsible):
+                        parent_coll.collapsed = True
+                # Render results table
                 table = DataTable()
                 _, _, self._analysis_col = table.add_columns("Rule", "Status", "Analysis")
                 self._rule_row_keys.clear()

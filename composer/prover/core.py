@@ -55,7 +55,7 @@ class ProverCallbacks:
     """Base class with no-op defaults. Subclass and override only what you need."""
     async def on_stdout_line(self, line: str) -> None: pass
     async def on_cloud_poll(self, status: str, message: str) -> None: pass
-    async def on_prover_run(self, args: list[str], tool_call_id: str) -> None: pass
+    async def on_prover_run(self, args: list[str]) -> None: pass
     async def on_prover_result(self, results: dict[str, RuleResult]) -> None: pass
     async def on_analysis_start(self, rule: RuleResult) -> None: pass
     async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None: pass
@@ -155,7 +155,7 @@ async def run_prover(
         effective_args.extend(["--prover_version", options.cloud.prover_version])
 
     # 2. Notify callback
-    await callbacks.on_prover_run(effective_args, tool_call_id)
+    await callbacks.on_prover_run(effective_args)
 
     # 3-5. Spawn async subprocess, stream stdout, collect stderr
     wrapper_script = Path(__file__).parent / "certoraRunWrapper.py"

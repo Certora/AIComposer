@@ -42,10 +42,11 @@ from composer.spec.component import (
 from composer.spec.bug import run_bug_analysis
 from composer.spec.prop import PropertyFormulation
 from composer.spec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC
-from composer.spec.stub_gen import generate_stub, DESCRIPTION as STUB_GEN_DESC, STUB_KEY
+from composer.spec.stub_gen import generate_stub, DESCRIPTION as STUB_GEN_DESC
 from composer.spec.registry import StubRegistry
 from composer.spec.merge import make_publish_tools, make_advisory_typecheck_tool
 from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_batch_cvl
+from composer.templates.loader import load_jinja_template
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +260,8 @@ async def run_natspec_pipeline(
             cvl_research=cvl_research,
             extra_tools=[*stub_tools, typecheck_tool],
             extra_input=[
-                "The current verification stub is:",
-                stub_content,
+                "For reference, the system document for this system is",
+                system_doc.content
             ],
             result_tools=lambda validator: make_publish_tools(
                 master_spec, registry.read_stub, interface,

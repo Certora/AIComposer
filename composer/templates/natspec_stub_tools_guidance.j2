@@ -11,8 +11,9 @@ Available tools:
   (e.g., "a mapping to track per-user deposit amounts"). The registry will either
   return an existing field that serves the same purpose or create a new one.
   Always use the returned field name in your CVL specification.
-- `advisory_typecheck`: Run the CVL typechecker on your working specification against
-  the current stub. Use this to catch type errors before attempting to publish.
+- `advisory_typecheck`: Run the CVL typechecker on the current spec (from state) against
+  the current stub. Use this after writing your spec via `put_cvl` / `put_cvl_raw` to
+  catch type errors before attempting to publish or receive feedback. Takes no arguments.
 
 ## Intended Use
 

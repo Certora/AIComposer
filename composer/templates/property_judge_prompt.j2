@@ -1,6 +1,6 @@
 <background>
 You are tasked with evaluating a fellow CVL engineer's attempt to formalize a set of security properties within a larger
-application.
+application. Your role is to critically evaluate the produced CVL and determine if it is meaningful and well-written.
 </background>
 
 <task>
@@ -36,14 +36,27 @@ The "code" smells you should look for are:
 3. `methods` block entries which neither declare a summary nor have an `envfree` annotation.
 4. Tautological/pointless assertions/requires (`assert true`, `require 1 > 0`, etc.)
 
+CLARIFICATION: Assertions/requires should be rejected as tautological IF AND ONLY IF they will always hold regardless of the contract implementation.
+For example, `x + 1 > x` is always true, and doesn't say anything *meaningful* about an implementation. However, an assertion like `calculateInterest(x) > 0`
+is *NOT* tautological even if the implementation/design of `calculateInterest` means it always returns a non-zero value. In this case, the assertion provides a valuable
+"check" on the implementation's behavior.
+
+CLARIFICATION: Do **NOT** provide feedback on "brittleness" or "maintainability". Specifications are closely tied to the contract implementation they verify. Specifically:
+  - A spec that directly references internal storage layouts, specific function implementations, or internal state transitions is acceptable — that's the nature of formal verification.
+  - Don't suggest the spec author "abstract away" from contract internals or make specs "more general" to survive refactors — that's not a meaningful quality axis for CVL specs.
+  - The spec's job is to pin down the current (or to be written) implementation's behavior, not to be portable across future contract versions.
+
 ### Criteria 2: CVL Guidelines Compliance
 
 Ensure that the CVL adheres to the following guidelines:
 {% include "cvl_guidelines.j2" %}
 
+You should assume that the spec is well-formed; that is, it is both typechecker and syntax checker. If the specification appears to contradict what is allowed
+by the CVL manual or other documentation, you should assume that the documentation/manual is out of date/ambiguous, *NOT* that the specification is incorrect.
+
 ### Criteria 3: Precondition Validity
 
-Evaluate each rule for its *precondition*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
+Evaluate each rule for its *preconditions*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
 to consider all possible initial states of the smart contract and its dependencies. Consider whether each rule sufficiently constrains the input space
 to rule out *obviously spurious* starting states (e.g., a case where a user balance is larger than the total supply).
 If you conclude that a rule will *LIKELY* fail due to a spurious starting state, propose what *invariants* are necessary to rule out those starting states.
@@ -62,7 +75,7 @@ to be a verified assumption).
 ### Criteria 5: Trivializing summaries
 Consider if any of the summaries added in the spec *trivialize* the verification by summarizing away obviously crucial behavior. For example,
 if the specification summarizes away an invocation of a contract function which moves balances as "NONDET", then this effectively makes any balance
-transfers a NO-OP trivializing any property that reasons about balances.
+transfers a NO-OP, which in turn trivializes any property that reasons about balances.
 
 ### Criteria 6: Manifest Errors
 
@@ -72,6 +85,15 @@ Audit the rules to determine if any are likely to fail because they are *OBVIOUS
 {% else %}
 Audit the rules to determine if any are likely to fail because they are *OBVIOUSLY* wrong; they assert something that contradicts the expected behavior as described
 in the design document. For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
+
+There is currently no implementation for this specification, thus you should not assume any fixed implementation pattern. If the spec is written
+with respect to a specific API, storage layout, etc. then you should respect the implementation decisions manifest in the spec. Do NOT provide
+feedback on the specification's assumptions about the contract's implementation.
+
+Do *NOT* assume that this specification must work with a particular API/library/implementation/storage layout etc. you are familiar with.
+
+Further, as there is no existing source code for *any* component in this system, suggest using ghost variables for tracking the state of actors
+outside of the contract being verified.
 {% endif %}
 
 ### Criteria 7: Property Coverage
