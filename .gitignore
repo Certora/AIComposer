@@ -5,8 +5,5 @@ cryptosafe.db
 *.db*
 tags
 scripts/cvl_manual.html
-<<<<<<< HEAD
 **/node_modules
-=======
 *.html
->>>>>>> origin/master
