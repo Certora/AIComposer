@@ -1,3 +1,4 @@
+use crate::add;
 use cvlr::prelude::*;
 
 /// Verifies that `add` correctly computes the sum of two numbers.

@@ -88,7 +88,8 @@ def get_resume_prompt_common(
         art: ResumeArtifact,
         res: ResumeInput,
         updated_spec: str,
-        other_changes: list[InputChangeDesc] | None = None
+        other_changes: list[InputChangeDesc] | None = None,
+        platform: str = "evm"
         ) -> list[str | dict]:
     changes = []
     if other_changes is not None:
@@ -109,14 +110,16 @@ def get_resume_prompt_common(
         spec_change_commentary=res.comments,
         orig_spec=art.spec_file,
         new_spec=updated_spec,
-        other_changes=changes
+        other_changes=changes,
+        platform=platform,
     )]
 
 def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> Input:
     input_messages : list[str | dict] = get_resume_prompt_common(
         art=resume_art,
         res=input,
-        updated_spec=input.new_spec.string_contents
+        updated_spec=input.new_spec.string_contents,
+        platform=workflow_options.platform
     )
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
@@ -157,7 +160,8 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
         art=resume_art,
         res=input,
         other_changes=changes,
-        updated_spec=new_spec
+        updated_spec=new_spec,
+        platform=workflow_options.platform
     )
     input_messages.append("In addition to the explicit changes mentioned above, the contents of the VFS may have been arbitrarily changed since your last work. " \
     "Some of these changes may cause the current implementation to no longer compile. Thus, analyze the current implementation and consider what changes are necessary to " \
@@ -388,7 +392,7 @@ def execute_ai_composer_workflow(
                         def debug_thunk():
                             st = cast(AIComposerState, workflow_exec.get_state(curr_state_config).values)
                             A.debug_console(work_context, st, False)
-                        human_response = handle_human_interrupt(interrupt_data, debug_thunk)
+                        human_response = handle_human_interrupt(interrupt_data, debug_thunk, platform=workflow_options.platform)
                         current_input = Command(resume=human_response)
                         interrupted = True
                         break

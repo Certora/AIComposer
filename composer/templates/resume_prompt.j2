@@ -16,7 +16,7 @@ However, the specification file has since been updated to the following:
 {{ new_spec }}
 ```
 
-This NEW version of the specification has already been changed in the VFS at the path `rules.spec`.
+This NEW version of the specification has already been changed in the VFS at the path {% if platform == "svm" %}`rules.rs`{% else %}`rules.spec`{% endif %}
 
 You must carefully analyze the differences between the specifications. Identify what
 has been added, removed or changed, and consider what, if anything, in the current version

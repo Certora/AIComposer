@@ -91,13 +91,13 @@ def get_cryptostate_builder(
     # import here to avoid loading these for non-composer factory uses
 
     from composer.tools.prover import certora_prover, solana_prover
-    from composer.tools.proposal import propose_spec_change
+    from composer.tools.proposal import propose_spec_change_tool
     from composer.tools.question import human_in_the_loop
     from composer.tools.result import code_result
     from composer.tools.search import cvl_manual_search
 
     crypto_tools: list[BaseTool] = ([solana_prover] if platform == "svm" else [certora_prover]
-        ) + [propose_spec_change, human_in_the_loop, code_result, cvl_manual_search(AIComposerContext), *vfs_tooling]
+        ) + [propose_spec_change_tool(platform), human_in_the_loop, code_result, cvl_manual_search(AIComposerContext), *vfs_tooling]
     crypto_tools.extend(extra_tools)
 
     conf : SummaryGeneration | None = SummaryGeneration(

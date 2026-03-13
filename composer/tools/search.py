@@ -35,7 +35,7 @@ class SearchResultSchema(TypedDict):
 class CVLManualSearchSchema(WithToolCallId):
     """
     Search the CVL manual database for information relevant to a question about CVL.
-    Information about CVLR (CVL for Rust) are also in this manual.
+    Information about CVLR (CVL for Rust on Solana) are also in this manual.
 
     This tool uses semantic similarity search to find the most relevant documentation
     sections from the CVL manual that can help answer questions about CVL syntax,

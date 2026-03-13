@@ -34,16 +34,16 @@ def _print_header(topic: str) -> None:
     print(topic)
     print("=" * 80)
 
-def handle_proposal_interrupt(interrupt_ty: ProposalType, debug_thunk: Callable[[], None]) -> str:
+def handle_proposal_interrupt(interrupt_ty: ProposalType, debug_thunk: Callable[[], None], platform: str = "evm") -> str:
     _print_header("SPEC CHANGE PROPOSAL")
     orig = interrupt_ty["current_spec"].splitlines(keepends=True)
     proposed = interrupt_ty["proposed_spec"].splitlines(keepends=True)
 
     diff = difflib.unified_diff(
         a = orig,
-        fromfile="a/rules.spec",
+        fromfile="a/rules.rs" if platform == "svm" else "a/rules.spec",
         b = proposed,
-        tofile="b/rules.spec",
+        tofile="b/rules.rs" if platform == "svm" else "b/rules.spec",
         n=3,
     )
 
@@ -97,13 +97,13 @@ def handle_req_relaxation_interrupt(interrupt: RequirementRelaxationType, debug_
     return prompt_input("Response to request, must start with ACCEPTED/REJECTED", debug_thunk, filt)
 
 
-def handle_human_interrupt(interrupt_data: dict, debug_thunk: Callable[[], None]) -> str:
+def handle_human_interrupt(interrupt_data: dict, debug_thunk: Callable[[], None], platform: str = "evm") -> str:
     """Handle human-in-the-loop interrupts and get user input."""
     interrupt_ty = cast(HumanInteractionType, interrupt_data)
 
     match interrupt_ty["type"]:
         case "proposal":
-            return handle_proposal_interrupt(interrupt_ty, debug_thunk)
+            return handle_proposal_interrupt(interrupt_ty, debug_thunk, platform=platform)
         case "question":
             return handle_question_interrupt(interrupt_ty, debug_thunk)
         case "req_relaxation":
