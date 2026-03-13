@@ -427,7 +427,7 @@ def main() -> None:
 
     main_body_ctx.set(main_body)
 
-    db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model(), skip_test=False)
+    db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model(), skip_test=False, create_schema=True)
     buffer : list[BlockChunk] = []
 
     sink = TextCollector()
