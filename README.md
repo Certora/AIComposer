@@ -31,6 +31,7 @@ Instructions are as follows:
 3. Run `source somepath/bin/activate`.
 4. Run `pip3 install -r ./rag_build_requirements.txt`
 5. Run `python3 ./ragbuild.py cvl_manual.html`.
+5.1. Run `python3 ./ragbuild.py solana_manual.html`.
 6. Run the command `deactivate`
 7. (Optional) cleanup `somepath`
 

@@ -419,8 +419,9 @@ def main() -> None:
 
     # delete documentation of changes, not interesting to the LLM
     changes = m.find("section", {"id": "changes-since-cvl-1"})
-    assert isinstance(changes, Tag)
-    changes.decompose()
+    if changes is not None:
+        assert isinstance(changes, Tag)
+        changes.decompose()
 
     main_body = m.find("div", {"itemprop": "articleBody"})
     assert isinstance(main_body, Tag), str(main_body)
