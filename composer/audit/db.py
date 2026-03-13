@@ -24,7 +24,7 @@ SELECT
 FROM resume_artifact r
 INNER JOIN vfs_result intf_id ON intf_id.path = r.interface_path AND intf_id.thread_id = r.thread_id
 INNER JOIN run_info ri ON ri.thread_id = r.thread_id
-INNER JOIN vfs_result final_spec_id ON r.thread_id = final_spec_id.thread_id AND final_spec_id.path = 'rules.spec'
+INNER JOIN vfs_result final_spec_id ON r.thread_id = final_spec_id.thread_id AND final_spec_id.path = %s
 WHERE r.thread_id = %s
 """
 
@@ -290,11 +290,12 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
 """, (thread_id, intf, commentary)
                 )
 
-    def get_resume_artifact(self, thread_id: str) -> ResumeArtifact:
+    def get_resume_artifact(self, thread_id: str, platform: str = "evm") -> ResumeArtifact:
         with self.conn.transaction():
             with self.conn.cursor() as cur:
                 retriever = VFSRetriever(_table="vfs_result", thread_id=thread_id, conn=self.conn)
-                cur.execute(_resume_q, (thread_id,))
+                spec_path = "rules.rs" if platform == "svm" else "rules.spec"
+                cur.execute(_resume_q, (spec_path, thread_id))
                 r = cur.fetchone()
                 if r is None:
                     raise RuntimeError(f"No resume artifact found for thread {thread_id}")
@@ -312,7 +313,7 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
 
                 rule_file = VFSFile(
                     conn=self.conn,
-                    path="rules.spec",
+                    path=spec_path,
                     file_id=r[4]
                 )
 

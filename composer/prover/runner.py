@@ -90,27 +90,27 @@ def certora_prover(
     writer = get_stream_writer()
 
     with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
+        args = source_files.copy()
+        args.extend([
+            "--verify",
+            f"{target_contract}:./rules.spec",
+            "--optimistic_loop",
+            "--optimistic_hashing",
+            "--loop_iter",
+            str(loop_iter),
+            "--solc", compiler_version,
+            "--solc_via_ir",
+            "--strict_solc_optimizer",
+            "--prover_args",
+            "-timeoutCracker true",
+        ])
+        if rule is not None:
+            args.extend(["--rule", rule])
+
+        store = get_store()
+        cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
+
         try:
-            args = source_files.copy()
-            args.extend([
-                "--verify",
-                f"{target_contract}:./rules.spec",
-                "--optimistic_loop",
-                "--optimistic_hashing",
-                "--loop_iter",
-                str(loop_iter),
-                "--solc", compiler_version,
-                "--solc_via_ir",
-                "--strict_solc_optimizer",
-                "--prover_args",
-                "-timeoutCracker true",
-            ])
-            if rule is not None:
-                args.extend(["--rule", rule])
-
-            store = get_store()
-            cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
-
             result = asyncio.run(run_prover(
                 state,
                 Path(temp_dir),
@@ -133,3 +133,47 @@ def certora_prover(
             import traceback
             traceback.print_exc()
             sys.exit(1)
+
+
+def solana_prover(
+    rule: Optional[str],
+    state: AIComposerState,
+    tool_call_id: str
+) -> SummarizedReport | RawReport | str:
+    runtime = get_runtime(AIComposerContext)
+    ctxt = runtime.context
+    writer = get_stream_writer()
+
+    with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
+        project_dir = Path(temp_dir)
+        cargo_toml = project_dir / "Cargo.toml"
+        if not cargo_toml.exists():
+            return "Error: Cargo.toml not found in project root. The Solana prover requires a valid Rust project with Cargo.toml."
+
+        args = ["--rule_sanity", "basic"]
+        if rule is not None:
+            args.extend(["--rule", rule])
+
+        store = get_store()
+        cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
+        try:
+            result = asyncio.run(run_prover(
+                state,
+                project_dir,
+                args,
+                ctxt.llm,
+                tool_call_id,
+                CoreProverOptions(),
+                _AuditCallbacks(writer, tool_call_id, ctxt.prover_opts.capture_output),
+                analysis_cache=cache,
+                summarization_threshold=10,
+                platform="svm",
+            ))
+
+            return result
+        except Exception as e:
+            print(e)
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+

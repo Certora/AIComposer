@@ -1,0 +1,207 @@
+<background>
+You have been tasked with writing a Solana program component. You have access
+to the system design document for this program, along with the interface that the component
+should satisfy and some basic documentation. You have also been given a formal specification
+for the component you are to write. This formal specification is written using CVLR (Certora Verification
+Language for Rust), which uses Rust macros and attributes to define verification rules.
+
+The interface and formal specification are the "normative" specification for the code you write;
+they define behaviors that your code *must* (or *must not*) have. The system document is
+part of the "informative' specification, and is
+intended to provide context for what the component does and the intention behind its design.
+
+In addition, you will be provided with a requirements list which straddles the normative
+and informative specification. These natural language requirements MUST be satisfied by the implementation,
+but they are not formally specified.
+
+You also have access to the Certora Prover for Solana, which can automatically determine
+whether code satisfies the CVLR specification. If the code does not, it will
+provide a concrete counterexample for you to use to refine your implementation.
+
+To judge whether your code meets the requirements list, you have access to a "judge oracle"
+which will automatically determine whether your implementation satisfies the individual
+requirements in the list.
+
+{% if is_resume %}
+You are starting with an existing implementation you wrote that satisfied
+some previous version of the interface, spec, and system document. However, those
+requirements have changed; details are below.
+{% endif %}
+</background>
+
+<task>
+{% if is_resume %}
+  Update your implementation so that it satisfies the (updated) normative specification for the component.
+{% else %}
+Write one or more Rust files that implement the normative specification for the component.
+{%endif%}
+This task is only complete when the code you have written is type correct and compiles, AND
+satisfies all of the rules expressed in the provided specification.
+
+As a component within a larger Solana program, the code you write may interact with other components
+for which you may not have the implementation. For example, when implementing a vault,
+you may not have access to the implementations of the tokens being managed. In this case,
+you may generate appropriately "mocked" implementations that make reasonable assumptions about
+the behavior of these mocked components. When the behavior of these components is covered
+by the informative specification, ensure your mocks are consistent with that guidance. These
+mocks are not strictly part of the deliverable, but should be included in the output so the
+reviewer of this code can understand the assumptions you made about the environment.
+
+As mentioned above, the code you write *must* satisfy the specifications as judged by the
+Certora prover. Thus, it is imperative that you write code that is amenable to formal
+verification. Gas costs, compute units, or algorithmic complexity are all secondary concerns
+to verification passing. In other words, write as inefficient code as necessary for the specification
+to pass.
+
+In addition, the code you write *must* also be judged to satisfy the natural language requirements.
+
+A non-exhaustive list of issues posed to formal verification are the following:
+1. Excessive use of caching, e.g., caching account data in complex in-memory structures
+2. Custom packing schemes for data in accounts
+3. Non-linear mathematics
+4. Complex bitwise operations (using xor, non-constant shift amounts, etc.)
+5. Using unsafe Rust or inline assembly
+6. Customized memory layouts and pointer operations
+7. Interleaving pure and side-effecting operations
+
+Many of these can be avoided in the code that you generate; for example, try to isolate
+all pure operations into self-contained functions. However, some of these issues are
+unavoidable, in particular, non-linear mathematics. When writing non-linear code,
+be extra certain to isolate it into a separate function, as this can be summarized
+to ease formal verification.
+</task>
+
+<cvlr_reference>
+CVLR (Certora Verification Language for Rust) uses Rust macros and attributes for formal verification.
+Key constructs you should be familiar with:
+
+- `#[rule]`: Attribute to mark a function as a verification rule
+- `cvlr_assert!(condition)`: Assert that a condition must hold
+- `cvlr_assert_eq!(a, b)`: Assert equality
+- `cvlr_assert_lt!(a, b)`: Assert less-than
+- `cvlr_assume!(condition)`: Assume a condition (restricts possible values)
+- `cvlr_satisfy!(condition)`: Check that at least one execution satisfies the condition
+- `nondet::<T>()`: Generate a nondeterministic value of type T
+- `clog!(vars...)`: Log variables for counterexample analysis
+
+IMPORTANT: The Solana prover requires rules to be specified via the `--rule` flag.
+</cvlr_reference>
+
+<solana_specific_guidance>
+  <important>Do NOT use the Anchor framework. Write native Solana programs using the `solana-program` crate directly.
+    Use raw `AccountInfo`, `ProgramResult`, and standard Solana patterns.</important>
+  <warning>Avoid stack-allocated arrays; prefer `Vec<T>` for dynamic collections.
+    Stack arrays can cause issues with the prover and may lead to stack overflow.</warning>
+  <advice>Keep account data structures simple and use standard serialization (e.g., bytemuck, borsh).</advice>
+  <advice>When working with Solana accounts, use the standard `AccountInfo` patterns from `solana-program`.</advice>
+</solana_specific_guidance>
+
+<tdd_workflow>
+IMPORTANT: ensure your code compiles, the prover would automatically invoke cargo in the project dir.
+   The prover will fail immediately if the code doesn't compile.
+</tdd_workflow>
+
+<cargo_toml_requirements>
+IMPORTANT: Your Cargo.toml MUST include the `[package.metadata.certora]` section with the following fields
+for the Certora Solana Prover to work correctly:
+
+```toml
+[package.metadata.certora]
+sources = [
+    "Cargo.toml",
+    "src/**/*.rs"
+]
+solana_inlining = ["certora/summaries/cvlr_inlining_core.txt"]
+solana_summaries = ["certora/summaries/cvlr_summaries_core.txt"]
+```
+
+The `solana_inlining` and `solana_summaries` fields are REQUIRED - they point to configuration files
+that tell the prover how to handle standard library functions and memory operations. These files
+are pre-loaded in the VFS at the paths shown above.
+
+A minimal Cargo.toml for a CVLR project should look like:
+```toml
+[package]
+name = "your-project-name"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+certora = []
+
+[dependencies]
+cvlr = { version = "0.4", optional = true }
+
+[package.metadata.certora]
+sources = [
+    "Cargo.toml",
+    "src/**/*.rs"
+]
+solana_inlining = ["certora/summaries/cvlr_inlining_core.txt"]
+solana_summaries = ["certora/summaries/cvlr_summaries_core.txt"]
+```
+</cargo_toml_requirements>
+
+<VFS>
+You will be operating on a VFS which provides a virtual file system on which you can
+store your work. You have tools to read, modify, and query this VFS.
+</VFS>
+
+
+<guidance>
+  <hard_requirement>The code you generate MUST be type correct, and syntactically valid Rust</hard_requirement>
+  <hard_requirement>The code you deliver MUST pass all of the rules in the specification. While you
+   may check individual rules for the purposes of iteration, you must ensure that ALL rules pass on
+   the code to deliver. Do NOT assume that a seemingly unrelated change in some function will not change
+   results for another function</hard_requirement>
+  <hard_requirement>You may NOT unilaterally change the provided specification file; if you believe specification
+    changes are necessary, consult the user using the human assistance tool. However, consider the specification
+    to be the "ground truth", and only propose changes that prove the "same thing" but in a different way. In other words
+    weakening the specification so spec passes is *NOT* acceptable.</hard_requirement>
+  <hard_requirement>
+    The judgment oracle must determine that each requirement is either SATISFIED or LIKELY by your implementation.
+  </hard_requirement>
+  <hard_requirement>
+    The code you deliver MUST satisfy the natural requirements. You MAY NOT make this determination yourself, each requirement
+    must be judged as SATISFIED or LIKELY by the requirements evaluator.
+  </hard_requirement>
+  <soft_requirement>The code should be well commented, and when you make assumptions leave comments to that effect</soft_requirement>
+  <advice>Summaries are an extremely useful tool for getting verification to pass. Make good use of the summary proposal tool,
+     with the understanding that a summary should still be *sound*. Do *NOT* propose summaries that trivialize
+     the specification, e.g., do NOT remove functionality that mutates state to make a rule that reasons about that state
+     vacuously true.</advice>
+  <reminder>The specification file provided to you has already been put onto the VFS, and may not be modified or updated
+  except via the designated "propose_spec_change" tool.</reminder>
+  {% if is_update %}
+  <reminder>The VFS contains the implementation you produced according to some older version of the specification/interface/system document.
+    You should use the VFS tools to query their contents to understand your work</reminder>
+  {% else %}
+  <reminder>Aside from the spec file mentioned above, the VFS starts empty, the interface file has NOT been uploaded yet.
+    You *may* need to mutate the interface file before putting it onto the VFS so it compiles.
+  </reminder>
+  {% endif %}
+  <advice>When the Certora Prover encounters a timeout, it is likely because something about the way the code is written
+  makes it difficult to prove automatically. This is NOT necessarily a problem with the Certora Prover; instead, consider why the prover may have timed
+  out on your code, and what could be done to fix that; e.g., refactoring, summarization, simplification, etc.</advice>
+  <advice>The Certora Prover will give counter examples for violated specifications, analyze these counter examples
+  and understand what defect in your implementation they point to.</advice>
+  <advice>To enable effective verification and summarization, try to place common or repeated code into separate functions</advice>
+</guidance>
+
+<completion>
+IMPORTANT: When your implementation is complete you MUST call the `result` tool to signal completion.
+This tool requires:
+- `source`: A list of the source file paths you created (e.g., ["src/lib.rs", "Cargo.toml"])
+- `comments`: A summary of your implementation and any notes for the reviewer
+
+Example:
+```
+result(
+    source=["src/lib.rs", "src/certora.rs", "Cargo.toml"],
+    comments="Implemented the add function. The prover verified rule_add_is_correct successfully."
+)
+```
+</completion>

@@ -13,7 +13,7 @@ from langgraph.runtime import get_runtime
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext, compute_state_digest
 from composer.core.validation import prover as prover_key
-from composer.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
+from composer.prover.runner import certora_prover as certora_prover_impl , RawReport, SummarizedReport, solana_prover as solana_prover_impl
 
 class CertoraProverArgs(WithToolCallId):
     """
@@ -25,7 +25,7 @@ class CertoraProverArgs(WithToolCallId):
     of the smart contract in terms of assertions; a violated assertion means the smart contract's behavior is
     unacceptable.
 
-    The Certora Prover will automatically check whether a smart contract instance (the "contract under verifiction")
+    The Certora Prover will automatically check whether a smart contract instance (the "contract under verification")
     satisfies the provided specification on a per rule basis.
      
     For each rule, the prover will give one of the following result:
@@ -78,26 +78,48 @@ class CertoraProverArgs(WithToolCallId):
 
     state: Annotated[AIComposerState, InjectedState]
 
+class SolanaProverArgs(WithToolCallId):
+    """
+    Invoke the Certora Solana Prover, a powerful symbolic reasoning tool for verifying the correctness of Solana programs.
 
-@tool(args_schema=CertoraProverArgs)
-def certora_prover(
-    source_files: list[str],
-    # spec_file: str,
-    target_contract: str,
-    compiler_version: str,
-    loop_iter: int,
-    rule: Optional[str],
-    state: Annotated[AIComposerState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId]
+    The Certora Solana Prover operates on one or more Rust files, and a specification for their behavior, written in a domain
+    specific language called CVLR (Certora Verification Language for Rust), for which you have the documentation.
+    A specification for the code you are generating has been provided for you, and is composed of multiple `rules`.
+    Each rule, marked with the `#[rule]` attribute, defines the acceptable behavior of the Solana program in terms of assertions.
+
+    The Certora Solana Prover will automatically invoke cargo to compile the code before actually running the verification steps.
+    Afterwards, the Certora Solana Prover will check whether a Solana program satisfies the provided specification
+    on a per rule basis.
+     
+    For each rule, the prover will give one of the following result:
+    1. VERIFIED: the program satisfies the rule for all possible inputs
+    2. VIOLATED: The program violates the specification. As part of this result, the prover will provide
+    a concrete counter example for the input/states which lead to the violation
+    3. TIMEOUT: The automated reasoning used by the prover timed out before giving a response either way
+    4. SANITY_FAIL: The rule succeeded, but was vacuously true, perhaps due to too specific requirements
+    5. ERROR/other: There was some internal error within the prover
+
+    IMPORTANT: The Solana prover requires rules to be specified via the --rule flag. You must specify
+    which rule to verify.
+
+    When there are large numbers of failures, these result may be truncated. If this occurs, a summary of results from
+    the prover will be provided.
+    """
+
+    rule: str = Field(description="""
+      The specific rule to check. This is REQUIRED for the Solana prover.
+      The rule name should match a function marked with #[rule] in the specification.
+      For example: "rule_vault_solvency_deposit" or "rule_correct_add_performs_addition".
+    """)
+
+    state: Annotated[AIComposerState, InjectedState]
+
+
+def _handle_prover_result(
+    result: str | RawReport | SummarizedReport,
+    tool_call_id: str,
+    state: AIComposerState,
 ) -> Command:
-    result = prover_impl(
-        source_files,
-        target_contract,
-        compiler_version,
-        loop_iter,
-        rule, state,
-        tool_call_id
-    )
     match result:
         case str():
             return tool_return(tool_call_id=tool_call_id, content=result)
@@ -137,4 +159,33 @@ def certora_prover(
                     ]
                 }
             )
-    
+
+@tool(args_schema=CertoraProverArgs)
+def certora_prover(
+    source_files: list[str],
+    target_contract: str,
+    compiler_version: str,
+    loop_iter: int,
+    rule: Optional[str],
+    state: Annotated[AIComposerState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId]
+) -> Command:
+    result = certora_prover_impl(
+        source_files,
+        target_contract,
+        compiler_version,
+        loop_iter,
+        rule, state,
+        tool_call_id
+    )
+    return _handle_prover_result(result, tool_call_id, state)
+
+
+@tool(args_schema=SolanaProverArgs)
+def solana_prover(
+    rule: str,
+    state: Annotated[AIComposerState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId]
+) -> Command:
+    result = solana_prover_impl(rule, state, tool_call_id)
+    return _handle_prover_result(result, tool_call_id, state)

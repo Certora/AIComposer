@@ -61,39 +61,42 @@ class SpecChangeProposalArgs(WithToolCallId):
     state: Annotated[AIComposerState, InjectedState]
 
 
-@tool(args_schema=SpecChangeProposalArgs)
-def propose_spec_change(
-    proposed_spec: str,
-    explanation: str,
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[AIComposerState, InjectedState]
-) -> Command:
-    ctxt = get_runtime(AIComposerContext)
-    vfs_access = ctxt.context.vfs_materializer 
-    curr_spec = vfs_access.get(state, "rules.spec")
-    assert curr_spec is not None
-    human_response = interrupt(ProposalType(
-        type="proposal",
-        proposed_spec=proposed_spec,
-        current_spec=curr_spec.decode("utf-8"),
-        explanation=explanation
-    ))
-    assert isinstance(human_response, str)
-    if human_response.startswith("ACCEPTED"):
-        return Command(
-            update={
-                "messages": [
-                    ToolMessage(
-                        tool_call_id=tool_call_id,
-                        content=human_response
-                    )
-                ],
-                "vfs": {
-                    "rules.spec": proposed_spec
+def propose_spec_change_tool(platform: str):
+    @tool(args_schema=SpecChangeProposalArgs)
+    def propose_spec_change(
+        proposed_spec: str,
+        explanation: str,
+        tool_call_id: Annotated[str, InjectedToolCallId],
+        state: Annotated[AIComposerState, InjectedState],
+    ) -> Command:
+        ctxt = get_runtime(AIComposerContext)
+        vfs_access = ctxt.context.vfs_materializer
+        curr_spec = vfs_access.get(state, "rules.rs" if platform == "svm" else "rules.spec")
+        assert curr_spec is not None
+        human_response = interrupt(ProposalType(
+            type="proposal",
+            proposed_spec=proposed_spec,
+            current_spec=curr_spec.decode("utf-8"),
+            explanation=explanation
+        ))
+        assert isinstance(human_response, str)
+        if human_response.startswith("ACCEPTED"):
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            tool_call_id=tool_call_id,
+                            content=human_response
+                        )
+                    ],
+                    "vfs": {
+                        ("rules.rs" if platform == "svm" else "rules.spec"): proposed_spec
+                    }
                 }
-            }
+            )
+        return tool_return(
+            tool_call_id=tool_call_id,
+            content=human_response
         )
-    return tool_return(
-        tool_call_id=tool_call_id,
-        content=human_response
-    )
+
+    return propose_spec_change

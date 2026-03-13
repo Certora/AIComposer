@@ -35,6 +35,7 @@ class SearchResultSchema(TypedDict):
 class CVLManualSearchSchema(WithToolCallId):
     """
     Search the CVL manual database for information relevant to a question about CVL.
+    Information about CVLR (CVL for Rust on Solana) are also in this manual.
 
     This tool uses semantic similarity search to find the most relevant documentation
     sections from the CVL manual that can help answer questions about CVL syntax,
@@ -42,7 +43,7 @@ class CVLManualSearchSchema(WithToolCallId):
 
     The result is a list of quotes from the manual, identified with the name of the relevant section.
     """
-    question: str = Field(description="A single, self-contained question about CVL. Avoid open-ended 'how do I...?' questions in favor of 'What is the syntax for ...?' style questions.")
+    question: str = Field(description="A single, self-contained question about CVL (for Solidity) or CVLR (for Solana/Rust). Avoid open-ended 'how do I...?' questions in favor of 'What is the syntax for ...?' style questions.")
     similarity_cutoff: float = Field(default=0.5, description="Minimum cosine similarity threshold for results (default: 0.7)")
     max_results: int = Field(default=10, description="Maximum number of search results to return (default: 10)")
     manual_section: list[str] = \

@@ -20,7 +20,7 @@ def main() -> int:
         case "materialize":
             conn = psycopg.connect(args.audit_db)
             audit = AuditDB(conn)
-            res = audit.get_resume_artifact(args.src_thread_id)
+            res = audit.get_resume_artifact(args.src_thread_id, args.platform)
             out_dir = pathlib.Path(args.target)
             out_dir.mkdir(exist_ok=True, parents=True)
 
