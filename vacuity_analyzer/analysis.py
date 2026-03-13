@@ -36,34 +36,22 @@ class VacuityAnalysisResult(BaseModel):
     issue_type: str = Field(description='Category of the cause of the vacuity issue like "Prover Configuration", "Specification Issue", etc.')
     mitigation_options: list[VacuityAnalysisMitigation] = Field(description="A list of possible fixes that can be expressed as a VacuityAnalysisMitigation. Can be empty if the fix is of a more complicated form.")
     short_summary: str = Field(description="A short summary of the issue and possible fixes.")
-    detailed_result: str = Field(description="""The textual analysis explaining the vacuity issue in the following structured format:
-
-## Root Cause: [Brief title describing the main issue]
-[2-3 sentence summary of what's causing the unsatisfiability]
-
-## Detailed Analysis
+    root_cause: str = Field(description="""Explanation of the root cause of the issue of the form:
+[Brief title describing the main issue]
+[2-3 sentence summary of what's causing the unsatisfiability]""")
+    detailed_analysis: str = Field(description="""Textual analysis giving more details about the issue in the form:
 ### 1. **The Problematic Constraint Sequence**
 [Trace through the [in UC] commands explaining which constraints conflict and why]
 
 ### 2. **Why This Creates Unsatisfiability** 
-[Explain the logical contradiction and why these constraints cannot be satisfied together]
-
+[Explain the logical contradiction and why these constraints cannot be satisfied together]""")
+    solution: str = Field(description="""Explanation of how to solve the issue of the form:
 ## Solution: [Title of the recommended fix]
 [Detailed explanation of how to fix the issue, including:]
 - Configuration changes (flags, settings)
 - CVL rule modifications if needed
 - Implementation changes if needed
-- Flag explanations with rationale for values
-
-## Summary
-[Brief paragraph covering:]
-- Issue Type: [Category like "Prover Configuration", "Specification Issue", etc.]
-- Root Cause: [One line summary]
-- Impact: [What this means for verification]
-- Fix: [Concrete action items]
-- Expected Result: [What should happen after the fix]
-
-Use markdown formatting for readability.""")
+- Flag explanations with rationale for values""")
                                  
 vacuity_analysis_output_tool = result_tool_generator(
     "result",
@@ -153,9 +141,11 @@ Examples:
     )
 
     args = parser.parse_args()
-    res, details = analyze(cast(VacuityAnalysisArgs, args))
-    print(details)
-    return res
+    details = analyze(cast(VacuityAnalysisArgs, args))
+    if details:
+        print(details)
+        return 0
+    return 1
 
 
 def parse_vacuity_filename(filename: str) -> tuple[str | None, str | None]:
@@ -197,7 +187,7 @@ def parse_vacuity_filename(filename: str) -> tuple[str | None, str | None]:
     return rule, None
 
 
-def analyze(args: VacuityAnalysisArgs) -> tuple[int, VacuityAnalysisResult | None]:
+def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
     vacuity_txt_path = pathlib.Path(args.vacuity_txt_path).resolve()
 
     # Extract report directory - check if txt file is in Reports subdirectory
@@ -205,16 +195,16 @@ def analyze(args: VacuityAnalysisArgs) -> tuple[int, VacuityAnalysisResult | Non
         report_dir = vacuity_txt_path.parent.parent
     else:
         print(f"Error: Expected txt file to be in 'Reports' directory, but found: {vacuity_txt_path.parent}")
-        return 1, None
+        return None
 
     # Verify paths exist
     if not report_dir.exists():
         print(f"Report directory not found: {report_dir}")
-        return 1, None
+        return None
 
     if not vacuity_txt_path.exists():
         print(f"Unsat txt file not found: {vacuity_txt_path}")
-        return 1, None
+        return None
 
     # Extract rule and method from arguments or filename
     rule = args.rule
@@ -229,7 +219,7 @@ def analyze(args: VacuityAnalysisArgs) -> tuple[int, VacuityAnalysisResult | Non
 
     if rule is None:
         print(f"Error: Could not determine rule name from arguments or filename: {vacuity_txt_path.name}")
-        return 1, None
+        return None
 
     print(f"Analyzing vacuity issue: {vacuity_txt_path.name}")
     print(f"Rule: {rule}")
@@ -242,7 +232,7 @@ def analyze(args: VacuityAnalysisArgs) -> tuple[int, VacuityAnalysisResult | Non
             vacuity_txt_content = f.read()
     except FileNotFoundError as e:
         print(f"Error reading unsat core file: {e}")
-        return 1, None
+        return None
     
     # Set up VFS tools for accessing source files
     (v_tools, _) = vfs_tools(
@@ -311,4 +301,4 @@ def analyze(args: VacuityAnalysisArgs) -> tuple[int, VacuityAnalysisResult | Non
                 print(d)
 
     final_result = graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
-    return 0, final_result
+    return final_result
