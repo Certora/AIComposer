@@ -134,6 +134,7 @@ async def run_prover(
     *,
     analysis_cache: AnalysisCache | None = None,
     summarization_threshold: int | None = None,
+    platform: str = "evm"
 ) -> RawReport | SummarizedReport | str:
     """Execute the Certora prover and return structured results.
 
@@ -158,7 +159,7 @@ async def run_prover(
     with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
         proc = await asyncio.subprocess.create_subprocess_exec(
             sys.executable,
-            str(wrapper_script), str(output_file.name), *effective_args,
+            str(wrapper_script), platform, str(output_file.name), *effective_args,
             cwd=str(folder),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

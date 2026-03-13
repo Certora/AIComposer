@@ -39,14 +39,21 @@ if certora_path is None:
 sys.path.append(certora_path)
 
 from certoraRun import run_certora
+from certoraSolanaProver import run_solana_prover
 
-output = sys.argv[1]
+platform = sys.argv[1]
+output = sys.argv[2]
 
 with open(output, 'wb') as out:
     try:
-        r = run_certora(
-            args=sys.argv[2:]
-        )
+        if platform == "svm":
+            r = run_solana_prover(
+                args=sys.argv[3:]
+            )
+        else:
+            r = run_certora(
+                args=sys.argv[3:]
+            )
         pickle.dump(r, out)
     except Exception as e:
         pickle.dump(e, out)
