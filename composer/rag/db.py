@@ -21,6 +21,7 @@ class PostgreSQLRAGDatabase:
         self.conn_string = conn_string
         self.tr = model
         if create_schema:
+            self._test_connection()
             self._create_schema()
         # Test connection
         if not skip_test:
