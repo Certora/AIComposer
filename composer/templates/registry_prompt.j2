@@ -1,0 +1,30 @@
+A property agent needs a storage variable for the purpose described in the input.
+Your job is to decide whether an existing field already serves the same semantic purpose,
+or whether a new one needs to be added to the stub.
+
+## Matching rules
+
+- Semantic equivalence means the fields track the SAME conceptual data, not just similar data.
+  "Tracks user token balances" and "mapping for per-user deposit tracking" ARE equivalent.
+  "Tracks user balances" and "tracks total supply" are NOT equivalent.
+- When in doubt, prefer reusing an existing field over creating a duplicate.
+- Consult the interface source for relevant Solidity types when choosing a type for a new field.
+
+## Output requirements
+
+Deliver your decision via the result tool. You MUST populate the following fields:
+
+- `field_name`: The Solidity identifier for the field.
+- `is_new`: `true` if adding a new field, `false` if reusing an existing one.
+
+If `is_new` is true, the following are ALSO required (do NOT leave them empty):
+- `field_type`: The Solidity type (e.g., `mapping(address => uint256)`, `uint256`, `bool`).
+- `field_description`: A short sentence describing what this field tracks.
+- `updated_stub`: The COMPLETE updated stub source code with the new field declaration inserted.
+  This must be valid Solidity that compiles — do NOT include markdown fences or any wrapper.
+  Return the full file contents, not a diff.
+
+If `is_new` is false, only `field_name` and `is_new` are needed.
+
+If your updated stub does not typecheck, take the errors into account and fix your implementation.
+When updating the stub, do *NOT* delete any existing fields or mutate any of the existing implentation stubs.

@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import tempfile
 import subprocess
 import hashlib
@@ -9,7 +10,7 @@ import sys
 
 from dataclasses import dataclass
 import types
-from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any
+from typing import cast, Annotated, Literal, NotRequired, TypeVar, Callable, Sequence, Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -25,16 +26,21 @@ from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.spec.ptypes import NatSpecState, Result, NatSpecInput
+from composer.spec.ptypes import NatSpecState, Result, NatSpecInput, HumanQuestionSchema
 from composer.spec.cvl_tools import (
     put_cvl_description,
     PutCVLSchemaModel,
     put_cvl,
     put_cvl_raw,
+    get_cvl,
 )
 from composer.tools.search import cvl_manual_search
+from composer.tools.thinking import explicit_thinking
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
-from composer.human.handlers import prompt_input
+from composer.io.console import BaseConsoleHandler
+from composer.io.prompt import prompt_input
+from composer.io.context import with_handler, run_graph
+from composer.io.event_handler import NullEventHandler
 from composer.templates.loader import load_jinja_template
 
 from graphcore.tools.human import human_interaction_tool
@@ -44,6 +50,8 @@ from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import build_workflow, FlowInput, MessagesState, tool_state_update
 from graphcore.summary import SummaryConfig
 
+from composer.io.protocol import NatSpecIOHandler
+
 type ValidationToken = Literal["guidelines", "suggestion", "typecheck"]
 
 guidelines : ValidationToken = "guidelines"
@@ -52,7 +60,7 @@ typecheck : ValidationToken = "typecheck"
 
 all_validations : list[ValidationToken] = [guidelines, suggestions, typecheck]
 
-class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
+class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions, Protocol):
     input_file: str
 
 @dataclass
@@ -275,20 +283,6 @@ def get_document() -> str:
     """
     return get_runtime(NatSpecContext).context.orig_doc
 
-class GetCVLSchema(BaseModel):
-    """
-    View the (pretty-printed) version of the CVL file.
-    """
-    state: Annotated[NatSpecState, InjectedState]
-
-@tool(args_schema=GetCVLSchema)
-def get_cvl(
-    state: Annotated[NatSpecState, InjectedState]
-) -> str:
-    if state["curr_spec"] is None:
-        return "No spec file on VFS"
-    return state["curr_spec"]
-
 class PutInterfaceSchema(BaseModel):
     """
     Put the proposed interface file for the system entry point on the VFS.
@@ -338,6 +332,8 @@ def validate_spec_completion(
     m: Result,
     id: str
 ) -> ValidationResult:
+    if not st.get("did_read", False):
+        return "You must review the current spec before completing. Call get_cvl first."
     if st["curr_intf"] is None:
         return "No interface file has been placed yet."
     if st["curr_spec"] is None:
@@ -357,15 +353,6 @@ generation_complete = result_tool_generator(
     doc="Used to indicate the successful generation of a spec + interface for the natural language input.",
     validator=(NatSpecState, validate_spec_completion)
 )
-
-class HumanQuestionSchema(BaseModel):
-    """
-    Use to pose a question to the user. You should *not* assume the user is necessarily familiar with
-    CVL. The primary usage of this tool should be to clarify intent over ambiguities in the natural language
-    specification.
-    """
-    question: str = Field(description="The question to pose to the user")
-    context: str = Field(description="Any additional context to the question, e.g. a citation from the natural language spec.")
 
 human_question_tool = human_interaction_tool(
     HumanQuestionSchema,
@@ -461,7 +448,8 @@ stdout:
 Using the provided interface file and implementation notes, 
 generate a *stub* implementation of the interface.
 That is, generate a contract which implements the interface with a name of your choosing, 
-that satisfies any of the noted implementation constraints, but otherwise has NO executable code.
+that satisfies any of the noted implementation constraints, but otherwise has NO executable code,
+besides returning dummy/default values.
 
 IMPORTANT: You can ignore any natural language requirements listed in the interface,
 the stub simply needs to be type-correct.
@@ -519,8 +507,34 @@ stderr:
 {run_res.stderr}
 """
 
-def execute(args: NatSpecArgs) -> int:
+class NatSpecConsoleHandler(BaseConsoleHandler[HumanQuestionSchema, Any]):
+    async def log_state_update(self, path: list[str], st: dict):
+        print(st)
+
+    async def progress_update(self, path: list[str], upd: Any):
+        pass
+
+    async def human_interaction(self, ty: HumanQuestionSchema, debug_thunk: Callable[[], None]) -> str:
+        self._print_header("HUMAN ASSISTANCE REQUESTED")
+        print(f"Question:\n{ty.question}")
+        print(f"Context:\n{ty.context}")
+        return prompt_input("Enter your response", debug_thunk)
+
+    async def display_result(self, final_state: NatSpecState) -> None:
+        assert "result" in final_state
+        print("Spec file generation complete")
+        print(final_state["curr_spec"])
+        print(final_state["curr_intf"])
+        print("Expected contract name: " + final_state["result"].expected_contract_name)
+        print("Expected solidity version: " + final_state["result"].expected_solc)
+        print("Notes:\n" + final_state["result"].implementation_notes)
+
+
+async def execute(args: NatSpecArgs, handler: NatSpecIOHandler | None = None) -> int:
     llm = create_llm(args)
+
+    if handler is None:
+        handler = NatSpecConsoleHandler()
 
     thread_id : str
     if args.thread_id is None:
@@ -528,7 +542,7 @@ def execute(args: NatSpecArgs) -> int:
         print(f"Selected {thread_id}")
     else:
         thread_id = args.thread_id
-    
+
     judge = get_judge_tool(
         thread_id=thread_id,
         llm=llm
@@ -570,7 +584,7 @@ def execute(args: NatSpecArgs) -> int:
             generation_complete,
             put_interface,
             get_document,
-            get_cvl,
+            get_cvl(NatSpecState, set_did_read=True),
             put_cvl_raw,
             judge,
             mem_tool,
@@ -580,72 +594,27 @@ def execute(args: NatSpecArgs) -> int:
         ]
     )[0].compile(checkpointer=checkpointer)
 
-    def fresh_config() -> RunnableConfig:
-        return {
-            "recursion_limit": args.recursion_limit,
-            "configurable": {
-                "thread_id": thread_id
-            }
+    runnable_conf : RunnableConfig = {
+        "recursion_limit": args.recursion_limit,
+        "configurable": {
+            "thread_id": thread_id
         }
-
-    runnable_conf : RunnableConfig = fresh_config()
+    }
 
     if args.checkpoint_id is not None:
-        assert "configurable" in runnable_conf
         runnable_conf["configurable"]["checkpoint_id"] = args.checkpoint_id
 
-    graph_input : Command | NatSpecInput | None = NatSpecInput(input=[
+    graph_input = NatSpecInput(input=[
         "The system/design document is as follows",
         document
-    ], curr_intf=None, curr_spec=None, validations={})
+    ], curr_intf=None, curr_spec=None, validations={}, did_read=False)
 
-    if args.checkpoint_id is not None:
-        graph_input = None
-    
-    while True:
-        t = graph_input
-        graph_input = None
-        for (tag, payload) in graph.stream(
-            input=t,
-            config=runnable_conf,
-            context=ctxt,
-            stream_mode=["updates", "checkpoints"]
-        ):
-            assert isinstance(payload, dict)
-            if tag == "checkpoints":
-                assert isinstance(payload, dict)
-                print("current checkpoint: " + payload["config"]["configurable"]["checkpoint_id"])
-                continue
-            if "__interrupt__" in payload:
-                runnable_conf = fresh_config()
-                data = payload["__interrupt__"][0].value
-                assert isinstance(data, HumanQuestionSchema)
-                print("=" * 80)
-                print("HUMAN ASSISTANCE REQUESTED")
-                print("=" * 80)
-                print(f"Question:\n{data.question}")
-                print(f"Context:\n{data.context}")
-                res = prompt_input("Enter your response", lambda: None)
-                graph_input = Command(
-                    resume=res
-                )
-                break
-            else:
-                print(payload)
-        if graph_input is None:
-            break
-
-    final_state = cast(NatSpecState, graph.get_state(fresh_config()).values)
+    async with with_handler(handler, NullEventHandler()):
+        final_state = await run_graph(graph, ctxt, graph_input, runnable_conf, description="NatSpecx generation")
     if "result" not in final_state:
         return 1
-    
-    print("Spec file generation complete")
-    print(final_state["curr_spec"])
-    print(final_state["curr_intf"])
-    print("Expected contract name: " + final_state["result"].expected_contract_name)
-    print("Expected solidity version: " + final_state["result"].expected_solc)
-    print("Notes:\n" + final_state["result"].implementation_notes)
 
+    await handler.display_result(final_state)
     return 0
 
 def main() -> int:
@@ -656,4 +625,4 @@ def main() -> int:
     parser.add_argument("input_file", help="The input file to use for the spec generation")
 
     args = cast(NatSpecArgs, parser.parse_args())
-    return execute(args)
+    return asyncio.run(execute(args))

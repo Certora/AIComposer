@@ -21,6 +21,7 @@ class AnalysisArgsD():
     thinking_tokens: int
     tokens: int
     ecosystem: Ecosystem
+    model: str
     rag_db: str
     model: str
     method: str | None = None

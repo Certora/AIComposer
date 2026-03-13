@@ -120,6 +120,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     # prover options
     parser.add_argument("--prover-capture-output", action=argparse.BooleanOptionalAction, default=True, help="Whether to capture the stdout/stderr of the prover")
     parser.add_argument("--prover-keep-folders", action="store_true", help="Keep the temporary folders after the prover runs instead of deleting them")
+    parser.add_argument("--local-prover", action="store_true", help="Run the prover locally instead of in the cloud")
 
     parser.add_argument("--debug-prompt-override", help="Append this text to the final prompt for debugging instructions to the LLM")
     parser.add_argument("--requirements-oracle", action="append", help="Use existing files to automatically answer questions during requirement generation")

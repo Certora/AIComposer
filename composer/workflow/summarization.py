@@ -10,7 +10,9 @@ class SummaryGeneration(SummaryConfig[AIComposerState]):
     def get_resume_prompt(self, state: AIComposerState, summary: str) -> str:
         res = super().get_resume_prompt(state, summary)
 
-        res += "\n You may use the VFS tools to query the current state of your implementation."
+        res += "\n You may use the VFS tools to query the current state of your implementation.\n" \
+            "IMPORTANT: *Nothing* has changed since the task summary above was produced. You do NOT need to reverify claims or " \
+            "re-run tools to confirm the task status reported in your summary. Move immediately on to the action items listed in your summary."
         return res
     
     def get_summarization_prompt(self, state: AIComposerState) -> str:

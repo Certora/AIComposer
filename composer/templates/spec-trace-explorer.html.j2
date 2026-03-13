@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spec Trace Explorer</title>
+
+    <!-- Prism.js for Solidity syntax highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css" rel="stylesheet" />
+
+    {% include 'trace/styles.j2' %}
+
+    <!-- Natspec-specific styles -->
+    <style>
+        /* Guidelines Feedback Styles */
+        .guidelines-results {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .feedback-item {
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+            border: 1px solid;
+            transition: box-shadow 0.2s;
+        }
+
+        .feedback-item.critical {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .feedback-item.advice {
+            background: #fff3cd;
+            border-color: #ffeaa7;
+            color: #856404;
+        }
+
+        .feedback-item.informational {
+            background: #d1ecf1;
+            border-color: #bee5eb;
+            color: #0c5460;
+        }
+
+        .feedback-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .feedback-severity-icon {
+            font-size: 1.2rem;
+            flex-shrink: 0;
+        }
+
+        .feedback-severity-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.1);
+        }
+
+        .feedback-description {
+            margin-bottom: 0.75rem;
+            line-height: 1.6;
+        }
+
+        .feedback-guideline {
+            font-style: italic;
+            padding: 0.5rem;
+            background: rgba(0,0,0,0.05);
+            border-radius: 4px;
+            margin-bottom: 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .feedback-code-ref {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: rgba(0,0,0,0.1);
+            padding: 0.75rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+        }
+
+        /* Suggestion Styles */
+        .suggestion-results {
+            padding: 0rem 1rem 1rem;
+        }
+
+        .suggestion-results h2 {
+            margin-bottom: 0.75rem;
+        }
+
+        .suggestion-list {
+            list-style-type: disc;
+            padding-left: 1.5rem;
+        }
+
+        .suggestion-list li {
+            padding-bottom: 0.5rem;
+            line-height: 1.6;
+        }
+
+        .no-suggestions {
+            font-style: italic;
+            color: #6c757d;
+            padding: 1rem;
+        }
+
+        /* Typecheck Styles */
+        .typecheck-result {
+            padding: 1rem;
+        }
+
+        .typecheck-status {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .typecheck-status.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .typecheck-status.failure {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .typecheck-icon {
+            font-size: 1.5rem;
+        }
+
+        .typecheck-label {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .typecheck-output {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 1rem;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Result Step Styles */
+        .result-info {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+        }
+
+        .result-info-item {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #dee2e6;
+            align-items: flex-end;
+        }
+
+        .result-info-item:last-child {
+            border-bottom: none;
+        }
+
+        .result-info-label {
+            font-weight: 600;
+            color: #495057;
+            min-width: 180px;
+        }
+
+        .result-info-value {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            color: #3498db;
+
+        }
+
+        .implementation-notes {
+            background: #fff3e0;
+            border: 1px solid #ffb74d;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .implementation-notes-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+            color: #e65100;
+        }
+
+        /* Shared markdown content styles */
+        .markdown-content {
+            line-height: 1.6;
+        }
+
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3,
+        .markdown-content h4 {
+            margin-top: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .markdown-content h1 { font-size: 1.4rem; }
+        .markdown-content h2 { font-size: 1.2rem; }
+        .markdown-content h3 { font-size: 1.1rem; }
+
+        .markdown-content p {
+            margin-bottom: 0.75rem;
+        }
+
+        .markdown-content ul,
+        .markdown-content ol {
+            margin-left: 1.5rem;
+            margin-bottom: 0.75rem;
+            padding-left: 0.5rem;
+        }
+
+        .markdown-content li {
+            margin-bottom: 0.4rem;
+        }
+
+        .markdown-content code {
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .markdown-content pre {
+            padding: 0.75rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 0.75rem 0;
+        }
+
+        .markdown-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        /* Implementation notes: orange theme */
+        .implementation-notes-content {
+            color: #5d4037;
+        }
+
+        .implementation-notes-content h1,
+        .implementation-notes-content h2,
+        .implementation-notes-content h3,
+        .implementation-notes-content h4 {
+            color: #e65100;
+        }
+
+        .implementation-notes-content code {
+            background: rgba(230, 81, 0, 0.1);
+            color: #bf360c;
+        }
+
+        .implementation-notes-content pre {
+            background: rgba(230, 81, 0, 0.08);
+            border: 1px solid #ffb74d;
+        }
+
+        /* Document content: neutral theme */
+        .document-content {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 1.5rem;
+        }
+
+        .document-content.plaintext {
+            white-space: pre-wrap;
+        }
+
+        .document-content h1,
+        .document-content h2,
+        .document-content h3,
+        .document-content h4 {
+            color: #343a40;
+        }
+
+        .document-content code {
+            background: rgba(0, 0, 0, 0.06);
+            color: #495057;
+        }
+
+        .document-content pre {
+            background: rgba(0, 0, 0, 0.04);
+            border: 1px solid #dee2e6;
+        }
+
+        /* Put Step Rejected Styles */
+        .put-update.rejected {
+            border-left: 4px solid #dc3545;
+        }
+
+        .put-update.rejected .put-file-path {
+            color: #dc3545;
+        }
+
+        .put-rejection-reason {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            color: #721c24;
+            font-size: 0.9rem;
+            white-space: pre-line;
+        }
+
+        .put-rejection-label {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        /* No feedback message */
+        .no-feedback {
+            font-style: italic;
+            color: #28a745;
+            padding: 1rem;
+            background: #d4edda;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        /* File reference links in error messages */
+        .file-ref-link {
+            color: #007bff;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .file-ref-link:hover {
+            color: #0056b3;
+        }
+
+        .code-line.highlighted-line {
+            background: rgba(255, 235, 59, 0.4);
+            outline: 2px solid #ffc107;
+            animation: highlight-fade 2s ease-out;
+        }
+
+        @keyframes highlight-fade {
+            0% { background: rgba(255, 235, 59, 0.6); }
+            100% { background: rgba(255, 235, 59, 0); }
+        }
+    </style>
+</head>
+<body>
+    {% include 'trace/navigation.j2' %}
+
+    {% include 'trace/sidebar.j2' %}
+
+    {% include 'trace/main_content.j2' %}
+
+    {% include 'trace/vfs_modal.j2' %}
+
+    <!-- Templates -->
+
+{% include 'trace/shared_templates.html.j2' %}
+
+    <!-- Natspec Initial Step Template -->
+    <template id="initial-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Initial Configuration</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+
+            <div class="collapsible" data-collapsible-state="expanded">
+                <div class="collapsible__trigger" data-collapsible-trigger>
+                    <span class="collapsible__icon"></span>
+                    <span class="collapsible__title">Design Document</span>
+                </div>
+                <div class="collapsible__content">
+                    <div class="document-content markdown-content"></div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Guidelines Step Template -->
+    <template id="guidelines-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Guidelines Evaluation</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+
+            <div class="guidelines-results"></div>
+        </div>
+    </template>
+
+    <!-- Feedback Item Template -->
+    <template id="feedback-item-template">
+        <div class="feedback-item">
+            <div class="feedback-header">
+                <span class="feedback-severity-icon"></span>
+                <span class="feedback-severity-label"></span>
+            </div>
+            <div class="feedback-description"></div>
+            <div class="feedback-guideline"></div>
+            <pre class="feedback-code-ref"></pre>
+        </div>
+    </template>
+
+    <!-- Suggestion Step Template -->
+    <template id="suggestion-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Suggestion Oracle</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+
+            <div class="suggestion-results"></div>
+        </div>
+    </template>
+
+    <!-- Typecheck Step Template -->
+    <template id="typecheck-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Typecheck Verification</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+
+            <div class="typecheck-result">
+                <div class="typecheck-status">
+                    <span class="typecheck-icon"></span>
+                    <span class="typecheck-label"></span>
+                </div>
+                <div class="typecheck-output-section">
+                    <pre class="typecheck-output"></pre>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Result Step Template -->
+    <template id="result-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>Generation Complete</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+
+            <div class="result-info">
+                <div class="result-info-item">
+                    <span class="result-info-label">Expected Solc Version:</span>
+                    <span class="result-info-value expected-solc"></span>
+                </div>
+                <div class="result-info-item">
+                    <span class="result-info-label">Expected Contract Name:</span>
+                    <span class="result-info-value expected-contract"></span>
+                </div>
+            </div>
+
+            <div class="implementation-notes">
+                <div class="implementation-notes-header">
+                    <span>Implementation Notes</span>
+                </div>
+                <div class="implementation-notes-content markdown-content"></div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Put Step Template -->
+    <template id="put-step-template">
+        <div class="pane">
+            <div class="pane-header">
+                <span>VFS Updates</span>
+                <button class="vfs-button" data-vfs-open>View VFS</button>
+            </div>
+
+            <div class="put-updates"></div>
+        </div>
+    </template>
+
+    <!-- Put Update Template -->
+    <template id="put-update-template">
+        <div class="put-update">
+            <div class="put-update-header">
+                <span class="put-file-path"></span>
+                <div class="put-update-actions">
+                    <span class="put-update-type"></span>
+                    <button class="put-view-toggle hidden" data-toggle-view>Show Full File</button>
+                </div>
+            </div>
+            <div class="put-update-content"></div>
+            <div class="put-rejection-section hidden">
+                <div class="put-rejection-reason">
+                    <div class="put-rejection-label">Rejection Reason:</div>
+                    <div class="put-rejection-text"></div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Prism.js for syntax highlighting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-solidity.min.js"></script>
+
+    <!-- CVL syntax highlighting -->
+    <script>
+{% include 'prism-cvl.js' %}
+    </script>
+
+    <!-- Marked.js for markdown parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/11.1.1/marked.min.js"></script>
+
+    <script>
+        // VFS and steps data
+        const fs = {{ fs_dump }};
+        const steps = {{ steps_dump }};
+
+        // Global state
+        let currentStepIndex = 0;
+        let currentVFSSnapshot = null;
+        let selectedFile = null;
+        let stepTitles = [];
+
+        // Initialize the application
+        function init() {
+            generateStepTitles();
+            populateSidebar();
+            attachEventListeners();
+
+            // Read initial step from URL hash
+            currentStepIndex = parseURLHash();
+
+            updateStepIndicator();
+            updateSidebarHighlight();
+            renderCurrentStep();
+            updateNavigationButtons();
+        }
+
+        // Generate step titles based on step types
+        function generateStepTitles() {
+            stepTitles = steps.map(step => {
+                switch(step.type) {
+                    case 'initial':
+                        return 'Initial Configuration';
+                    case 'ai':
+                        return 'AI Execution Step';
+                    case 'search':
+                        return 'CVL Manual Search';
+                    case 'put_file':
+                        return 'VFS Updates';
+                    case 'question':
+                        return 'Human Question';
+                    case 'result':
+                        return 'Generation Complete';
+                    case 'vfs':
+                        return 'VFS Interactions';
+                    case 'summarization':
+                        return 'Context Summarization';
+                    case 'guidelines':
+                        return 'Guidelines Evaluation';
+                    case 'suggestion':
+                        return 'Suggestion Oracle';
+                    case 'typecheck':
+                        return 'Typecheck Verification';
+                    default:
+                        return `Unknown Step (${step.type})`;
+                }
+            });
+        }
+
+{% include 'trace/core_scripts.js.j2' %}
+
+{% include 'trace/vfs_scripts.js.j2' %}
+
+        // Render the current step
+        function renderCurrentStep() {
+            const container = document.getElementById('paneContainer');
+            const step = steps[currentStepIndex];
+
+            // Clear existing content
+            container.innerHTML = '';
+
+            // Render based on step type
+            switch(step.type) {
+                case 'initial':
+                    renderInitialStep(step, container);
+                    break;
+                case 'ai':
+                    renderAIStep(step, container);
+                    break;
+                case 'search':
+                    renderSearchStep(step, container);
+                    break;
+                case 'put_file':
+                    renderPutStep(step, container);
+                    break;
+                case 'question':
+                    renderHumanQuestionStep(step, container);
+                    break;
+                case 'vfs':
+                    renderVFSStep(step, container);
+                    break;
+                case 'summarization':
+                    renderSummarizationStep(step, container);
+                    break;
+                case 'result':
+                    renderResultStep(step, container);
+                    break;
+                case 'guidelines':
+                    renderGuidelinesStep(step, container);
+                    break;
+                case 'suggestion':
+                    renderSuggestionStep(step, container);
+                    break;
+                case 'typecheck':
+                    renderTypecheckStep(step, container);
+                    break;
+                default:
+                    console.warn(`Unknown step type: ${step.type}`);
+            }
+        }
+
+        // Render Summarization Step
+        function renderSummarizationStep(step, container) {
+            const template = document.getElementById('summarization-step-template');
+            const clone = template.content.cloneNode(true);
+
+            // Render the markdown summary content
+            const contentDiv = clone.querySelector('.summarization-container');
+            contentDiv.innerHTML = renderMarkdown(step.summary_md);
+
+            container.appendChild(clone);
+        }
+
+        // Render VFS Step
+        function renderVFSStep(step, container) {
+            const template = document.getElementById('vfs-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const commandsContainer = clone.querySelector('.vfs-commands-container');
+
+            // Render each command in the VFS event
+            step.commands.forEach(command => {
+                if (command.type === 'thought') {
+                    const thoughtElement = renderVFSThought(command.msg);
+                    commandsContainer.appendChild(thoughtElement);
+                } else if (command.type === 'cmd') {
+                    const cmdElement = renderVFSCommand(command.cmd, command.stdout);
+                    commandsContainer.appendChild(cmdElement);
+                }
+            });
+
+            container.appendChild(clone);
+        }
+
+        // Render VFS thought block using template
+        function renderVFSThought(message) {
+            const template = document.getElementById('vfs-thought-template');
+            const clone = template.content.cloneNode(true);
+
+            clone.querySelector('.vfs-thought-content').textContent = message;
+
+            return clone;
+        }
+
+        // Render VFS command block using template
+        function renderVFSCommand(cmd, stdout) {
+            const template = document.getElementById('vfs-cmd-template');
+            const clone = template.content.cloneNode(true);
+
+            // Set command text
+            clone.querySelector('.vfs-cmd-text').textContent = cmd;
+
+            // Set output with syntax highlighting for .sol/.spec files
+            const outputDiv = clone.querySelector('.vfs-cmd-output');
+
+            if (cmd.trim().startsWith('cat ') && cmd.includes('.sol')) {
+                outputDiv.classList.add('solidity-highlight');
+                outputDiv.innerHTML = `<pre><code class="language-solidity">${escapeHtml(stdout)}</code></pre>`;
+                setTimeout(() => Prism.highlightAllUnder(outputDiv), 0);
+            } else if (cmd.trim().startsWith('cat ') && cmd.includes('.spec')) {
+                outputDiv.innerHTML = `<pre><code class="language-cvl">${escapeHtml(stdout)}</code></pre>`;
+                setTimeout(() => Prism.highlightAllUnder(outputDiv), 0);
+            } else {
+                outputDiv.textContent = stdout;
+            }
+
+            return clone;
+        }
+
+        // Heuristic to detect if content is likely markdown
+        function isLikelyMarkdown(text) {
+            // Check for common markdown patterns
+            const mdPatterns = [
+                /^#{1,6}\s+/m,           // Headers: # Title
+                /\*\*[^*]+\*\*/,         // Bold: **text**
+                /\*[^*]+\*/,             // Italic: *text*
+                /^\s*[-*+]\s+/m,         // Unordered lists: - item
+                /^\s*\d+\.\s+/m,         // Ordered lists: 1. item
+                /\[.+\]\(.+\)/,          // Links: [text](url)
+                /```[\s\S]*?```/,        // Code blocks: ```code```
+                /`[^`]+`/,               // Inline code: `code`
+                /^\s*>/m,                // Blockquotes: > quote
+            ];
+
+            let matches = 0;
+            for (const pattern of mdPatterns) {
+                if (pattern.test(text)) {
+                    matches++;
+                    if (matches >= 2) return true;
+                }
+            }
+            return false;
+        }
+
+        // Render Initial Step (natspec - shows document)
+        function renderInitialStep(step, container) {
+            const template = document.getElementById('initial-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const docContent = clone.querySelector('.document-content');
+
+            // Render as markdown if detected, otherwise as plaintext
+            if (isLikelyMarkdown(step.document)) {
+                docContent.innerHTML = renderMarkdown(step.document);
+            } else {
+                docContent.classList.add('plaintext');
+                docContent.textContent = step.document;
+            }
+
+            container.appendChild(clone);
+        }
+
+        // Render Guidelines Step
+        function renderGuidelinesStep(step, container) {
+            const template = document.getElementById('guidelines-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const resultsContainer = clone.querySelector('.guidelines-results');
+
+            if (step.feedback_items.length === 0) {
+                const noFeedback = document.createElement('div');
+                noFeedback.className = 'no-feedback';
+                noFeedback.textContent = 'No guidelines violations found';
+                resultsContainer.appendChild(noFeedback);
+            } else {
+                const itemTemplate = document.getElementById('feedback-item-template');
+
+                step.feedback_items.forEach(item => {
+                    const itemClone = itemTemplate.content.cloneNode(true);
+                    const itemDiv = itemClone.querySelector('.feedback-item');
+
+                    // Set severity class
+                    itemDiv.classList.add(item.severity.toLowerCase());
+
+                    // Set icon
+                    const icon = itemClone.querySelector('.feedback-severity-icon');
+                    switch(item.severity) {
+                        case 'Critical':
+                            icon.textContent = '🚨';
+                            break;
+                        case 'Advice':
+                            icon.textContent = '⚠️';
+                            break;
+                        case 'Informational':
+                            icon.textContent = 'ℹ️';
+                            break;
+                    }
+
+                    // Set label
+                    itemClone.querySelector('.feedback-severity-label').textContent = item.severity;
+
+                    // Set description
+                    itemClone.querySelector('.feedback-description').textContent = item.description;
+
+                    // Set guideline
+                    if (item.guideline_ref) {
+                        itemClone.querySelector('.feedback-guideline').textContent =
+                            'Guideline: ' + item.guideline_ref;
+                    } else {
+                        itemClone.querySelector('.feedback-guideline').style.display = 'none';
+                    }
+
+                    // Set code reference
+                    if (item.code_reference) {
+                        itemClone.querySelector('.feedback-code-ref').textContent = item.code_reference;
+                    } else {
+                        itemClone.querySelector('.feedback-code-ref').style.display = 'none';
+                    }
+
+                    resultsContainer.appendChild(itemClone);
+                });
+            }
+
+            container.appendChild(clone);
+        }
+
+        // Render Suggestion Step
+        function renderSuggestionStep(step, container) {
+            const template = document.getElementById('suggestion-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const resultsContainer = clone.querySelector('.suggestion-results');
+
+            if (step.suggestions.length === 0) {
+                const noSuggestions = document.createElement('div');
+                noSuggestions.className = 'no-suggestions';
+                noSuggestions.textContent = '(No further suggestions)';
+                resultsContainer.appendChild(noSuggestions);
+            } else {
+                const head = document.createElement("h2");
+                head.innerText = "Rule Suggestions:";
+                resultsContainer.appendChild(head);
+                const list = document.createElement('ul');
+                list.className = 'suggestion-list';
+
+                step.suggestions.forEach(suggestion => {
+                    const li = document.createElement('li');
+                    li.textContent = suggestion;
+                    list.appendChild(li);
+                });
+
+                resultsContainer.appendChild(list);
+            }
+
+            container.appendChild(clone);
+        }
+
+        // Render Typecheck Step
+        function renderTypecheckStep(step, container) {
+            const template = document.getElementById('typecheck-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const statusDiv = clone.querySelector('.typecheck-status');
+            const icon = clone.querySelector('.typecheck-icon');
+            const label = clone.querySelector('.typecheck-label');
+            const output = clone.querySelector('.typecheck-output');
+
+            if (step.success) {
+                statusDiv.classList.add('success');
+                icon.textContent = '✓';
+                label.textContent = 'Typecheck Passed';
+            } else {
+                statusDiv.classList.add('failure');
+                icon.textContent = '✗';
+                label.textContent = 'Typecheck Failed';
+            }
+
+            output.textContent = step.output;
+
+            container.appendChild(clone);
+        }
+
+        // Render Result Step
+        function renderResultStep(step, container) {
+            const template = document.getElementById('result-step-template');
+            const clone = template.content.cloneNode(true);
+
+            clone.querySelector('.expected-solc').textContent = step.expected_solc || 'Not specified';
+            clone.querySelector('.expected-contract').textContent = step.expected_contract_name || 'Not specified';
+            clone.querySelector('.implementation-notes-content').innerHTML =
+                renderMarkdown(step.implementation_notes || 'No notes provided.');
+
+            container.appendChild(clone);
+        }
+
+        function renderHumanQuestionStep(step, container) {
+            const template = document.getElementById("human-question-template").content.cloneNode(true);
+            const messageContainer = template.querySelector(".messages-container");
+
+            const contextBubble = renderMessageBubble(step.context, "Context", "text");
+            messageContainer.appendChild(contextBubble);
+
+            if(step.code) {
+                messageContainer.appendChild(renderMessageBubbleFn("Code Reference", "question-code", (d) => {
+                    d.appendChild(renderSolidityCode(step.code));
+                }));
+            }
+
+            messageContainer.appendChild(renderMessageBubble(
+                step.query,
+                "Question",
+                "human-question"
+            ));
+
+            messageContainer.appendChild(renderMessageBubble(
+                step.answer,
+                "Response",
+                "human-response"
+            ));
+            container.appendChild(template);
+        }
+
+        function renderSolidityCode(code) {
+            const pre = document.createElement("pre");
+            pre.innerHTML = `<code class="language-solidity">${escapeHtml(code)}</code>`;
+            Prism.highlightAllUnder(pre);
+            return pre;
+        }
+
+        function renderMessageBubbleFn(type, typeClass, cb) {
+            const messageClone = document.getElementById('message-bubble-template').content.cloneNode(true);
+            const bubble = messageClone.querySelector('.message-bubble');
+            messageClone.querySelector(".message-type-label").textContent = type;
+            if(typeClass) {
+                bubble.classList.add(typeClass);
+            }
+            cb(messageClone.querySelector(".message-text"));
+            return messageClone;
+        }
+
+        function renderMessageBubble(content, type, typeClass) {
+            return renderMessageBubbleFn(type, typeClass, (d) => { d.textContent = content });
+        }
+
+        // Render AI Step
+        function renderAIStep(step, container) {
+            const template = document.getElementById('ai-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const messagesContainer = clone.querySelector('.messages-container');
+
+            // Render each message
+            step.messages.forEach(message => {
+                let tyClass, typeText;
+                switch (message.type) {
+                    case "thinking":
+                        tyClass = "thinking";
+                        typeText = "Thinking";
+                        break;
+                    case "memory":
+                        tyClass = "memory";
+                        typeText = "Memory";
+                        break;
+                    default:
+                        tyClass = "text";
+                        typeText = "Response";
+                }
+                const messageBubble = renderMessageBubble(message.text, typeText, tyClass);
+                messagesContainer.appendChild(messageBubble);
+            });
+
+            // Add tool call
+            const toolCall = clone.querySelector('.tool-call');
+            toolCall.textContent = `Tool called: ${step.tool}`;
+
+            container.appendChild(clone);
+        }
+
+        function renderMarkdown(mdString) {
+            return marked.parse(mdString, {
+                gfm: true,
+                breaks: true,
+                highlight: function(code, lang) {
+                    if (lang === 'solidity' && Prism.languages.solidity) {
+                        return Prism.highlight(code, Prism.languages.solidity, 'solidity');
+                    }
+                    return code;
+                }
+            })
+        }
+
+        // Render Search Step
+        function renderSearchStep(step, container) {
+            const template = document.getElementById('search-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const questionBubble = renderMessageBubble(
+                step.query,
+                "Search Query",
+                "search-query"
+            );
+
+            clone.querySelector(".search-container").prepend(questionBubble);
+
+            // Render results
+            const resultsContainer = clone.querySelector('.search-results');
+            const resultTemplate = document.getElementById('search-result-template');
+
+            step.results.forEach((result, index) => {
+                const resultClone = resultTemplate.content.cloneNode(true);
+
+                // Set header/title
+                resultClone.querySelector('.search-result-title').textContent = result.header;
+
+                // Set content
+                resultClone.querySelector('.search-result-body').textContent = result.content;
+
+                // Set similarity score
+                const similarityScore = resultClone.querySelector('.similarity-score');
+                similarityScore.textContent = result.similarity.toFixed(2);
+
+                // Start with first result expanded, others collapsed
+                if (index > 0) {
+                    const collapsible = resultClone.querySelector('.collapsible');
+                    collapsible.setAttribute('data-collapsible-state', 'collapsed');
+                    resultClone.querySelector('.collapsible__icon').classList.add('collapsed');
+                    resultClone.querySelector('.collapsible__content').classList.add('collapsed');
+                }
+
+                resultsContainer.appendChild(resultClone);
+            });
+
+            container.appendChild(clone);
+        }
+
+        // Render Put Step
+        function renderPutStep(step, container) {
+            const template = document.getElementById('put-step-template');
+            const clone = template.content.cloneNode(true);
+
+            const updatesContainer = clone.querySelector('.put-updates');
+            const updateTemplate = document.getElementById('put-update-template');
+
+            step.updates.forEach(update => {
+                const updateClone = updateTemplate.content.cloneNode(true);
+                const updateDiv = updateClone.querySelector('.put-update');
+
+                // Set file path
+                updateClone.querySelector('.put-file-path').textContent = update.path;
+
+                // Set type badge
+                const typeBadge = updateClone.querySelector('.put-update-type');
+
+                // Handle rejected updates
+                if (update.rejected) {
+                    updateDiv.classList.add('rejected');
+                    typeBadge.textContent = 'REJECTED';
+                    typeBadge.style.background = '#dc3545';
+                    typeBadge.style.color = 'white';
+
+                    // Show rejection reason with linkified file references
+                    const rejectionSection = updateClone.querySelector('.put-rejection-section');
+                    rejectionSection.classList.remove('hidden');
+                    const rejectionText = updateClone.querySelector('.put-rejection-text');
+                    rejectionText.innerHTML = linkifyFileRefs(
+                        escapeHtml(update.rejection_reason || 'Update rejected')
+                    );
+
+                    // Add click handlers for file ref links
+                    rejectionText.querySelectorAll('.file-ref-link').forEach(link => {
+                        link.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            const lineNum = parseInt(link.dataset.line, 10);
+                            const contentDiv = updateDiv.querySelector('.put-update-content');
+                            scrollToLine(contentDiv, lineNum);
+                        });
+                    });
+
+                    // For rejected put_cvl, show placeholder
+                    const contentDiv = updateClone.querySelector('.put-update-content');
+                    if (update.contents === '(Input not shown - invalid JSON)') {
+                        const placeholder = document.createElement('div');
+                        placeholder.className = 'no-suggestions';
+                        placeholder.textContent = '(Input not shown - invalid JSON)';
+                        contentDiv.appendChild(placeholder);
+                    } else {
+                        // Show the attempted content
+                        renderPutFileContent(contentDiv, update.path, update.contents);
+                    }
+                } else {
+                    typeBadge.textContent = update.type === 'fresh' ? 'NEW' : 'MODIFIED';
+                    if (update.type === 'diff') {
+                        typeBadge.classList.add('diff');
+                    }
+
+                    const contentDiv = updateClone.querySelector('.put-update-content');
+                    const toggleButton = updateClone.querySelector('[data-toggle-view]');
+
+                    if (update.type === 'fresh') {
+                        toggleButton.classList.add('hidden');
+                        renderPutFileContent(contentDiv, update.path, update.contents);
+                    } else if (update.type === 'diff') {
+                        toggleButton.classList.remove('hidden');
+                        toggleButton.dataset.filePath = update.path;
+                        toggleButton.dataset.fileContents = update.contents;
+                        renderPutDiffContent(contentDiv, update.diff_lines);
+                    }
+                }
+
+                updatesContainer.appendChild(updateClone);
+            });
+
+            container.appendChild(clone);
+        }
+
+        function renderDiffContent(diffLines, idClass) {
+            const diffView = document.createElement('div');
+            diffView.classList.add("diff-view");
+            diffView.classList.add(idClass);
+
+            diffLines.forEach(line => {
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'diff-line';
+                lineDiv.textContent = line;
+
+                if (line.startsWith('+++') || line.startsWith('---')) {
+                    lineDiv.classList.add('file-meta');
+                } else if (line.startsWith('@@')) {
+                    lineDiv.classList.add('meta');
+                } else if (line.startsWith('+')) {
+                    lineDiv.classList.add('addition');
+                } else if (line.startsWith('-')) {
+                    lineDiv.classList.add('deletion');
+                } else {
+                    lineDiv.classList.add('context');
+                }
+
+                diffView.appendChild(lineDiv);
+            });
+            return diffView;
+        }
+
+        // Render diff content with colored lines
+        function renderPutDiffContent(container, diffLines) {
+            const diffView = renderDiffContent(diffLines, "put-diff-view");
+            container.appendChild(diffView);
+        }
+
+        // Render file content with syntax highlighting and line numbers for scrolling
+        function renderPutFileContent(container, path, contents) {
+            const fileView = document.createElement('div');
+            fileView.className = 'put-file-view';
+
+            const preElem = document.createElement("pre");
+            const codeElem = document.createElement("code");
+
+            if (path.endsWith(".sol")) {
+                codeElem.classList.add("language-solidity");
+            } else if (path.endsWith(".spec")) {
+                codeElem.classList.add("language-cvl");
+            }
+
+            codeElem.textContent = contents;
+            preElem.appendChild(codeElem);
+            fileView.appendChild(preElem);
+
+            // Highlight syntax first
+            if (path.endsWith(".sol") || path.endsWith(".spec")) {
+                Prism.highlightAllUnder(fileView);
+            }
+
+            // Wrap each line with line number attribute for scrolling
+            const html = codeElem.innerHTML;
+            const lines = html.split('\n');
+            codeElem.innerHTML = lines.map((line, idx) => {
+                const lineNum = idx + 1;
+                console.log(line);
+                return `<span class="code-line" data-line="${lineNum}">${line || ' '}</span>`;
+            }).join('\n');
+
+            container.appendChild(fileView);
+        }
+
+        // Linkify file references like "rules.spec:214:11" to scrollable links
+        function linkifyFileRefs(text, targetContainer) {
+            const pattern = /([\w.-]+\.(?:spec|sol)):(\d+)(?::\d+)?/g;
+            return text.replace(pattern, (match, file, line) => {
+                return `<a href="#" class="file-ref-link" data-line="${line}">${match}</a>`;
+            });
+        }
+
+        // Scroll to a specific line within a put-update container
+        function scrollToLine(container, lineNumber) {
+            const targetLine = container.querySelector(`[data-line="${lineNumber}"]`);
+            if (targetLine) {
+                targetLine.classList.add('highlighted-line');
+                targetLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Flash effect
+                setTimeout(() => targetLine.classList.remove('highlighted-line'), 2000);
+            }
+        }
+
+        // Toggle between diff and full file view
+        function togglePutView(button) {
+            const contentDiv = button.closest('.put-update').querySelector('.put-update-content');
+            const isShowingDiff = button.textContent === 'Show Full File';
+
+            // Clear current content
+            contentDiv.innerHTML = '';
+
+            if (isShowingDiff) {
+                // Switch to full file view
+                button.textContent = 'Show Diff';
+                const path = button.dataset.filePath;
+                const contents = button.dataset.fileContents;
+                renderPutFileContent(contentDiv, path, contents);
+            } else {
+                // Switch back to diff view
+                button.textContent = 'Show Full File';
+                const stepIndex = currentStepIndex;
+                const step = steps[stepIndex];
+                const update = step.updates.find(u => u.path === button.dataset.filePath);
+                if (update && update.diff_lines) {
+                    renderPutDiffContent(contentDiv, update.diff_lines);
+                }
+            }
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

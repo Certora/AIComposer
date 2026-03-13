@@ -1,11 +1,11 @@
-from typing import NotRequired, cast, Callable, Any
+from typing import NotRequired, Callable, Any
 from dataclasses import dataclass
 import uuid
 import pathlib
 
 from pydantic import BaseModel, Field
 
-from graphcore.graph import FlowInput, build_workflow
+from graphcore.graph import FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.memory import memory_tool, MemoryBackend
 
@@ -15,7 +15,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from langgraph.graph import MessagesState
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import interrupt, Command
+from langgraph.types import interrupt
 
 from composer.audit.types import InputFileLike
 from composer.audit.db import ResumeArtifact
@@ -24,12 +24,27 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.workflow.factories import get_checkpointer
 from composer.tools.search import cvl_manual_search
+from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
 from composer.natreq.automation import requirements_oracle
+from composer.human.types import HumanInteractionType
+from composer.io.protocol import IOHandler
+from composer.io.context import with_handler, run_graph
+from composer.io.event_handler import NullEventHandler
 
 
-class ExtractionState(MessagesState):
+@dataclass
+class ExtractionResult:
+    """Result of requirements extraction, including the thread_id for post-mortem introspection."""
+    reqs: list[str]
+    thread_id: str
+
+
+class ExtractionState(MessagesState, RoughDraftState):
     reqs: NotRequired[list[str]]
+
+class ExtractionInput(FlowInput, RoughDraftState):
+    pass
 
 @dataclass
 class ExtractionContext:
@@ -58,10 +73,20 @@ def human_in_the_loop(
     context: str
 ) -> str:
     response = interrupt({
+        "type": "extraction_question",
         "question": question,
         "context": context
     })
     return response
+
+def _extraction_res_checker(
+    st: ExtractionState,
+    _r: list[str],
+    _id: str
+) -> str | None:
+    if "memory" in st and not st.get("did_read", False):
+        return "Completion REJECTED: You must read your rough draft before submitting. Call read_rough_draft first."
+    return None
 
 results_tool = result_tool_generator(
     "reqs",
@@ -70,7 +95,8 @@ results_tool = result_tool_generator(
 Tool used to indicate your analysis is complete and communicate the generated requirements back to the user.
 
 REMINDER: You should call this tool only AFTER you have updated your memories.
-"""
+""",
+    validator=(ExtractionState, _extraction_res_checker)
 )
 
 
@@ -78,7 +104,32 @@ system_prompt = load_jinja_template("req_role_prompt.j2")
 
 initial_prompt = load_jinja_template("req_extraction_prompt.j2")
 
-def get_requirements(
+
+class OracleHandler:
+    """Delegation-based wrapper around any IOHandler.
+
+    Forwards all methods except human_interaction, where extraction_question
+    interrupts are routed to the oracle (if available).
+    """
+
+    def __init__(self, inner: IOHandler, oracle: Callable[[tuple[str, str]], str] | None):
+        self._inner = inner
+        self._oracle = oracle
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    async def human_interaction(self, ty: HumanInteractionType, debug_thunk: Callable[[], None]) -> str:
+        if ty["type"] == "extraction_question" and self._oracle is not None:
+            print(f"Calling oracle...\nQuestion: {ty['question']}\nContext: {ty['context']}")
+            resp = self._oracle((ty["context"], ty["question"]))
+            print(f"Oracle response: {resp}")
+            return resp
+        return await self._inner.human_interaction(ty, debug_thunk)
+
+
+async def get_requirements(
+    io: IOHandler,
     options: RAGDBOptions,
     llm: BaseChatModel,
     sys_doc: InputFileLike,
@@ -86,17 +137,19 @@ def get_requirements(
     mem_backend: MemoryBackend,
     resume_artifact: ResumeArtifact | None,
     oracle: list[str]
-) -> list[str]:
+) -> ExtractionResult:
     tools = [
         memory_tool(mem_backend),
         results_tool,
         human_in_the_loop,
-        cvl_manual_search(ExtractionContext)
+        cvl_manual_search(ExtractionContext),
+        explicit_thinking,
+        *get_rough_draft_tools(ExtractionState),
     ]
-    built : CompiledStateGraph[ExtractionState, ExtractionContext, FlowInput, Any] = build_workflow(
+    built : CompiledStateGraph[ExtractionState, ExtractionContext, ExtractionInput, Any] = build_async_workflow(
         state_class=ExtractionState,
         context_schema=ExtractionContext,
-        input_type=FlowInput,
+        input_type=ExtractionInput,
         output_key="reqs",
         tools_list=tools,
         unbound_llm=llm,
@@ -104,7 +157,7 @@ def get_requirements(
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt
     )[0].compile(checkpointer=get_checkpointer())
-    
+
     thread_id = uuid.uuid1().hex
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
@@ -141,29 +194,10 @@ spec).
             [ pathlib.Path(p) for p in oracle ]
         )
 
-    graph_input : Command | FlowInput | None = FlowInput(
-        input=input_text
-    )
-    while graph_input is not None:
-        to_send = graph_input
-        graph_input = None
-        for payload in built.stream(input = to_send, context=ExtractionContext(rag_db=db), config=config):
-            if "__interrupt__" in payload:
-                interrupt_data = cast(dict, payload["__interrupt__"][0].value)
-                context = interrupt_data["context"]
-                question = interrupt_data["question"]
-                if req_oracle is not None:
-                    print(f"Calling oracle...\nQuestion: {question}\nContext: {context}")
-                    resp = req_oracle((context, question))
-                    print(f"Oracle response: {resp}")
-                    graph_input = Command(resume=resp)
-                    break
-                print("=" * 80)
-                print(" HUMAN ASSISTANCE REQUESTED")
-                print("=" * 80)
-                print(f"Context:\n{context}")
-                print(f"Question: {question}")
-                human_response = input("Enter your reponse: ")
-                graph_input = Command(resume=human_response)
-                break
-    return built.get_state(config).values["reqs"]
+    graph_input = ExtractionInput(input=input_text, memory=None, did_read=False)
+
+    handler = OracleHandler(io, req_oracle)
+    async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
+        final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config, description="Requirements extraction")
+    assert "reqs" in final_state
+    return ExtractionResult(reqs=final_state["reqs"], thread_id=thread_id)

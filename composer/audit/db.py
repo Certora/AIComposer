@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from composer.rag.types import ManualRef
+from composer.prover.ptypes import StatusCodes
 from composer.audit.types import ManualResult, RuleResult, RunInput, InputFileLike
 
 DEFAULT_CONNECTION = "postgresql://audit_db_user:audit_db_password@localhost:5432/audit_db"
@@ -401,3 +402,34 @@ SELECT req_text from run_requirements WHERE thread_id = %s ORDER BY req_num ASC 
                     ),
                     reqs=reqs
                 ), vfs_accessor)
+
+
+class AuditDBSink:
+    """Implements AuditSink protocol, delegating to AuditDB with a fixed thread_id."""
+
+    def __init__(self, db: AuditDB, thread_id: str):
+        self._db = db
+        self._thread_id = thread_id
+
+    def on_rule_result(self, rule: str, status: StatusCodes, analysis: str | None, tool_id: str) -> None:
+        self._db.add_rule_result(
+            thread_id=self._thread_id,
+            tool_id=tool_id,
+            rule_name=rule,
+            result=status,
+            analysis=analysis
+        )
+
+    def on_manual_search(self, tool_id: str, ref: ManualRef) -> None:
+        self._db.add_manual_result(
+            thread_id=self._thread_id,
+            tool_id=tool_id,
+            ref=ref
+        )
+
+    def on_summarization(self, checkpoint_id: str, summary: str) -> None:
+        self._db.register_summary(
+            thread_id=self._thread_id,
+            checkpoint_id=checkpoint_id,
+            summary=summary
+        )
