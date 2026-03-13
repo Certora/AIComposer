@@ -16,6 +16,7 @@
 from typing import Optional, Generator, cast, Iterable, Iterator
 
 from dataclasses import dataclass
+import json
 import logging
 import argparse
 import contextvars
@@ -74,6 +75,7 @@ def get_section_header(s: Tag) -> Optional[Header]:
 max_length = 2000
 nlp = spacy.load("en_core_web_sm")
 main_body_ctx: contextvars.ContextVar[Tag] = contextvars.ContextVar('main_body')
+section_label_ctx: contextvars.ContextVar[str] = contextvars.ContextVar('section_label', default="")
 
 @dataclass
 class InitContext:
@@ -381,18 +383,22 @@ def translate_block(streamer: TextStreamer, s: Tag, headers: list[str]) -> Gener
 def get_block_header(s: Tag) -> list[str]:
     assert isinstance(s, Tag)
     main_body = main_body_ctx.get()
+    section_label = section_label_ctx.get()
     h = get_section_header(s)
-    headers = [""] * 6
     assert h is not None
-    headers[h.level - 1] = h.head
+    offset = 1 if section_label else 0
+    headers = [""] * 6
+    if section_label:
+        headers[0] = section_label
+    headers[h.level - 1 + offset] = h.head
     for p in s.parents:
         if p == main_body:
             break
         if p.name == "section":
             head = get_section_header(p)
             assert head is not None
-            assert headers[head.level - 1] == ""
-            headers[head.level - 1] = head.head
+            assert headers[head.level - 1 + offset] == ""
+            headers[head.level - 1 + offset] = head.head
     return headers
 
 def sanity_checker(s: BlockChunk) -> None:
@@ -406,53 +412,77 @@ def sanity_checker(s: BlockChunk) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG database from HTML documentation')
-    parser.add_argument('html_file', help='Path to the HTML file to process')
+    parser.add_argument('html_files', nargs='*', metavar='HTML_FILE',
+                        help='One or more HTML files to process directly')
+    parser.add_argument('--config', type=str,
+                        help='JSON config file listing html files and optional section labels')
+    parser.add_argument('--connection', type=str, default=DEFAULT_CONNECTION,
+                        help='Database connection string (default: rag_db)')
     args = parser.parse_args()
 
-    with open(args.html_file, "r") as f:
-        manual = f.read()
+    if bool(args.html_files) == bool(args.config):
+        parser.error('provide either positional HTML_FILE arguments or --config, not both (or neither)')
 
-    m = BeautifulSoup(manual, "html.parser")
+    if args.config:
+        config_path = pathlib.Path(args.config)
+        with open(config_path, "r") as f:
+            raw = json.load(f)
+        # resolve file paths relative to the config file's directory
+        config_dir = config_path.parent
+        file_entries = [{"file": str(config_dir / e["file"]), "section": e.get("section", "")} for e in raw]
+    else:
+        file_entries = [{"file": str(f), "section": ""} for f in args.html_files]
 
-    for s in m.find_all("a", {"class": "headerlink"}):
-        s.decompose()
+    db = PostgreSQLRAGDatabase(args.connection, get_model(), skip_test=False)
+    buffer: list[BlockChunk] = []
 
-    # delete documentation of changes, not interesting to the LLM
-    changes = m.find("section", {"id": "changes-since-cvl-1"})
-    assert isinstance(changes, Tag)
-    changes.decompose()
+    for entry in file_entries:
+        section_label_ctx.set(entry["section"])
 
-    main_body = m.find("div", {"itemprop": "articleBody"})
-    assert isinstance(main_body, Tag), str(main_body)
+        with open(entry["file"], "r") as f:
+            manual = f.read()
 
-    main_body_ctx.set(main_body)
+        m = BeautifulSoup(manual, "html.parser")
 
-    db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model(), skip_test=False)
-    buffer : list[BlockChunk] = []
+        for s in m.find_all("a", {"class": "headerlink"}):
+            s.decompose()
 
-    sink = TextCollector()
+        # delete documentation of changes, not interesting to the LLM
+        # (only exists in CVL manual, not in extended manual)
+        changes = m.find("section", {"id": "changes-since-cvl-1"})
+        if isinstance(changes, Tag):
+            changes.decompose()
 
-    root_streamer = TextStreamer(
-        sink, 1, None, []
-    )
+        main_body = m.find("div", {"itemprop": "articleBody"})
+        assert isinstance(main_body, Tag), str(main_body)
+        main_body_ctx.set(main_body)
 
-    for s in main_body.select("div.compound > section"):
-        assert isinstance(s, Tag)
-        head = get_block_header(s)
-        trunc_head = [ h for h in head if h ]
-        section_streamer = root_streamer.child(trunc_head)
-        for t in translate_block(section_streamer, s, head):
-            sanity_checker(t)
-            buffer.append(t)
-            if len(buffer) == 50:
-                db.add_chunks_batch(buffer)
-                buffer = []
+        sink = TextCollector()
+        root_streamer = TextStreamer(sink, 1, None, [])
 
-    if len(buffer) > 0:
+        # singlehtml output wraps page sections in div.compound; individual html pages do not
+        if main_body.find("div", class_="compound"):
+            top_sections = main_body.select("div.compound > section")
+        else:
+            top_sections = main_body.find_all("section", recursive=False)
+
+        for s in top_sections:
+            assert isinstance(s, Tag)
+            head = get_block_header(s)
+            trunc_head = [h for h in head if h]
+            section_streamer = root_streamer.child(trunc_head)
+            for t in translate_block(section_streamer, s, head):
+                sanity_checker(t)
+                buffer.append(t)
+                if len(buffer) == 50:
+                    db.add_chunks_batch(buffer)
+                    buffer = []
+
+        for i in sink.chunks():
+            db.add_manual_section(i)
+
+    if buffer:
         db.add_chunks_batch(buffer)
-
-    for i in sink.chunks():
-        db.add_manual_section(i)
 
 if __name__ == "__main__":
     main()

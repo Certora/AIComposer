@@ -34,9 +34,10 @@ dependencies = [
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
+vacuity-analyzer = "vacuity_analyzer.analysis:main"
 
 [tool.setuptools.packages.find]
-include = ["analyzer*", "composer*"]
+include = ["analyzer*", "composer*", "vacuity_analyzer*"]
 
 [tool.setuptools.package-dir]
 "" = "."

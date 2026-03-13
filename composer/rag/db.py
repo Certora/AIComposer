@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
+VACUITY_DEFAULT_CONNECTION: str = "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db"
 
 class PostgreSQLRAGDatabase:
     """Handle PostgreSQL database operations for RAG"""
