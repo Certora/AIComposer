@@ -31,7 +31,7 @@ GRANT ALL PRIVILEGES ON SCHEMA public TO langgraph_checkpoint_user;
 GRANT ALL PRIVILEGES ON DATABASE audit_db TO audit_db_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO audit_db_user;
 
-\c audit_db
+\c memory_tool_db
 GRANT ALL PRIVILEGES ON DATABASE memory_tool_db TO memory_tool_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO memory_tool_user;
 
