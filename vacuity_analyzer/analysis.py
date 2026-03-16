@@ -14,8 +14,9 @@ from composer.rag.models import get_model
 from composer.tools.search import cvl_manual_search
 from composer.templates.loader import load_jinja_template
 from composer.workflow.factories import get_checkpointer
-from composer.workflow.services import create_llm
+from composer.workflow.services import create_llm, get_memory
 
+from graphcore.tools.memory import memory_tool
 from graphcore.tools.vfs import fs_tools
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
@@ -232,8 +233,14 @@ def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
         forbidden_read=r"^\..*$"
     )
 
+    tid = args.thread_id if args.thread_id is not None else f"vacuity-analysis-{uuid.uuid1().hex}"
+    if args.thread_id is None:
+        print(f"Chose thread id: {tid}")
+
     rag_db = PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
     tools = [cvl_manual_search(rag_db), vacuity_analysis_output_tool, *v_tools]
+    if args.memory_tool:
+        tools.append(memory_tool(get_memory(tid, "vacuity")))
 
     llm = create_llm(args)
 
@@ -252,12 +259,6 @@ def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
     )[0].compile(checkpointer=get_checkpointer())
 
     conf: RunnableConfig = {"configurable": {}}
-    tid: str
-    if args.thread_id is not None:
-        tid = args.thread_id
-    else:
-        tid = f"vacuity-analysis-{uuid.uuid1().hex}"
-        print(f"Chose thread id: {tid}")
 
     conf["configurable"]["thread_id"] = tid
     if args.checkpoint_id is not None:
