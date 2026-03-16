@@ -433,7 +433,7 @@ def main() -> None:
     else:
         file_entries = [{"file": str(f), "section": ""} for f in args.html_files]
 
-    db = PostgreSQLRAGDatabase(args.connection, get_model(), skip_test=False)
+    db = PostgreSQLRAGDatabase(args.connection, get_model(), skip_test=False, create_schema=True)
     buffer: list[BlockChunk] = []
 
     for entry in file_entries:
