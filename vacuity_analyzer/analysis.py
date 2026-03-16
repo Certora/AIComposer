@@ -15,7 +15,7 @@ from composer.tools.search import cvl_manual_search
 from composer.templates.loader import load_jinja_template
 from composer.workflow.factories import get_checkpointer
 
-from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
+from graphcore.tools.vfs import fs_tools
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
 
@@ -27,7 +27,7 @@ class VacuityExplainerContext:
     rag_db: PostgreSQLRAGDatabase
 
 
-class VacuityState(VFSState, MessagesState):
+class VacuityState(MessagesState):
     result: NotRequired[str]
 
 class VacuityAnalysisMitigation(BaseModel):
@@ -234,14 +234,9 @@ def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
         print(f"Error reading unsat core file: {e}")
         return None
     
-    # Set up VFS tools for accessing source files
-    (v_tools, _) = vfs_tools(
-        ty=VacuityState,
-        conf=VFSToolConfig(
-            immutable=True,
-            forbidden_read=r"^\..*$",
-            fs_layer=str(report_dir / "inputs" / ".certora_sources")
-        )
+    v_tools = fs_tools(
+        fs_layer=str(report_dir / "inputs" / ".certora_sources"),
+        forbidden_read=r"^\..*$"
     )
 
     tools = [cvl_manual_search(VacuityExplainerContext), vacuity_analysis_output_tool, *v_tools]
