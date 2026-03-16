@@ -48,7 +48,38 @@ class VacuityAnalysisResult(BaseModel):
 - CVL rule modifications if needed
 - Implementation changes if needed
 - Flag explanations with rationale for values""")
-                                 
+
+    def format(self) -> str:
+        lines = [
+            f"# Vacuity Analysis Result",
+            f"",
+            f"**Issue Type:** {self.issue_type}",
+            f"",
+            f"## Summary",
+            f"",
+            self.short_summary,
+            f"",
+            f"## Root Cause",
+            f"",
+            self.root_cause,
+            f"",
+            f"## Detailed Analysis",
+            f"",
+            self.detailed_analysis,
+            f"",
+            self.solution,
+        ]
+        if self.mitigation_options:
+            lines += [f"", f"## Mitigation Options", f""]
+            for i, opt in enumerate(self.mitigation_options, 1):
+                if opt.config_changes:
+                    lines.append(f"**Option {i}:**")
+                    lines.append("```")
+                    for (key, value) in opt.config_changes:
+                        lines.append(f"{key} = {value}")
+                    lines.append("```")
+        return "\n".join(lines)
+
 vacuity_analysis_output_tool = result_tool_generator(
     "result",
     VacuityAnalysisResult,
@@ -105,7 +136,7 @@ Examples:
     args = parser.parse_args()
     details = analyze(cast(VacuityAnalysisArgs, args))
     if details:
-        print(details)
+        print(details.format())
         return 0
     return 1
 
