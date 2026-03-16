@@ -210,10 +210,9 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         max_retries=2,
         stop=None,
         thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
-        betas=([
-            "files-api-2025-04-14",
-            "context-management-2025-06-27"
-        ] if args.memory_tool else [
-            "files-api-2025-04-14"
-        ])
+        betas=(
+            ["files-api-2025-04-14"]
+            + (["context-management-2025-06-27"] if args.memory_tool else [])
+            + (["interleaved-thinking-2025-05-14"] if args.interleaved_thinking else [])
+        )
     )

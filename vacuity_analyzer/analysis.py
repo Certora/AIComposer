@@ -1,30 +1,26 @@
 from typing import NotRequired
-from dataclasses import dataclass
 import pathlib
 import uuid
 import json
 
 from langgraph.graph import MessagesState
-from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, Field
 
+from composer.input.parsing import add_protocol_args
+from composer.input.types import ModelOptions, WorkflowOptions
 from composer.rag.db import PostgreSQLRAGDatabase, VACUITY_DEFAULT_CONNECTION
 from composer.rag.models import get_model
 from composer.tools.search import cvl_manual_search
 from composer.templates.loader import load_jinja_template
 from composer.workflow.factories import get_checkpointer
+from composer.workflow.services import create_llm
 
 from graphcore.tools.vfs import fs_tools
 from graphcore.graph import build_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
 
 from vacuity_analyzer.types import VacuityAnalysisArgs
-
-
-@dataclass
-class VacuityExplainerContext:
-    rag_db: PostgreSQLRAGDatabase
 
 
 class VacuityState(MessagesState):
@@ -102,43 +98,9 @@ Examples:
         help='Suppress intermediate output during analysis (only show final result)'
     )
 
-    parser.add_argument(
-        '--recursion-limit',
-        type=int,
-        default=30,
-        help="The recursion limit to use for the vacuity analysis"
-    )
-
-    parser.add_argument(
-        "--thread-id",
-        type=str,
-        help="The thread id (for resuming halted/crashed runs)"
-    )
-
-    parser.add_argument(
-        "--checkpoint-id",
-        type=str,
-        help="The checkpoint id (for resuming halted/crashed runs)"
-    )
-
-    parser.add_argument(
-        "--thinking-tokens",
-        type=int,
-        default=2048
-    )
-
-    parser.add_argument(
-        "--tokens",
-        type=int,
-        default=4096
-    )
-
-    parser.add_argument(
-        "--rag-db",
-        type=str,
-        default=VACUITY_DEFAULT_CONNECTION,
-        help="RAG database connection string (defaults to extended_rag_db with prover documentation)"
-    )
+    add_protocol_args(parser, ModelOptions)
+    add_protocol_args(parser, WorkflowOptions)
+    parser.set_defaults(rag_db=VACUITY_DEFAULT_CONNECTION, model="claude-sonnet-4-5-20250929", interleaved_thinking=True)
 
     args = parser.parse_args()
     details = analyze(cast(VacuityAnalysisArgs, args))
@@ -239,18 +201,10 @@ def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
         forbidden_read=r"^\..*$"
     )
 
-    tools = [cvl_manual_search(VacuityExplainerContext), vacuity_analysis_output_tool, *v_tools]
+    rag_db = PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
+    tools = [cvl_manual_search(rag_db), vacuity_analysis_output_tool, *v_tools]
 
-    llm = ChatAnthropic(
-        model_name="claude-sonnet-4-5-20250929",
-        max_tokens_to_sample=args.tokens,
-        temperature=1,
-        timeout=None,
-        max_retries=2,
-        stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
-        betas=["interleaved-thinking-2025-05-14", "context-management-2025-06-27"],
-    )
+    llm = create_llm(args)
 
     # Load custom prompts for vacuity analysis
     system_prompt = load_jinja_template("vacuity_system_prompt.j2")
@@ -258,7 +212,6 @@ def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
 
     graph = build_workflow(
         input_type=FlowInput,
-        context_schema=VacuityExplainerContext,
         output_key="result",
         tools_list=tools,
         unbound_llm=llm,
@@ -274,20 +227,18 @@ def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
     else:
         tid = f"vacuity-analysis-{uuid.uuid1().hex}"
         print(f"Chose thread id: {tid}")
-    
+
     conf["configurable"]["thread_id"] = tid
     if args.checkpoint_id is not None:
         conf["configurable"]["checkpoint_id"] = args.checkpoint_id
-    
+
     conf["recursion_limit"] = args.recursion_limit
 
     for (ty, d) in graph.stream(input=FlowInput(input=[
         f"The rule being analyzed is: {rule}",
         f"Method context: {method if method else 'N/A'}",
         f"Unsat core data:\n{vacuity_txt_content}"
-    ]), context=VacuityExplainerContext(
-        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
-    ), config=conf, stream_mode=["checkpoints", "updates"]):
+    ]), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
             print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])

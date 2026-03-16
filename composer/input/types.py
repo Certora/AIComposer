@@ -93,7 +93,6 @@ class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
 
     debug_prompt_override: Optional[str]
 
-    recursion_limit: int
     audit_db: str
     summarization_threshold: Optional[int]
 
@@ -118,6 +117,10 @@ class ModelOptions(Protocol):
         help="Enable Anthropic's memory tool",
         default=None,
         feature_flag=("memory", True) # default to use if this is not exposed on command line
+    )]
+    interleaved_thinking: Annotated[bool, Arg(
+        help="Enable interleaved thinking mode (default: {default})",
+        default=False
     )]
 
 class CommandLineArgs(WorkflowOptions, ModelOptions, Protocol):
