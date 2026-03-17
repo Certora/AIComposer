@@ -18,7 +18,7 @@ from composer.rag.models import get_model
 from composer.spec.context import (
     WorkflowContext, SystemDoc, PlainBuilder, CVLOnlyBuilder, get_system_doc,
 )
-from composer.spec.pipeline import run_natspec_pipeline, PipelineResult
+from composer.spec.natspec_pipeline import run_natspec_pipeline, PipelineResult
 from composer.spec.util import string_hash
 from composer.templates.loader import load_jinja_template
 from composer.tools.search import cvl_manual_tools

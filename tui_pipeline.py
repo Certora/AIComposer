@@ -26,7 +26,7 @@ from composer.spec.context import (
     WorkflowContext, SystemDoc, PlainBuilder, CVLOnlyBuilder,
     get_system_doc,
 )
-from composer.spec.pipeline import run_natspec_pipeline
+from composer.spec.natspec_pipeline import run_natspec_pipeline
 from composer.spec.util import string_hash
 
 from composer.ui.pipeline_app import PipelineApp

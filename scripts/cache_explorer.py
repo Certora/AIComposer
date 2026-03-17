@@ -21,7 +21,7 @@ from composer.spec.stub_gen import _CachedStub
 from composer.spec.bug import _BugAnalysisCache, BUG_ANALYSIS_KEY
 from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, CVL_JUDGE_KEY, LAST_ATTEMPT_KEY
 from composer.spec.feedback import FEEDBACK_KEY
-from composer.spec.pipeline import PROPERTIES_KEY, _component_cache_key, _batch_cache_key
+from composer.spec.natspec_pipeline import PROPERTIES_KEY, _component_cache_key, _batch_cache_key
 from composer.spec.util import string_hash
 
 

@@ -21,7 +21,7 @@ from composer.ui.ide_bridge import IDEBridge
 from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
-from composer.spec.pipeline import Phase, PipelineResult
+from composer.spec.natspec_pipeline import Phase, PipelineResult
 from composer.spec.pipeline_events import NatspecEvent
 from composer.spec.ptypes import HumanQuestionSchema
 
@@ -66,27 +66,16 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
         case "cvl_gen":
             return ToolDisplayConfig(tool_display={
                 **CommonTools.cvl_research_displays(),
-                "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "get_cvl": ToolDisplay("Reading spec", None),
-                "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
+                **CommonTools.cvl_manipulation(),
                 "extended_reasoning": CommonTools.extended_reasoning,
                 "publish_spec": ToolDisplay("Publishing to master spec", _suppress_ack("Publish result")),
                 "give_up": ToolDisplay("Giving up on property", _suppress_ack("Give up result")),
-                "record_skip": ToolDisplay(
-                    lambda p: f"Skipping property #{p.get('property_index', '?')}",
-                    _suppress_ack("Skip result", ("Recorded skip",)),
-                ),
-                "unskip_property": ToolDisplay(
-                    lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
-                    _suppress_ack("Unskip result", ("Removed skip",)),
-                ),
                 "read_stub": ToolDisplay("Reading verification stub", None),
                 "request_stub_field": ToolDisplay("Requesting stub field", "Stub field result"),
                 "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),
+                **CommonTools.cvl_research_displays(),
                 "result": CommonTools.result,
-                "write_rough_draft": CommonTools.write_rough_draft,
-                "read_rough_draft": CommonTools.read_rough_draft,
+                **CommonTools.rough_draft_displays(),
                 "memory": CommonTools.memory,
             })
 

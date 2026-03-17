@@ -275,11 +275,11 @@ def make_publish_tools(
                 )
 
     class GiveUp(WithInjectedId, WithAsyncImplementation[Command]):
-        """Call this if you cannot formalize the property after multiple merge attempts.
+        """Call this if you cannot formalize *any* of the properties after multiple merge attempts.
         This will end this task with a failure record.
         """
         reason: str = Field(
-            description="Why you are giving up on this property"
+            description="Why you are giving up on this generation attempt"
         )
 
         @override
