@@ -131,11 +131,12 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
             it = store.get(kb, self.title)
             if it is not None:
                 return f"An article with the title {self.title} already exists"
-            store.put(kb, self.title, {
+            article : KnowledgeBaseArticle = {
                 "title": self.title,
-                "description": self.symptom,
+                "symptom": self.symptom,
                 "body": self.body
-            }, index=["description"])
+            }
+            store.put(kb, self.title, cast(dict, article), index=["description"])
             return "Contribution accepted."
     
     to_ret : list[BaseTool] = [KBScan.as_tool("scan_knowledge_base"), KBGet.as_tool("get_knowledge_base_article")]

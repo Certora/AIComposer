@@ -7,9 +7,9 @@ from langgraph.graph import StateGraph
 from graphcore.graph import build_workflow, BoundLLM
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig, VFSState
 
-from composer.workflow.types import Input, PromptParams
+from composer.workflow.types import PromptParams
 from composer.core.context import AIComposerContext
-from composer.core.state import AIComposerState
+from composer.core.state import AIComposerState, AIComposerInput
 
 from composer.templates.loader import load_jinja_template
 from composer.workflow.summarization import SummaryGeneration
@@ -59,7 +59,7 @@ def get_cryptostate_builder(
     fs_layer: str | None,
     summarization_threshold : int | None,
     extra_tools: list[BaseTool] = []
-) -> tuple[StateGraph[AIComposerState, AIComposerContext, Input, Any], BoundLLM, VFSAccessor[VFSState]]:
+) -> tuple[StateGraph[AIComposerState, AIComposerContext, AIComposerInput, Any], BoundLLM, VFSAccessor[VFSState]]:
     (vfs_tooling, mat) = get_vfs_tools(fs_layer=fs_layer, immutable=False)
     # import here to avoid loading these for non-composer factory uses
 
@@ -76,9 +76,9 @@ def get_cryptostate_builder(
         max_messages=summarization_threshold
     ) if summarization_threshold else None
 
-    workflow_builder: tuple[StateGraph[AIComposerState, AIComposerContext, Input, Any], BoundLLM] = build_workflow(
+    workflow_builder: tuple[StateGraph[AIComposerState, AIComposerContext, AIComposerInput, Any], BoundLLM] = build_workflow(
         state_class=AIComposerState,
-        input_type=Input,
+        input_type=AIComposerInput,
         tools_list=crypto_tools,
         sys_prompt=get_system_prompt(),
         initial_prompt=get_initial_prompt(prompt_params),

@@ -6,6 +6,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static, Input, Collapsible, DataTable
 from textual.widgets.data_table import RowKey, ColumnKey
 from textual.validation import Function, Validator
+from textual.timer import Timer
 
 from rich.syntax import Syntax
 from rich.text import Text
@@ -26,6 +27,7 @@ from composer.human.types import (
 )
 from composer.core.state import ResultStateSchema, AIComposerState
 from composer.prover.ptypes import StatusCodes
+from composer.prover.cloud import _TERMINAL_STATUSES
 
 _STATUS_STYLES: dict[StatusCodes, str] = {
     "VERIFIED": "green",
@@ -42,12 +44,19 @@ class _ProverSpinner(Static):
     def __init__(self, message: str):
         super().__init__("")
         self._spinner = Spinner("dots", message)
+        self.timer : Timer | None = None
 
     def on_mount(self) -> None:
-        self.set_interval(1 / 12, self._tick)
+        self.timer = self.set_interval(1 / 12, self._tick)
 
     def update_message(self, message: str) -> None:
         self._spinner.text = message
+
+    def finish(self, msg: str) -> None:
+        if self.timer is not None:
+            self.timer.stop()
+        self.update(msg)
+
 
     def _tick(self) -> None:
         self.update(self._spinner)
@@ -134,8 +143,11 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                         existing.update_message(f"Waiting for cloud: {upd['message']}")
                     else:
                         spinner = _ProverSpinner(f"Waiting for cloud: {upd['message']}")
+                        existing = spinner
                         self._tool_spinners[tool_call_id] = spinner
                         await self._mount_to(pane, spinner)
+                    if upd["status"] in _TERMINAL_STATUSES:
+                        existing.finish("Complete")
             case "prover_result":
                 tool_call_id = upd["tool_call_id"]
                 # Collapse the stdout output pane

@@ -67,7 +67,8 @@ and may suggest how the property can in fact be formalized.
 Use the provided `verify_spec` tool to test your spec. If there are verification failures
 that point to errors in your specification, refine your specification, and return to step 2.
 
-If there are failures from `HAVOC` from unresolved calls, use the `unresolved_call_guidance` tool for advice.
+If there are failures from `HAVOC` from unresolved calls, use the `unresolved_call_guidance` tool for advice,
+do NOT try to make ghosts persistent as a workaround.
 
 If the prover feedback requires non-trivial changes, be sure to use the `extended_reasoning` tool to reflect on
 and appropriately digest the feedback from the prover before actually editing your specification.

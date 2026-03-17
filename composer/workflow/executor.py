@@ -19,10 +19,9 @@ from graphcore.tools.vfs import VFSState
 from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
 from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools
 from composer.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools, get_memory_ns
-from composer.workflow.types import Input, PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
+from composer.workflow.types import PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
 from composer.workflow.services import get_indexed_store
 from composer.workflow.meta import create_resume_commentary
-from composer.core.state import AIComposerState  # used by VFSAccessor type param
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.prover.core import CloudConfig
 from composer.core.validation import ValidationType, prover, reqs as req_type
@@ -38,6 +37,7 @@ from composer.templates.loader import load_jinja_template
 from composer.io.protocol import CodeGenIOHandler, WorkflowPurpose
 from composer.io.context import with_handler, run_graph
 from composer.io.codegen_events import CodeGenEventHandler
+from composer.core.state import AIComposerInput, AIComposerExtra
 
 
 _KB_NS = ("natspec_pipeline", "kb")
@@ -70,9 +70,14 @@ def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> s
         system_doc_filename=input_data.system_doc.basename,
         debug_prompt=debug_prompt)
 
+def _get_empty_extra() -> AIComposerExtra:
+    return AIComposerExtra(
+        validation={}, skipped_reqs=set(), working_spec=None
+    )
 
-def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> Input:
-    return Input(input=[
+
+def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> AIComposerInput:
+    return AIComposerInput(input=[
                 input.intf.to_document_dict(),
                 input.spec.to_document_dict(),
                 input.system_doc.to_document_dict(),
@@ -80,7 +85,7 @@ def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> Inpu
                     "type": "text",
                     "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
                 }
-            ], vfs={"rules.spec": input.spec.read()})
+            ], vfs={"rules.spec": input.spec.read()}, **_get_empty_extra())
 
 @dataclass
 class InputChangeDesc:
@@ -120,7 +125,7 @@ def get_resume_prompt_common(
         other_changes=changes
     )]
 
-def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> Input:
+def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> AIComposerInput:
 
     input_messages : list[str | dict] = get_resume_prompt_common(
         art=resume_art,
@@ -133,12 +138,13 @@ def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflo
     vfs_materialize = resume_art.vfs.to_dict()
     new_vfs = { k: v.decode("utf-8") for (k, v) in vfs_materialize.items() }
     new_vfs["rules.spec"] = input.new_spec.string_contents
-    return Input(
+    return AIComposerInput(
         input=input_messages,
-        vfs=new_vfs
+        vfs=new_vfs,
+        **_get_empty_extra()
     )
 
-def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[Input, InputFileLike, InputFileLike]:
+def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[AIComposerInput, InputFileLike, InputFileLike]:
     path = pathlib.Path(input.file_path)
 
     spec_p = path / "rules.spec"
@@ -171,7 +177,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
 
-    return (Input(input=input_messages, vfs={}), NativeFS(intf_p), NativeFS(spec_p))
+    return (AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()), NativeFS(intf_p), NativeFS(spec_p))
 
 
 async def execute_ai_composer_workflow(
@@ -201,7 +207,7 @@ async def execute_ai_composer_workflow(
 
     prompt_params: PromptParams
     fs_layer: str | None = None
-    flow_input: Input
+    flow_input: AIComposerInput
 
     system_doc: InputFileLike
     interface_file: InputFileLike

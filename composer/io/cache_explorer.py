@@ -174,7 +174,7 @@ class CacheExplorerApp[V](App):
             with Vertical(id="tree-pane"):
                 yield Tree("Cache", id="cache-tree")
             with VerticalScroll(id="detail-pane"):
-                yield Static("Select a node to view details", id="detail-content")
+                yield Static("Select a node to view details", id="detail-content", markup=False)
             with Vertical(id="memory-pane", classes="hidden"):
                 with Horizontal():
                     with Vertical(id="memory-tree-pane"):

@@ -12,7 +12,7 @@ from langgraph.store.postgres import PostgresStore
 
 from graphcore.tools.memory import PostgresMemoryBackend
 
-from composer.input.types import ModelOptions
+from composer.input.types import ModelOptions, ModelOptionsBase
 
 
 T = TypeVar("T")
@@ -201,10 +201,13 @@ def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
 _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
 
 
-def create_llm(args: ModelOptions) -> BaseChatModel:
-    """Create and configure the LLM."""
-    if args.model in _ADAPTIVE_MODELS:
-        thinking: dict[str, Any] = {"type": "adaptive"}
+def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
+    """Create LLM; thinking disabled when args.thinking_tokens is None."""
+    thinking: dict[str, Any] | None
+    if args.thinking_tokens is None:
+        thinking = None
+    elif args.model in _ADAPTIVE_MODELS:
+        thinking = {"type": "adaptive"}
     else:
         thinking = {"type": "enabled", "budget_tokens": args.thinking_tokens}
 
@@ -223,4 +226,9 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
             "files-api-2025-04-14"
         ])
     )
+
+
+def create_llm(args: ModelOptions) -> BaseChatModel:
+    """Create and configure the LLM. Backwards-compatible; thinking always enabled."""
+    return create_llm_base(args)
 
