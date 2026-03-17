@@ -74,10 +74,6 @@ REMINDER: You should call this tool only AFTER you have updated your memories.
 )
 
 
-system_prompt = load_jinja_template("req_role_prompt.j2")
-
-initial_prompt = load_jinja_template("req_extraction_prompt.j2")
-
 def get_requirements(
     options: RAGDBOptions,
     llm: BaseChatModel,
@@ -85,8 +81,10 @@ def get_requirements(
     spec_file: InputFileLike,
     mem_backend: MemoryBackend,
     resume_artifact: ResumeArtifact | None,
-    oracle: list[str]
+    oracle: list[str],
 ) -> list[str]:
+    system_prompt = load_jinja_template("req_role_prompt.j2")
+    initial_prompt = load_jinja_template("req_extraction_prompt.j2")
     tools = [
         memory_tool(mem_backend),
         results_tool,

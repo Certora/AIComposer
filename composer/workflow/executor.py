@@ -31,11 +31,23 @@ from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.tools.relaxation import requirements_relaxation
 from composer.console.handler import DebugHandler
+from composer.input.config import config as input_config
 import composer.console.app as A
 
 
 StreamEvents = Literal["checkpoints", "custom", "updates"]
 
+def get_svm_summary_files() -> dict[str, str]:
+    """Load the bundled CVLR summary and inlining files for SVM mode.
+    
+    These files are required by the Certora Solana Prover and are referenced
+    in Cargo.toml under [package.metadata.certora].
+    """
+    bundle_dir = pathlib.Path(__file__).parent.parent.parent / "bundle"
+    return {
+        "certora/summaries/cvlr_summaries_core.txt": (bundle_dir / "cvlr_summaries_core.txt").read_text(),
+        "certora/summaries/cvlr_inlining_core.txt": (bundle_dir / "cvlr_inlining_core.txt").read_text()
+    }
 
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
     return load_jinja_template(
@@ -45,8 +57,12 @@ def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> s
         system_doc_filename=input_data.system_doc.basename,
         debug_prompt=debug_prompt)
 
-
 def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> Input:
+    vfs_contents: dict[dict, str]
+    vfs_contents = {input_config.spec_fn: input.spec.read()}
+    if input_config.platform == "svm":
+        vfs_contents.update(get_svm_summary_files())
+
     return Input(input=[
                 input.intf.to_document_dict(),
                 input.spec.to_document_dict(),
@@ -55,7 +71,7 @@ def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> Inpu
                     "type": "text",
                     "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
                 }
-            ], vfs={"rules.spec": input.spec.read()})
+            ], vfs=vfs_contents)
 
 @dataclass
 class InputChangeDesc:
@@ -71,7 +87,7 @@ def get_resume_prompt_common(
         art: ResumeArtifact,
         res: ResumeInput,
         updated_spec: str,
-        other_changes: list[InputChangeDesc] | None = None
+        other_changes: list[InputChangeDesc] | None = None,
         ) -> list[str | dict]:
     changes = []
     if other_changes is not None:
@@ -92,11 +108,10 @@ def get_resume_prompt_common(
         spec_change_commentary=res.comments,
         orig_spec=art.spec_file,
         new_spec=updated_spec,
-        other_changes=changes
+        other_changes=changes,
     )]
 
 def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> Input:
-
     input_messages : list[str | dict] = get_resume_prompt_common(
         art=resume_art,
         res=input,
@@ -107,7 +122,9 @@ def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflo
 
     vfs_materialize = resume_art.vfs.to_dict()
     new_vfs = { k: v.decode("utf-8") for (k, v) in vfs_materialize.items() }
-    new_vfs["rules.spec"] = input.new_spec.string_contents
+    new_vfs[input_config.spec_fn] = input.new_spec.string_contents
+    if input_config.platform == "svm":
+        new_vfs.update(get_svm_summary_files())
     return Input(
         input=input_messages,
         vfs=new_vfs
@@ -116,7 +133,7 @@ def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflo
 def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[Input, InputFileLike, InputFileLike]:
     path = pathlib.Path(input.file_path)
 
-    spec_p = path / "rules.spec"
+    spec_p = path / input_config.spec_fn
     if not spec_p.is_file():
         raise RuntimeError("Specification file is apparently missing")
     new_spec = spec_p.read_text()
@@ -137,7 +154,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
         art=resume_art,
         res=input,
         other_changes=changes,
-        updated_spec=new_spec
+        updated_spec=new_spec,
     )
     input_messages.append("In addition to the explicit changes mentioned above, the contents of the VFS may have been arbitrarily changed since your last work. " \
     "Some of these changes may cause the current implementation to no longer compile. Thus, analyze the current implementation and consider what changes are necessary to " \
@@ -239,7 +256,7 @@ def execute_ai_composer_workflow(
                 spec_file,
                 req_memories,
                 resume_art,
-                workflow_options.requirements_oracle
+                workflow_options.requirements_oracle,
             )
             reqs_list = reqs
         store.put((thread_id,), "requirements", {"reqs": reqs_list})
@@ -254,7 +271,8 @@ def execute_ai_composer_workflow(
             mem=req_memories,
             unbound=llm,
             vfs_tools=get_vfs_tools(
-                fs_layer=fs_layer, immutable=True
+                fs_layer=fs_layer,
+                immutable=True,
             )[0]
         )
         extra_tools.append(judge_tool)
@@ -270,7 +288,7 @@ def execute_ai_composer_workflow(
         fs_layer=fs_layer,
         prompt_params=prompt_params,
         summarization_threshold=workflow_options.summarization_threshold,
-        extra_tools=extra_tools
+        extra_tools=extra_tools,
     )
 
     audit_db.register_run(
@@ -313,7 +331,7 @@ def execute_ai_composer_workflow(
     )   
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
-    required_validations : list[ValidationType] = [prover]
+    required_validations : list[ValidationType] = input_config.required_validations
     if reqs_list is not None:
         required_validations.append(req_type)
     

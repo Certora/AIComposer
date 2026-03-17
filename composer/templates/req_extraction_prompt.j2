@@ -1,11 +1,10 @@
-You have been provided with a system document for a DeFi protocol. This document is a natural
-language description of a protocol, with varying levels of formalism/rigor. This system document
+You have been provided with a system document for a {% if platform == "svm" %}Solana program{% else %}DeFi protocol{% endif %}. This document is a natural
+language description of a {% if platform == "svm" %}program{% else %}protocol{% endif %}, with varying levels of formalism/rigor. This system document
 may describe the interactions of one or more components, along with the behavior of the individual
 components.
 
 In addition, you have been provided with a *formal* specification of the behavior of one of the components
-of this protocol. This specification is written in the Certora Verification Language (CVL), a DSL for
-writing properties of smart contracts.
+of this {% if platform == "svm" %}program{% else %}protocol{% endif %}. This specification is written in {% if platform == "svm" %}CVLR (Certora Verification Language for Rust), which uses Rust macros and attributes to define verification rules for Solana/Rust programs{% else %}the Certora Verification Language (CVL), a DSL for writing properties of smart contracts{% endif %}.
 
 Analyze both the system document and the specification to identify any implementation
 requirements/invariants/properties implied by the system document which are *NOT* covered by the provided specification.
@@ -17,11 +16,16 @@ After your analysis, formulate these extracted requirements in natural language 
 directive should be similar to "The implementation must ensure that ...", 
 "When X happens, the implementation must ...", etc.
 
-IMPORTANT: If you are unclear as to what component the specification is targeting, as the user for help.
+IMPORTANT: If you are unclear as to what component the specification is targeting, ask the user for help.
 
 IMPORTANT: You *MUST* consult the user if you are uncertain about specific requirements or the meaning
 behind parts of the system document or specification. You MUST use the human_in_the_loop tool to clarify any
-uncertainties you may have or ambiguities in the specifications.
+uncertainties you may have or ambiguities in the specifications. When you invoke the human_in_the_loop tool,
+you MUST always provide:
+- a `question` field containing a single, clear, concrete question or request for assistance; and
+- a `context` field explaining what you are trying to do, what you have already tried, and what remains unclear.
+You SHOULD also provide a `code` field with any relevant code snippets or extracts from the spec/system document
+that will help the user understand the problem. Make these snippets as focused and informative as possible.
 
 IMPORTANT: Your goal is to identify requirements in the system document which are not covered by the specification file.
 You ARE NOT trying to improve the specification file. You ARE trying to make the specification richer by formulating

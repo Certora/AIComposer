@@ -3,6 +3,7 @@ from composer.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
 import pathlib
 from dataclasses import dataclass
 
+
 @dataclass
 class BasicArg:
     help: str
@@ -15,6 +16,8 @@ class Arg(BasicArg):
 @dataclass
 class OptionalArg(BasicArg):
     pass
+
+Platform = Literal["evm", "svm"]
 
 
 @dataclass
@@ -100,6 +103,7 @@ class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
     requirements_oracle: list[str]
     set_reqs: Optional[str]
     skip_reqs: bool
+    platform: Platform
 
 
 class ModelOptions(Protocol):

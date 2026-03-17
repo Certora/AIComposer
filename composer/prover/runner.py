@@ -15,6 +15,7 @@ from composer.prover.core import (
 )
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
+from composer.input.config import config
 
 import sys
 
@@ -77,43 +78,50 @@ class _StoreCache:
 
 
 def certora_prover(
-    source_files: List[str],
-    target_contract: str,
-    compiler_version: str,
-    loop_iter: int,
-    rule: Optional[str],
     state: AIComposerState,
     tool_call_id: str,
+    rule: Optional[str],
+    source_files: Optional[List[str]] = None,
+    target_contract: Optional[str] = None,
+    compiler_version: Optional[str] = None,
+    loop_iter: Optional[str] = None,
 ) -> SummarizedReport | RawReport | str:
     runtime = get_runtime(AIComposerContext)
     ctxt = runtime.context
     writer = get_stream_writer()
 
     with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
-        try:
+        project_dir = Path(temp_dir)
+
+        if config.platform == "svm":
+            if not (project_dir / "Cargo.toml").exists():
+                return "Error: Cargo.toml not found in project root. The Solana prover requires a valid Rust project with Cargo.toml."
+            args = ["--rule_sanity", "basic"]
+        else:
             args = source_files.copy()
             args.extend([
                 "--verify",
-                f"{target_contract}:./rules.spec",
+                f"{target_contract}:./{config.spec_fn}",
                 "--optimistic_loop",
                 "--optimistic_hashing",
-                "--loop_iter",
-                str(loop_iter),
+                "--loop_iter", str(loop_iter),
                 "--solc", compiler_version,
                 "--solc_via_ir",
                 "--strict_solc_optimizer",
                 "--prover_args",
                 "-timeoutCracker true",
             ])
-            if rule is not None:
-                args.extend(["--rule", rule])
 
-            store = get_store()
-            cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
+        if rule is not None:
+            args.extend(["--rule", rule])
 
+        store = get_store()
+        cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
+
+        try:
             result = asyncio.run(run_prover(
                 state,
-                Path(temp_dir),
+                project_dir,
                 args,
                 ctxt.llm,
                 tool_call_id,
@@ -124,7 +132,7 @@ def certora_prover(
             ))
 
             # Preserve the rule-is-None check for all_verified
-            if isinstance(result, RawReport) and rule is not None:
+            if isinstance(result, RawReport) and rule is not None and config.platform == "evm":
                 result = RawReport(report=result.report, all_verified=False)
 
             return result

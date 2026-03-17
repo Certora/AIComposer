@@ -10,6 +10,7 @@ from functools import cached_property
 
 from composer.rag.types import ManualRef
 from composer.audit.types import ManualResult, RuleResult, RunInput, InputFileLike
+from composer.input.config import config
 
 DEFAULT_CONNECTION = "postgresql://audit_db_user:audit_db_password@localhost:5432/audit_db"
 
@@ -24,7 +25,7 @@ SELECT
 FROM resume_artifact r
 INNER JOIN vfs_result intf_id ON intf_id.path = r.interface_path AND intf_id.thread_id = r.thread_id
 INNER JOIN run_info ri ON ri.thread_id = r.thread_id
-INNER JOIN vfs_result final_spec_id ON r.thread_id = final_spec_id.thread_id AND final_spec_id.path = 'rules.spec'
+INNER JOIN vfs_result final_spec_id ON r.thread_id = final_spec_id.thread_id AND final_spec_id.path = %s
 WHERE r.thread_id = %s
 """
 
@@ -294,7 +295,8 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
         with self.conn.transaction():
             with self.conn.cursor() as cur:
                 retriever = VFSRetriever(_table="vfs_result", thread_id=thread_id, conn=self.conn)
-                cur.execute(_resume_q, (thread_id,))
+                spec_path = config.spec_fn
+                cur.execute(_resume_q, (spec_path, thread_id))
                 r = cur.fetchone()
                 if r is None:
                     raise RuntimeError(f"No resume artifact found for thread {thread_id}")
@@ -312,7 +314,7 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
 
                 rule_file = VFSFile(
                     conn=self.conn,
-                    path="rules.spec",
+                    path=spec_path,
                     file_id=r[4]
                 )
 

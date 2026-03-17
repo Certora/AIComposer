@@ -13,6 +13,7 @@ from graphcore.graph import WithToolCallId, tool_return
 from composer.human.types import ProposalType
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
+from composer.input.config import config
 
 
 
@@ -66,11 +67,11 @@ def propose_spec_change(
     proposed_spec: str,
     explanation: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
-    state: Annotated[AIComposerState, InjectedState]
+    state: Annotated[AIComposerState, InjectedState],
 ) -> Command:
     ctxt = get_runtime(AIComposerContext)
-    vfs_access = ctxt.context.vfs_materializer 
-    curr_spec = vfs_access.get(state, "rules.spec")
+    vfs_access = ctxt.context.vfs_materializer
+    curr_spec = vfs_access.get(state, config.spec_fn)
     assert curr_spec is not None
     human_response = interrupt(ProposalType(
         type="proposal",
@@ -88,9 +89,7 @@ def propose_spec_change(
                         content=human_response
                     )
                 ],
-                "vfs": {
-                    "rules.spec": proposed_spec
-                }
+                "vfs": { config.spec_fn: proposed_spec }
             }
         )
     return tool_return(

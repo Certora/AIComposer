@@ -1,0 +1,1 @@
+The function `add` must perform integer addition of its two arguments of type u64. It must handle overflows by wrapping around like Rust default behavior in release mode.

@@ -4,6 +4,7 @@ import difflib
 from rich.console import Console
 
 from composer.human.types import ProposalType, QuestionType, HumanInteractionType, RequirementRelaxationType
+from composer.input.config import config
 
 def prompt_input(prompt_str: str, debug_thunk: Callable[[], None], filter: Optional[Callable[[str], Optional[str]]] = None) -> str:
     l = input(prompt_str + " (double newlines ends): ")
@@ -41,9 +42,9 @@ def handle_proposal_interrupt(interrupt_ty: ProposalType, debug_thunk: Callable[
 
     diff = difflib.unified_diff(
         a = orig,
-        fromfile="a/rules.spec",
+        fromfile=f"a/{config.spec_fn}",
         b = proposed,
-        tofile="b/rules.spec",
+        tofile=f"b/{config.spec_fn}",
         n=3,
     )
 
