@@ -65,14 +65,15 @@ def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
     match phase:
         case AutoProvePhase.HARNESS:
             return ToolDisplayConfig(tool_display={
-                "get_file": ToolDisplay("Reading file", None),
-                "put_file": ToolDisplay("Writing harness", _suppress_ack("File write result")),
+                **CommonTools.source_displays(),
                 "erc20_guidance": ToolDisplay("ERC20 guidance", None),
                 "result": CommonTools.result,
                 "memory": CommonTools.memory,
             })
         case AutoProvePhase.SUMMARIES:
             return ToolDisplayConfig(tool_display={
+                **CommonTools.source_displays(),
+                **CommonTools.cvl_research_displays(),
                 "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
                 "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
                 "get_cvl": ToolDisplay("Reading spec", None),
@@ -87,39 +88,42 @@ def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
         case AutoProvePhase.INVARIANTS:
             return ToolDisplayConfig(tool_display={
                 "invariant_feedback": ToolDisplay("Getting feedback", "Invariant feedback"),
-                "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "get_cvl": ToolDisplay("Reading spec", None),
-                "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
-                "extended_reasoning": CommonTools.extended_reasoning,
-                "cvl_manual_search": CommonTools.cvl_manual,
-                "write_rough_draft": CommonTools.write_rough_draft,
-                "read_rough_draft": CommonTools.read_rough_draft,
                 "result": CommonTools.result,
                 "memory": CommonTools.memory,
             })
         case AutoProvePhase.COMPONENT_ANALYSIS:
             return ToolDisplayConfig(tool_display={
+                **CommonTools.source_displays(),
                 "result": CommonTools.result,
                 "memory": CommonTools.memory,
             })
         case AutoProvePhase.BUG_ANALYSIS:
             return ToolDisplayConfig(tool_display={
+                **CommonTools.source_displays(),
+                **CommonTools.rough_draft_displays(),
                 "result": CommonTools.result,
-                "write_rough_draft": CommonTools.write_rough_draft,
-                "read_rough_draft": CommonTools.read_rough_draft,
             })
         case AutoProvePhase.CVL_GEN:
             return ToolDisplayConfig(tool_display={
+                **CommonTools.cvl_research_displays(),
+                **CommonTools.source_displays(),
                 "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
                 "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
                 "get_cvl": ToolDisplay("Reading spec", None),
                 "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
                 "extended_reasoning": CommonTools.extended_reasoning,
-                "cvl_manual_search": CommonTools.cvl_manual,
+                "record_skip": ToolDisplay(
+                    lambda p: f"Skipping property #{p.get('property_index', '?')}",
+                    _suppress_ack("Skip result", ("Recorded skip",)),
+                ),
+                "unskip_property": ToolDisplay(
+                    lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
+                    _suppress_ack("Unskip result", ("Removed skip",)),
+                ),
+                "explore_code": ToolDisplay("Exploring code", "Code exploration"),
+                "verify_spec": ToolDisplay("Running prover", None),
+                "unresolved_call_guidance": ToolDisplay("Unresolved call guidance", "Guidance"),
                 "result": CommonTools.result,
-                "write_rough_draft": CommonTools.write_rough_draft,
-                "read_rough_draft": CommonTools.read_rough_draft,
                 "memory": CommonTools.memory,
             })
 
@@ -155,6 +159,7 @@ class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
         if tool_call_id in self._prover_logs:
             return self._prover_logs[tool_call_id]
         log = RichLog(highlight=True, markup=False)
+        log.styles.min_height = 15
         self._prover_logs[tool_call_id] = log
         await self._mount_to(self._panel, log)
         return log

@@ -26,3 +26,5 @@ def temp_certora_file(
         yield tmp_name
     finally:
         os.unlink(tgt)
+
+FS_FORBIDDEN_READ = r"(^lib/.*)|(^\.certora_internal.*)|(^\.git.*)|(^test/.*)|(^emv-.*)|(.*\.json$)|(^node_modules/.*)"

@@ -41,7 +41,7 @@ from composer.spec.cvl_generation import (
 from composer.spec.harness import setup_and_harness_agent, Configuration
 from composer.spec.summarizer import setup_summaries
 from composer.spec.struct_invariant import get_invariant_formulation
-from composer.spec.prover import get_prover_tool, WithCVL, CloudConfig
+from composer.spec.prover import get_prover_tool, CloudConfig
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +75,7 @@ class AutoProveResult:
     n_properties: int
     failures: list[str] = field(default_factory=list)
 
+from logging import getLogger
 
 # ---------------------------------------------------------------------------
 # Pipeline
@@ -118,7 +119,7 @@ async def run_autoprove_pipeline(
 
     # Build prover tool (needs config from phase 1)
     prover_tool = get_prover_tool(
-        llm, WithCVL, config.config, system_doc.contract_name,
+        llm, config.config, system_doc.contract_name,
         system_doc.project_root, cloud=cloud, semaphore=semaphore,
     )
 
@@ -132,7 +133,7 @@ async def run_autoprove_pipeline(
         summary_resource: CVLResource = await run_task(
             handler_factory,
             TaskInfo("summaries", "Custom Summaries", AutoProvePhase.SUMMARIES),
-            lambda: setup_summaries(ctx, system_doc, config, cvl_authorship),
+            lambda: setup_summaries(ctx, system_doc, config, cvl_authorship, cvl_research),
         )
         resources.append(summary_resource)
 
@@ -172,7 +173,7 @@ async def run_autoprove_pipeline(
 
             inv_cvl = await run_task(
                 handler_factory,
-                TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.INVARIANTS),
+                TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
                 lambda: generate_batch_cvl(
                     inv_cvl_ctx.abstract(CVLGeneration),
                     inv_props, None, inv_env,

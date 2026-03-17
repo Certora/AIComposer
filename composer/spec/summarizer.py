@@ -5,6 +5,7 @@ Given a ``Configuration`` with classified external contracts, produces a CVL
 specification file containing summaries for all SUMMARIZABLE contracts.
 """
 
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -12,7 +13,7 @@ import sys
 from typing import NotRequired, override, Protocol, Callable
 
 from typing_extensions import TypedDict
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from langgraph.types import Command, Checkpointer
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -27,7 +28,7 @@ from composer.spec.api import ProjectParamProtocol, LLMParams
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.cvl_tools import get_cvl, put_cvl, put_cvl_raw
 from composer.spec.cvl_generation import CVLResource
-from composer.spec.context import WorkflowContext, CVLBuilder, SourceCode, ThreadProvider
+from composer.spec.context import WorkflowContext, CVLBuilder, CVLOnlyBuilder, SourceCode, ThreadProvider, CacheKey
 from composer.spec.util import temp_certora_file
 from composer.templates.loader import load_jinja_template
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -37,21 +38,14 @@ from composer.rag.db import PostgreSQLRAGDatabase
 # Tools
 # ---------------------------------------------------------------------------
 
-class ResolutionGuidance(WithImplementation[Command], WithInjectedId):
+class ResolutionGuidance(WithImplementation[str], WithInjectedId):
     """
     Retrieve guidance on resolution. You must NOT call this tool in parallel with other tools.
     """
 
     @override
-    def run(self) -> Command:
-        return Command(
-            update={
-                "messages": [
-                    ToolMessage(tool_call_id=self.tool_call_id, content="Guidance is as follows..."),
-                    HumanMessage(content=load_jinja_template("resolution_guidance.j2"))
-                ]
-            }
-        )
+    def run(self) -> str:
+        return load_jinja_template("resolution_guidance.j2")
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +205,8 @@ async def _setup_summaries_impl(
     config: SummaryInput,
     source: ProjectParamProtocol,
     memory: BaseTool | None,
-    checkpoint: Checkpointer
+    checkpoint: Checkpointer,
+    research: BaseTool | None = None,
 ) -> str:
 
     class SummarizerExtra(TypedDict):
@@ -304,6 +299,8 @@ async def _setup_summaries_impl(
 
     if memory is not None:
         tools.append(memory)
+    if research is not None:
+        tools.append(research)
 
     graph = bind_standard(
         cvl_authorship, ST, "The commentary on the generated specification", _validator
@@ -354,6 +351,19 @@ Summarization instructions: {ext.suggested_summaries}
 
 
 # ---------------------------------------------------------------------------
+# Caching
+# ---------------------------------------------------------------------------
+
+class _SummaryCache(BaseModel):
+    content: str
+
+
+def _summary_key(d: Configuration) -> CacheKey[None, _SummaryCache]:
+    cacher = hashlib.sha256(d.model_dump_json().encode()).hexdigest()[:16]
+    return CacheKey("summary-" + cacher)
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
@@ -362,6 +372,7 @@ async def setup_summaries(
     source: SourceCode,
     config: Configuration,
     cvl_authorship: CVLBuilder,
+    cvl_research: CVLOnlyBuilder,
 ) -> CVLResource:
     """Generate custom CVL summaries for SUMMARIZABLE external contracts.
 
@@ -374,10 +385,14 @@ async def setup_summaries(
         source: Source code metadata.
         config: Harness configuration with external contract classifications.
         cvl_authorship: Builder with CVL + source tools for the summary author.
+        cvl_research: Builder with CVL manual tools for the research sub-agent.
 
     Returns:
         CVLResource pointing to the generated ``custom_summaries.spec`` file.
     """
+    from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
+
+    summary_context = ctx.child(_summary_key(config), config.model_dump())
     result_path = pathlib.Path(source.project_root) / "certora" / "custom_summaries.spec"
 
     to_ret = CVLResource(
@@ -387,9 +402,17 @@ async def setup_summaries(
         sort="import",
     )
 
+    if (cached := summary_context.cache_get(_SummaryCache)) is not None:
+        result_path.write_text(cached.content)
+        return to_ret
+
+    research = cvl_research_tool(ctx, cvl_research, CVL_RESEARCH_BASE_DOC)
+
     result = await _setup_summaries_impl(
-        ctx, cvl_authorship, config, source, ctx.get_memory_tool(), ctx.checkpointer
+        summary_context, cvl_authorship, config, source, ctx.get_memory_tool(), ctx.checkpointer,
+        research=research,
     )
 
+    summary_context.cache_put(_SummaryCache(content=result))
     result_path.write_text(result)
     return to_ret

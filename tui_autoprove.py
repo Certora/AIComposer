@@ -37,9 +37,7 @@ from composer.spec.prover import CloudConfig
 
 from composer.io.autoprove_app import AutoProveApp
 
-
-# Common forbidden read pattern for source analysis
-FS_FORBIDDEN_READ = r"(^lib/.*)|(^\.certora_internal.*)|(^\.git.*)|(^test/.*)|(^emv-.*)|(.*\.json$)"
+from composer.spec.util import FS_FORBIDDEN_READ
 
 
 # ---------------------------------------------------------------------------

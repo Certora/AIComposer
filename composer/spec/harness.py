@@ -38,8 +38,9 @@ from graphcore.tools.results import result_tool_generator, ValidationResult
 from composer.templates.loader import load_jinja_template
 from composer.spec.graph_builder import run_to_completion
 from composer.spec.preaudit_setup import run_preaudit_setup, SetupFailure
-from composer.spec.context import WorkflowContext, SourceCode
+from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.api import ProjectParamProtocol, LLMParams
+from composer.spec.util import FS_FORBIDDEN_READ
 
 
 # ---------------------------------------------------------------------------
@@ -152,24 +153,15 @@ class Configuration(ContractSetup):
 # Tools
 # ---------------------------------------------------------------------------
 
-class ERC20TokenGuidance(WithImplementation[Command], WithInjectedId):
+class ERC20TokenGuidance(WithImplementation[str], WithInjectedId):
     """
     Invoke this tool to receive guidance on how ERC20 is usually modelled using the prover.
 
     You MUST NOT invoke this tool in parallel with other tools.
     """
     @override
-    def run(self) -> Command:
-        return Command(update={
-            "messages": [ToolMessage(
-                tool_call_id=self.tool_call_id,
-                content="Advice is as follows..."
-            ), HumanMessage(
-                content=[load_jinja_template(
-                    "erc20_advice.j2"
-                ), "Carefully consider if explicit ERC20 contract instances are necessary for this protocol, or if the 'standard summarization' is sufficient."]
-            )]
-        })
+    def run(self) -> str:
+        return load_jinja_template("erc20_advice.j2")
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +308,49 @@ async def analyze_external_interactions(
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
+SETUP_KEY = CacheKey[None, Configuration]("setup")
+HARNESS_KEY = CacheKey[Configuration, HarnessSetup]("harnessing")
+
+async def _setup_harness_inner(
+    ctx: WorkflowContext[HarnessSetup],
+    llm: BaseChatModel,
+    source: SourceCode,
+    vfs_conf: VFSToolConfig
+) -> HarnessSetup:
+    graph, mat = _build_harness_graph(
+        llm, source, vfs_conf, ctx.get_memory_tool(), ctx.checkpointer,
+    )
+
+    st = await run_to_completion(
+        graph,
+        input=VFSInput(vfs={}, input=[]),
+        thread_id=ctx.thread_id,
+        description="Harness setup",
+    )
+
+    h_setup = _extract_harness_setup(st, mat)
+    return h_setup
+
+async def _run_setup_harness(
+    ctx: WorkflowContext[Configuration],
+    llm: BaseChatModel,
+    source: SourceCode
+) -> HarnessSetup:
+    harness_ctx = ctx.child(HARNESS_KEY)
+    if (cached := harness_ctx.cache_get(HarnessSetup)) is not None:
+        return cached
+    vfs_conf = VFSToolConfig(
+        immutable=False,
+        fs_layer=source.project_root,
+        forbidden_read=FS_FORBIDDEN_READ,
+        forbidden_write=r"^(?!certora/)",
+        put_doc_extra="You may only write files in the certora/ subdirectory",
+    )
+
+    res = await _setup_harness_inner(harness_ctx, llm, source, vfs_conf)
+    harness_ctx.cache_put(res)
+    return res
+
 async def setup_and_harness_agent(
     ctx: WorkflowContext[None],
     source: SourceCode,
@@ -342,25 +377,11 @@ async def setup_and_harness_agent(
     Raises:
         RuntimeError: If PreAudit compilation fails.
     """
-    vfs_conf = VFSToolConfig(
-        immutable=False,
-        fs_layer=source.project_root,
-        forbidden_write=r"^(?!certora/)",
-        put_doc_extra="You may only write files in the certora/ subdirectory",
-    )
+    child_ctx = ctx.child(SETUP_KEY)
+    if (cached := child_ctx.cache_get(Configuration)) is not None:
+        return cached
 
-    graph, mat = _build_harness_graph(
-        llm, source, vfs_conf, ctx.get_memory_tool(), ctx.checkpointer,
-    )
-
-    st = await run_to_completion(
-        graph,
-        input=VFSInput(vfs={}, input=[]),
-        thread_id=ctx.uniq_thread_id(),
-        description="Harness setup",
-    )
-
-    h_setup = _extract_harness_setup(st, mat)
+    h_setup = await _run_setup_harness(child_ctx, llm, source)
 
     # Write harness files to disk and collect extra input files
     root = Path(source.project_root)
@@ -387,7 +408,7 @@ async def setup_and_harness_agent(
     if isinstance(setup_result, SetupFailure):
         raise RuntimeError(f"PreAudit setup failed: {setup_result.error}")
 
-    return Configuration(
+    to_ret = Configuration(
         external_contracts=h_setup.setup.external_contracts,
         primary_entity=h_setup.setup.primary_entity,
         non_trivial_state=h_setup.setup.non_trivial_state,
@@ -395,3 +416,5 @@ async def setup_and_harness_agent(
         summaries_path=str(setup_result.summaries_path),
         user_types=setup_result.user_types,
     )
+    child_ctx.cache_put(to_ret)
+    return to_ret

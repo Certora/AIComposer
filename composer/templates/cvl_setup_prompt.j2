@@ -46,7 +46,7 @@ Follow these instructions exactly:
 
 ## Step 1
 
-Read and understand the summarization instructions
+Read and understand the summarization instructions.
 
 ## Step 2
 
@@ -56,6 +56,9 @@ Explore the source code to understand the APIs of the components being summarize
 
 Read the configuration file to understand what components are included in the Certora Prover's
 inputs, and the linking behavior.
+
+**IMPORTANT**: Do NOT try to read other spec files to inform your summarization or to "gain context"; the other spec
+files in the project may be entirely unrelated to your task and you have no way to determine which files are relevant.
 
 ## Step 4
 
@@ -81,7 +84,7 @@ to make this determination.
 ## Step 6
 
 Review your plan by retrieving it via the "read_plan" tool. Double check that you have no invented
-any summaries that were not mentioned in your input.
+any summaries that were not mentioned in your input. If you think updates or adjustments are required, return to step 5.
 
 ## Step 7
 
@@ -111,7 +114,7 @@ Signal the completion of your work by calling the "result" tool.
    output should consist SOLELY of the summary annotations and the supporting definitions.
   </hard_requirement>
   <hard_requirement>
-DO NOT, under any circumstances, use "assert" in any of the summaries you write. If you need to "exceptionally abort"
+    DO NOT, under any circumstances, use "assert" in any of the summaries you write. If you need to "exceptionally abort"
     a summary, use the "revert" statement.
   </hard_requirement>
 </guidance>
