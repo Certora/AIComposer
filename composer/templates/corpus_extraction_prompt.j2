@@ -1,0 +1,51 @@
+You are extracting structured data from a Certora formal verification report for the {{ protocol_name }} protocol ({{ protocol_description }}).
+
+Your task is to extract ALL property groups and their individual verification rules from this report.
+
+## What to extract
+
+**Property groups** are high-level categories of verified properties. They typically have:
+- A title (e.g. "Solvency Properties", "Access Control", "Reward Calculation Integrity")
+- A description of what the group covers
+- An overall verification status
+- Optional assumptions or preconditions
+- One or more individual rules or invariants
+
+**Rules** are individual CVL rules or invariants within a property group. They have:
+- A name (the CVL rule/invariant name, e.g. `integrityOfDeposit`, `totalSupplyIsSumOfBalances`)
+- A verification status (e.g. "Verified", "Violated", "Timeout")
+- A description of what the rule checks
+- A cloud run URL, if one can be matched (see below)
+
+## Guidelines
+
+1. Preserve the report's own grouping structure. If the report organizes properties into numbered sections, use those as property groups.
+2. Use the **exact** rule names as they appear in the report — these will be used to search for rules in source code. Do not rename, paraphrase, or normalize rule names.
+3. For the property group ID, use the section number or a short identifier from the report (e.g. "1", "2a", "solvency").
+4. Include ALL rules mentioned, even those with non-verified status (Violated, Timeout, etc.).
+5. If assumptions are stated for a group (e.g. "assuming no reentrancy"), capture them verbatim.
+
+## Cloud run URLs
+
+The following cloud run URLs were extracted from the report and resolved to their associated rule names. Use this mapping to populate the `cloud_run_url` field for each rule you extract.
+
+{% if resolved_links %}
+{% for link in resolved_links %}
+{% if link.explicit_rules %}- **Explicitly verifies**: {{ link.explicit_rules | join(", ") }} (contract: {{ link.contract }}, status: {{ link.job_status }}): {{ link.output_url }}
+{% elif link.included_rules %}- **Includes**: {{ link.included_rules | join(", ") }} (contract: {{ link.contract }}, status: {{ link.job_status }}): {{ link.output_url }}
+{% endif %}
+{% endfor %}
+{% else %}
+No cloud run URLs were found in this report.
+{% endif %}
+
+When a rule name from the report matches one of the resolved rule names above, set its `cloud_run_url` to the corresponding URL. If a single URL covers multiple rules, assign it to each matching rule. If no match is found for a rule, leave `cloud_run_url` as null.
+
+**Priority**: When multiple URLs could match a rule, prefer an "Explicitly verifies" URL (the run was specifically for that rule) over an "Includes" URL (the run verified an entire spec file that happened to contain the rule). Also consider page proximity — a URL near the rule's description in the report is more likely to be the right match.
+
+## Important: accuracy over completeness
+
+- If you are unsure whether something is a CVL rule name or a prose description, **omit it** rather than guessing a rule name that may not match source code.
+- If a property group's structure is ambiguous (e.g. it's unclear which rules belong to which group), prefer fewer, larger groups over speculative splitting.
+- If a rule's status is unclear, record it as "Unknown" rather than guessing.
+- It is better to extract fewer items accurately than to extract many items with fabricated or uncertain data.

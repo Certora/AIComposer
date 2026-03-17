@@ -10,3 +10,4 @@ scripts/cvl_manual.html
 .venv/
 build/
 *.egg-info/
+corpus_*/**

@@ -1,0 +1,49 @@
+Analyze the following rules from a formal verification report for: {{ protocol_description }}
+
+## Rules to find
+
+For each rule below, search the source tree, locate its CVL implementation, and analyze it:
+
+{% for ref in rules %}
+{{ loop.index }}. **{{ ref.rule.name }}** ({{ ref.rule.status }})
+   Property group: {{ ref.group.title }} ({{ ref.group.id }})
+   {{ ref.rule.description }}
+{% if ref.group.assumptions %}   Assumptions: {{ ref.group.assumptions }}
+{% endif %}
+{% endfor %}
+
+## Instructions
+
+1. Start by listing files to understand the repository structure — look for directories containing .spec files (often `certora/`, `specs/`, `spec/`, or similar).
+2. Use grep to search for each rule name across the repository.
+3. For each rule you find:
+   - Read its full CVL implementation and any supporting definitions (ghost variables, hooks, helper functions).
+   - **Read the Solidity source code** that the rule is verifying to understand the protocol behavior being specified.
+   - Explain the *mechanism* — how the rule achieves verification (ghost variables, hooks, invariant preservation strategy, etc.).
+   - Explain *why* the property matters and *why* the rule is written the way it is.
+4. Submit your result with all analyzed rules and any unmatched rules.
+
+## What makes a good vs bad analysis
+
+Your analysis should explain *why* the property matters and *why* the rule is written the way it is — not just recount the rule body. In particular, your explanation should try to explain
+why the rule/invariant is *important* to the protocol; what bug or failure mode is it attempting to prevent?
+
+**Bad** (mechanical recounting):
+> "The rule first constrains an input value to be a valid pool id, then calls `submitOrder`, then asserts the liquidity variable increased."
+
+**Good** (explains significance and design):
+> "A crucial property is that order submissions must always increase the pool's liquidity, even for orders as small as one share. This rule expresses that property by universally quantifying over all valid pool IDs and non-zero order sizes, invoking `submitOrder`, and asserting that `poolLiquidity` strictly increases. The rule uses a `require` on the pool ID to restrict to initialized pools, which matches the contract's own `require` guard in `submitOrder`."
+
+**Bad** (just names the CVL features used):
+> "This invariant uses a ghost variable and a hook on `_mint` to track total supply."
+
+**Good** (explains the verification strategy):
+> "The ERC20 standard requires totalSupply to equal the sum of all balances, but the Prover cannot enumerate all addresses. Instead, this invariant uses a ghost variable `sumOfBalances` maintained by hooks on `_mint`, `_burn`, and `_transfer` — each hook updates the ghost to mirror the balance changes. The invariant then asserts `totalSupply() == sumOfBalances`, which the Prover can check inductively without needing to sum over all holders."
+
+**Bad** (ignores the Solidity context):
+> "The rule calls `withdraw` and checks that the user's balance decreased by the withdrawal amount."
+
+**Good** (connects to protocol semantics):
+> "This rule verifies the integrity of the withdrawal flow in the lending pool. The `withdraw` function in `Pool.sol` burns aTokens and transfers the underlying asset — two operations that must remain in sync. The rule captures this by asserting that the decrease in the user's aToken balance exactly equals the increase in their underlying token balance, ensuring no value is created or destroyed during redemption."
+
+Remember: accuracy over completeness. If you cannot find a rule, report it as unmatched rather than guessing.
