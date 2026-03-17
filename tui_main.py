@@ -6,8 +6,8 @@ from composer.input.parsing import fresh_workflow_argument_parser
 from composer.workflow.services import create_llm
 from composer.input.files import upload_input
 from composer.workflow.executor import execute_ai_composer_workflow
-from composer.io.codegen_rich import CodeGenRichApp
-from composer.io.ide_bridge import IDEBridge
+from composer.ui.codegen_rich import CodeGenRichApp
+from composer.ui.ide_bridge import IDEBridge
 from composer.diagnostics.debug import setup_logging, dump_fs
 
 

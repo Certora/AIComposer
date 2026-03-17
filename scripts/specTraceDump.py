@@ -18,7 +18,7 @@ from langgraph.checkpoint.base import CheckpointTuple
 from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMessage, SystemMessage
 from pydantic import Discriminator
 
-from composer.workflow.factories import get_checkpointer
+from composer.workflow.services import get_checkpointer
 from composer.templates.loader import load_jinja_template
 
 # Import common utilities and base types

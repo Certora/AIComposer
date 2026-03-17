@@ -29,7 +29,7 @@ from composer.spec.context import (
 from composer.spec.pipeline import run_natspec_pipeline
 from composer.spec.util import string_hash
 
-from composer.io.pipeline_app import PipelineApp
+from composer.ui.pipeline_app import PipelineApp
 
 
 # ---------------------------------------------------------------------------

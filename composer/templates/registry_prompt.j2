@@ -2,7 +2,26 @@ A property agent needs a storage variable for the purpose described in the input
 Your job is to decide whether an existing field already serves the same semantic purpose,
 or whether a new one needs to be added to the stub.
 
+## Suitability Filter
+
+Before adding or matching a new field, check to see whether the request is "suitable".
+A suitable request:
+1. Must be for a storage field (requesting new external entry points, internal functions, is not allowed)
+2. Must be for legitimate contract state: requests for state fields that track *other* contract's state should be rejected,
+  with advice given to use "ghost state" instead.
+
+Requests should be rejected under criteria 2 only if there is *strong*, *obvious* evidence that the field
+is not for tracking the current stub contract's state.
+
+If the field request is not rejected, move onto "matching". If the request is rejected, call the `result` tool
+with the `rejected` flag set to "true" and all other fields set to dummy/empty values. Use the "description"
+field for your description of why the update was rejected.
+
 ## Matching rules
+
+When performing the matching task, determine if the requested field needs to be added
+to the stub or if an existing field should be used. An existing field should be used
+if that field is "semantically equivalent" to the requested field.
 
 - Semantic equivalence means the fields track the SAME conceptual data, not just similar data.
   "Tracks user token balances" and "mapping for per-user deposit tracking" ARE equivalent.
@@ -16,6 +35,7 @@ Deliver your decision via the result tool. You MUST populate the following field
 
 - `field_name`: The Solidity identifier for the field.
 - `is_new`: `true` if adding a new field, `false` if reusing an existing one.
+- `rejected`: always `false` if the request is not rejected
 
 If `is_new` is true, the following are ALSO required (do NOT leave them empty):
 - `field_type`: The Solidity type (e.g., `mapping(address => uint256)`, `uint256`, `bool`).

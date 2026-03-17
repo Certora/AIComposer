@@ -12,14 +12,14 @@ from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
 from composer.spec.context import (
     WorkflowContext, CVLBuilder, CVLOnlyBuilder,
-    CacheKey, CVLJudge, Feedback,
-    SourceCode, SystemDoc,
+    CacheKey, CVLJudge, Feedback
 )
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.cvl.tools import get_cvl
 from composer.spec.component import ComponentInst
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
+from composer.spec.gen_types import GenerationInput, NatspecInput
 
 FEEDBACK_KEY = CacheKey[CVLJudge, Feedback]("feedback")
 
@@ -42,13 +42,10 @@ type FeedbackTool = Callable[[str, Sequence[ISkippedProperty]], Awaitable[Proper
 
 class PropertyContext(Protocol):
     @property
-    def has_source(self) -> bool: ...
-
-    @property
     def cvl_authorship(self) -> CVLBuilder | CVLOnlyBuilder: ...
 
     @property
-    def input(self) -> SourceCode | SystemDoc: ...
+    def input(self) -> GenerationInput: ...
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
@@ -59,7 +56,6 @@ def property_feedback_judge(
 ) -> FeedbackTool:
 
     child = ctx.child(FEEDBACK_KEY)
-    has_source = env.has_source
     builder = env.cvl_authorship
 
     class JudgeExtra(RoughDraftState):
@@ -86,13 +82,9 @@ def property_feedback_judge(
 
     template_kwargs: dict = {
         "context": inst,
-        "has_source": has_source,
         "properties": props,
+        **env.input.params()
     }
-    if has_source:
-        assert isinstance(env.input, SourceCode)
-        template_kwargs["contract_name"] = env.input.contract_name
-        template_kwargs["relative_path"] = env.input.relative_path
 
     workflow = bind_standard(
         builder, ST, validator=did_rough_draft_read
@@ -112,9 +104,12 @@ def property_feedback_judge(
         skipped: Sequence[ISkippedProperty],
     ) -> PropertyFeedback:
         input_parts: list[str | dict] = []
-        if not has_source:
+        if isinstance(env.input, NatspecInput):
             input_parts.append("The following is the design document for the application:")
             input_parts.append(env.input.content)
+            input_parts.append("The current stub implementation for the contract is:")
+            input_parts.append(env.input.stub_provider())
+
         input_parts.append("The proposed CVL file is")
         input_parts.append(cvl)
         if skipped:

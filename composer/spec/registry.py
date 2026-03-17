@@ -60,10 +60,14 @@ class RegistryResult(BaseModel):
         description="The Solidity type for the new field (e.g., 'mapping(address => uint256)'). "
         "Required when is_new is true.",
     )
-    field_description: str = PydanticField(
+    rejected: bool = PydanticField(
+        default=False,
+        description="Set to true if the field request was rejected as 'unsuitable'."
+    )
+    description: str = PydanticField(
         default="",
-        description="A short description of what this field tracks. "
-        "Required when is_new is true.",
+        description="A short description of what this field tracks OR why the request was rejected. "
+        "Required when is_new is true or when rejected is true.",
     )
     updated_stub: str = PydanticField(
         default="",
@@ -125,7 +129,7 @@ async def run_registry_agent(
         if res.is_new:
             if not res.field_type:
                 return "When proposing a new field, you must provide field_type (the Solidity type)."
-            if not res.field_description:
+            if not res.description:
                 return "When proposing a new field, you must provide field_description."
             if not res.updated_stub:
                 return "When proposing a new field, you must provide updated_stub (the complete source code)."
@@ -259,7 +263,7 @@ class StubRegistry:
 
         Spawns a fresh registry agent. If a new field is added, the agent
         produces the updated stub (validated by solc) and we write it to the store.
-        Returns the field name to use.
+        Returns a description of the field to use, or a rejection message.
         """
         async with self._lock:
             stub_content = self.read_stub()
@@ -275,11 +279,14 @@ class StubRegistry:
                 ctx=self._ctx,
             )
 
+            if result.rejected:
+                return f"Field request was rejected: {result.description}"
+
             if result.is_new:
                 field_metadata.fields.append(FieldSpec(
                     name=result.field_name,
                     type=result.field_type,
-                    description=result.field_description,
+                    description=result.description,
                 ))
                 self._write_field_metadata(field_metadata)
                 self._write_stub(result.updated_stub)
@@ -289,7 +296,7 @@ class StubRegistry:
                 }
                 get_stream_writer()(evt)
 
-            return result.field_name
+            return f"Use field {result.field_name}"
 
     def get_tools(self) -> list[BaseTool]:
         """Return tools for injection into property agents."""
@@ -316,8 +323,7 @@ class StubRegistry:
 
             @override
             async def run(self) -> str:
-                name = await registry.request_field(self.purpose)
-                return f"Use field: {name}"
+                return await registry.request_field(self.purpose)
 
         return [
             ReadStubTool.as_tool("read_stub"),

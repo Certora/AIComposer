@@ -5,8 +5,8 @@ from typing import cast
 
 from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
-from composer.io.natspec_rich import NatSpecRichApp
-from composer.io.ide_bridge import IDEBridge
+from composer.ui.natspec_rich import NatSpecRichApp
+from composer.ui.ide_bridge import IDEBridge
 from composer.spec.natspec import execute, NatSpecArgs
 
 import argparse

@@ -46,6 +46,7 @@ from composer.spec.stub_gen import generate_stub, DESCRIPTION as STUB_GEN_DESC
 from composer.spec.registry import StubRegistry
 from composer.spec.merge import make_publish_tools, make_advisory_typecheck_tool
 from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_batch_cvl
+from composer.spec.gen_types import NatspecInput, CustomOutput
 from composer.templates.loader import load_jinja_template
 
 
@@ -253,19 +254,23 @@ async def run_natspec_pipeline(
             registry.read_stub, interface, contract_name, solc_version,
         )
 
+        publish = make_publish_tools(
+            master_spec, registry.read_stub, interface,
+            contract_name, solc_version, cvl_research, batch_ctx
+        )
+
         env = GenerationEnv(
-            input=system_doc,
+            input=NatspecInput(
+                content=system_doc.content,
+                stub_provider=registry.read_stub
+            ),
             cvl_authorship=cvl_authorship,
             cvl_research=cvl_research,
-            extra_tools=[*stub_tools, typecheck_tool, *make_publish_tools(
-                master_spec, registry.read_stub, interface,
-                contract_name, solc_version, cvl_research, batch_ctx
-            )],
-            extra_input=[
-                "For reference, the system document for this system is",
-                system_doc.content
-            ],
-            standard_results=False
+            extra_tools=[*stub_tools, typecheck_tool],
+            output=CustomOutput(
+                publish_tools=list(publish),
+                result_template="publish_spec_fragment.j2"
+            )
         )
 
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"

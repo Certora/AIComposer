@@ -55,6 +55,36 @@ You should assume that the spec is well-formed; that is, it has been accepted by
 If the specification appears to contradict what is allowed by the CVL manual or other documentation, you should assume that
 the documentation/manual is out of date/ambiguous, *NOT* that the specification is incorrect.
 
+{% if has_source %}
+Instead of multiple, overlapping rules that all describe different reverting conditions for the same function, a single "revert characteristic"
+rule is preferred. These rules are usually of the form:
+
+```
+rule revert_for_function() {
+  t1 arg1;
+  t2 arg2;
+  // .. etc
+  env e;
+  the_function@with_revert(e, arg1, arg2);
+  assert lastReverted <=> (p(arg1) || p(arg2) || ...);
+}
+```
+
+where `p` is some logical predicate over the arguments. For example, one such rule could be:
+
+```
+rule revert_for_approve() {
+  env e;
+  address requester;
+  approve@withrevert(e, requester);
+  assert lastReverted <=> (isAdmin(e.msg.sender) || requestState(requester) != ACTIVE || currentContract.paused == PAUSED);
+}
+```
+
+NB: For such revert characteristic rules, bare `require` statements should almost *never* be used ("requireInvariant" statements are acceptable, as usual).
+
+{% endif %}
+
 ### Criteria 3: Precondition Validity
 
 Evaluate each rule for its *preconditions*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
@@ -125,15 +155,19 @@ Using the write_rough_draft tool, create an initial draft of your analysis.
 Read back your rough draft, and compare every point of feedback against the 7 criteria. If the feedback is nonsensical, not actionable, or not in relation
 to one of the criteria, discard it.
 
+{%if not has_source %}
+To reiterate, you should *NOT* provide feedback on rules/invariants that cannot be verified against
+the current stub implementation. The stub is *NON-FUNCTIONAL* and is a minimal skeleton to allow type-checking
+the specification.
+{% endif %}
+
 ## Step 6
 Update your memories, and then output the results of your feedback.
 </task>
 
-<inputs>
 <application>
 {% include "application_context.j2" %}
 </application>
-</inputs>
 
 <guidance>
 <hard_requirement>

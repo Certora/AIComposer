@@ -7,9 +7,8 @@ Parameterized by:
 """
 
 import hashlib
-import sqlite3
-from dataclasses import dataclass, field
-from typing import Annotated, Callable, Awaitable, NotRequired, override, Literal
+from dataclasses import dataclass
+from typing import Annotated, Callable, NotRequired, override, Awaitable
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
@@ -18,15 +17,13 @@ from langchain_core.tools import BaseTool
 
 from langgraph.types import Command
 from langgraph.graph import MessagesState
+from langgraph.runtime import get_runtime
 
 from graphcore.graph import FlowInput, tool_state_update, tool_return, Builder
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
-from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
 from composer.spec.context import (
-    WorkflowContext, SourceBuilder, CVLBuilder, CVLOnlyBuilder,
-    CacheKey, CVLGeneration, CVLJudge, Feedback,
-    SourceCode, SystemDoc,
+    WorkflowContext, CacheKey, CVLGeneration, CVLJudge,
 )
 from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance
 from composer.core.state import merge_validation
@@ -34,65 +31,13 @@ from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl
 from composer.spec.component import ComponentInst
-from composer.tools.thinking import ExplicitThinking, RoughDraftState, get_rough_draft_tools
+from composer.tools.thinking import ExplicitThinking
 from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.spec.code_explorer import code_explorer_tool_from_builder
-from composer.templates.loader import load_jinja_template
-from composer.spec.feedback import property_feedback_judge
+from composer.spec.feedback import property_feedback_judge, PropertyFeedback
+from composer.spec.gen_types import GenerationEnv, NatspecInput, SourceInput, StandardResult, CustomOutput
 
 CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
-
-
-# ---------------------------------------------------------------------------
-# GenerationEnv — unified configuration for CVL generation
-# ---------------------------------------------------------------------------
-
-class CVLResource(BaseModel):
-    import_path: str = Field(description="the path to the resource (relative to `certora/`)")
-    required: bool = Field(description="whether this resource *must* be used in the verification process")
-    description: str = Field(description="A description of this resource")
-    sort: Literal["import"]
-
-
-@dataclass
-class GenerationEnv:
-    """Environment configuration for CVL generation.
-
-    Bundles input, role-based builders, and optional capabilities.
-    Each capability adds tools and template conditionals.
-
-    Builder roles:
-    - cvl_authorship: main CVL generation agent and feedback judge
-    - cvl_research: CVL research sub-agents (manual/KB search only)
-    - source_tools: code exploration sub-agent (None if no source code)
-    """
-    input: SourceCode | SystemDoc
-    cvl_authorship: CVLBuilder | CVLOnlyBuilder
-    cvl_research: CVLOnlyBuilder
-    source_tools: SourceBuilder | None = None
-
-    # Optional capabilities
-    prover_tool: BaseTool | None = None
-    resources: list[CVLResource] = field(default_factory=list)
-    extra_tools: list[BaseTool] = field(default_factory=list)
-    extra_input: list[str | dict] = field(default_factory=list)
-    standard_results: bool = True
-
-    @property
-    def has_source(self) -> bool:
-        return isinstance(self.input, SourceCode)
-
-    @property
-    def has_prover(self) -> bool:
-        return self.prover_tool is not None
-
-    @property
-    def has_publish(self) -> bool:
-        return not self.standard_results
-
-    @property
-    def base_builder(self):
-        return self.cvl_authorship
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +141,101 @@ LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 
 DESCRIPTION = "CVL generation"
 
+@dataclass
+class _CVLGenerationContext:
+    feedback_thunk: Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedback]]
+    num_props: int
+
+
+class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithAsyncImplementation[Command]):
+    """
+    Receive feedback on your CVL and any skip declarations.
+    The judge will evaluate coverage (all properties accounted for)
+    and the validity of any skip justifications.
+    """
+    @override
+    async def run(self) -> Command:
+        feedback = get_runtime(_CVLGenerationContext).context.feedback_thunk
+        st = self.state
+        spec = st["curr_spec"]
+        if spec is None:
+            return tool_return(self.tool_call_id, "No spec put yet")
+        skipped = st["skipped"]
+        t = await feedback(spec, skipped)
+        msg = f"Good? {t.good}\nFeedback {t.feedback}"
+        if t.good:
+            digest = _compute_digest(spec, skipped)
+            return tool_state_update(
+                self.tool_call_id, msg,
+                validations={"feedback": digest},
+            )
+        return tool_state_update(self.tool_call_id, msg)
+
+class _RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithImplementation[Command]):
+    """
+    Declare that you are skipping a property from the batch.
+    You must provide the 1-indexed property number and a justification.
+    The feedback judge will evaluate whether your justification is valid.
+    Only use this after genuinely attempting to formalize the property.
+    """
+    property_index: int = Field(
+        description="The 1-indexed property number from the batch listing"
+    )
+    reason: str = Field(
+        description="Justification for why this property cannot be formalized"
+    )
+
+    @override
+    def run(self) -> Command:
+        num_props = get_runtime(_CVLGenerationContext).context.num_props
+        if not (1 <= self.property_index <= num_props):
+            return tool_state_update(
+                self.tool_call_id,
+                f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
+            )
+        if not self.reason.strip():
+            return tool_state_update(
+                self.tool_call_id,
+                "A non-empty justification is required when skipping a property.",
+            )
+        skip = SkippedProperty(
+            property_index=self.property_index,
+            reason=self.reason,
+        )
+        return tool_state_update(
+            self.tool_call_id,
+            f"Recorded skip for property {self.property_index}.",
+            skipped=[skip],
+        )
+
+class _UnskipSchema(WithInjectedId, WithImplementation[Command]):
+    """
+    Remove a previously declared skip for a property.
+    Use this if you later find a way to formalize a property you previously skipped.
+    """
+    property_index: int = Field(
+        description="The 1-indexed property number to un-skip"
+    )
+
+    @override
+    def run(self) -> Command:
+        num_props = get_runtime(_CVLGenerationContext).context.num_props
+        if not (1 <= self.property_index <= num_props):
+            return tool_state_update(
+                self.tool_call_id,
+                f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
+            )
+        # Empty reason is the sentinel for "not skipped"
+        skip = SkippedProperty(
+            property_index=self.property_index,
+            reason="",
+        )
+        return tool_state_update(
+            self.tool_call_id,
+            f"Removed skip for property {self.property_index}.",
+            skipped=[skip],
+        )
+
 
 async def generate_batch_cvl(
     ctx: WorkflowContext[CVLGeneration],
@@ -205,144 +245,52 @@ async def generate_batch_cvl(
     with_memory: bool,
     description: str,
 ) -> GeneratedCVL:
-
-    num_props = len(props)
-
-    has_source = env.has_source
-    has_prover = env.has_prover
-    has_publish = env.has_publish
-    base_builder = env.base_builder
-
     required_validations = ["feedback"]
-    if has_prover:
-        required_validations.append("prover")
 
     feedback = property_feedback_judge(
         ctx.child(CVL_JUDGE_KEY), env, feat, props, with_memory,
     )
 
-    class FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithAsyncImplementation[Command]):
-        """
-        Receive feedback on your CVL and any skip declarations.
-        The judge will evaluate coverage (all properties accounted for)
-        and the validity of any skip justifications.
-        """
-        @override
-        async def run(self) -> Command:
-            st = self.state
-            spec = st["curr_spec"]
-            if spec is None:
-                return tool_return(self.tool_call_id, "No spec put yet")
-            skipped = st["skipped"]
-            t = await feedback(spec, skipped)
-            msg = f"Good? {t.good}\nFeedback {t.feedback}"
-            if t.good:
-                digest = _compute_digest(spec, skipped)
-                return tool_state_update(
-                    self.tool_call_id, msg,
-                    validations={"feedback": digest},
-                )
-            return tool_state_update(self.tool_call_id, msg)
-
-    class RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithImplementation[Command]):
-        """
-        Declare that you are skipping a property from the batch.
-        You must provide the 1-indexed property number and a justification.
-        The feedback judge will evaluate whether your justification is valid.
-        Only use this after genuinely attempting to formalize the property.
-        """
-        property_index: int = Field(
-            description="The 1-indexed property number from the batch listing"
-        )
-        reason: str = Field(
-            description="Justification for why this property cannot be formalized"
-        )
-
-        @override
-        def run(self) -> Command:
-            if not (1 <= self.property_index <= num_props):
-                return tool_state_update(
-                    self.tool_call_id,
-                    f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
-                )
-            if not self.reason.strip():
-                return tool_state_update(
-                    self.tool_call_id,
-                    "A non-empty justification is required when skipping a property.",
-                )
-            skip = SkippedProperty(
-                property_index=self.property_index,
-                reason=self.reason,
-            )
-            return tool_state_update(
-                self.tool_call_id,
-                f"Recorded skip for property {self.property_index}.",
-                skipped=[skip],
-            )
-
-    class UnskipSchema(WithInjectedId, WithImplementation[Command]):
-        """
-        Remove a previously declared skip for a property.
-        Use this if you later find a way to formalize a property you previously skipped.
-        """
-        property_index: int = Field(
-            description="The 1-indexed property number to un-skip"
-        )
-
-        @override
-        def run(self) -> Command:
-            if not (1 <= self.property_index <= num_props):
-                return tool_state_update(
-                    self.tool_call_id,
-                    f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
-                )
-            # Empty reason is the sentinel for "not skipped"
-            skip = SkippedProperty(
-                property_index=self.property_index,
-                reason="",
-            )
-            return tool_state_update(
-                self.tool_call_id,
-                f"Removed skip for property {self.property_index}.",
-                skipped=[skip],
-            )
-
     _cvl_research_doc = CVL_RESEARCH_BASE_DOC
-    if has_source:
-        _cvl_research_doc += " Do NOT use this for source code questions (use explore_code instead)."
 
     tools: list[BaseTool] = [
         put_cvl, put_cvl_raw,
-        FeedbackSchema.as_tool("feedback_tool"),
-        RecordSkipSchema.as_tool("record_skip"),
-        UnskipSchema.as_tool("unskip_property"),
-        cvl_research_tool(ctx, env.cvl_research, _cvl_research_doc),
+        _FeedbackSchema.as_tool("feedback_tool"),
+        _RecordSkipSchema.as_tool("record_skip"),
+        _UnskipSchema.as_tool("unskip_property"),
         get_cvl(CVLGenerationState),
         ExplicitThinking.as_tool("extended_reasoning"),
         ERC20TokenGuidance.as_tool("erc20_guidance"),
         UnresolvedCallGuidance.as_tool("unresolved_call_guidance"),
     ]
 
+
+    extra_inputs: list[str | dict] = []
+
+    match env.input:
+        case NatspecInput():
+            extra_inputs.extend([
+                "For reference, the system document for this system is",
+                env.input.content,
+                "The current typechecking stub is",
+                env.input.stub_provider()
+            ])
+        case SourceInput():
+            tools.append(env.input.prover_tool)
+            tools.append(code_explorer_tool_from_builder(env.input.source_tools))
+            required_validations.append("prover")
+            _cvl_research_doc += " Do NOT use this for source code questions (use explore_code instead)."
+
+    tools.append(cvl_research_tool(ctx, env.cvl_research, _cvl_research_doc))
+
     template_kwargs: dict = {
         "context": feat,
         "resources": env.resources,
-        "has_source": has_source,
-        "has_prover": has_prover,
-        "has_publish": has_publish,
-        "has_stub_tools": len(env.extra_tools) > 0,
         "properties": props,
         "memory": with_memory,
+        "result_template": env.output.result_template,
+        **env.input.params()
     }
-
-    if has_source:
-        assert isinstance(env.input, SourceCode)
-        assert env.source_tools is not None
-        tools.append(code_explorer_tool_from_builder(env.source_tools))
-        template_kwargs["contract_name"] = env.input.contract_name
-        template_kwargs["relative_path"] = env.input.relative_path
-
-    if env.prover_tool is not None:
-        tools.append(env.prover_tool)
 
     # Add extra tools from env (e.g., stub read, field request, typecheck)
     tools.extend(env.extra_tools)
@@ -351,11 +299,6 @@ async def generate_batch_cvl(
 
     if with_memory:
         tools.append(ctx.get_memory_tool())
-
-    extra_inputs: list[str | dict] = []
-
-    # Prepend env.extra_input (e.g., current stub content)
-    extra_inputs.extend(env.extra_input)
 
     if with_memory:
         last_attempt = ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
@@ -366,20 +309,22 @@ async def generate_batch_cvl(
     # Builder configuration: if result_tools provided, use manual config
     to_build : Builder[CVLGenerationState, None, None]
 
-    if not env.standard_results:
-        # tools.extend(env.result_tools(validator))
-        to_build = base_builder.with_state(
-            CVLGenerationState
-        ).with_output_key(
-            "result"
-        ).with_default_summarizer(
-            max_messages=50
-        )
-    else:
-        to_build = bind_standard(
-            base_builder, CVLGenerationState, "A description of your generated CVL",
-            validator=lambda s, _r: check_completion(s),
-        )
+    match env.output:
+        case CustomOutput():
+            to_build = env.cvl_authorship.with_state(
+                CVLGenerationState
+            ).with_output_key(
+                "result"
+            ).with_default_summarizer(
+                max_messages=50
+            ).with_tools(
+                env.output.publish_tools
+            )
+        case StandardResult():
+            to_build = bind_standard(
+                env.cvl_authorship, CVLGenerationState, "A description of your generated CVL",
+                validator=lambda s, _r: check_completion(s),
+            )
 
     d = to_build.with_input(
         CVLGenerationInput
@@ -390,6 +335,8 @@ async def generate_batch_cvl(
     ).with_initial_prompt_template(
         "property_generation_prompt.j2",
         **template_kwargs
+    ).with_context(
+        _CVLGenerationContext
     ).compile_async(
         checkpointer=ctx.checkpointer
     )
@@ -405,6 +352,10 @@ async def generate_batch_cvl(
                 required_validations=required_validations
             ),
             thread_id=ctx.thread_id,
+            context=_CVLGenerationContext(
+                feedback_thunk=feedback,
+                num_props=len(props)
+            ),
             description=description,
         )
     finally:
