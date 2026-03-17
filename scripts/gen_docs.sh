@@ -18,7 +18,7 @@ python3 -m venv "$venv_dir"
 source "$venv_dir/bin/activate"
 pip install -r "$doc_dir/requirements.txt"
 
-for target in "$doc_dir"/docs/{cvl,solana,prover}/ ; do
+for target in "$doc_dir"/docs/{cvl,solana,prover,user-guide}/ ; do
     cp "$doc_dir/conf.py" "$target"
     cd "$target"
     sphinx-build -M singlehtml . tmp
