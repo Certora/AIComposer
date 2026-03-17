@@ -25,6 +25,7 @@ from composer.prover.cloud import cloud_results
 from composer.prover.ptypes import RuleResult
 from composer.prover.results import read_and_format_run_result
 from composer.templates.loader import load_jinja_template
+from composer.input.config import config
 
 
 @dataclass
@@ -133,8 +134,7 @@ async def run_prover(
     callbacks: ProverCallbacks,
     *,
     analysis_cache: AnalysisCache | None = None,
-    summarization_threshold: int | None = None,
-    platform: str = "evm"
+    summarization_threshold: int | None = None
 ) -> RawReport | SummarizedReport | str:
     """Execute the Certora prover and return structured results.
 
@@ -159,7 +159,7 @@ async def run_prover(
     with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
         proc = await asyncio.subprocess.create_subprocess_exec(
             sys.executable,
-            str(wrapper_script), platform, str(output_file.name), *effective_args,
+            str(wrapper_script), config.platform, str(output_file.name), *effective_args,
             cwd=str(folder),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

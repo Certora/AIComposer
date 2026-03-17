@@ -4,6 +4,7 @@ import difflib
 from rich.console import Console
 
 from composer.human.types import ProposalType, QuestionType, HumanInteractionType, RequirementRelaxationType
+from composer.input.config import config
 
 def prompt_input(prompt_str: str, debug_thunk: Callable[[], None], filter: Optional[Callable[[str], Optional[str]]] = None) -> str:
     l = input(prompt_str + " (double newlines ends): ")
@@ -34,16 +35,16 @@ def _print_header(topic: str) -> None:
     print(topic)
     print("=" * 80)
 
-def handle_proposal_interrupt(interrupt_ty: ProposalType, debug_thunk: Callable[[], None], platform: str = "evm") -> str:
+def handle_proposal_interrupt(interrupt_ty: ProposalType, debug_thunk: Callable[[], None]) -> str:
     _print_header("SPEC CHANGE PROPOSAL")
     orig = interrupt_ty["current_spec"].splitlines(keepends=True)
     proposed = interrupt_ty["proposed_spec"].splitlines(keepends=True)
 
     diff = difflib.unified_diff(
         a = orig,
-        fromfile="a/rules.rs" if platform == "svm" else "a/rules.spec",
+        fromfile=f"a/{config.spec_fn}",
         b = proposed,
-        tofile="b/rules.rs" if platform == "svm" else "b/rules.spec",
+        tofile=f"b/{config.spec_fn}",
         n=3,
     )
 
@@ -97,13 +98,13 @@ def handle_req_relaxation_interrupt(interrupt: RequirementRelaxationType, debug_
     return prompt_input("Response to request, must start with ACCEPTED/REJECTED", debug_thunk, filt)
 
 
-def handle_human_interrupt(interrupt_data: dict, debug_thunk: Callable[[], None], platform: str = "evm") -> str:
+def handle_human_interrupt(interrupt_data: dict, debug_thunk: Callable[[], None]) -> str:
     """Handle human-in-the-loop interrupts and get user input."""
     interrupt_ty = cast(HumanInteractionType, interrupt_data)
 
     match interrupt_ty["type"]:
         case "proposal":
-            return handle_proposal_interrupt(interrupt_ty, debug_thunk, platform=platform)
+            return handle_proposal_interrupt(interrupt_ty, debug_thunk)
         case "question":
             return handle_question_interrupt(interrupt_ty, debug_thunk)
         case "req_relaxation":

@@ -15,6 +15,7 @@ from composer.prover.core import (
 )
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
+from composer.input.config import config
 
 import sys
 
@@ -77,68 +78,13 @@ class _StoreCache:
 
 
 def certora_prover(
-    source_files: List[str],
-    target_contract: str,
-    compiler_version: str,
-    loop_iter: int,
-    rule: Optional[str],
     state: AIComposerState,
     tool_call_id: str,
-) -> SummarizedReport | RawReport | str:
-    runtime = get_runtime(AIComposerContext)
-    ctxt = runtime.context
-    writer = get_stream_writer()
-
-    with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
-        args = source_files.copy()
-        args.extend([
-            "--verify",
-            f"{target_contract}:./rules.spec",
-            "--optimistic_loop",
-            "--optimistic_hashing",
-            "--loop_iter",
-            str(loop_iter),
-            "--solc", compiler_version,
-            "--solc_via_ir",
-            "--strict_solc_optimizer",
-            "--prover_args",
-            "-timeoutCracker true",
-        ])
-        if rule is not None:
-            args.extend(["--rule", rule])
-
-        store = get_store()
-        cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
-
-        try:
-            result = asyncio.run(run_prover(
-                state,
-                Path(temp_dir),
-                args,
-                ctxt.llm,
-                tool_call_id,
-                CoreProverOptions(),
-                _AuditCallbacks(writer, tool_call_id, ctxt.prover_opts.capture_output),
-                analysis_cache=cache,
-                summarization_threshold=10,
-            ))
-
-            # Preserve the rule-is-None check for all_verified
-            if isinstance(result, RawReport) and rule is not None:
-                result = RawReport(report=result.report, all_verified=False)
-
-            return result
-        except Exception as e:
-            print(e)
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-
-
-def solana_prover(
     rule: Optional[str],
-    state: AIComposerState,
-    tool_call_id: str
+    source_files: Optional[List[str]] = None,
+    target_contract: Optional[str] = None,
+    compiler_version: Optional[str] = None,
+    loop_iter: Optional[str] = None,
 ) -> SummarizedReport | RawReport | str:
     runtime = get_runtime(AIComposerContext)
     ctxt = runtime.context
@@ -146,16 +92,32 @@ def solana_prover(
 
     with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
         project_dir = Path(temp_dir)
-        cargo_toml = project_dir / "Cargo.toml"
-        if not cargo_toml.exists():
-            return "Error: Cargo.toml not found in project root. The Solana prover requires a valid Rust project with Cargo.toml."
 
-        args = ["--rule_sanity", "basic"]
+        if config.platform == "svm":
+            if not (project_dir / "Cargo.toml").exists():
+                return "Error: Cargo.toml not found in project root. The Solana prover requires a valid Rust project with Cargo.toml."
+            args = ["--rule_sanity", "basic"]
+        else:
+            args = source_files.copy()
+            args.extend([
+                "--verify",
+                f"{target_contract}:./{config.spec_fn}",
+                "--optimistic_loop",
+                "--optimistic_hashing",
+                "--loop_iter", str(loop_iter),
+                "--solc", compiler_version,
+                "--solc_via_ir",
+                "--strict_solc_optimizer",
+                "--prover_args",
+                "-timeoutCracker true",
+            ])
+
         if rule is not None:
             args.extend(["--rule", rule])
 
         store = get_store()
         cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
+
         try:
             result = asyncio.run(run_prover(
                 state,
@@ -167,8 +129,11 @@ def solana_prover(
                 _AuditCallbacks(writer, tool_call_id, ctxt.prover_opts.capture_output),
                 analysis_cache=cache,
                 summarization_threshold=10,
-                platform="svm",
             ))
+
+            # Preserve the rule-is-None check for all_verified
+            if isinstance(result, RawReport) and rule is not None and config.platform == "evm":
+                result = RawReport(report=result.report, all_verified=False)
 
             return result
         except Exception as e:
@@ -176,4 +141,3 @@ def solana_prover(
             import traceback
             traceback.print_exc()
             sys.exit(1)
-

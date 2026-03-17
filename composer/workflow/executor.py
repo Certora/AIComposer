@@ -31,6 +31,7 @@ from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.tools.relaxation import requirements_relaxation
 from composer.console.handler import DebugHandler
+from composer.input.config import config as input_config
 import composer.console.app as A
 
 
@@ -58,11 +59,9 @@ def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> s
 
 def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> Input:
     vfs_contents: dict[dict, str]
-    if workflow_options.platform == "svm":
-        vfs_contents = {"rules.rs": input.spec.read()}
+    vfs_contents = {input_config.spec_fn: input.spec.read()}
+    if input_config.platform == "svm":
         vfs_contents.update(get_svm_summary_files())
-    else:
-        vfs_contents = {"rules.spec": input.spec.read()}
 
     return Input(input=[
                 input.intf.to_document_dict(),
@@ -89,7 +88,6 @@ def get_resume_prompt_common(
         res: ResumeInput,
         updated_spec: str,
         other_changes: list[InputChangeDesc] | None = None,
-        platform: str = "evm"
         ) -> list[str | dict]:
     changes = []
     if other_changes is not None:
@@ -111,26 +109,22 @@ def get_resume_prompt_common(
         orig_spec=art.spec_file,
         new_spec=updated_spec,
         other_changes=changes,
-        platform=platform,
     )]
 
 def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> Input:
     input_messages : list[str | dict] = get_resume_prompt_common(
         art=resume_art,
         res=input,
-        updated_spec=input.new_spec.string_contents,
-        platform=workflow_options.platform
+        updated_spec=input.new_spec.string_contents
     )
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
 
     vfs_materialize = resume_art.vfs.to_dict()
     new_vfs = { k: v.decode("utf-8") for (k, v) in vfs_materialize.items() }
-    if workflow_options.platform == "svm":
-        new_vfs["rules.rs"] = input.new_spec.string_contents
+    new_vfs[input_config.spec_fn] = input.new_spec.string_contents
+    if input_config.platform == "svm":
         new_vfs.update(get_svm_summary_files())
-    else:
-        new_vfs["rules.spec"] = input.new_spec.string_contents
     return Input(
         input=input_messages,
         vfs=new_vfs
@@ -139,7 +133,7 @@ def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflo
 def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[Input, InputFileLike, InputFileLike]:
     path = pathlib.Path(input.file_path)
 
-    spec_p = path / ("rules.rs" if workflow_options.platform == "svm" else "rules.spec")
+    spec_p = path / input_config.spec_fn
     if not spec_p.is_file():
         raise RuntimeError("Specification file is apparently missing")
     new_spec = spec_p.read_text()
@@ -161,7 +155,6 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
         res=input,
         other_changes=changes,
         updated_spec=new_spec,
-        platform=workflow_options.platform
     )
     input_messages.append("In addition to the explicit changes mentioned above, the contents of the VFS may have been arbitrarily changed since your last work. " \
     "Some of these changes may cause the current implementation to no longer compile. Thus, analyze the current implementation and consider what changes are necessary to " \
@@ -213,7 +206,7 @@ def execute_ai_composer_workflow(
         case ResumeIdData() | ResumeFSData():
             prompt_params = PromptParams(is_resume=True)
 
-            resume_art = audit_db.get_resume_artifact(thread_id=input.thread_id, platform=workflow_options.platform)
+            resume_art = audit_db.get_resume_artifact(thread_id=input.thread_id)
             if input.new_system is None:
                 system_doc = resume_art.system_vfs_handle
             else:
@@ -264,7 +257,6 @@ def execute_ai_composer_workflow(
                 req_memories,
                 resume_art,
                 workflow_options.requirements_oracle,
-                workflow_options.platform,
             )
             reqs_list = reqs
         store.put((thread_id,), "requirements", {"reqs": reqs_list})
@@ -281,7 +273,6 @@ def execute_ai_composer_workflow(
             vfs_tools=get_vfs_tools(
                 fs_layer=fs_layer,
                 immutable=True,
-                platform=workflow_options.platform,
             )[0]
         )
         extra_tools.append(judge_tool)
@@ -298,7 +289,6 @@ def execute_ai_composer_workflow(
         prompt_params=prompt_params,
         summarization_threshold=workflow_options.summarization_threshold,
         extra_tools=extra_tools,
-        platform=workflow_options.platform
     )
 
     audit_db.register_run(
@@ -341,7 +331,7 @@ def execute_ai_composer_workflow(
     )   
 
     rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
-    required_validations : list[ValidationType] = [prover]
+    required_validations : list[ValidationType] = input_config.required_validations
     if reqs_list is not None:
         required_validations.append(req_type)
     
@@ -392,7 +382,7 @@ def execute_ai_composer_workflow(
                         def debug_thunk():
                             st = cast(AIComposerState, workflow_exec.get_state(curr_state_config).values)
                             A.debug_console(work_context, st, False)
-                        human_response = handle_human_interrupt(interrupt_data, debug_thunk, platform=workflow_options.platform)
+                        human_response = handle_human_interrupt(interrupt_data, debug_thunk)
                         current_input = Command(resume=human_response)
                         interrupted = True
                         break

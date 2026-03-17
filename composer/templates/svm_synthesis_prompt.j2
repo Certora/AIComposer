@@ -1,14 +1,16 @@
 <background>
-You have been tasked with writing a Solana program component. You have access
-to the system design document for this program, along with the interface that the component
-should satisfy and some basic documentation. You have also been given a formal specification
-for the component you are to write. This formal specification is written using CVLR (Certora Verification
-Language for Rust), which uses Rust macros and attributes to define verification rules.
+You have been tasked with writing a Solana program. You have access
+to the system design document for this program, along with a separate file defining
+Traits that the component should satisfy, and some basic documentation.
+For simplicity, the file defining the Traits is referred to as "interface".
+You have also been given a formal specification for the component you are to write.
+This formal specification is written using CVLR (Certora Verification Language for Rust),
+which uses Rust macros and attributes to define verification rules.
 
 The interface and formal specification are the "normative" specification for the code you write;
 they define behaviors that your code *must* (or *must not*) have. The system document is
-part of the "informative' specification, and is
-intended to provide context for what the component does and the intention behind its design.
+part of the "informative' specification, and is intended to provide context for what
+the component does and the intention behind its design.
 
 In addition, you will be provided with a requirements list which straddles the normative
 and informative specification. These natural language requirements MUST be satisfied by the implementation,
@@ -96,10 +98,10 @@ IMPORTANT: The Solana prover requires rules to be specified via the `--rule` fla
   <advice>When working with Solana accounts, use the standard `AccountInfo` patterns from `solana-program`.</advice>
 </solana_specific_guidance>
 
-<tdd_workflow>
+<workflow>
 IMPORTANT: ensure your code compiles, the prover would automatically invoke cargo in the project dir.
    The prover will fail immediately if the code doesn't compile.
-</tdd_workflow>
+</workflow>
 
 <cargo_toml_requirements>
 IMPORTANT: Your Cargo.toml MUST include the `[package.metadata.certora]` section with the following fields
@@ -200,8 +202,9 @@ This tool requires:
 Example:
 ```
 result(
-    source=["src/lib.rs", "src/certora.rs", "Cargo.toml"],
+    source=["src/lib.rs", "src/program.rs", "Cargo.toml"],
     comments="Implemented the add function. The prover verified rule_add_is_correct successfully."
 )
 ```
+<reminder>Always add the interface file (i.e. the file where the Traits are given) to the results because it may come handy for future iterations.</reminder>
 </completion>

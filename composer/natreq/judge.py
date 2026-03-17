@@ -78,20 +78,23 @@ BEFORE calling this tool.
         initial_prompt=load_jinja_template("req_judge_prompt.j2")
     )[0]
 
-classification_explanation = load_jinja_template("req_classifications.j2")
+def get_evaluation_schema():
+    classification_explanation = load_jinja_template("req_classifications.j2")
 
-class RequirementEvaluationSchema(WithToolCallId):
-    state: Annotated[AIComposerState, InjectedState]
+    class RequirementEvaluationSchema(WithToolCallId):
+        state: Annotated[AIComposerState, InjectedState]
 
-RequirementEvaluationSchema.__doc__ = f"""
-Query an oracle to determine if the generated implementation meets the requirements list
-provided.
+    RequirementEvaluationSchema.__doc__ = f"""
+    Query an oracle to determine if the generated implementation meets the requirements list
+    provided.
 
-Each requirement is evaluated against the current implementation and assigned a classification:
-{classification_explanation} 
+    Each requirement is evaluated against the current implementation and assigned a classification:
+    {classification_explanation}
 
-If any requirements are classified as PARTIAL or VIOLATED, you must address this feedback.
-    """
+    If any requirements are classified as PARTIAL or VIOLATED, you must address this feedback.
+        """
+
+    return RequirementEvaluationSchema
 
 def _format_result(
     r: JudgeResult,
@@ -139,7 +142,7 @@ def get_judge_tool(
     workflow = _gen_workflow(vfs_tools, mem, unbound)
     compiled_graph = workflow.compile()
     req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
-    @tool(args_schema=RequirementEvaluationSchema)
+    @tool(args_schema=get_evaluation_schema())
     def requirements_evaluation(
         state: AIComposerState,
         tool_call_id: Annotated[str, InjectedToolCallId]

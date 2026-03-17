@@ -10,6 +10,7 @@ from functools import cached_property
 
 from composer.rag.types import ManualRef
 from composer.audit.types import ManualResult, RuleResult, RunInput, InputFileLike
+from composer.input.config import config
 
 DEFAULT_CONNECTION = "postgresql://audit_db_user:audit_db_password@localhost:5432/audit_db"
 
@@ -290,11 +291,11 @@ SET interface_path = EXCLUDED.interface_path, commentary = EXCLUDED.commentary
 """, (thread_id, intf, commentary)
                 )
 
-    def get_resume_artifact(self, thread_id: str, platform: str = "evm") -> ResumeArtifact:
+    def get_resume_artifact(self, thread_id: str) -> ResumeArtifact:
         with self.conn.transaction():
             with self.conn.cursor() as cur:
                 retriever = VFSRetriever(_table="vfs_result", thread_id=thread_id, conn=self.conn)
-                spec_path = "rules.rs" if platform == "svm" else "rules.spec"
+                spec_path = config.spec_fn
                 cur.execute(_resume_q, (spec_path, thread_id))
                 r = cur.fetchone()
                 if r is None:

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from composer.core.state import AIComposerState
 from composer.templates.loader import load_jinja_template
+from composer.input.config import config
 
 class ResumeCommentary(BaseModel):
     """
@@ -14,7 +15,7 @@ class ResumeCommentary(BaseModel):
     """
 
     commentary: str = Field(description="Your commentary describing your work, what you did, and " \
-    "what should be kept in mind if this work needs to be resume.")
+    "what should be kept in mind if this work needs to be resumed.")
 
     interface_path: str = Field(description="The path of the interface file on the VFS")
 

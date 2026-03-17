@@ -13,7 +13,7 @@ from langgraph.runtime import get_runtime
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext, compute_state_digest
 from composer.core.validation import prover as prover_key
-from composer.prover.runner import certora_prover as certora_prover_impl , RawReport, SummarizedReport, solana_prover as solana_prover_impl
+from composer.prover.runner import certora_prover as certora_prover_impl, RawReport, SummarizedReport
 
 class CertoraProverArgs(WithToolCallId):
     """
@@ -77,6 +77,7 @@ class CertoraProverArgs(WithToolCallId):
               "single, 'problematic' rule.")
 
     state: Annotated[AIComposerState, InjectedState]
+
 
 class SolanaProverArgs(WithToolCallId):
     """
@@ -171,12 +172,13 @@ def certora_prover(
     tool_call_id: Annotated[str, InjectedToolCallId]
 ) -> Command:
     result = certora_prover_impl(
-        source_files,
-        target_contract,
-        compiler_version,
-        loop_iter,
-        rule, state,
-        tool_call_id
+        state=state,
+        tool_call_id=tool_call_id,
+        rule=rule,
+        source_files=source_files,
+        target_contract=target_contract,
+        compiler_version=compiler_version,
+        loop_iter=loop_iter,
     )
     return _handle_prover_result(result, tool_call_id, state)
 
@@ -187,5 +189,9 @@ def solana_prover(
     state: Annotated[AIComposerState, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId]
 ) -> Command:
-    result = solana_prover_impl(rule, state, tool_call_id)
+    result = certora_prover_impl(
+        state=state,
+        tool_call_id=tool_call_id,
+        rule=rule,
+    )
     return _handle_prover_result(result, tool_call_id, state)
