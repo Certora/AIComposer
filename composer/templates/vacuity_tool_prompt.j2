@@ -109,12 +109,11 @@ Provide specific recommendations:
   - **Dynamic contract creation**: If you see contract creation commands with
   dispatcher failures, use `"dynamic_bound": N` and `"dynamic_dispatch": true`
   flags - *do NOT* modify DISPATCHER settings **in this case**
-  - **Loop iteration bounds**: For `loop_iter` issues, suggest both a minimal
-  non-vacuous bound and a safe recommended bound (possibly larger than the
-  minimal one but not too inflated). Explain the
-  rationale for each value.
-  - **Hashing Bounds**: For `hashing_length_bound` issues, suggest both a
-  minimal non-vacuous and a safe recommended bound.
+  - **Loop iteration bounds**: For `loop_iter` issues, suggest exactly two mitigation options,
+  both a minimal non-vacuous bound and a safe recommended bound (possibly larger than the
+  minimal one but not too inflated). Explain the rationale for each value.
+  - **Hashing Bounds**: For `hashing_length_bound` issues, suggest exactly two mitigation options, 
+  both a minimal non-vacuous and a safe recommended bound.
   - **Contract linking issues**: Review `--link` configuration if `MinContractAddrCheck` appears in unsat core
 - Implementation changes if needed
 - Reference the documentation database for additional prover configuration
