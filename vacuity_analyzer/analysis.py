@@ -16,6 +16,8 @@ from composer.templates.loader import load_jinja_template
 from composer.workflow.factories import get_checkpointer
 from composer.workflow.services import create_llm, get_memory
 
+from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
+
 from graphcore.tools.memory import memory_tool
 from graphcore.tools.vfs import fs_tools
 from graphcore.graph import build_workflow, FlowInput
@@ -24,7 +26,7 @@ from graphcore.tools.results import result_tool_generator
 from vacuity_analyzer.types import VacuityAnalysisArgs
 
 
-class VacuityState(MessagesState):
+class VacuityState(MessagesState, RoughDraftState):
     result: NotRequired[str]
 
 class VacuityAnalysisMitigation(BaseModel):
@@ -84,7 +86,16 @@ class VacuityAnalysisResult(BaseModel):
 vacuity_analysis_output_tool = result_tool_generator(
     "result",
     VacuityAnalysisResult,
-    "Tool to communicate the result of your vacuity analysis in a structured format.")
+    "Tool to communicate the result of your vacuity analysis in a structured format.",
+    validator=(
+        VacuityState,
+        lambda state, _result, _tool_call_id: (
+            "You must call read_rough_draft before submitting your final result."
+            if state.get("memory") and not state["did_read"]
+            else None
+        ),
+    ),
+)
 
 
 def main() -> int:
@@ -238,7 +249,7 @@ def analyze(args: VacuityAnalysisArgs) -> VacuityAnalysisResult | None:
         print(f"Chose thread id: {tid}")
 
     rag_db = PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
-    tools = [cvl_manual_search(rag_db), vacuity_analysis_output_tool, *v_tools]
+    tools = [cvl_manual_search(rag_db), vacuity_analysis_output_tool, *get_rough_draft_tools(VacuityState), *v_tools]
     if args.memory_tool:
         tools.append(memory_tool(get_memory(tid, "vacuity")))
 
