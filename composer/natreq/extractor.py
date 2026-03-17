@@ -22,7 +22,7 @@ from composer.audit.db import ResumeArtifact
 from composer.input.types import RAGDBOptions
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.workflow.factories import get_checkpointer
+from composer.workflow.services import get_checkpointer
 from composer.tools.search import cvl_manual_search
 from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template

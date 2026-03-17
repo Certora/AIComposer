@@ -18,7 +18,7 @@ from rich.text import Text
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from composer.diagnostics.handlers import normalize_content
-from composer.io.tool_display import ToolDisplayConfig
+from composer.ui.tool_display import ToolDisplayConfig
 
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
 

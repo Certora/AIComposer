@@ -7,10 +7,10 @@ from textual.validation import Function, Validator
 from rich.syntax import Syntax
 from rich.text import Text
 
-from composer.io.ide_bridge import IDEBridge
-from composer.io.tool_display import NatSpecToolDisplay
-from composer.io.rich_console import BaseRichConsoleApp
-from composer.io.message_renderer import _DOT
+from composer.ui.ide_bridge import IDEBridge
+from composer.ui.tool_display import NatSpecToolDisplay
+from composer.ui.rich_console import BaseRichConsoleApp
+from composer.ui.message_renderer import _DOT
 
 from composer.spec.ptypes import HumanQuestionSchema, NatSpecState
 

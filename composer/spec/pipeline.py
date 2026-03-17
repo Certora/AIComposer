@@ -22,7 +22,7 @@ from typing import Literal
 
 from langgraph.store.base import BaseStore
 
-from composer.io.multi_job_app import (
+from composer.ui.multi_job_app import (
     TaskInfo, HandlerFactory, run_task,
 )
 
@@ -118,7 +118,7 @@ async def run_natspec_pipeline(
     cvl_research: CVLOnlyBuilder,
     ctx: WorkflowContext[None],
     store: BaseStore,
-    handler_factory: HandlerFactory[Phase],
+    handler_factory: HandlerFactory[Phase, None],
     *,
     max_concurrent: int = 4,
 ) -> PipelineResult:

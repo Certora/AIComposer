@@ -35,10 +35,9 @@ from composer.cvl.tools import (
     get_cvl,
 )
 from composer.tools.search import cvl_manual_search
-from composer.tools.thinking import explicit_thinking
 from composer.workflow.services import create_llm, get_checkpointer, get_memory
-from composer.io.console import BaseConsoleHandler
-from composer.io.prompt import prompt_input
+from composer.ui.console import BaseConsoleHandler
+from composer.ui.prompt import prompt_input
 from composer.io.context import with_handler, run_graph
 from composer.io.event_handler import NullEventHandler
 from composer.templates.loader import load_jinja_template

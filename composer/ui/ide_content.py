@@ -17,7 +17,7 @@ from textual.widgets import Static
 from rich.markup import escape
 from rich.text import Text
 
-from composer.io.ide_bridge import IDEBridge
+from composer.ui.ide_bridge import IDEBridge
 
 if TYPE_CHECKING:
     from textual.app import App

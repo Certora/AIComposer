@@ -1,20 +1,19 @@
 from typing import cast
 
 from composer.io.event_handler import EventHandler
-from composer.io.protocol import IOHandler
+from composer.io.protocol import CodeGenIOHandler
 from composer.audit.sink import AuditSink
 
 from composer.diagnostics.stream import (
-    ProgressUpdate, PartialUpdates, SummarizationNotice,
+    PartialUpdates, SummarizationNotice,
 )
 from composer.diagnostics.handlers import is_user_update, is_audit_update
-from composer.human.types import HumanInteractionType
 
 
 class CodeGenEventHandler(EventHandler):
     def __init__(
         self,
-        io: IOHandler[HumanInteractionType, ProgressUpdate],
+        io: CodeGenIOHandler,
         audit: AuditSink | None
     ):
         self._io = io

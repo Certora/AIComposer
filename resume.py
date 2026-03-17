@@ -4,7 +4,7 @@ import asyncio
 import composer.certora as _
 
 from composer.input.parsing import resume_workflow_parser
-from composer.workflow.factories import create_llm
+from composer.workflow.services import create_llm
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
 from composer.io.console import ConsoleHandler

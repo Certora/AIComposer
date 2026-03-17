@@ -31,13 +31,13 @@ from rich.text import Text
 
 from langchain_core.messages import AIMessage
 
-from composer.io.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
-from composer.io.tool_display import ToolDisplayConfig
+from composer.ui.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
+from composer.ui.tool_display import ToolDisplayConfig
 from composer.io.event_handler import EventHandler, NullEventHandler
 from composer.io.protocol import IOHandler
-from composer.io.ide_bridge import IDEBridge
-from composer.io.ide_content import IDEContentMixin
-from composer.io.log_screen import LogViewerMixin
+from composer.ui.ide_bridge import IDEBridge
+from composer.ui.ide_content import IDEContentMixin
+from composer.ui.log_screen import LogViewerMixin
 from composer.io.context import with_handler
 
 
@@ -112,24 +112,24 @@ class TaskInfo[P]:
 
 
 @dataclass(frozen=True)
-class TaskHandle[H, P]:
+class TaskHandle[H]:
     """Bundles an IOHandler with lifecycle callbacks."""
-    handler: IOHandler[H, P]
+    handler: IOHandler[H]
     event_handler: EventHandler
     on_error: Callable[[Exception, str], Awaitable[None]]
     on_start: Callable[[], None] = lambda: None
     on_done: Callable[[], None] = lambda: None
 
 
-type HandlerFactory[P] = Callable[[TaskInfo[P]], Awaitable[TaskHandle[Any, Any]]]
+type HandlerFactory[P, H] = Callable[[TaskInfo[P]], Awaitable[TaskHandle[H]]]
 
 
 # ---------------------------------------------------------------------------
 # run_task helper
 # ---------------------------------------------------------------------------
 
-async def run_task[P, T](
-    factory: HandlerFactory[P],
+async def run_task[P, T, H](
+    factory: HandlerFactory[P, H],
     info: TaskInfo[P],
     fn: Callable[[], Awaitable[T]],
     semaphore: asyncio.Semaphore | None = None,
@@ -164,7 +164,7 @@ async def run_task[P, T](
 # ---------------------------------------------------------------------------
 
 class MultiJobTaskHandler[H]:
-    """Per-task ``IOHandler[H, Any]`` that renders LLM messages, handles
+    """Per-task ``IOHandler[H]`` that renders LLM messages, handles
     HITL input, and manages task status.
 
     ``H`` is the human-interaction schema type.
@@ -471,7 +471,7 @@ class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, Ap
 
     # ── HandlerFactory implementation ─────────────────────────
 
-    async def make_handler(self, info: TaskInfo[P]) -> TaskHandle[Any, Any]:
+    async def make_handler(self, info: TaskInfo[P]) -> TaskHandle[Any]:
         """Create per-task panel, handler, summary row, and return a ``TaskHandle``."""
         task_id = info.task_id
         label = info.label

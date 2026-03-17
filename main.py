@@ -3,7 +3,7 @@ import composer.certora as _
 import asyncio
 
 from composer.input.parsing import fresh_workflow_argument_parser
-from composer.workflow.factories import create_llm
+from composer.workflow.services import create_llm
 from composer.input.files import upload_input
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.io.console import ConsoleHandler

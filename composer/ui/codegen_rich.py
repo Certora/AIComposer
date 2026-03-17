@@ -11,12 +11,12 @@ from textual.timer import Timer
 from rich.syntax import Syntax
 from rich.text import Text
 
-from composer.io.ide_bridge import IDEBridge
-from composer.io.tool_display import CodeGenToolDisplay
-from composer.io.rich_console import BaseRichConsoleApp
+from composer.ui.ide_bridge import IDEBridge
+from composer.ui.tool_display import CodeGenToolDisplay
+from composer.ui.rich_console import BaseRichConsoleApp
 from composer.io.protocol import WorkflowPurpose
 from composer.workflow.types import WorkflowResult, WorkflowSuccess
-from composer.io.message_renderer import _DOT
+from composer.ui.message_renderer import _DOT
 
 from graphcore.tools.vfs import VFSAccessor
 

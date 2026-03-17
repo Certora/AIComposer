@@ -7,7 +7,7 @@ from rich.console import Console
 from composer.diagnostics.handlers import summarize_update, print_prover_updates
 from composer.diagnostics.stream import ProgressUpdate
 from composer.human.types import HumanInteractionType, ProposalType, QuestionType, RequirementRelaxationType, ExtractionQuestionType
-from composer.io.prompt import prompt_input
+from composer.ui.prompt import prompt_input
 from composer.io.protocol import WorkflowPurpose
 from composer.core.state import ResultStateSchema, AIComposerState
 

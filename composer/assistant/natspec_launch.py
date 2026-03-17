@@ -11,7 +11,7 @@ from graphcore.tools.memory import memory_tool as make_memory_tool
 
 from composer.assistant.launch_args import LaunchNatSpecArgs
 from composer.assistant.types import OrchestratorContext
-from composer.io.pipeline_app import PipelineApp
+from composer.ui.pipeline_app import PipelineApp
 from composer.kb.knowledge_base import kb_tools
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model

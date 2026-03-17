@@ -15,10 +15,10 @@ from textual.widgets import Static, Input, Collapsible, ContentSwitcher
 from rich.syntax import Syntax
 from rich.text import Text
 
-from composer.io.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
+from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
 from composer.io.event_handler import EventHandler
-from composer.io.ide_bridge import IDEBridge
-from composer.io.multi_job_app import (
+from composer.ui.ide_bridge import IDEBridge
+from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
 from composer.spec.pipeline import Phase, PipelineResult
@@ -109,27 +109,16 @@ class NatspecTaskHandler(MultiJobTaskHandler[HumanQuestionSchema]):
         if ty.context:
             parts.append(f"\n  Context: {ty.context}")
         return parts
-
-
-# ---------------------------------------------------------------------------
-# PipelineEventHandler
-# ---------------------------------------------------------------------------
-
-class PipelineEventHandler:
-    """Routes ``NatspecEvent`` payloads to the task panel as content links."""
-
-    def __init__(self, handler: NatspecTaskHandler):
-        self._handler = handler
-
+    
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         evt = cast(NatspecEvent, payload)
         match evt["type"]:
             case "master_spec_update":
-                await self._handler.render_content_link(
+                await self.render_content_link(
                     "Master spec updated", evt["spec"], "input.spec",
                 )
             case "stub_update":
-                await self._handler.render_content_link(
+                await self.render_content_link(
                     "Stub updated", evt["stub"], "Impl.sol",
                 )
 
@@ -154,7 +143,7 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         return NatspecTaskHandler(info.task_id, info.label, panel, self, tc)
 
     def create_event_handler(self, handler: NatspecTaskHandler, info: TaskInfo[Phase]) -> EventHandler:
-        return PipelineEventHandler(handler)
+        return handler
 
     # ── Pipeline completion ───────────────────────────────────
 
