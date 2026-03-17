@@ -253,21 +253,19 @@ async def run_natspec_pipeline(
             registry.read_stub, interface, contract_name, solc_version,
         )
 
-        stub_content = registry.read_stub()
         env = GenerationEnv(
             input=system_doc,
             cvl_authorship=cvl_authorship,
             cvl_research=cvl_research,
-            extra_tools=[*stub_tools, typecheck_tool],
+            extra_tools=[*stub_tools, typecheck_tool, *make_publish_tools(
+                master_spec, registry.read_stub, interface,
+                contract_name, solc_version, cvl_research, batch_ctx
+            )],
             extra_input=[
                 "For reference, the system document for this system is",
                 system_doc.content
             ],
-            result_tools=lambda validator: make_publish_tools(
-                master_spec, registry.read_stub, interface,
-                contract_name, solc_version, cvl_research, batch_ctx,
-                validator=validator,
-            ),
+            standard_results=False
         )
 
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"

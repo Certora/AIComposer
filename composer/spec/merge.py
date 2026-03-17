@@ -10,7 +10,6 @@ result tools. PublishSpec spawns the merge agent and does a CAS update on
 the master spec.
 """
 
-import contextlib
 import pathlib
 import subprocess
 import sys
@@ -33,7 +32,7 @@ from composer.spec.cas import SharedArtifact
 from composer.spec.pipeline_events import MasterSpecUpdate
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.cvl_generation import CVLGenerationExtra, StateValidator
+from composer.spec.cvl_generation import CVLGenerationExtra, check_completion
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +213,6 @@ def make_publish_tools(
     solc_version: str,
     builder: PlainBuilder | CVLOnlyBuilder,
     ctx: WorkflowContext,
-    validator: StateValidator = lambda _: None,
 ) -> tuple[BaseTool, BaseTool]:
     """Construct PublishSpec + GiveUp tools for a property agent.
 
@@ -237,7 +235,7 @@ def make_publish_tools(
 
         @override
         async def run(self) -> Command:
-            rejection = validator(self.state)
+            rejection = check_completion(self.state)
             if rejection is not None:
                 return tool_return(self.tool_call_id, content=rejection)
 

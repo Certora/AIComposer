@@ -19,7 +19,7 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 
-from graphcore.graph import FlowInput, tool_state_update, tool_return
+from graphcore.graph import FlowInput, tool_state_update, tool_return, Builder
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
 from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
@@ -32,16 +32,15 @@ from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance
 from composer.core.state import merge_validation
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.cvl_tools import put_cvl_raw, put_cvl, get_cvl
+from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl
 from composer.spec.component import ComponentInst
 from composer.tools.thinking import ExplicitThinking, RoughDraftState, get_rough_draft_tools
 from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.spec.code_explorer import code_explorer_tool_from_builder
 from composer.templates.loader import load_jinja_template
+from composer.spec.feedback import property_feedback_judge
 
 CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
-FEEDBACK_KEY = CacheKey[CVLJudge, Feedback]("feedback")
-
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +76,7 @@ class GenerationEnv:
     resources: list[CVLResource] = field(default_factory=list)
     extra_tools: list[BaseTool] = field(default_factory=list)
     extra_input: list[str | dict] = field(default_factory=list)
-    result_tools: "ResultToolFactory | None" = None
+    standard_results: bool = True
 
     @property
     def has_source(self) -> bool:
@@ -89,7 +88,7 @@ class GenerationEnv:
 
     @property
     def has_publish(self) -> bool:
-        return self.result_tools is not None
+        return not self.standard_results
 
     @property
     def base_builder(self):
@@ -99,101 +98,6 @@ class GenerationEnv:
 # ---------------------------------------------------------------------------
 # Feedback types
 # ---------------------------------------------------------------------------
-
-class PropertyFeedback(BaseModel):
-    """
-    The feedback on the properties
-    """
-    good: bool = Field(description="Whether the properties are good as is, or if there is room for improvement")
-    feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
-
-
-type FeedbackTool = Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedback]]
-
-
-def property_feedback_judge(
-    ctx: WorkflowContext[CVLJudge],
-    env: GenerationEnv,
-    inst: ComponentInst | None,
-    props: list[PropertyFormulation],
-    with_memory: bool,
-) -> FeedbackTool:
-
-    child = ctx.child(FEEDBACK_KEY)
-    has_source = env.has_source
-    builder = env.cvl_authorship
-
-    class JudgeExtra(RoughDraftState):
-        curr_spec: str
-
-    class ST(MessagesState, JudgeExtra):
-        result: NotRequired[PropertyFeedback]
-
-    class SpecJudgeInput(FlowInput, JudgeExtra):
-        pass
-
-    rough_draft_tools = get_rough_draft_tools(ST)
-
-    def did_rough_draft_read(s: ST, _) -> str | None:
-        if not s["did_read"]:
-            return "Completion REJECTED: never read rough draft for review"
-        return None
-
-    if with_memory:
-        mem = ctx.get_memory_tool()
-    else:
-        db = sqlite3.connect(":memory:", check_same_thread=False)
-        mem = memory_tool(SqliteMemoryBackend("dummy", db))
-
-    template_kwargs: dict = {
-        "context": inst,
-        "has_source": has_source,
-        "properties": props,
-    }
-    if has_source:
-        assert isinstance(env.input, SourceCode)
-        template_kwargs["contract_name"] = env.input.contract_name
-        template_kwargs["relative_path"] = env.input.relative_path
-
-    workflow = bind_standard(
-        builder, ST, validator=did_rough_draft_read
-    ).with_input(
-        SpecJudgeInput
-    ).with_initial_prompt_template(
-        "property_judge_prompt.j2",
-        **template_kwargs
-    ).with_sys_prompt_template(
-        "cvl_system_prompt.j2"
-    ).with_tools([*rough_draft_tools, mem, get_cvl(ST)]).compile_async(
-        checkpointer=ctx.checkpointer
-    )
-
-    async def the_tool(
-        cvl: str,
-        skipped: list[SkippedProperty],
-    ) -> PropertyFeedback:
-        input_parts: list[str | dict] = []
-        if not has_source:
-            input_parts.append("The following is the design document for the application:")
-            input_parts.append(env.input.content)
-        input_parts.append("The proposed CVL file is")
-        input_parts.append(cvl)
-        if skipped:
-            input_parts.append("The following properties were explicitly skipped by the author:")
-            for s in skipped:
-                input_parts.append(f"  Property {s.property_index}: {s.reason}")
-        res = await run_to_completion(
-            workflow,
-            SpecJudgeInput(input=input_parts, curr_spec=cvl, memory=None, did_read=False),
-            thread_id=child.uniq_thread_id(),
-            description="Property feedback judge",
-        )
-        assert "result" in res
-        return res["result"]
-
-    return the_tool
-
-
 
 class SkippedProperty(BaseModel):
     """A property the agent explicitly decided not to formalize."""
@@ -233,6 +137,7 @@ class CVLGenerationExtra(TypedDict):
     curr_spec: str | None
     skipped: Annotated[list[SkippedProperty], _merge_skips]
     validations: Annotated[dict[str, str], merge_validation]
+    required_validations: list[str]
 
 
 def _compute_digest(curr_spec: str, skipped: list[SkippedProperty]) -> str:
@@ -244,7 +149,7 @@ def _compute_digest(curr_spec: str, skipped: list[SkippedProperty]) -> str:
 
 
 def check_completion(
-    state: CVLGenerationExtra, required: list[str],
+    state: CVLGenerationExtra,
 ) -> str | None:
     """Returns None if valid, error string if not."""
     spec = state["curr_spec"]
@@ -252,6 +157,7 @@ def check_completion(
         return "Completion REJECTED: no spec written yet."
     digest = _compute_digest(spec, state["skipped"])
     validations = state["validations"]
+    required = state["required_validations"]
     for key in required:
         if key not in validations or validations[key] != digest:
             return f"Completion REJECTED: {key} validation not satisfied or stale."
@@ -310,8 +216,6 @@ async def generate_batch_cvl(
     required_validations = ["feedback"]
     if has_prover:
         required_validations.append("prover")
-
-    validator: StateValidator = lambda s: check_completion(s, required_validations)
 
     feedback = property_feedback_judge(
         ctx.child(CVL_JUDGE_KEY), env, feat, props, with_memory,
@@ -460,42 +364,35 @@ async def generate_batch_cvl(
             extra_inputs.append(last_attempt.cvl)
 
     # Builder configuration: if result_tools provided, use manual config
-    if env.result_tools is not None:
-        tools.extend(env.result_tools(validator))
-        d = base_builder.with_state(
+    to_build : Builder[CVLGenerationState, None, None]
+
+    if not env.standard_results:
+        # tools.extend(env.result_tools(validator))
+        to_build = base_builder.with_state(
             CVLGenerationState
         ).with_output_key(
             "result"
         ).with_default_summarizer(
             max_messages=50
-        ).with_input(
-            CVLGenerationInput
-        ).with_tools(
-            tools
-        ).with_sys_prompt_template(
-            "cvl_system_prompt.j2"
-        ).with_initial_prompt_template(
-            "property_generation_prompt.j2",
-            **template_kwargs
-        ).compile_async(
-            checkpointer=ctx.checkpointer
         )
     else:
-        d = bind_standard(
+        to_build = bind_standard(
             base_builder, CVLGenerationState, "A description of your generated CVL",
-            validator=lambda s, _r: validator(s),
-        ).with_input(
-            CVLGenerationInput
-        ).with_tools(
-            tools
-        ).with_sys_prompt_template(
-            "cvl_system_prompt.j2"
-        ).with_initial_prompt_template(
-            "property_generation_prompt.j2",
-            **template_kwargs
-        ).compile_async(
-            checkpointer=ctx.checkpointer
+            validator=lambda s, _r: check_completion(s),
         )
+
+    d = to_build.with_input(
+        CVLGenerationInput
+    ).with_tools(
+        tools
+    ).with_sys_prompt_template(
+        "cvl_system_prompt.j2"
+    ).with_initial_prompt_template(
+        "property_generation_prompt.j2",
+        **template_kwargs
+    ).compile_async(
+        checkpointer=ctx.checkpointer
+    )
 
     try:
         r = await run_to_completion(
@@ -505,6 +402,7 @@ async def generate_batch_cvl(
                 curr_spec=None,
                 skipped=[],
                 validations={},
+                required_validations=required_validations
             ),
             thread_id=ctx.thread_id,
             description=description,
@@ -519,18 +417,8 @@ async def generate_batch_cvl(
 
     skipped = r["skipped"]
 
-    if has_publish:
-        # With publish tools, curr_spec may not be in final state (it was merged into master).
-        # The result contains the commentary (or GAVE_UP: reason).
-        return GeneratedCVL(
-            commentary=r["result"],
-            cvl=r["curr_spec"] or "",
-            skipped=skipped,
-        )
-    else:
-        assert r["curr_spec"] is not None
-        return GeneratedCVL(
-            commentary=r["result"],
-            cvl=r["curr_spec"],
-            skipped=skipped,
-        )
+    return GeneratedCVL(
+        commentary=r["result"],
+        cvl=r["curr_spec"] or "",
+        skipped=skipped,
+    )

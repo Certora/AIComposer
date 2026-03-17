@@ -115,12 +115,19 @@ async def certora_prover(
     rule: Optional[str],
     state: AIComposerState,
     tool_call_id: str,
+    use_working_spec: bool
 ) -> SummarizedReport | RawReport | str:
+    if use_working_spec and not state["working_spec"]:
+        return "No working spec written."
     runtime = get_runtime(AIComposerContext)
     ctxt = runtime.context
     writer = get_stream_writer()
 
     with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
+        if use_working_spec:
+            ws = state["working_spec"]
+            assert ws is not None
+            (Path(temp_dir) / "rules.spec").write_text(ws)
         try:
             args = source_files.copy()
             args.extend([

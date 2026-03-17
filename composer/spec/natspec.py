@@ -27,7 +27,7 @@ from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.ptypes import NatSpecState, Result, NatSpecInput, HumanQuestionSchema
-from composer.spec.cvl_tools import (
+from composer.cvl.tools import (
     put_cvl_description,
     PutCVLSchemaModel,
     put_cvl,
