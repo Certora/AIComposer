@@ -3,9 +3,9 @@ from typing import Protocol
 from composer.input.types import ModelOptions, WorkflowOptions
 
 
-class VacuityAnalysisArgs(ModelOptions, WorkflowOptions, Protocol):
+class SanityAnalysisArgs(ModelOptions, WorkflowOptions, Protocol):
     @property
-    def vacuity_txt_path(self) -> str:
+    def unsat_core_txt_path(self) -> str:
         ...
 
     @property
