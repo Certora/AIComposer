@@ -319,11 +319,17 @@ class ChromaRAGDatabase:
 
         self.tr = model
         self.client = chromadb.PersistentClient(path=persist_dir)
+        # Collection for semantic search (embedded chunks)
         self.collection = self.client.get_or_create_collection(
             name="cvl_manual",
             metadata={"hnsw:space": "cosine"}
         )
+        # Collection for section storage (keyword search + exact retrieval)
+        self.sections = self.client.get_or_create_collection(
+            name="cvl_manual_sections"
+        )
         self._next_id = self.collection.count()
+        self._next_section_id = self.sections.count()
 
     def add_chunks_batch(self, chunks: list[BlockChunk]) -> None:
         """Add chunks to ChromaDB"""
@@ -417,3 +423,86 @@ class ChromaRAGDatabase:
             to_ret.append(ManualRef(headers=headers, content=doc, similarity=similarity))
 
         return to_ret
+
+    def add_manual_section(self, ch: BlockChunk) -> None:
+        """Add a manual section for keyword search and exact retrieval."""
+        # Expand code refs inline
+        body = ch.chunk
+        for j, code in enumerate(ch.code_refs):
+            body = body.replace(code_ref_tag(j), code)
+
+        metadata: dict[str, str | int] = {"part": ch.part}
+        for i, h in enumerate(ch.headers):
+            if h:
+                metadata[f"h{i+1}"] = h
+
+        self.sections.add(
+            ids=[str(self._next_section_id)],
+            documents=[body],
+            metadatas=[metadata]
+        )
+        self._next_section_id += 1
+
+    def search_manual_keywords(self, query: str, *, min_depth: int = 0, limit: int = 10) -> list[ManualSectionHit]:
+        """Search sections by keywords (simple term matching)."""
+        if min_depth < 0 or min_depth > 6:
+            raise ValueError("min_depth must be between 0 and 6")
+
+        # Fetch all sections and score by keyword matching
+        # ChromaDB doesn't have native FTS, so we do simple term matching
+        all_sections = self.sections.get(include=["metadatas", "documents"])
+
+        if not all_sections['documents']:
+            return []
+
+        hits = []
+        terms = query.lower().split()
+
+        for i, doc in enumerate(all_sections['documents']):
+            meta = all_sections['metadatas'][i] if all_sections['metadatas'] else {}
+
+            # Check min_depth
+            if min_depth > 0 and f"h{min_depth}" not in meta:
+                continue
+
+            # Extract headers
+            headers = [meta.get(f"h{j}") for j in range(1, 7) if meta.get(f"h{j}")]
+
+            # Score by term matching
+            doc_lower = doc.lower()
+            matched = sum(1 for t in terms if t in doc_lower)
+            if matched > 0:
+                relevance = matched / len(terms)
+                hits.append(ManualSectionHit(headers=headers, relevance=relevance))
+
+        # Sort by relevance descending and limit
+        hits.sort(key=lambda h: h.relevance, reverse=True)
+        return hits[:limit]
+
+    def get_manual_section(self, headers: list[str]) -> str | None:
+        """Retrieve full section content by exact headers."""
+        if not headers:
+            return None
+
+        # Build filter for exact header match
+        # ChromaDB requires $and for multiple conditions
+        conditions = []
+        for i, h in enumerate(headers):
+            conditions.append({f"h{i+1}": {"$eq": h}})
+
+        where_filter = {"$and": conditions} if len(conditions) > 1 else conditions[0] if conditions else None
+
+        results = self.sections.get(
+            where=where_filter,
+            include=["documents", "metadatas"]
+        )
+
+        if not results['documents']:
+            return None
+
+        # Sort by part and concatenate
+        parts = sorted(
+            zip(results['documents'], results['metadatas']),
+            key=lambda x: x[1].get('part', 0)
+        )
+        return "\n".join(doc for doc, _ in parts)
