@@ -72,7 +72,7 @@ commands to locate relevant code
 - Connect TAC-level constraints to specification requirements
 
 ### 4. **Root Cause Diagnosis**
-Determine if the sanity issue stems from:
+Determine if the vacuity stems from:
 - **Specification issues**: Overly restrictive CVL rules, unreachable assertions
 - **Logical expression evaluation problems**: The prover compiles logical expressions into single TAC blocks and evaluates ALL subexpressions. Look for:
   - Implications where the consequent contains operations that cause `assume false` or `require false`
