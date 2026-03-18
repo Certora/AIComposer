@@ -431,7 +431,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
             include=["documents", "metadatas", "distances"]
         )
 
-        to_ret = []
+        to_ret: list[ManualRef] = []
         if not results['documents'] or not results['documents'][0]:
             return to_ret
 
@@ -499,7 +499,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
                 continue
 
             # Extract headers
-            headers = [meta.get(f"h{j}") for j in range(1, 7) if meta.get(f"h{j}")]
+            headers = [str(meta.get(f"h{j}")) for j in range(1, 7) if meta.get(f"h{j}")]
 
             # Score by term matching
             doc_lower = doc.lower()
