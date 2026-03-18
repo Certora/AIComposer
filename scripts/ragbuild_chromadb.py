@@ -366,6 +366,8 @@ def main() -> None:
         assert isinstance(s, Tag)
         for t in translate_block(s, get_block_header(s)):
             sanity_checker(t)
+            # Add to sections collection for keyword search and exact retrieval
+            db.add_manual_section(t)
             buffer.append(t)
             if len(buffer) == 50:
                 db.add_chunks_batch(buffer)
