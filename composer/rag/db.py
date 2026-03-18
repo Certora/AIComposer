@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Generator, cast, Any, Iterator, LiteralString
 import logging
@@ -14,7 +15,39 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
 
-class PostgreSQLRAGDatabase:
+
+class ComposerRAGDB(ABC):
+    """Abstract base class for RAG database implementations."""
+
+    @abstractmethod
+    def add_chunks_batch(self, chunks: list[BlockChunk]) -> None:
+        """Add chunks to the database in batches."""
+        ...
+
+    @abstractmethod
+    def add_manual_section(self, ch: BlockChunk) -> None:
+        """Add a manual section for keyword search and exact retrieval."""
+        ...
+
+    @abstractmethod
+    def find_refs(self, query: str, similarity_cutoff: float = 0.5,
+                  top_k: int = 10, manual_section: list[str] = []) -> list[ManualRef]:
+        """Search for similar documents using semantic similarity."""
+        ...
+
+    @abstractmethod
+    def search_manual_keywords(self, query: str, *, min_depth: int = 0,
+                               limit: int = 10) -> list[ManualSectionHit]:
+        """Search sections by keywords using full-text search."""
+        ...
+
+    @abstractmethod
+    def get_manual_section(self, headers: list[str]) -> str | None:
+        """Retrieve full section content by exact headers."""
+        ...
+
+
+class PostgreSQLRAGDatabase(ComposerRAGDB):
     """Handle PostgreSQL database operations for RAG"""
 
     def __init__(self, conn_string: str, model: SentenceTransformer, skip_test : bool = True, create_schema=False):
@@ -311,7 +344,7 @@ class PostgreSQLRAGDatabase:
                 return "\n".join(parts)
 
 
-class ChromaRAGDatabase:
+class ChromaRAGDatabase(ComposerRAGDB):
     """ChromaDB-based RAG database (file-based, no PostgreSQL required)"""
 
     def __init__(self, persist_dir: str, model: SentenceTransformer, skip_test: bool = True):
@@ -506,3 +539,25 @@ class ChromaRAGDatabase:
             key=lambda x: x[1].get('part', 0)
         )
         return "\n".join(doc for doc, _ in parts)
+
+
+def create_rag_db(rag_db_path: str, model: SentenceTransformer | None = None, skip_test: bool = True) -> ComposerRAGDB:
+    """Create appropriate RAG database based on connection string format.
+
+    Args:
+        rag_db_path: Either a PostgreSQL connection string (postgresql://...)
+                     or a directory path for ChromaDB
+        model: SentenceTransformer model for embeddings. If None, uses default.
+        skip_test: Whether to skip connection test (default True)
+
+    Returns:
+        ComposerRAGDB instance (either PostgreSQL or ChromaDB)
+    """
+    from composer.rag.models import get_model
+    if model is None:
+        model = get_model()
+
+    if rag_db_path.startswith("postgresql://"):
+        return PostgreSQLRAGDatabase(conn_string=rag_db_path, model=model, skip_test=skip_test)
+    else:
+        return ChromaRAGDatabase(persist_dir=rag_db_path, model=model)

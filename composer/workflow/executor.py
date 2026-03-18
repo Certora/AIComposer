@@ -20,8 +20,7 @@ from composer.workflow.meta import create_resume_commentary
 from composer.core.state import ResultStateSchema, AIComposerState
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.core.validation import ValidationType, prover, reqs as req_type
-from composer.rag.db import PostgreSQLRAGDatabase
-from composer.rag.models import get_model as get_rag_model
+from composer.rag.db import create_rag_db
 from composer.audit.db import AuditDB, ResumeArtifact, InputFileLike
 from composer.diagnostics.stream import AllUpdates, PartialUpdates, Summarization
 from composer.diagnostics.handlers import summarize_update, handle_custom_update
@@ -312,7 +311,7 @@ def execute_ai_composer_workflow(
         keep_folder=workflow_options.prover_keep_folders
     )   
 
-    rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model(), skip_test=True)
+    rag_db = create_rag_db(rag_connection)
     required_validations : list[ValidationType] = [prover]
     if reqs_list is not None:
         required_validations.append(req_type)

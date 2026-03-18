@@ -16,8 +16,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 
-from composer.rag.db import PostgreSQLRAGDatabase, ChromaRAGDatabase, DEFAULT_CONNECTION
-from composer.rag.models import get_model
+from composer.rag.db import create_rag_db, ComposerRAGDB, DEFAULT_CONNECTION
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
 
@@ -56,7 +55,7 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
 
 @dataclass
 class ExplainerContext:
-    rag_db: PostgreSQLRAGDatabase | ChromaRAGDatabase
+    rag_db: ComposerRAGDB
 
 _analysis_doc = """REQUIRED: You MUST call this tool to submit your final analysis.
 Do NOT write your answer as plain text - the workflow cannot complete until you call this tool.
@@ -313,12 +312,7 @@ def _analyze_core(
 
     conf["recursion_limit"] = args.recursion_limit
 
-    # Create RAG database - supports both PostgreSQL (connection string) and ChromaDB (directory path)
-    if args.rag_db.startswith("postgresql://"):
-        rag_db = PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
-    else:
-        # Assume it's a directory path for ChromaDB
-        rag_db = ChromaRAGDatabase(persist_dir=args.rag_db, model=get_model())
+    rag_db = create_rag_db(args.rag_db)
 
     for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
         rag_db=rag_db

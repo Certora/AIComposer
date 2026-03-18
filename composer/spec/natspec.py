@@ -23,8 +23,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from composer.input.types import ModelOptions, RAGDBOptions, LangraphOptions
 from composer.input.parsing import add_protocol_args
-from composer.rag.db import PostgreSQLRAGDatabase
-from composer.rag.models import get_model
+from composer.rag.db import create_rag_db, ComposerRAGDB
 from composer.spec.ptypes import NatSpecState, Result, NatSpecInput
 from composer.spec.cvl_tools import (
     put_cvl_description,
@@ -58,7 +57,7 @@ class NatSpecArgs(ModelOptions, RAGDBOptions, LangraphOptions):
 @dataclass
 class NatSpecContext:
     orig_doc: str
-    rag_db: PostgreSQLRAGDatabase
+    rag_db: ComposerRAGDB
     unbound_llm: BaseChatModel
 
 class GuidelineJudgeSchema(BaseModel):
@@ -547,9 +546,7 @@ def execute(args: NatSpecArgs) -> int:
 
     checkpointer = get_checkpointer()
 
-    rag_db = PostgreSQLRAGDatabase(
-        conn_string=args.rag_db, model=get_model(), skip_test=True
-    )
+    rag_db = create_rag_db(args.rag_db)
 
     document = pathlib.Path(args.input_file).read_text()
 

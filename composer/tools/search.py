@@ -6,16 +6,14 @@ from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 from composer.diagnostics.stream import ManualSearchResult
-from composer.rag.db import PostgreSQLRAGDatabase, ChromaRAGDatabase
-
-RAGDatabase = PostgreSQLRAGDatabase | ChromaRAGDatabase
+from composer.rag.db import ComposerRAGDB
 from dataclasses import Field as DField
 
 class RAGDBContext(Protocol):
     __dataclass_fields__: ClassVar[dict[str, DField[Any]]]
 
     @property
-    def rag_db(self) -> RAGDatabase:
+    def rag_db(self) -> ComposerRAGDB:
         ...
 
 class SearchResultText(TypedDict):
@@ -52,7 +50,7 @@ class CVLManualSearchSchema(WithToolCallId):
               "If specified, at least one section heading must match at least one of the values provided here")
 
 def _cvl_manual_search_factory(
-    db_provider: Callable[[], RAGDatabase]
+    db_provider: Callable[[], ComposerRAGDB]
 ) -> BaseTool:
     @tool("cvl_manual_search", args_schema=CVLManualSearchSchema)
     def _cvl_manual_search(
@@ -113,7 +111,7 @@ class CVLGetSectionSchema(BaseModel):
     headers: list[str] = Field(description="The section header path, e.g. ['Types', 'Integer Types']. Must match exactly.")
 
 def _cvl_keyword_search_factory(
-    db_provider: Callable[[], RAGDatabase]
+    db_provider: Callable[[], ComposerRAGDB]
 ) -> BaseTool:
     @tool("cvl_keyword_search", args_schema=CVLKeywordSearchSchema)
     def _cvl_keyword_search(
@@ -137,7 +135,7 @@ def _cvl_keyword_search_factory(
     return _cvl_keyword_search
 
 def _cvl_get_section_factory(
-    db_provider: Callable[[], RAGDatabase]
+    db_provider: Callable[[], ComposerRAGDB]
 ) -> BaseTool:
     @tool("get_cvl_manual_section", args_schema=CVLGetSectionSchema)
     def _get_cvl_manual_section(
@@ -154,16 +152,16 @@ def _cvl_get_section_factory(
             return f"Failed to retrieve section: {str(e)}"
     return _get_cvl_manual_section
 
-def _get_provider(ctxt: type[RAGDBContext] | RAGDatabase) -> Callable[[], RAGDatabase]:
-    if isinstance(ctxt, (PostgreSQLRAGDatabase, ChromaRAGDatabase)):
+def _get_provider(ctxt: type[RAGDBContext] | ComposerRAGDB) -> Callable[[], ComposerRAGDB]:
+    if isinstance(ctxt, ComposerRAGDB):
         return lambda: ctxt
     else:
         return lambda: get_runtime(ctxt).context.rag_db
 
-def cvl_manual_search(ctxt: type[RAGDBContext] | RAGDatabase) -> BaseTool:
+def cvl_manual_search(ctxt: type[RAGDBContext] | ComposerRAGDB) -> BaseTool:
     return _cvl_manual_search_factory(_get_provider(ctxt))
 
-def cvl_manual_tools(ctxt: type[RAGDBContext] | RAGDatabase) -> list[BaseTool]:
+def cvl_manual_tools(ctxt: type[RAGDBContext] | ComposerRAGDB) -> list[BaseTool]:
     provider = _get_provider(ctxt)
     return [
         _cvl_manual_search_factory(provider),
