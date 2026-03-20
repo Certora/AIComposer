@@ -8,3 +8,4 @@ questionary==2.1.1
 rich==14.3.3
 sentence_transformers==5.1.0
 textual==8.1.1
+attrs==26.1.0
