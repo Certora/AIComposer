@@ -103,6 +103,8 @@ def _format_cvl_result(_name: str, msg: ToolMessage) -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 
 class CommonTools:
+    # -- Individual entries --------------------------------------------------
+
     cvl_manual = ToolDisplay(
         lambda p: f"Searching CVL Manual: {p.get('question', '?')[:60]}",
         _format_cvl_result,
@@ -131,6 +133,68 @@ class CommonTools:
     write_rough_draft = ToolDisplay("Write rough draft", None)
     read_rough_draft = ToolDisplay("Read rough draft", "Rough Draft")
     extended_reasoning = ToolDisplay("Reasoning", None)
+    cvl_keyword_search = ToolDisplay(
+        lambda p: f"CVL Manual Search: {p.get('query')}", "CVL Matching Sections",
+    )
+    get_cvl_manual_section = ToolDisplay(
+        lambda p: f"Read CVL Manual: {' / '.join(p.get('headers', []))}", None,
+    )
+    cvl_research = ToolDisplay(
+        lambda p: f"Researching CVL: {p.get('question', '?')}", "Research result",
+    )
+    scan_knowledge_base = ToolDisplay("Scanning knowledge base", "KB scan results")
+    get_knowledge_base_article = ToolDisplay("Reading KB article", "KB article")
+    knowledge_base_contribute = ToolDisplay("Contributing to KB", "KB contribution")
+
+    # -- Grouped display bundles ---------------------------------------------
+    # Each corresponds to a capability provider (builder / service).
+    # Use **CommonTools.source_displays() etc. when composing a phase config.
+
+    @staticmethod
+    def source_displays() -> dict[str, "ToolDisplay | GroupedTool"]:
+        """Display entries for tools from ``fs_tools()`` (SourceBuilder)."""
+        return {
+            "get_file": CommonTools.get_file,
+            "put_file": CommonTools.put_file,
+            "list_files": CommonTools.list_files,
+            "grep_files": CommonTools.grep_files,
+        }
+
+    @staticmethod
+    def cvl_manual_displays() -> dict[str, "ToolDisplay | GroupedTool"]:
+        """Display entries for tools from ``cvl_manual_tools()`` (CVLOnlyBuilder)."""
+        return {
+            "cvl_manual_search": CommonTools.cvl_manual,
+            "cvl_keyword_search": CommonTools.cvl_keyword_search,
+            "get_cvl_manual_section": CommonTools.get_cvl_manual_section,
+        }
+
+    @staticmethod
+    def kb_displays() -> dict[str, "ToolDisplay"]:
+        """Display entries for tools from ``kb_tools()`` (WorkflowServices)."""
+        return {
+            "scan_knowledge_base": CommonTools.scan_knowledge_base,
+            "get_knowledge_base_article": CommonTools.get_knowledge_base_article,
+            "knowledge_base_contribute": CommonTools.knowledge_base_contribute,
+        }
+
+    @staticmethod
+    def rough_draft_displays() -> dict[str, "ToolDisplay"]:
+        """Display entries for rough draft tools."""
+        return {
+            "write_rough_draft": CommonTools.write_rough_draft,
+            "read_rough_draft": CommonTools.read_rough_draft,
+        }
+
+    @staticmethod
+    def cvl_research_displays() -> dict[str, "ToolDisplay | GroupedTool"]:
+        """Display entries for the CVL research sub-agent and all tools it uses."""
+        return {
+            "cvl_research": CommonTools.cvl_research,
+            **CommonTools.cvl_manual_displays(),
+            **CommonTools.kb_displays(),
+            **CommonTools.rough_draft_displays(),
+        }
 
 
 # ---------------------------------------------------------------------------

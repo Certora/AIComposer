@@ -14,11 +14,12 @@ from rich.text import Text
 
 from composer.io.ide_bridge import IDEBridge
 from composer.io.ide_content import IDEContentMixin
+from composer.io.log_screen import LogViewerMixin
 from composer.io.tool_display import ToolDisplayConfig
 from composer.io.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
 
 
-class BaseRichConsoleApp[H, P](IDEContentMixin, App):
+class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
     """Base Textual TUI for workflow IO, parameterized by human interaction (H) and progress (P) types."""
 
     CSS = """
@@ -45,6 +46,7 @@ class BaseRichConsoleApp[H, P](IDEContentMixin, App):
         ide: IDEBridge | None = None,
     ):
         super().__init__()
+        self._init_log_viewer()
 
         self._renderer = MessageRenderer(
             tool_config,

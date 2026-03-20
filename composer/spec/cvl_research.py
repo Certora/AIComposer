@@ -2,22 +2,25 @@
 CVL research sub-agent: answers questions about CVL by searching the manual and knowledge base.
 """
 
-from typing import Callable, Awaitable, NotRequired, Protocol
+import uuid
+from typing import Any, Callable, Awaitable, NotRequired, Protocol, override, cast
 
 from pydantic import Field
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import MessagesState
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Checkpointer
 
-from graphcore.graph import FlowInput
+from graphcore.graph import Builder, FlowInput
 from graphcore.tools.schemas import WithAsyncImplementation
 
 from composer.spec.context import ThreadProvider, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
-
-type ResearchTool = Callable[[str], Awaitable[str]]
+from composer.templates.loader import load_jinja_template
 
 CVL_RESEARCH_BASE_DOC = (
     "Delegate a question about CVL syntax, patterns, or techniques to a research sub-agent. "
@@ -30,7 +33,7 @@ CVL_RESEARCH_BASE_DOC = (
 
 
 class ResearchContext(ThreadProvider, Protocol):
-    """Narrow protocol for what cvl_researcher needs — satisfied by WorkflowContext."""
+    """Narrow protocol for what the context-based research tool needs."""
     def kb_tools(self, read_only: bool) -> list[BaseTool]: ...
     @property
     def checkpointer(self) -> Checkpointer: ...
@@ -65,58 +68,63 @@ needs a dense, precise answer they can immediately apply.
 """
 
 
-def cvl_researcher(
-    ctx: ResearchContext,
-    builder: CVLOnlyBuilder,
-) -> ResearchTool:
+# ---------------------------------------------------------------------------
+# Shared core
+# ---------------------------------------------------------------------------
 
-    class CVLResearchInput(FlowInput, RoughDraftState):
-        pass
+class _CVLResearchInput(FlowInput, RoughDraftState):
+    pass
 
-    class ST(MessagesState, RoughDraftState):
-        result: NotRequired[str]
 
-    def did_read_draft(s: ST, _) -> str | None:
-        if s.get("did_read", None) is None:
-            return "You must read your rough draft before delivering your answer"
-        return None
+class _CVLResearchST(MessagesState, RoughDraftState):
+    result: NotRequired[str]
 
-    rough_draft_tools = get_rough_draft_tools(ST)
 
-    workflow = bind_standard(
-        builder, ST, "Your research findings", validator=did_read_draft
+_CompiledResearchGraph = CompiledStateGraph[_CVLResearchST, None, _CVLResearchInput, Any]
+
+type GraphRunner = Callable[
+    [_CompiledResearchGraph, _CVLResearchInput],
+    Awaitable[_CVLResearchST],
+]
+
+
+def _did_read_draft(s: _CVLResearchST, _: Any) -> str | None:
+    if s.get("did_read", None) is None:
+        return "You must read your rough draft before delivering your answer"
+    return None
+
+
+def _build_research_tool(
+    builder: Builder,
+    checkpointer: Checkpointer,
+    runner: GraphRunner,
+    doc: str,
+) -> BaseTool:
+    """Build a CVL research BaseTool.
+
+    Args:
+        builder: Builder with LLM and all external tools (CVL manual, KB, etc.)
+            already bound.
+        checkpointer: Checkpointer for the sub-agent graph.
+        runner: How to invoke the compiled graph. Thread ID management is
+            the runner's responsibility.
+        doc: Docstring for the tool schema.
+    """
+    rough_draft_tools = get_rough_draft_tools(_CVLResearchST)
+
+    graph = bind_standard(
+        builder, _CVLResearchST, "Your research findings", validator=_did_read_draft
     ).with_input(
-        CVLResearchInput
+        _CVLResearchInput
     ).with_tools(
-        [*ctx.kb_tools(read_only=True), *rough_draft_tools]
+        rough_draft_tools
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
     ).with_initial_prompt(
         CVL_RESEARCH_INITIAL_PROMPT
     ).compile_async(
-        checkpointer=ctx.checkpointer
+        checkpointer=checkpointer
     )
-
-    async def research(question: str) -> str:
-        res = await run_to_completion(
-            workflow,
-            CVLResearchInput(input=[question], did_read=False, memory=None),
-            thread_id=ctx.uniq_thread_id(),
-            description="CVL research",
-        )
-        assert "result" in res
-        return res["result"]
-
-    return research
-
-
-def cvl_research_tool(
-    ctx: ResearchContext,
-    builder: CVLOnlyBuilder,
-    doc: str,
-) -> BaseTool:
-    """Create a CVL research BaseTool with a caller-provided docstring."""
-    researcher = cvl_researcher(ctx, builder)
 
     class CVLResearchSchema(WithAsyncImplementation[str]):
         __doc__ = doc
@@ -126,7 +134,73 @@ def cvl_research_tool(
             "Good: 'What is the correct syntax for a preserved block with require statements?' "
             "Bad: 'How does the withdraw function work?' (not a CVL question)"
         )
+
+        @override
         async def run(self) -> str:
-            return await researcher(self.question)
+            st = await runner(
+                graph,
+                _CVLResearchInput(input=[self.question], did_read=False, memory=None),
+            )
+            assert "result" in st
+            return st["result"]
 
     return CVLResearchSchema.as_tool("cvl_research")
+
+
+# ---------------------------------------------------------------------------
+# Public API — context-based (existing callers)
+# ---------------------------------------------------------------------------
+
+def cvl_research_tool(
+    ctx: ResearchContext,
+    builder: CVLOnlyBuilder,
+    doc: str,
+) -> BaseTool:
+    """Create a CVL research BaseTool using a WorkflowContext."""
+    enriched = builder.with_tools(ctx.kb_tools(read_only=True))
+
+    async def runner(
+        graph: _CompiledResearchGraph, inp: _CVLResearchInput,
+    ) -> _CVLResearchST:
+        return await run_to_completion(
+            graph, inp,
+            thread_id=ctx.uniq_thread_id(),
+            description="CVL research",
+        )
+
+    return _build_research_tool(enriched, ctx.checkpointer, runner, doc)
+
+
+# ---------------------------------------------------------------------------
+# Public API — standalone (no IO handlers needed)
+# ---------------------------------------------------------------------------
+
+def standalone_cvl_research_tool(
+    llm: BaseChatModel,
+    cvl_tools: list[BaseTool],
+) -> BaseTool:
+    """Create a CVL research tool that works without IO handlers.
+
+    Args:
+        llm: Language model for the research sub-agent.
+        cvl_tools: CVL manual search tools (from ``cvl_manual_tools``).
+
+    Returns:
+        A BaseTool named ``cvl_research``.
+    """
+    builder = Builder().with_llm(llm).with_tools(cvl_tools).with_loader(load_jinja_template)
+
+    async def runner(
+        graph: _CompiledResearchGraph, inp: _CVLResearchInput,
+    ) -> _CVLResearchST:
+        res = await graph.ainvoke(
+            inp,
+            config={
+                "configurable": {"thread_id": uuid.uuid4().hex},
+                "recursion_limit": 100,
+            },
+        )
+        assert isinstance(res, dict)
+        return cast(_CVLResearchST, res)
+
+    return _build_research_tool(builder, InMemorySaver(), runner, CVL_RESEARCH_BASE_DOC)

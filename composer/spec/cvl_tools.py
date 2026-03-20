@@ -72,9 +72,9 @@ def _maybe_update_cvl(
             f.write(pp)
             f.flush()
             certora_dir = os.environ["CERTORA"]
-            emv_jar = os.path.join(certora_dir, "emv.jar")
+            emv_jar = os.path.join(certora_dir, "certora_jars", "Typechecker.jar")
             res = subprocess.run(
-                ["java", "-classpath", emv_jar, "spec.ParseCheckerKt", f.name],
+                ["java", "-classpath", emv_jar, "EntryPointKt", f.name],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE

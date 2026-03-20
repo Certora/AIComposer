@@ -56,9 +56,8 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
             })
         case "bug_analysis":
             return ToolDisplayConfig(tool_display={
+                **CommonTools.rough_draft_displays(),
                 "result": CommonTools.result,
-                "write_rough_draft": CommonTools.write_rough_draft,
-                "read_rough_draft": CommonTools.read_rough_draft,
             })
         case "interface_gen" | "stub_gen":
             return ToolDisplayConfig(tool_display={
@@ -66,15 +65,12 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
             })
         case "cvl_gen":
             return ToolDisplayConfig(tool_display={
+                **CommonTools.cvl_research_displays(),
                 "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
                 "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
                 "get_cvl": ToolDisplay("Reading spec", None),
                 "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
-                "cvl_research": ToolDisplay(lambda p: f"Researching CVL: {p.get('question', '?')}", "Research result"),
                 "extended_reasoning": CommonTools.extended_reasoning,
-                "cvl_manual_search": CommonTools.cvl_manual,
-                "get_cvl_manual_section": ToolDisplay(lambda p: f"Read CVL Manual: {" / ".join(p.get("headers", []))}", None),
-                "cvl_keyword_search": ToolDisplay(lambda p: f"CVL Manual Search: {p.get("query")}", "CVL Matching Sections"),
                 "publish_spec": ToolDisplay("Publishing to master spec", _suppress_ack("Publish result")),
                 "give_up": ToolDisplay("Giving up on property", _suppress_ack("Give up result")),
                 "record_skip": ToolDisplay(
@@ -88,9 +84,6 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
                 "read_stub": ToolDisplay("Reading verification stub", None),
                 "request_stub_field": ToolDisplay("Requesting stub field", "Stub field result"),
                 "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),
-                "scan_knowledge_base": ToolDisplay("Scanning knowledge base", "KB scan results"),
-                "get_knowledge_base_article": ToolDisplay("Reading KB article", "KB article"),
-                "knowledge_base_contribute": ToolDisplay("Contributing to KB", "KB contribution"),
                 "result": CommonTools.result,
                 "write_rough_draft": CommonTools.write_rough_draft,
                 "read_rough_draft": CommonTools.read_rough_draft,

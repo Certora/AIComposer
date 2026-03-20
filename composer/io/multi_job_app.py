@@ -37,6 +37,7 @@ from composer.io.event_handler import EventHandler, NullEventHandler
 from composer.io.protocol import IOHandler
 from composer.io.ide_bridge import IDEBridge
 from composer.io.ide_content import IDEContentMixin
+from composer.io.log_screen import LogViewerMixin
 from composer.io.context import with_handler
 
 
@@ -305,7 +306,7 @@ class MultiJobTaskHandler[H]:
 # MultiJobApp — generic multi-job Textual app
 # ---------------------------------------------------------------------------
 
-class MultiJobApp[P, T: MultiJobTaskHandler](IDEContentMixin, App):
+class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, App):
     """Generic multi-job TUI with summary panel, task drill-down, and HITL routing.
 
     Implements ``TaskHost`` so that task handlers interact through a
@@ -348,6 +349,7 @@ class MultiJobApp[P, T: MultiJobTaskHandler](IDEContentMixin, App):
         ide: IDEBridge | None = None,
     ):
         super().__init__()
+        self._init_log_viewer()
         self._init_ide_content(ide)
         self._phase_labels = phase_labels
         self._section_order = section_order

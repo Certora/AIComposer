@@ -22,18 +22,16 @@ from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field, create_model
 
 from langgraph.config import get_stream_writer
+from langgraph.types import Command
 from graphcore.graph import LLM
 
 from composer.prover.core import (
     CloudConfig, ProverOptions, ProverCallbacks, run_prover,
 )
 from composer.diagnostics.stream import ProverOutputEvent, CloudPollingEvent
+from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
 
-
-class WithCVL(TypedDict):
-    curr_spec: NotRequired[str]
-    messages: list[AnyMessage]
-
+from graphcore.graph import tool_state_update
 
 class _SpecCallbacks(ProverCallbacks):
     def __init__(self, writer: Callable, tool_call_id: str) -> None:
@@ -75,6 +73,7 @@ class VerifySpecSchema(BaseModel):
         default=None,
         description="Specific rules to verify. If None, verifies all rules."
     )
+    state: Annotated[CVLGenerationState, InjectedState]
 
 
 @contextmanager
@@ -94,9 +93,8 @@ def tmp_spec(
         os.unlink(full_path)
 
 
-def get_prover_tool[T: WithCVL](
+def get_prover_tool(
     llm: LLM,
-    ty: type[T],
     conf: dict,
     main_contract: str,
     project_root: str,
@@ -104,20 +102,15 @@ def get_prover_tool[T: WithCVL](
     semaphore: asyncio.Semaphore | None = None,
 ) -> BaseTool:
     sem = semaphore or asyncio.Semaphore(1)
-    args_spec = create_model(
-        "VerifySpecSchemaInst",
-        __doc__=VerifySpecSchema.__doc__,
-        __base__=VerifySpecSchema,
-        state=Annotated[ty, InjectedState]
-    )
+    stamper = make_validation_stamper("prover")
 
-    @tool(args_schema=args_spec)
+    @tool(args_schema=VerifySpecSchema)
     async def verify_spec(
         tool_call_id: Annotated[str, InjectedToolCallId],
-        state: Annotated[T, InjectedState],
+        state: Annotated[CVLGenerationState, InjectedState],
         rules: list[str] | None = None
-    ) -> str:
-        if "curr_spec" not in state:
+    ) -> str | Command:
+        if state["curr_spec"] is None:
             return "Specification not yet put on VFS"
 
         with tmp_spec(root=project_root, content=state["curr_spec"]) as generated:
@@ -149,6 +142,8 @@ def get_prover_tool[T: WithCVL](
 
             if isinstance(result, str):
                 return result
+            if rules is None and result.all_verified:
+                return tool_state_update(tool_call_id=tool_call_id, content=result.report, validations=stamper(state))
             return result.report
 
     return verify_spec

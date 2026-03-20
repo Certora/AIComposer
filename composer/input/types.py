@@ -103,6 +103,18 @@ class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
     skip_reqs: bool
 
 
+class ModelOptionsBase(Protocol):
+    """Read-only view of model options. thinking_tokens may be None to disable thinking."""
+    @property
+    def model(self) -> str: ...
+    @property
+    def tokens(self) -> int: ...
+    @property
+    def thinking_tokens(self) -> int | None: ...
+    @property
+    def memory_tool(self) -> bool: ...
+
+
 class ModelOptions(Protocol):
     model: Annotated[str, Arg(
         help="Model to use for code generation (default: {default})", default="claude-opus-4-6"

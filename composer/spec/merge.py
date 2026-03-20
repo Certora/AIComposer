@@ -33,7 +33,7 @@ from composer.spec.cas import SharedArtifact
 from composer.spec.pipeline_events import MasterSpecUpdate
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.cvl_generation import CVLGenerationState, StateValidator
+from composer.spec.cvl_generation import CVLGenerationExtra, StateValidator
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ def make_advisory_typecheck_tool(
 ) -> BaseTool:
     """Create an advisory typecheck tool for property agents."""
 
-    class AdvisoryTypecheck(WithInjectedState[CVLGenerationState], WithAsyncImplementation[str]):
+    class AdvisoryTypecheck(WithInjectedState[CVLGenerationExtra], WithAsyncImplementation[str]):
         """Run the CVL typechecker on your current working specification against the shared stub.
         This is advisory — use it to catch issues before attempting to publish.
         Reads the current spec from state (written via put_cvl / put_cvl_raw).
@@ -225,7 +225,7 @@ def make_publish_tools(
     is rejected with that message.
     """
 
-    class PublishSpec(WithInjectedState[CVLGenerationState], WithInjectedId, WithAsyncImplementation[Command]):
+    class PublishSpec(WithInjectedState[CVLGenerationExtra], WithInjectedId, WithAsyncImplementation[Command]):
         """Publish your working CVL to the master spec. This spawns a merge agent that
         combines your working copy with the current master spec. If the merge succeeds
         and typechecks, your contribution is recorded and this task completes.
