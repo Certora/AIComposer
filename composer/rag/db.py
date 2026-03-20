@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Generator, cast, Any, Iterator, LiteralString
 import logging
+import sqlite3
+import os
 
 import psycopg
 from sentence_transformers import SentenceTransformer
@@ -351,18 +353,33 @@ class ChromaRAGDatabase(ComposerRAGDB):
         import chromadb
 
         self.tr = model
+        self.persist_dir = persist_dir
         self.client = chromadb.PersistentClient(path=persist_dir)
         # Collection for semantic search (embedded chunks)
         self.collection = self.client.get_or_create_collection(
             name="cvl_manual",
             metadata={"hnsw:space": "cosine"}
         )
-        # Collection for section storage (keyword search + exact retrieval)
+        # Collection for section storage (exact retrieval by headers)
         self.sections = self.client.get_or_create_collection(
             name="cvl_manual_sections"
         )
         self._next_id = self.collection.count()
         self._next_section_id = self.sections.count()
+
+        # Create FTS5 index for keyword search
+        self.fts_conn = sqlite3.connect(
+            os.path.join(persist_dir, "fts_index.db"),
+            check_same_thread=False
+        )
+        self.fts_conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
+                content,
+                h1, h2, h3, h4, h5, h6,
+                section_id UNINDEXED
+            )
+        """)
+        self.fts_conn.commit()
 
     def add_chunks_batch(self, chunks: list[BlockChunk]) -> None:
         """Add chunks to ChromaDB"""
@@ -474,43 +491,45 @@ class ChromaRAGDatabase(ComposerRAGDB):
             documents=[body],
             metadatas=[metadata]
         )
+
+        # Also insert into FTS index for keyword search
+        headers: list[str | None] = list(ch.headers) + [None] * (6 - len(ch.headers))
+        self.fts_conn.execute(
+            """INSERT INTO sections_fts(content, h1, h2, h3, h4, h5, h6, section_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (body, *headers[:6], str(self._next_section_id))
+        )
+        self.fts_conn.commit()
+
         self._next_section_id += 1
 
     def search_manual_keywords(self, query: str, *, min_depth: int = 0, limit: int = 10) -> list[ManualSectionHit]:
-        """Search sections by keywords (simple term matching)."""
+        """Search sections by keywords using FTS5 full-text search."""
         if min_depth < 0 or min_depth > 6:
             raise ValueError("min_depth must be between 0 and 6")
 
-        # Fetch all sections and score by keyword matching
-        # ChromaDB doesn't have native FTS, so we do simple term matching
-        all_sections = self.sections.get(include=["metadatas", "documents"])
+        depth_filter = f"AND h{min_depth} IS NOT NULL" if min_depth > 0 else ""
 
-        if not all_sections['documents']:
+        try:
+            cursor = self.fts_conn.execute(f"""
+                SELECT bm25(sections_fts) as rank, h1, h2, h3, h4, h5, h6
+                FROM sections_fts
+                WHERE sections_fts MATCH ?
+                {depth_filter}
+                ORDER BY rank
+                LIMIT ?
+            """, (query, limit))
+
+            return [
+                ManualSectionHit(
+                    headers=[h for h in row[1:7] if h],
+                    relevance=-row[0]  # bm25 returns negative scores, lower = better
+                )
+                for row in cursor.fetchall()
+            ]
+        except sqlite3.OperationalError:
+            # Handle invalid FTS query syntax gracefully
             return []
-
-        hits = []
-        terms = query.lower().split()
-
-        for i, doc in enumerate(all_sections['documents']):
-            meta = all_sections['metadatas'][i] if all_sections['metadatas'] else {}
-
-            # Check min_depth
-            if min_depth > 0 and f"h{min_depth}" not in meta:
-                continue
-
-            # Extract headers
-            headers = [str(meta.get(f"h{j}")) for j in range(1, 7) if meta.get(f"h{j}")]
-
-            # Score by term matching
-            doc_lower = doc.lower()
-            matched = sum(1 for t in terms if t in doc_lower)
-            if matched > 0:
-                relevance = matched / len(terms)
-                hits.append(ManualSectionHit(headers=headers, relevance=relevance))
-
-        # Sort by relevance descending and limit
-        hits.sort(key=lambda h: h.relevance, reverse=True)
-        return hits[:limit]
 
     def get_manual_section(self, headers: list[str]) -> str | None:
         """Retrieve full section content by exact headers."""
