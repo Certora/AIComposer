@@ -13,8 +13,9 @@ from graphcore.graph import MessagesState, FlowInput
 from composer.spec.context import WorkflowContext, CacheKey, ComponentGroup, SourceCode, AnalysisInput
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.prop import PropertyFormulation
-from composer.spec.component import ComponentInst
+from composer.spec.system_model import ContractComponentInstance
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
+from composer.spec.code_explorer import code_explorer_tool_from_builder
 
 
 class _BugAnalysisCache(BaseModel):
@@ -27,7 +28,7 @@ DESCRIPTION = "Property extraction"
 
 async def run_bug_analysis(
     ctx: WorkflowContext[ComponentGroup],
-    component: ComponentInst,
+    component: ContractComponentInstance,
     input: AnalysisInput,
 ) -> list[PropertyFormulation] | None:
     """Extract security properties for a component.
@@ -49,6 +50,11 @@ async def run_bug_analysis(
 
     class ST(MessagesState, RoughDraftState):
         result: NotRequired[list[PropertyFormulation]]
+
+    tools = get_rough_draft_tools(ST)
+
+    if has_source:
+        tools.append(code_explorer_tool_from_builder(input[1]))
 
     d = bind_standard(
         builder, ST, "The security properties you have extracted about the component"

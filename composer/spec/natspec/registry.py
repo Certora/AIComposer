@@ -27,6 +27,7 @@ from graphcore.tools.schemas import WithAsyncImplementation
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.pipeline_events import StubUpdate
+from composer.spec.natspec.interface_gen import InterfaceResult
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ class FieldSpec(BaseModel):
 
 
 class FieldMetadata(BaseModel):
-    fields: list[FieldSpec] = PydanticField(default_factory=list)
+    stub_fields: dict[str, list[FieldSpec]] = PydanticField(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -80,20 +81,22 @@ class RegistryResult(BaseModel):
 # Stub compilation check
 # ---------------------------------------------------------------------------
 
-def _compile_stub(stub: str, interface: str, solc_version: str) -> str | None:
+def _compile_stub(stub: str, interfaces: InterfaceResult, solc_version: str) -> str | None:
     """Compile stub against interface with solc. Returns None on success, error string on failure."""
     solc_name = f"solc{solc_version}"
     import pathlib
     with tempfile.TemporaryDirectory() as tmpdir:
         root = pathlib.Path(tmpdir)
-        (root / "Intf.sol").write_text(interface)
-        (root / "Impl.sol").write_text(stub)
+        interfaces.dump_to_path(root)
+        (root / "contracts").mkdir(exist_ok=True)
+        (root / "contracts" / "Impl.sol").write_text(stub)
         try:
             proc = subprocess.run(
-                [solc_name, str(root / "Impl.sol")],
+                [solc_name, "contracts/Impl.sol"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                cwd=tmpdir
             )
         except FileNotFoundError:
             return f"Solidity compiler {solc_name} not found"
@@ -107,10 +110,11 @@ def _compile_stub(stub: str, interface: str, solc_version: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 async def run_registry_agent(
+    contract_name: str,
     request: str,
     stub_content: str,
     field_metadata: FieldMetadata,
-    interface: str,
+    interface: InterfaceResult,
     solc_version: str,
     builder: PlainBuilder | CVLOnlyBuilder,
     ctx: WorkflowContext,
@@ -161,13 +165,14 @@ async def run_registry_agent(
         request,
         "The current stub source code is:",
         stub_content,
-        "The current interface source code is:",
-        interface,
+        "The interface for this stub is",
+        interface.name_to_interface[contract_name].content
     ]
-    if field_metadata.fields:
+
+    if (flds := field_metadata.stub_fields.get(contract_name, [])):
         field_lines = "\n".join(
             f"  - `{f.type} {f.name}`: {f.description}"
-            for f in field_metadata.fields
+            for f in flds
         )
         input_parts.extend([
             "The currently registered fields are:",
@@ -205,7 +210,7 @@ class StubRegistry:
     _store: BaseStore
     _builder: PlainBuilder | CVLOnlyBuilder
     _ctx: WorkflowContext
-    _interface: str
+    _interface: InterfaceResult
     _solc_version: str
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _namespace: tuple[str, ...] = ()
@@ -215,9 +220,9 @@ class StubRegistry:
         store: BaseStore,
         namespace: tuple[str, ...],
         builder: PlainBuilder | CVLOnlyBuilder,
-        ctx: WorkflowContext,
-        interface: str,
-        initial_stub: str,
+        ctx: WorkflowContext[None],
+        interface: InterfaceResult,
+        initial_stubs: dict[str, str],
         solc_version: str,
     ) -> "StubRegistry":
         """Create or resume a StubRegistry.
@@ -227,9 +232,9 @@ class StubRegistry:
         the store is initialized with the provided initial_stub.
         """
         if store.get(namespace, STUB_STORE_KEY) is None:
-            store.put(namespace, STUB_STORE_KEY, {"content": initial_stub})
+            store.put(namespace, STUB_STORE_KEY, initial_stubs)
         if store.get(namespace, FIELDS_STORE_KEY) is None:
-            store.put(namespace, FIELDS_STORE_KEY, {"fields": []})
+            store.put(namespace, FIELDS_STORE_KEY, {k: [] for k in initial_stubs.keys() })
         return StubRegistry(
             _store=store,
             _builder=builder,
@@ -239,12 +244,12 @@ class StubRegistry:
             _namespace=namespace,
         )
 
-    def read_stub(self) -> str:
+    def read_stub(self, nm : str) -> str:
         """Read current stub content (no lock needed)."""
         item = self._store.get(self._namespace, STUB_STORE_KEY)
         if item is None:
             return ""
-        return item.value["content"]
+        return item.value[nm]
 
     def _read_field_metadata(self) -> FieldMetadata:
         item = self._store.get(self._namespace, FIELDS_STORE_KEY)
@@ -255,10 +260,14 @@ class StubRegistry:
     def _write_field_metadata(self, metadata: FieldMetadata) -> None:
         self._store.put(self._namespace, FIELDS_STORE_KEY, metadata.model_dump())
 
-    def _write_stub(self, content: str) -> None:
-        self._store.put(self._namespace, STUB_STORE_KEY, {"content": content})
+    def _write_stub(self, nm: str, content: str) -> None:
+        it = self._store.get(self._namespace, STUB_STORE_KEY)
+        assert it is not None
+        to_put = it.value.copy()
+        to_put[nm] = content
+        self._store.put(self._namespace, STUB_STORE_KEY, to_put)
 
-    async def request_field(self, purpose: str) -> str:
+    async def request_field(self, nm: str, purpose: str) -> str:
         """Request a stub field for a given purpose. Serialized via lock.
 
         Spawns a fresh registry agent. If a new field is added, the agent
@@ -266,10 +275,11 @@ class StubRegistry:
         Returns a description of the field to use, or a rejection message.
         """
         async with self._lock:
-            stub_content = self.read_stub()
+            stub_content = self.read_stub(nm)
             field_metadata = self._read_field_metadata()
 
             result = await run_registry_agent(
+                contract_name=nm,
                 request=purpose,
                 stub_content=stub_content,
                 field_metadata=field_metadata,
@@ -283,30 +293,34 @@ class StubRegistry:
                 return f"Field request was rejected: {result.description}"
 
             if result.is_new:
-                field_metadata.fields.append(FieldSpec(
+                if nm not in field_metadata.stub_fields:
+                    field_metadata.stub_fields[nm] = []
+                field_metadata.stub_fields[nm].append(FieldSpec(
                     name=result.field_name,
                     type=result.field_type,
                     description=result.description,
                 ))
                 self._write_field_metadata(field_metadata)
-                self._write_stub(result.updated_stub)
+                self._write_stub(nm, result.updated_stub)
                 evt: StubUpdate = {
                     "type": "stub_update",
+                    "contract_id": nm,
                     "stub": result.updated_stub,
                 }
                 get_stream_writer()(evt)
 
             return f"Use field {result.field_name}"
 
-    def get_tools(self) -> list[BaseTool]:
+    def get_tools(self, nm: str) -> list[BaseTool]:
         """Return tools for injection into property agents."""
         registry = self
 
         class ReadStubTool(WithAsyncImplementation[str]):
-            """Read the current shared verification stub source code."""
+            """Read the current shared verification stub source code for the given contract."""
+
             @override
             async def run(self) -> str:
-                return registry.read_stub()
+                return registry.read_stub(nm)
 
         class RequestStubField(WithAsyncImplementation[str]):
             """Request a storage variable in the shared verification stub.
@@ -317,13 +331,14 @@ class StubRegistry:
 
             You may *NOT* use this tool to request any change to the stub besides a new storage field.
             """
+
             purpose: str = PydanticField(
                 description="Natural language description of what the field should track"
             )
 
             @override
             async def run(self) -> str:
-                return await registry.request_field(self.purpose)
+                return await registry.request_field(nm, self.purpose)
 
         return [
             ReadStubTool.as_tool("read_stub"),

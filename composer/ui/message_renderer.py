@@ -135,8 +135,8 @@ class MessageRenderer:
                     )
                 case "text":
                     text = c["text"]
-                    if text.strip():
-                        widgets.append(Static(dot("blue", text)))
+                    if (stripped := text.strip()):
+                        widgets.append(Static(dot("blue", stripped)))
                 case "tool_use":
                     tool_call_id = c.get("id")
                     name = c["name"]

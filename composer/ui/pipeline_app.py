@@ -21,7 +21,7 @@ from composer.ui.ide_bridge import IDEBridge
 from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
-from composer.spec.natspec_pipeline import Phase, PipelineResult
+from composer.spec.natspec.pipeline import Phase, PipelineResult
 from composer.spec.pipeline_events import NatspecEvent
 from composer.spec.ptypes import HumanQuestionSchema
 
@@ -67,16 +67,17 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
             return ToolDisplayConfig(tool_display={
                 **CommonTools.cvl_research_displays(),
                 **CommonTools.cvl_manipulation(),
-                "extended_reasoning": CommonTools.extended_reasoning,
                 "publish_spec": ToolDisplay("Publishing to master spec", _suppress_ack("Publish result")),
                 "give_up": ToolDisplay("Giving up on property", _suppress_ack("Give up result")),
+                "record_skip": ToolDisplay(lambda d: f"Skipping Property #{d['property_index']}: {d['reason']}", _suppress_ack("Skip Request Result", ("Recorded skip", ))),
                 "read_stub": ToolDisplay("Reading verification stub", None),
-                "request_stub_field": ToolDisplay("Requesting stub field", "Stub field result"),
+                "request_stub_field": ToolDisplay(lambda d: f"Requesting stub field: {d["purpose"]}", "Stub field result"),
                 "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),
                 **CommonTools.cvl_research_displays(),
                 "result": CommonTools.result,
                 **CommonTools.rough_draft_displays(),
                 "memory": CommonTools.memory,
+                "feedback_tool": ToolDisplay("Seeking CVL feedback", "Feedback")
             })
 
 
@@ -144,23 +145,24 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         switcher = self.query_one("#switcher", ContentSwitcher)
         switcher.current = "summary"
 
-        n_fail = len(result.failures)
-
         banner_text = Text()
         banner_text.append("\n━━ Pipeline Complete ━━\n", style="bold green")
-        banner_text.append(f"Contract: {result.contract_name} (solc {result.solc_version})\n")
-        banner_text.append(f"Failures: {n_fail}\n" if n_fail else "All properties succeeded\n")
-        if n_fail:
-            for f in result.failures:
-                banner_text.append(f"  \u2717 {f.prop.description}: {f.reason}\n", style="red")
+
+        files: dict[str, str] = {}
+
+        for c in result.contracts:
+            n_fail = len(c.failures)
+            banner_text.append(f"Contract: {c.name}\n")
+            banner_text.append(f"  Interface: {c.interface.path}")
+            banner_text.append(f"  Failures: {n_fail}\n" if n_fail else "All properties succeeded\n")
+            if n_fail:
+                for f in c.failures:
+                    banner_text.append(f"    \u2717 {f.prop.description}: {f.reason}\n", style="red")
+            files[f"certora/{c.stub.solidity_identifier}.spec"] = c.spec
+            files[f"interfaces/{c.interface.path}"] = c.interface.content
+            files[f"stubs/{c.stub.path}"] = c.stub.content
 
         await summary.mount(Static(banner_text))
-
-        files: dict[str, str] = {
-            "input.spec": result.spec,
-            "Impl.sol": result.stub,
-            "Intf.sol": result.interface,
-        }
 
         if self._ide is not None:
             preview_id: str | None = None

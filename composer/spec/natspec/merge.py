@@ -28,11 +28,12 @@ from langgraph.types import Command
 from graphcore.graph import FlowInput, tool_output, tool_return
 from graphcore.tools.schemas import WithInjectedState, WithInjectedId, WithAsyncImplementation
 
-from composer.spec.cas import SharedArtifact
+from composer.spec.natspec.cas import SharedArtifact
 from composer.spec.pipeline_events import MasterSpecUpdate
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.cvl_generation import CVLGenerationExtra, check_completion
+from composer.spec.natspec.interface_gen import InterfaceResult
 
 
 # ---------------------------------------------------------------------------
@@ -40,26 +41,33 @@ from composer.spec.cvl_generation import CVLGenerationExtra, check_completion
 # ---------------------------------------------------------------------------
 
 def typecheck_spec(
+    interface: InterfaceResult,
+    *,
     spec: str,
     stub: str,
-    interface: str,
-    contract_name: str,
+    solidity_contract_identifier: str,
     solc_version: str,
 ) -> str | None:
     """Run certoraTypeCheck.py on spec + stub. Returns None on success, error string on failure."""
     solc_name = f"solc{solc_version}"
-    with tempfile.TemporaryDirectory() as tmpdir:
-        root = pathlib.Path(tmpdir)
-        (root / "input.spec").write_text(spec)
-        (root / "Intf.sol").write_text(interface)
-        (root / "Impl.sol").write_text(stub)
 
-        p = (pathlib.Path(__file__).parent / "certoraTypeCheck.py").absolute()
+    import logging
+    logger = logging.getLogger(__name__)
+
+    with tempfile.TemporaryDirectory(delete=False) as tmpdir:
+        root = pathlib.Path(tmpdir)
+        interface.dump_to_path(root)
+        (root / "certora").mkdir(exist_ok=True)
+        (root / "certora" / "input.spec").write_text(spec)
+        (root / "contracts").mkdir(exist_ok=True)
+        (root / "contracts" / "Impl.sol").write_text(stub)
+
+        p = (pathlib.Path(__file__).parent.parent / "certoraTypeCheck.py").absolute()
         result = subprocess.run(
             [
                 sys.executable, str(p),
-                f"Impl.sol:{contract_name}",
-                "--verify", f"{contract_name}:./input.spec",
+                f"contracts/Impl.sol:{solidity_contract_identifier}",
+                "--verify", f"{solidity_contract_identifier}:./certora/input.spec",
                 "--solc", solc_name,
                 "--compilation_steps_only",
             ],
@@ -67,6 +75,10 @@ def typecheck_spec(
             capture_output=True,
             cwd=tmpdir
         )
+        logger.debug(f"return code {result.returncode}")
+        logger.debug(p)
+        logger.debug(root)
+        logger.debug(solidity_contract_identifier)
         if result.returncode == 0:
             return None
         return f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
@@ -88,14 +100,16 @@ class MergeResult:
 # ---------------------------------------------------------------------------
 
 async def run_merge_agent(
+    builder: PlainBuilder | CVLOnlyBuilder,
+    ctx: WorkflowContext,
+    interface: InterfaceResult,
+
+    *,
     working_copy: str,
     master_content: str,
     stub: str,
-    interface: str,
-    contract_name: str,
+    contract_identifier: str,
     solc_version: str,
-    builder: PlainBuilder | CVLOnlyBuilder,
-    ctx: WorkflowContext,
 ) -> MergeResult:
     """Spawn a merge agent to merge working_copy into master_content.
 
@@ -109,7 +123,7 @@ async def run_merge_agent(
 
     def validate_merge(_s: ST, res: str) -> str | None:
         tc_result = typecheck_spec(
-            res, stub, interface, contract_name, solc_version,
+            interface, solidity_contract_identifier=contract_identifier, solc_version=solc_version, spec=res, stub=stub
         )
         if tc_result is not None:
             return f"Merged spec failed typecheck:\n{tc_result}\nPlease fix the merge and try again."
@@ -167,8 +181,8 @@ async def run_merge_agent(
 
 def make_advisory_typecheck_tool(
     read_stub: Callable[[], str],
-    interface: str,
-    contract_name: str,
+    interface: InterfaceResult,
+    stub_identifier: str,
     solc_version: str,
 ) -> BaseTool:
     """Create an advisory typecheck tool for property agents."""
@@ -186,7 +200,7 @@ def make_advisory_typecheck_tool(
                 return "No spec written yet. Use put_cvl or put_cvl_raw first."
             stub_content = read_stub()
             result = typecheck_spec(
-                spec, stub_content, interface, contract_name, solc_version,
+                interface, solidity_contract_identifier=stub_identifier, solc_version=solc_version, stub=stub_content, spec=spec
             )
             if result is None:
                 return "Typecheck passed."
@@ -199,17 +213,11 @@ def make_advisory_typecheck_tool(
 # Publish + GiveUp tools
 # ---------------------------------------------------------------------------
 
-# State type for property agents (must have curr_spec)
-# class _PropertyAgentState(MessagesState):
-#     curr_spec: NotRequired[str]
-#     result: NotRequired[str]
-
-
 def make_publish_tools(
     master_spec: SharedArtifact,
     stub_read: Callable[[], str],
-    interface: str,
-    contract_name: str,
+    interface: InterfaceResult,
+    contract_id: str,
     solc_version: str,
     builder: PlainBuilder | CVLOnlyBuilder,
     ctx: WorkflowContext,
@@ -222,6 +230,9 @@ def make_publish_tools(
     ``validator`` is called before merge — if it returns a string, the publish
     is rejected with that message.
     """
+
+    import logging
+    logging.getLogger(__name__).debug(contract_id)
 
     class PublishSpec(WithInjectedState[CVLGenerationExtra], WithInjectedId, WithAsyncImplementation[Command]):
         """Publish your working CVL to the master spec. This spawns a merge agent that
@@ -251,7 +262,7 @@ def make_publish_tools(
                     master_content=master_content or "",
                     stub=stub_content,
                     interface=interface,
-                    contract_name=contract_name,
+                    contract_identifier=contract_id,
                     solc_version=solc_version,
                     builder=builder,
                     ctx=ctx,
@@ -267,6 +278,7 @@ def make_publish_tools(
                 evt: MasterSpecUpdate = {
                     "type": "master_spec_update",
                     "spec": merge_result.merged_spec,
+                    "contract_id": contract_id
                 }
                 get_stream_writer()(evt)
                 return tool_output(

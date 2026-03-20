@@ -70,7 +70,6 @@ class LaunchNatSpecTool(LaunchNatSpecArgs, WithAsyncImplementation[str]):
         ctx = get_runtime(OrchestratorContext).context
         response = interrupt(LaunchNatSpecArgs(
             input_file=self.input_file,
-            contract_name=self.contract_name,
             solc_version=self.solc_version,
             cache_namespace=self.cache_namespace,
             memory_namespace=self.memory_namespace

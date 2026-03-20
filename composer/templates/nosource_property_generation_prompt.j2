@@ -1,0 +1,124 @@
+<background>
+You have been tasked with formalizing a set of security properties within the context of a larger Web3 application.
+</background>
+
+<context>
+{% include "application_context_new.j2" %}
+</context>
+
+<task>
+You must write a single CVL specification covering the following properties:
+
+{% for prop in properties %}
+<{{ prop.sort }}>
+  Property {{ loop.index }}: {{ prop.description }}
+  {% if prop.sort == "attack_vector" %}
+  Goal: demonstrate that this attack/exploit *cannot* occur.
+  {% else %}
+  Goal: demonstrate that this property holds.
+  {% endif %}
+</{{ prop.sort }}>
+{% endfor %}
+
+Follow procedure exactly:
+
+## Step 0
+
+Gather information about the Web3 application from the system document and component descriptions,
+and its relationship with the properties above.
+Use this information to inform how you plan to formalize them. Refer to the system document
+
+## Step 1
+
+Write a single CVL (Certora Verification Language) specification which formalizes all of the properties listed above.
+Each property should have its own rule(s) or invariant(s) in the spec.
+
+When you need to understand CVL syntax, patterns, or language features — especially for
+non-obvious constructs or features — delegate to the cvl_research tool rather than searching the manual yourself.
+you should also use the cvl_research tool for help when you are struggling with a persistent problem.
+
+You are writing a CVL file without any implementation, neither for the contract being verified or 
+the other contracts mentioned as being interacted with.
+However, you have been provided with the Solidity *interface* of these other contracts. If necessary,
+you can write summaries in your specification file to capture the behavior of these other contracts' entry points.
+If modeling the internal state of these other actors/contracts is necessary, use ghost state variables.
+When setting up these summaries/ghosts, carefully consider whether the application will have multiple instances
+of the implementation of the interface (`dynamic` or `multiple` sorts) or a single instance. In the former case,
+your ghost state will need to account for the receiver contract.
+
+If you need to model the state/behavior of an external actor (*not* one of the other explicit contracts in the system)
+use the following decision procedure:
+1. If the external actor is a permissioned role in the system, you can likely use permission accounting internal
+   to your contract. For example, if the external actor is a singular admin role, you can request a stub field
+   which holds the address of the administrator
+2. If the external actor is an off-chain component, this behavior is not expressible in CVL, and 
+   the property should be skipped
+3. If the external actor is another contract not part of the application, you should use the summary/ghost approach
+   described above. However, as there is no explicit interface provided for these external actor contracts you will
+   need to make reasonable decisions about the summary signature to use.
+
+To model the state/storage of the contract containing the component under verification,
+you may use the stub tools described below. Do *NOT* try to simulate or otherwise model the
+behavior/state of other contracts with state/functions in the contract you are verifying.
+
+{% include "natspec_stub_tools_guidance.j2" %}
+
+## Step 2
+
+Invoke the advisory typecheck tool to ensure your specification is well-typed. If it is not, address
+any feedback, and invoke the tool again. Otherwise, proceed to step 3.
+
+## Step 3
+
+Seek feedback on your specification from the feedback tool. If it indicates that your spec needs work, use
+adaptive thinking to decide how to address its feedback, implement your changes, and reinvoke the tool until
+it is satisfied with your specification.
+
+The feedback judge is aware of all properties in this batch. It will flag missing coverage — if your spec
+does not address a property and you have not declared a skip for it, the judge will reject your spec.
+If you have declared a skip but the judge considers the justification insufficient, it will also reject
+and may suggest how the property can in fact be formalized.
+
+## Step 4
+
+{% include "publish_spec_fragment.j2" %}
+
+IMPORTANT: Do not try to reason yourself about whether any property is true or possible — focus solely on authoring CVL which will *demonstrate* the desired properties.
+
+<skipping>
+If you genuinely cannot formalize a property after thorough effort, use the `record_skip` tool to declare
+which property (by its number) you are skipping and why. The feedback judge will evaluate whether
+your justification is valid — do not skip properties lightly.
+
+You must attempt to formalize ALL properties before considering any skips.
+</skipping>
+
+{% if resources %}
+You may also make use of the following CVL resources, available as CVL files.
+
+{% for res in resources %}
+   <resource>
+      Description: {{ res.description }}
+      Import with: `import "{{ res.import_path }}";`
+
+      {% if res.required %}
+      You MUST ensure your final specification imports this file.
+      {% else %}
+      You may use this import at your discretion (e.g., it defines an invariant necessary to prove your rule/invariant).
+      {% endif %}
+   </resource>
+{% endfor %}
+{% endif %}
+
+{% if memory %}
+<state>
+Use the available memory tools to track your progress through this algorithm, any important lessons about CVL you may have learned,
+or any other significant, relevant information to this task. Be sure to update your memory *before* calling the result tool, as that will end the workflow.
+</state>
+{% endif %}
+</task>
+
+<guidance>
+{% include "cvl_guidelines.j2" %}
+{% include "cvl_additions.j2" %}
+</guidance>

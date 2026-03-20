@@ -14,10 +14,10 @@ Synthesizes a Solidity implementation from a CVL specification, a Solidity inter
 - **`resume_work_key`**: Optional. If a previous codegen run crashed and returned a resume work key, pass it here to recover in-progress files. The key is included in the crash error message.
 
 ### 2. NatSpec Generation (natspec)
-Generates a CVL specification and Solidity interface from a natural language system/design document.
-- **Inputs**: `.md`/`.txt`/`.pdf` file (system/design document describing the contract), contract name, Solidity compiler version
+Generates CVL specifications and Solidity interfaces from a natural language system/design document.
+- **Inputs**: `.md`/`.txt`/`.pdf` file (system/design document describing the contract), Solidity compiler version
 - **When to use**: The project has a design document but no CVL spec or interface yet
-- **Tool**: `launch_natspec(input_file, contract_name, solc_version, cache_namespace="", memory_namespace="")` — `input_file` relative to the workspace root, `solc_version` like `"8.21"`
+- **Tool**: `launch_natspec(input_file, solc_version, cache_namespace="", memory_namespace="")` — `input_file` relative to the workspace root, `solc_version` like `"8.21"`
 - **`cache_namespace`**: Optional. Enables cross-run caching so agent work is reused on re-runs with the same input. Use a descriptive name like the contract name.
 - **`memory_namespace`**: Optional. Namespace for persistent agent memory. Defaults to the auto-generated thread ID if empty.
 

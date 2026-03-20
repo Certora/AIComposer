@@ -20,4 +20,10 @@ Available tools:
 1. Before writing CVL, read the stub to see available fields
 2. If you need a storage variable not in the stub, use `request_stub_field`
 3. Write your CVL using the field names from the stub
+
+**Important**: Do NOT try to request `constant` fields; Solidity `constant` are compile time
+constants which are erased after compilation. The Prover operates on the compiled bytecode, and thus
+has no way to access or reason about constants. Instead, request a regular storage field, and
+include a parametric rule that states the storage field is immutable; that is, after calling any function
+`f` the storage field does not change.
 </stub_tools>

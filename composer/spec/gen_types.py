@@ -1,6 +1,6 @@
 
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Callable, Literal, TYPE_CHECKING
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
@@ -24,55 +24,41 @@ class CVLResource(BaseModel):
     description: str = Field(description="A description of this resource")
     sort: Literal["import"]
 
-class Capabilities(TypedDict):
-    has_source: bool
-    has_stub_tools: bool
-    has_prover: bool
+if TYPE_CHECKING:
+    class TypedTemplate[T]:
+        def __init__(self, name: str):
+            self._wrapped = name
 
-class ContractContext(TypedDict):
-    contract_name: str | None
-    relative_path: str | None
-
-class GenerationTemplateParams(ContractContext, Capabilities):
-    pass
-
-@dataclass
-class SourceInput(SourceCode):
-    prover_tool: BaseTool
-    source_tools: SourceBuilder
-
-    def params(self) -> GenerationTemplateParams:
-        return {
-            "has_prover": True,
-            "has_source": True,
-            "contract_name": self.contract_name,
-            "relative_path": self.relative_path,
-            "has_stub_tools": False
-        }
+        def __str__(self) -> str:
+            return self._wrapped
+else:
+    class TypedTemplate(str):
+        def __new__(cls, s: str) -> str:
+            return s
+        
+        def __class_getitem__(cls, _):
+            return cls
 
 @dataclass
-class NatspecInput(SystemDoc):
-    stub_provider: Callable[[], str]
+class TemplateInstantiation:
+    template: TypedTemplate
+    args: dict
 
-    def params(self) -> GenerationTemplateParams:
-        return {
-            "has_prover": False,
-            "contract_name": None,
-            "relative_path": None,
-            "has_source": False,
-            "has_stub_tools": True
-        }
-
-type GenerationInput = NatspecInput | SourceInput
+    @staticmethod
+    def create[T](
+        templ: TypedTemplate[T],
+        args: T
+    ) -> "TemplateInstantiation":
+        assert isinstance(args, dict)
+        return TemplateInstantiation(templ, args)
 
 @dataclass
-class StandardResult:
-    result_template: str = "deliver_spec_fragment.j2"
+class GenerationPrompt:
+    cvl_prompt: TemplateInstantiation
+    feedback_prompt: TemplateInstantiation
 
-@dataclass
-class CustomOutput:
-    publish_tools: list[BaseTool]
-    result_template: str
+    cvl_prompt_extras: list[str | dict] = field(default_factory=list)
+    feedback_prompt_extras: Callable[[], list[str | dict]] = field(default=lambda: [])
 
 @dataclass
 class GenerationEnv:
@@ -86,10 +72,11 @@ class GenerationEnv:
     - cvl_research: CVL research sub-agents (manual/KB search only)
     - source_tools: code exploration sub-agent (None if no source code)
     """
-    input: GenerationInput
+    prompt: GenerationPrompt
     cvl_authorship: CVLBuilder | CVLOnlyBuilder
     cvl_research: CVLOnlyBuilder
-    output: CustomOutput | StandardResult
+    validation_tools: list[tuple[str, BaseTool]] = field(default_factory=list)
+    output_tools: list[BaseTool] | None = None
 
     resources: list[CVLResource] = field(default_factory=list)
     extra_tools: list[BaseTool] = field(default_factory=list)

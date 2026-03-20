@@ -146,11 +146,10 @@ class OrchestratorHandler:
         table.add_column("Value")
 
         match payload:
-            case LaunchNatSpecArgs(input_file=f, contract_name=c, solc_version=v,
+            case LaunchNatSpecArgs(input_file=f, solc_version=v,
                                    cache_namespace=cache, memory_namespace=mem):
                 title = "NatSpec Pipeline"
                 table.add_row("Input file", f)
-                table.add_row("Contract", c)
                 table.add_row("Solc version", v)
                 if cache:
                     table.add_row("Cache NS", cache)

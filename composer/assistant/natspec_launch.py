@@ -18,7 +18,7 @@ from composer.rag.models import get_model
 from composer.spec.context import (
     WorkflowContext, SystemDoc, PlainBuilder, CVLOnlyBuilder, get_system_doc,
 )
-from composer.spec.natspec_pipeline import run_natspec_pipeline, PipelineResult
+from composer.spec.natspec.pipeline import run_natspec_pipeline, PipelineResult
 from composer.spec.util import string_hash
 from composer.templates.loader import load_jinja_template
 from composer.tools.search import cvl_manual_tools
@@ -92,10 +92,8 @@ async def launch_natspec_workflow(
         try:
             pipeline_result = await run_natspec_pipeline(
                 system_doc=system_doc,
-                contract_name=args.contract_name,
                 solc_version=args.solc_version,
                 analysis_builder=analysis_builder,
-                cvl_authorship=cvl_authorship,
                 cvl_research=cvl_research,
                 ctx=wf_ctx,
                 store=store,

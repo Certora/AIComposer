@@ -8,8 +8,9 @@ tree builder and value formatter.
 See scripts/cache_explorer.py for the NatSpec pipeline entry point.
 """
 
-from collections.abc import Callable
+from typing import Callable
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 
 from langgraph.store.postgres import PostgresStore
 
@@ -39,18 +40,28 @@ class DummyServices:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class OrgNode[V]:
+    label: str
+    children: list["CacheTreeNode[V]"] = field(default_factory=list)
+
+@dataclass
 class CacheNode[V]:
     label: str
     ctx: WorkflowContext
     value: V | None = None
-    children: list["CacheNode[V]"] = field(default_factory=list)
+    children: list["CacheTreeNode[V]"] = field(default_factory=list)
+
+type CacheTreeNode[V] = CacheNode[V] | OrgNode[V]
+
+def icon[V](node: CacheTreeNode[V]) -> str:
+    match node:
+        case OrgNode():
+            return "\u25B7"
+        case CacheNode():
+            return "\u2713" if node.value is not None else "\u25cb"
 
 
-def icon[V](node: CacheNode[V]) -> str:
-    return "\u2713" if node.value is not None else "\u25cb"
-
-
-def node_label[V](node: CacheNode[V]) -> str:
+def node_label[V](node: CacheTreeNode[V]) -> str:
     return f"{icon(node)}  {node.label}"
 
 
@@ -189,20 +200,21 @@ class CacheExplorerApp[V](App):
         self.query_one("#status-line", Label).update(self._status)
 
     def _build_tree_widget(self) -> None:
-        tree = self.query_one("#cache-tree", Tree)
+        tree : Tree[CacheTreeNode[V]] = self.query_one("#cache-tree", Tree)
         tree.clear()
         tree.root.data = self._cache_root
         tree.root.set_label(node_label(self._cache_root))
         self._populate_children(tree.root, self._cache_root)
         tree.root.expand()
 
-    def _populate_children(self, tree_node: TreeNode, cache_node: CacheNode[V]) -> None:
+    def _populate_children(self, tree_node: TreeNode[CacheTreeNode[V]], cache_node: CacheTreeNode[V]) -> None:
         for child in cache_node.children:
+            as_node_data = child if isinstance(child, CacheNode) else None
             if child.children:
-                branch = tree_node.add(node_label(child), data=child)
+                branch = tree_node.add(node_label(child), data=as_node_data)
                 self._populate_children(branch, child)
             else:
-                tree_node.add_leaf(node_label(child), data=child)
+                tree_node.add_leaf(node_label(child), data=as_node_data)
 
     def _format_detail(self, node: CacheNode[V]) -> str:
         lines = [f"[{node.label}]"]
@@ -255,9 +267,9 @@ class CacheExplorerApp[V](App):
         tree_id = event.node.tree.id
         if tree_id == "cache-tree":
             node: CacheNode[V] | None = event.node.data
+            self._selected_node = node
             if node is None:
                 return
-            self._selected_node = node
             if self._showing_memory:
                 self._show_memory(node)
             else:

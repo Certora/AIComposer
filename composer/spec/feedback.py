@@ -12,16 +12,13 @@ from graphcore.tools.memory import SqliteMemoryBackend, memory_tool
 
 from composer.spec.context import (
     WorkflowContext, CVLBuilder, CVLOnlyBuilder,
-    CacheKey, CVLJudge, Feedback
+    CVLJudge
 )
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.cvl.tools import get_cvl
-from composer.spec.component import ComponentInst
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
-from composer.spec.gen_types import GenerationInput, NatspecInput
-
-FEEDBACK_KEY = CacheKey[CVLJudge, Feedback]("feedback")
+from composer.spec.gen_types import GenerationPrompt
 
 class PropertyFeedback(BaseModel):
     """
@@ -45,17 +42,15 @@ class PropertyContext(Protocol):
     def cvl_authorship(self) -> CVLBuilder | CVLOnlyBuilder: ...
 
     @property
-    def input(self) -> GenerationInput: ...
+    def prompt(self) -> GenerationPrompt: ...
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
     env: PropertyContext,
-    inst: ComponentInst | None,
     props: list[PropertyFormulation],
     with_memory: bool,
 ) -> FeedbackTool:
 
-    child = ctx.child(FEEDBACK_KEY)
     builder = env.cvl_authorship
 
     class JudgeExtra(RoughDraftState):
@@ -81,9 +76,8 @@ def property_feedback_judge(
         mem = memory_tool(SqliteMemoryBackend("dummy", db))
 
     template_kwargs: dict = {
-        "context": inst,
         "properties": props,
-        **env.input.params()
+        **env.prompt.feedback_prompt.args
     }
 
     workflow = bind_standard(
@@ -91,7 +85,7 @@ def property_feedback_judge(
     ).with_input(
         SpecJudgeInput
     ).with_initial_prompt_template(
-        "property_judge_prompt.j2",
+        str(env.prompt.feedback_prompt.template),
         **template_kwargs
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
@@ -103,13 +97,7 @@ def property_feedback_judge(
         cvl: str,
         skipped: Sequence[ISkippedProperty],
     ) -> PropertyFeedback:
-        input_parts: list[str | dict] = []
-        if isinstance(env.input, NatspecInput):
-            input_parts.append("The following is the design document for the application:")
-            input_parts.append(env.input.content)
-            input_parts.append("The current stub implementation for the contract is:")
-            input_parts.append(env.input.stub_provider())
-
+        input_parts: list[str | dict] = env.prompt.feedback_prompt_extras()
         input_parts.append("The proposed CVL file is")
         input_parts.append(cvl)
         if skipped:
@@ -119,7 +107,7 @@ def property_feedback_judge(
         res = await run_to_completion(
             workflow,
             SpecJudgeInput(input=input_parts, curr_spec=cvl, memory=None, did_read=False),
-            thread_id=child.uniq_thread_id(),
+            thread_id=ctx.uniq_thread_id(),
             description="Property feedback judge",
         )
         assert "result" in res

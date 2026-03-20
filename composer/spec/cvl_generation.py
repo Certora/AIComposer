@@ -30,12 +30,9 @@ from composer.core.state import merge_validation
 from composer.spec.prop import PropertyFormulation
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl
-from composer.spec.component import ComponentInst
-from composer.tools.thinking import ExplicitThinking
 from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
-from composer.spec.code_explorer import code_explorer_tool_from_builder
 from composer.spec.feedback import property_feedback_judge, PropertyFeedback
-from composer.spec.gen_types import GenerationEnv, NatspecInput, SourceInput, StandardResult, CustomOutput
+from composer.spec.gen_types import GenerationEnv
 
 CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
 
@@ -240,7 +237,6 @@ class _UnskipSchema(WithInjectedId, WithImplementation[Command]):
 async def generate_batch_cvl(
     ctx: WorkflowContext[CVLGeneration],
     props: list[PropertyFormulation],
-    feat: ComponentInst | None,
     env: GenerationEnv,
     with_memory: bool,
     description: str,
@@ -248,7 +244,7 @@ async def generate_batch_cvl(
     required_validations = ["feedback"]
 
     feedback = property_feedback_judge(
-        ctx.child(CVL_JUDGE_KEY), env, feat, props, with_memory,
+        ctx.child(CVL_JUDGE_KEY), env, props, with_memory,
     )
 
     _cvl_research_doc = CVL_RESEARCH_BASE_DOC
@@ -259,41 +255,25 @@ async def generate_batch_cvl(
         _RecordSkipSchema.as_tool("record_skip"),
         _UnskipSchema.as_tool("unskip_property"),
         get_cvl(CVLGenerationState),
-        ExplicitThinking.as_tool("extended_reasoning"),
         ERC20TokenGuidance.as_tool("erc20_guidance"),
         UnresolvedCallGuidance.as_tool("unresolved_call_guidance"),
     ]
 
+    tools.extend(env.extra_tools)
 
-    extra_inputs: list[str | dict] = []
+    extra_inputs: list[str | dict] = env.prompt.cvl_prompt_extras
 
-    match env.input:
-        case NatspecInput():
-            extra_inputs.extend([
-                "For reference, the system document for this system is",
-                env.input.content,
-                "The current typechecking stub is",
-                env.input.stub_provider()
-            ])
-        case SourceInput():
-            tools.append(env.input.prover_tool)
-            tools.append(code_explorer_tool_from_builder(env.input.source_tools))
-            required_validations.append("prover")
-            _cvl_research_doc += " Do NOT use this for source code questions (use explore_code instead)."
+    for (validation, tool) in env.validation_tools:
+        required_validations.append(validation)
+        tools.append(tool)
 
     tools.append(cvl_research_tool(ctx, env.cvl_research, _cvl_research_doc))
 
     template_kwargs: dict = {
-        "context": feat,
-        "resources": env.resources,
         "properties": props,
         "memory": with_memory,
-        "result_template": env.output.result_template,
-        **env.input.params()
+        **env.prompt.cvl_prompt.args
     }
-
-    # Add extra tools from env (e.g., stub read, field request, typecheck)
-    tools.extend(env.extra_tools)
 
     tools.extend(ctx.kb_tools(read_only=False))
 
@@ -309,22 +289,21 @@ async def generate_batch_cvl(
     # Builder configuration: if result_tools provided, use manual config
     to_build : Builder[CVLGenerationState, None, None]
 
-    match env.output:
-        case CustomOutput():
-            to_build = env.cvl_authorship.with_state(
-                CVLGenerationState
-            ).with_output_key(
-                "result"
-            ).with_default_summarizer(
-                max_messages=50
-            ).with_tools(
-                env.output.publish_tools
-            )
-        case StandardResult():
-            to_build = bind_standard(
-                env.cvl_authorship, CVLGenerationState, "A description of your generated CVL",
-                validator=lambda s, _r: check_completion(s),
-            )
+    if env.output_tools:
+        to_build = env.cvl_authorship.with_state(
+            CVLGenerationState
+        ).with_output_key(
+            "result"
+        ).with_default_summarizer(
+            max_messages=50
+        ).with_tools(
+            env.output_tools
+        )
+    else:
+        to_build = bind_standard(
+            env.cvl_authorship, CVLGenerationState, "A description of your generated CVL",
+            validator=lambda s, _r: check_completion(s),
+        )
 
     d = to_build.with_input(
         CVLGenerationInput
@@ -333,7 +312,7 @@ async def generate_batch_cvl(
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
     ).with_initial_prompt_template(
-        "property_generation_prompt.j2",
+        str(env.prompt.cvl_prompt.template),
         **template_kwargs
     ).with_context(
         _CVLGenerationContext

@@ -21,7 +21,6 @@ class LaunchResumeArgs(CommonCodeGen):
 
 class LaunchNatSpecArgs(BaseModel):
     input_file: str = Field(description="Relative path to design/system document")
-    contract_name: str = Field(description="Contract name for the generated spec")
     solc_version: str = Field(description="Solidity compiler version (e.g. '8.21')")
     cache_namespace: str = Field(description="Namespace for cross-run caching (e.g. 'mytoken'). Enables reuse of prior agent work.")
     memory_namespace: str = Field(description="Namespace for persistent agent memory (defaults to thread ID if empty)")

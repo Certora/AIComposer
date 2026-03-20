@@ -26,7 +26,7 @@ from composer.spec.context import (
     WorkflowContext, SystemDoc, PlainBuilder, CVLOnlyBuilder,
     get_system_doc,
 )
-from composer.spec.natspec_pipeline import run_natspec_pipeline
+from composer.spec.natspec.pipeline import run_natspec_pipeline
 from composer.spec.util import string_hash
 
 from composer.ui.pipeline_app import PipelineApp
@@ -99,7 +99,6 @@ async def main() -> int:
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
     parser.add_argument("input_file", help="Path to the design document (text or PDF)")
-    parser.add_argument("--contract-name", required=True, help="Expected contract name")
     parser.add_argument("--solc-version", default="8.29", help="Solidity compiler version (default: 8.29)")
     parser.add_argument("--max-concurrent", type=int, default=4, help="Max concurrent agents (default: 4)")
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
@@ -144,10 +143,8 @@ async def main() -> int:
         try:
             result = await run_natspec_pipeline(
                 system_doc=system_doc,
-                contract_name=args.contract_name,
                 solc_version=args.solc_version,
                 analysis_builder=analysis_builder,
-                cvl_authorship=cvl_authorship,
                 cvl_research=cvl_research,
                 ctx=ctx,
                 store=store,

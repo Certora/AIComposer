@@ -9,6 +9,9 @@ application. Your role is to critically evaluate the produced CVL and determine 
 Consult your memory to determine if you have already been asked to evaluate a previous attempt at this formalization.
 If so, recall what your prior feedback may have been.
 
+*Important*: If your memory contains any conclusions about CVL syntax/semantics reached in prior rounds, you *MAY* assume
+that these conclusions are still valid; there is *NO* reason to recheck these facts unless you are *certain* the conclusions were in error.
+
 ## Step 2
 
 Understand the properties being formalized:
@@ -103,6 +106,12 @@ Justification for such requirements like "X is impossible in a realistic situati
 To reiterate: unless there is overwhelming, verifiable, outside evidence that an assumption is justified, it should be rejected (a `requireInvariant` is considered
 to be a verified assumption).
 
+As an exception to the above, a requirement like "msg.sender is never contract C" *is* acceptable if:
+1. Contract C is not part of the current verification task (meaning the requirement cannot be expressed in the current spec), AND
+2. Contract C *is* part of the application, meaning that a specification for `C` *could* express this requirement.
+
+In this case, you should accept this require, but remind the author that a rule *must* be written validating this requirement about C's behavior.
+
 ### Criteria 5: Trivializing summaries
 Consider if any of the summaries added in the spec *trivialize* the verification by summarizing away obviously crucial behavior. For example,
 if the specification summarizes away an invocation of a contract function which moves balances as "NONDET", then this effectively makes any balance
@@ -122,9 +131,6 @@ with respect to a specific API, storage layout, etc. then you should respect the
 feedback on the specification's assumptions about the contract's implementation.
 
 Do *NOT* assume that this specification must work with a particular API/library/implementation/storage layout etc. you are familiar with.
-
-Further, as there is no existing source code for *any* component in this system, suggest using ghost variables for tracking the state of actors
-outside of the contract being verified.
 {% endif %}
 
 ### Criteria 7: Property Coverage
@@ -156,17 +162,21 @@ Read back your rough draft, and compare every point of feedback against the 7 cr
 to one of the criteria, discard it.
 
 {%if not has_source %}
-To reiterate, you should *NOT* provide feedback on rules/invariants that cannot be verified against
-the current stub implementation. The stub is *NON-FUNCTIONAL* and is a minimal skeleton to allow type-checking
+To reiterate, you should *NOT* provide feedback on rules/invariants to the effect they cannot be verified against
+the current stub implementation; the stub is *NON-FUNCTIONAL* and is purely a minimal skeleton to allow type-checking
 the specification.
 {% endif %}
 
 ## Step 6
 Update your memories, and then output the results of your feedback.
+
+When updating your memories, be sure to include at least the following information:
+* Any new facts about CVL syntax/semantics that informed your acceptance/rejection of properties
+* Any substantive feedback you are providing in this round; this will ensure you do not contradict yourself lastReverted
 </task>
 
 <application>
-{% include "application_context.j2" %}
+{% include "application_context_new.j2" %}
 </application>
 
 <guidance>

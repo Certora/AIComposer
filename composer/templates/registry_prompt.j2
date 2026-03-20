@@ -44,6 +44,11 @@ If `is_new` is true, the following are ALSO required (do NOT leave them empty):
   This must be valid Solidity that compiles — do NOT include markdown fences or any wrapper.
   Return the full file contents, not a diff.
 
+**IMPORTANT** When adding a field do NOT change anything else about the contract; do not 
+change its name, the other field definitions, function, or event definitions.
+
+**IMPORTANT** Do NOT add `constant` fields.
+
 If `is_new` is false, only `field_name` and `is_new` are needed.
 
 If your updated stub does not typecheck, take the errors into account and fix your implementation.
