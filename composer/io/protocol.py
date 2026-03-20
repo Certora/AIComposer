@@ -14,14 +14,13 @@ See ``DESIGN.md`` in this directory for the full event flow.
 """
 
 import enum
-from typing import Any, Protocol, Callable
+from typing import Protocol, Callable
 
 from graphcore.tools.vfs import VFSAccessor
 
 from composer.diagnostics.stream import ProgressUpdate
 from composer.human.types import HumanInteractionType
 from composer.core.state import ResultStateSchema, AIComposerState
-from composer.spec.ptypes import NatSpecState, HumanQuestionSchema
 
 
 class IOHandler[H](Protocol):
@@ -100,8 +99,3 @@ class CodeGenIOHandler(IOHandler[HumanInteractionType], Protocol):
         mat: VFSAccessor[AIComposerState],
         st: AIComposerState
     ): ...
-
-
-class NatSpecIOHandler(IOHandler[HumanQuestionSchema], Protocol):
-    """Extended handler for the single-agent NatSpec workflow."""
-    async def display_result(self, final_state: NatSpecState) -> None: ...

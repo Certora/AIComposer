@@ -23,7 +23,6 @@ from composer.ui.multi_job_app import (
 )
 from composer.spec.natspec.pipeline import Phase, PipelineResult
 from composer.spec.pipeline_events import NatspecEvent
-from composer.spec.ptypes import HumanQuestionSchema
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +84,7 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
 # NatspecTaskHandler
 # ---------------------------------------------------------------------------
 
-class NatspecTaskHandler(MultiJobTaskHandler[HumanQuestionSchema]):
+class NatspecTaskHandler(MultiJobTaskHandler[None]):
     """Per-task handler with natspec-specific state detection and HITL formatting."""
 
     async def on_node_state(self, path: list[str], node_name: str, values: dict) -> None:
@@ -94,11 +93,8 @@ class NatspecTaskHandler(MultiJobTaskHandler[HumanQuestionSchema]):
                 "Working copy updated", values["curr_spec"], "working.spec",
             )
 
-    def format_hitl_prompt(self, ty: HumanQuestionSchema) -> list[Text | str]:
-        parts: list[Text | str] = [Text("Question: ", style="bold yellow"), ty.question]
-        if ty.context:
-            parts.append(f"\n  Context: {ty.context}")
-        return parts
+    def format_hitl_prompt(self, ty: None) -> list[Text | str]:
+        raise NotImplementedError("no hitl tools in this workflow")
     
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         evt = cast(NatspecEvent, payload)

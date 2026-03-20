@@ -268,9 +268,6 @@ class MultiJobTaskHandler[H]:
                 await self._renderer.render_messages(target, v["messages"])
             await self.on_node_state(path, node_name, v)
 
-    async def progress_update(self, path: list[str], upd: Any) -> None:
-        pass
-
     async def human_interaction(
         self,
         ty: H,
