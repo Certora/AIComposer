@@ -34,10 +34,8 @@ jobs:
 
       - name: Install requirements
         run: |
-            egrep '^(sentence-)?transformers' requirements.txt > transformer-reqs.txt
-            pip install -r ./transformer-reqs.txt --no-deps
-            egrep -v '^(nvidia-|torch|((sentence-)?transformers))' requirements.txt > pyright-reqs.txt
-            pip install -r pyright-reqs.txt
+            pip install -r graphcore/requirements.txt
+            pip install -r ./requirements.txt --no-deps
 
       - name: Run pyright
         uses: jakebailey/pyright-action@v3
