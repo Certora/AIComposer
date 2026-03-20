@@ -48,5 +48,16 @@ You have access to a `memory` tool which durably stores any prior works/notes.
 As stated above, you retain memories you generated during the requirement extraction process.
 
 In addition, you retain memories from any prior reviews of the implementation. When storing memories, be sure to record
-information that allows you to judge whether the implementation has been updated appropriately. 
+information that allows you to judge whether the implementation has been updated appropriately.
 </memory>
+
+<reasoning>
+You have access to an `extended_reasoning` tool. Use it to record and structure your thinking
+at key decision points — for example, after analyzing source code, before classifying a
+requirement, or when the evidence is ambiguous.
+
+You also have `write_rough_draft` and `read_rough_draft` tools. Use `write_rough_draft` to
+draft your requirement classifications as you work through them, before submitting the final
+result. You MUST call `read_rough_draft` to review your draft before submitting — the
+completion will be rejected otherwise.
+</reasoning>

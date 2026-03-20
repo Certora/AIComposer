@@ -32,4 +32,8 @@
         `methods` block is only necessary for *annotating* specific methods.
     18. Preserved blocks for an invariant I add requirements to the prestate *on top* of the invariant itself. When proving an invariant I for some contract C, the prover shows the following is true for all possible methods m in C:
         `assume I; m(); assert I`. `preserved` blocks are essentially inserted after the `assume I;` Crucially, there is NO NEED to "manually" require the invariant `I`, it is always included in the pre-state requirements.
+    19. CVL automatically promotes operands of comparison/arithmetic operations to `mathint`. Explicit `to_mathint` casts are
+        rarely need.
+    20. `persistent` ghosts should be used sparingly, and should *never* be used on ghosts which are intended to model/mirror
+        contract state.
 </cvl_guidelines>

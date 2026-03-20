@@ -1,28 +1,32 @@
 from typing_extensions import NotRequired, Annotated
-from typing import Literal, Any, cast, Callable
-from functools import partial
+from typing import Literal, Any, cast
+import uuid
 
 from pydantic import BaseModel, Field
 
 from graphcore.tools.memory import MemoryBackend, memory_tool
-from graphcore.graph import FlowInput, build_workflow, WithToolCallId, tool_output
+from graphcore.graph import FlowInput, build_async_workflow, WithToolCallId
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.vfs import VFSState
 
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.tools import BaseTool, tool, InjectedToolCallId
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import get_runtime
 
 from composer.templates.loader import load_jinja_template
+from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
 from composer.core.state import AIComposerState
 from composer.core.validation import reqs as req_key
 from composer.core.context import AIComposerContext, compute_state_digest
+from composer.io.context import run_graph
 
-class JudgeInput(FlowInput):
+class JudgeInput(FlowInput, RoughDraftState):
     vfs: dict[str, str]
     orig_reqs: list[str]
 
@@ -45,7 +49,7 @@ class RequirementAnalysis(BaseModel):
 class JudgeResult(BaseModel):
     judgement_result: list[RequirementAnalysis] = Field(description="A list of analysis results, with one element per original requirement.")
 
-class JudgeState(MessagesState, VFSState):
+class JudgeState(MessagesState, VFSState, RoughDraftState):
     result: NotRequired[JudgeResult]
     orig_reqs: list[str]
 
@@ -67,13 +71,13 @@ BEFORE calling this tool.
 """,
         validator=(JudgeState, judge_res_checker)
     )
-    return build_workflow(
+    return build_async_workflow(
         input_type=JudgeInput,
         output_key="result",
         context_schema=None,
         state_class=JudgeState,
         unbound_llm=llm,
-        tools_list=[mem_tool, *vfs_tools, res],
+        tools_list=[mem_tool, *vfs_tools, res, explicit_thinking, *get_rough_draft_tools(JudgeState)],
         sys_prompt=load_jinja_template("req_role_prompt.j2"),
         initial_prompt=load_jinja_template("req_judge_prompt.j2")
     )[0]
@@ -88,7 +92,7 @@ Query an oracle to determine if the generated implementation meets the requireme
 provided.
 
 Each requirement is evaluated against the current implementation and assigned a classification:
-{classification_explanation} 
+{classification_explanation}
 
 If any requirements are classified as PARTIAL or VIOLATED, you must address this feedback.
     """
@@ -116,6 +120,8 @@ def judge_res_checker(
     r: JudgeResult,
     _: str
 ) -> str | None:
+    if st["memory"] is not None and not st["did_read"]:
+        return "Completion REJECTED: You must read your rough draft before submitting. Call read_rough_draft first."
     reqs = st["orig_reqs"]
     if len(reqs) != len(r.judgement_result):
         return f"Completion REJECTED: Incorrect number of requirement results: expected {len(reqs)} received {len(r.judgement_result)}"
@@ -137,27 +143,32 @@ def get_judge_tool(
     unbound: BaseChatModel
 ) -> BaseTool:
     workflow = _gen_workflow(vfs_tools, mem, unbound)
-    compiled_graph = workflow.compile()
+    compiled_graph = workflow.compile(checkpointer=MemorySaver())
     req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
     @tool(args_schema=RequirementEvaluationSchema)
-    def requirements_evaluation(
+    async def requirements_evaluation(
         state: AIComposerState,
         tool_call_id: Annotated[str, InjectedToolCallId]
     ) -> Command | str:
-        r = compiled_graph.invoke(JudgeInput(
-            input=[req_list],
-            vfs=state["vfs"],
-            orig_reqs=reqs
-        ))
+        judge_config: RunnableConfig = {"configurable": {"thread_id": uuid.uuid1().hex}}
+        judge_state = await run_graph(
+            compiled_graph,
+            None,
+            JudgeInput(input=[req_list], vfs=state["vfs"], orig_reqs=reqs, memory=None, did_read=False),
+            judge_config,
+            description="Requirements evaluation",
+            within_tool=tool_call_id
+        )
         skipped = state.get("skipped_reqs", set())
-        res = cast(JudgeResult, r["result"])
+        assert "result" in judge_state
+        res = cast(JudgeResult, judge_state["result"])
         all_satisfied = True
         for j in res.judgement_result:
             if j.classification != "LIKELY" and j.classification != "SATISFIED":
                 if j.requirement_number not in skipped:
                     all_satisfied = False
                     break
-        formatted_res = _format_result(r["result"], skipped)
+        formatted_res = _format_result(judge_state["result"], skipped)
         if not all_satisfied:
             return formatted_res
         digest = compute_state_digest(
@@ -173,4 +184,3 @@ def get_judge_tool(
             }
         })
     return requirements_evaluation
-
