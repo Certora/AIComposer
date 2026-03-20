@@ -90,6 +90,7 @@ class LangraphOptions(Protocol):
 class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
     prover_capture_output: bool
     prover_keep_folders: bool
+    local_prover: bool
 
     debug_prompt_override: Optional[str]
 
@@ -101,9 +102,25 @@ class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
     skip_reqs: bool
 
 
+class ModelOptionsBase(Protocol):
+    """Read-only view of model options. thinking_tokens may be None to disable thinking."""
+    @property
+    def model(self) -> str: ...
+    @property
+    def tokens(self) -> int: ...
+    @property
+    def thinking_tokens(self) -> int | None: ...
+    @property
+    def memory_tool(self) -> bool: ...
+
+    @property
+    def interleaved_thinking(self) -> bool: ...
+
+
+
 class ModelOptions(Protocol):
     model: Annotated[str, Arg(
-        help="Model to use for code generation (default: {default})", default="claude-sonnet-4-20250514"
+        help="Model to use for code generation (default: {default})", default="claude-opus-4-6"
         )]
     tokens: Annotated[int, Arg(
         help="Token budget for code generation (default: {default})",
@@ -123,10 +140,13 @@ class ModelOptions(Protocol):
         default=False
     )]
 
-class CommandLineArgs(WorkflowOptions, ModelOptions, Protocol):
+class UploadPaths(Protocol):
     spec_file: str
     interface_file: str
     system_doc: str
+
+
+class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, Protocol):
     debug_fs: str
 
     debug: bool

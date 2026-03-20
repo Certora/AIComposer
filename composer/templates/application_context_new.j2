@@ -1,0 +1,39 @@
+This task is targeting the formalization properties for a component {{ context.component.name }} within
+the contract {{ context.contract.name }}.
+
+This component is described as:
+
+{{ context.component.description }}
+
+The following are the requirements for this component:
+{% for req in context.component.requirements%}
+* {{ req }}
+{% endfor%}
+
+The {{ context.contract.name }} contract itself is part of the implementation of a broader application
+described as {{ context.app.application_type }}.
+
+{% if context.ommer_contracts %}
+The other contracts in the application are:
+{% for other in context.ommer_contracts %}
+* The "{{ other.name }}" contract, described as {{ other.description }}. The contract's sort is {{ other.sort }}
+{% endfor %}
+
+The sort of a contract means the following:
+- `singleton`: Exactly one instance of this contract will be deployed as part of the application.
+- `dynamic`: One of the other explicit contracts will dynamically create instances of this contract during execution
+- `multiple`: Multiple instances of this contract will be created, but by some external actor during execution
+   or as part of deployment.
+{% endif %}
+
+{% if context.component.interactions %}
+This component interacts with other parts of the application/external actors:
+{% for other in context.component.interactions %}
+  {% if other.contract_name %}
+- The {{ other.component }} of {% if other.contract_name == context.contract.name %}this contract{%else%}the {{ other.contract_name }} contract{%endif%}.
+  {% else %}
+- An external actor "{{ other.external_actor }}"
+{% endif %}
+This interaction is described as {{ other.description }}
+{% endfor %}
+{% endif %}

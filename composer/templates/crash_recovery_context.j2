@@ -1,0 +1,10 @@
+A previous run of this workflow crashed. The following files were recovered from the in-progress virtual filesystem at the time of the crash. Use these as a starting point — they may be incomplete or contain errors:
+
+{% for path, content in vfs_files %}
+## {{ path }}
+```
+{{ content }}
+```
+{% endfor %}
+
+Resume from where the previous run left off, fixing any issues in the recovered files.

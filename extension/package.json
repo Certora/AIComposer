@@ -1,0 +1,46 @@
+{
+  "name": "certora-ai-composer",
+  "displayName": "Certora AI Composer",
+  "description": "Terminal-to-IDE bridge for Composer TUI",
+  "version": "0.1.0",
+  "publisher": "certora",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "composerProposedChanges",
+          "name": "Proposed Changes",
+          "when": "composer.hasProposedChanges"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "composer.openProposedFile",
+        "title": "Open Proposed File"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "npm run compile -- --watch",
+    "package": "npm run compile -- --minify"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}

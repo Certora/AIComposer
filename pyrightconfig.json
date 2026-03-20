@@ -1,5 +1,7 @@
-  {
-    "stubPath": "stubs",
-    "typeshedPaths": ["stubs"],
-    "reportMissingModuleSource": "none"
-  }
+{
+  "include": ["composer", "sanity_analyzer"],
+  "stubPath": "stubs",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}

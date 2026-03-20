@@ -240,7 +240,7 @@ class DebugConsole(App):
             content = message.text()
             
             # Truncate long messages for list view
-            preview = content[:100] + "..." if len(content) > 100 else content
+            preview = content
             
             # Create list item with rich formatting
             item_text = Text()
@@ -387,23 +387,17 @@ class DebugConsole(App):
                         tool_info.append("Parameters:\n", style="bold")
                         for key, value in input_data.items():
                             tool_info.append(f"  {key}: ", style="cyan")
-                            if isinstance(value, str) and len(value) > 100:
-                                tool_info.append(f"{value[:100]}...\n", style="dim")
-                            else:
-                                tool_info.append(f"{value}\n")
-                    
+                            tool_info.append(f"{value}\n")
+
                     renderables.extend([header, tool_info])
-                    
+
                 else:
                     # Unknown structured block
                     header = Text(f"❓ Unknown Block ({item_type}):", style="bold red")
                     details = Text()
                     for key, value in item.items():
                         details.append(f"  {key}: ", style="cyan")
-                        if isinstance(value, str) and len(value) > 100:
-                            details.append(f"{value[:100]}...\n", style="dim")
-                        else:
-                            details.append(f"{value}\n")
+                        details.append(f"{value}\n")
                     renderables.extend([header, details])
                     
             else:

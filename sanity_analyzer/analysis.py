@@ -13,8 +13,7 @@ from composer.rag.db import PostgreSQLRAGDatabase, SANITY_DEFAULT_CONNECTION
 from composer.rag.models import get_model
 from composer.tools.search import cvl_manual_search
 from composer.templates.loader import load_jinja_template
-from composer.workflow.factories import get_checkpointer
-from composer.workflow.services import create_llm, get_memory
+from composer.workflow.services import create_llm, get_memory, get_checkpointer
 
 from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
 

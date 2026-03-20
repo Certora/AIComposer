@@ -21,7 +21,7 @@ from composer.rag.models import get_model
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
 
-from composer.workflow.factories import get_checkpointer
+from composer.workflow.services import get_checkpointer
 
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
