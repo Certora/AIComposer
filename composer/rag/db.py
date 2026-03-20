@@ -17,9 +17,12 @@ DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag
 class PostgreSQLRAGDatabase:
     """Handle PostgreSQL database operations for RAG"""
 
-    def __init__(self, conn_string: str, model: SentenceTransformer, skip_test : bool = True):
+    def __init__(self, conn_string: str, model: SentenceTransformer, skip_test : bool = True, create_schema=False):
         self.conn_string = conn_string
         self.tr = model
+        if create_schema:
+            self._test_connection()
+            self._create_schema()
         # Test connection
         if not skip_test:
             self._test_connection()
@@ -31,18 +34,6 @@ class PostgreSQLRAGDatabase:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
                     logger.info("✅ Database connection successful")
-
-                    # Check if documents table exists
-                    cur.execute("""
-                        SELECT 1 FROM information_schema.tables
-                        WHERE table_name = 'documents'
-                    """)
-                    if not cur.fetchone():
-                        logger.warning("❌ Documents table not found, creating...")
-                        self._create_schema()
-                    else:
-                        logger.info("✅ Documents table found")
-
         except Exception as e:
             logger.error(f"Database connection failed: {e}")
             raise
