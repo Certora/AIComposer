@@ -28,6 +28,8 @@ from sanity_analyzer.types import SanityAnalysisArgs
 
 class SanityState(MessagesState, RoughDraftState):
     result: NotRequired[str]
+class SanityInput(FlowInput, RoughDraftState):
+    pass
 
 class SanityAnalysisMitigation(BaseModel):
     config_changes: list[tuple[str,str]] = Field(description="If there is a fix via changing the configuration, list the necessary config values as tuples of key and value.")
@@ -260,7 +262,7 @@ def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
     initial_prompt = load_jinja_template("sanity_tool_prompt.j2")
 
     graph = build_workflow(
-        input_type=FlowInput,
+        input_type=SanityInput,
         output_key="result",
         tools_list=tools,
         unbound_llm=llm,
@@ -277,11 +279,11 @@ def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
 
     conf["recursion_limit"] = args.recursion_limit
 
-    for (ty, d) in graph.stream(input=FlowInput(input=[
+    for (ty, d) in graph.stream(input=SanityInput(input=[
         f"The rule being analyzed is: {rule}",
         f"Method context: {method if method else 'N/A'}",
         f"Unsat core data:\n{unsat_core_txt_content}"
-    ]), config=conf, stream_mode=["checkpoints", "updates"]):
+    ], memory=None, did_read=False), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
             print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
