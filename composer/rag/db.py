@@ -412,9 +412,9 @@ class ChromaRAGDatabase(ComposerRAGDB):
 
             # Store headers in metadata
             metadata = {}
-            for j, header in enumerate(chunk.headers):
+            for j, header in enumerate(chunk.headers, start=1):
                 if header:
-                    metadata[f"h{j+1}"] = header
+                    metadata[f"h{j}"] = header
             metadatas.append(metadata)
 
         self.collection.add(
@@ -482,9 +482,9 @@ class ChromaRAGDatabase(ComposerRAGDB):
             body = body.replace(code_ref_tag(j), code)
 
         metadata: dict[str, str | int] = {"part": ch.part}
-        for i, h in enumerate(ch.headers):
+        for i, h in enumerate(ch.headers, start=1):
             if h:
-                metadata[f"h{i+1}"] = h
+                metadata[f"h{i}"] = h
 
         self.sections.add(
             ids=[str(self._next_section_id)],
@@ -539,8 +539,8 @@ class ChromaRAGDatabase(ComposerRAGDB):
         # Build filter for exact header match
         # ChromaDB requires $and for multiple conditions
         conditions = []
-        for i, h in enumerate(headers):
-            conditions.append({f"h{i+1}": {"$eq": h}})
+        for i, h in enumerate(headers, start=1):
+            conditions.append({f"h{i}": {"$eq": h}})
 
         where_filter = {"$and": conditions} if len(conditions) > 1 else conditions[0] if conditions else None
 
