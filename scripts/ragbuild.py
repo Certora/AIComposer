@@ -77,7 +77,7 @@ def get_section_header(s: Tag) -> Optional[Header]:
 max_length = 2000
 nlp = spacy.load("en_core_web_sm")
 main_body_ctx: contextvars.ContextVar[Tag] = contextvars.ContextVar('main_body')
-section_label_ctx: contextvars.ContextVar[str] = contextvars.ContextVar('section_label', default="")
+section_label_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar('section_label', default=None)
 
 @dataclass
 class InitContext:
