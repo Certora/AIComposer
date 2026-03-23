@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import TypedDict
 
-from graphcore.graph import FlowInput
 
 class PromptParams(TypedDict):
     is_resume: bool

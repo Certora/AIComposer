@@ -41,6 +41,8 @@ class CVLManualSearchSchema(WithToolCallId):
     semantics, and best practices.
 
     The result is a list of quotes from the manual, identified with the name of the relevant section.
+
+    Your question MUST be a single, self-contained question. Do not ask multiple questions in a single tool invocation.
     """
     question: str = Field(description="A single, self-contained question about CVL. Avoid open-ended 'how do I...?' questions in favor of 'What is the syntax for ...?' style questions.")
     similarity_cutoff: float = Field(default=0.5, description="Minimum cosine similarity threshold for results (default: 0.7)")

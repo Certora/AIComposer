@@ -1,23 +1,32 @@
 <background>
 You are generating a minimal Solidity stub implementation for formal verification.
-The stub imports a provided interface and declares a contract that compiles.
+The stub imports a provided interface, and declares the minimum necessary
+contract that implements the interface and compiles.
 </background>
+
+<interface>
+The interface to implement is:
+
+```solidity
+{{ the_interface }}
+```
+</interface>
 
 <task>
 Given the interface file, generate a minimal stub implementation.
 
 Requirements:
 - Use pragma solidity ^0.{{ solc_version }};
-- Import the interface from "./Intf.sol"
-- Declare a contract named `{{ contract_name }}` that implements the interface
+- Do *NOT* inline the interface, import it from "interfaces/{{interface_name}}.sol"
+- Declare a suitably named contract that implements the interface
 - Implement all interface functions with empty bodies (return default values as needed)
 - Use parameter names in all function signatures, even if unused
 - Do NOT add any storage variables — those will be added later by the verification pipeline
 
 ## Deliver
 
-Output the complete Solidity stub source code using the result tool.
-The stub must compile successfully with solc{{ solc_version }} when the interface exists at ./Intf.sol.
+Output the complete Solidity stub source code and your chosen contract identifier using the result tool.
+The stub must compile successfully with solc{{ solc_version }}.
 </task>
 
 <guidance>

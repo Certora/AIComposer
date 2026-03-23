@@ -76,6 +76,8 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
               "all rules are run. Before delivering the finished code to the user, ensure that all rules pass on the most"
               "up to date version of the code. However, when iteratively developing code, it may be useful to focus on a"
               "single, 'problematic' rule.")
+    
+    use_working_spec : bool = Field(description="Use the working copy of the spec instead of the master copy.")
 
     state: Annotated[AIComposerState, InjectedState]
 
@@ -88,12 +90,13 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
             self.rule,
             self.state,
             self.tool_call_id,
+            self.use_working_spec
         )
         match result:
             case str():
                 return tool_return(tool_call_id=self.tool_call_id, content=result)
             case RawReport():
-                if result.all_verified:
+                if result.all_verified and not self.use_working_spec:
                     ctxt = get_runtime(AIComposerContext).context
                     state_digest = compute_state_digest(c=ctxt, state=self.state)
                     return Command(

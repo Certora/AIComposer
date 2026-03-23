@@ -15,15 +15,14 @@ from textual.widgets import Static, Input, Collapsible, ContentSwitcher
 from rich.syntax import Syntax
 from rich.text import Text
 
-from composer.io.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
+from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
 from composer.io.event_handler import EventHandler
-from composer.io.ide_bridge import IDEBridge
-from composer.io.multi_job_app import (
+from composer.ui.ide_bridge import IDEBridge
+from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
-from composer.spec.pipeline import Phase, PipelineResult
+from composer.spec.natspec.pipeline import Phase, PipelineResult
 from composer.spec.pipeline_events import NatspecEvent
-from composer.spec.ptypes import HumanQuestionSchema
 
 
 # ---------------------------------------------------------------------------
@@ -66,28 +65,18 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
         case "cvl_gen":
             return ToolDisplayConfig(tool_display={
                 **CommonTools.cvl_research_displays(),
-                "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "get_cvl": ToolDisplay("Reading spec", None),
-                "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
-                "extended_reasoning": CommonTools.extended_reasoning,
+                **CommonTools.cvl_manipulation(),
                 "publish_spec": ToolDisplay("Publishing to master spec", _suppress_ack("Publish result")),
                 "give_up": ToolDisplay("Giving up on property", _suppress_ack("Give up result")),
-                "record_skip": ToolDisplay(
-                    lambda p: f"Skipping property #{p.get('property_index', '?')}",
-                    _suppress_ack("Skip result", ("Recorded skip",)),
-                ),
-                "unskip_property": ToolDisplay(
-                    lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
-                    _suppress_ack("Unskip result", ("Removed skip",)),
-                ),
+                "record_skip": ToolDisplay(lambda d: f"Skipping Property #{d['property_index']}: {d['reason']}", _suppress_ack("Skip Request Result", ("Recorded skip", ))),
                 "read_stub": ToolDisplay("Reading verification stub", None),
-                "request_stub_field": ToolDisplay("Requesting stub field", "Stub field result"),
+                "request_stub_field": ToolDisplay(lambda d: f"Requesting stub field: {d["purpose"]}", "Stub field result"),
                 "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),
+                **CommonTools.cvl_research_displays(),
                 "result": CommonTools.result,
-                "write_rough_draft": CommonTools.write_rough_draft,
-                "read_rough_draft": CommonTools.read_rough_draft,
+                **CommonTools.rough_draft_displays(),
                 "memory": CommonTools.memory,
+                "feedback_tool": ToolDisplay("Seeking CVL feedback", "Feedback")
             })
 
 
@@ -95,7 +84,7 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
 # NatspecTaskHandler
 # ---------------------------------------------------------------------------
 
-class NatspecTaskHandler(MultiJobTaskHandler[HumanQuestionSchema]):
+class NatspecTaskHandler(MultiJobTaskHandler[None]):
     """Per-task handler with natspec-specific state detection and HITL formatting."""
 
     async def on_node_state(self, path: list[str], node_name: str, values: dict) -> None:
@@ -104,32 +93,18 @@ class NatspecTaskHandler(MultiJobTaskHandler[HumanQuestionSchema]):
                 "Working copy updated", values["curr_spec"], "working.spec",
             )
 
-    def format_hitl_prompt(self, ty: HumanQuestionSchema) -> list[Text | str]:
-        parts: list[Text | str] = [Text("Question: ", style="bold yellow"), ty.question]
-        if ty.context:
-            parts.append(f"\n  Context: {ty.context}")
-        return parts
-
-
-# ---------------------------------------------------------------------------
-# PipelineEventHandler
-# ---------------------------------------------------------------------------
-
-class PipelineEventHandler:
-    """Routes ``NatspecEvent`` payloads to the task panel as content links."""
-
-    def __init__(self, handler: NatspecTaskHandler):
-        self._handler = handler
-
+    def format_hitl_prompt(self, ty: None) -> list[Text | str]:
+        raise NotImplementedError("no hitl tools in this workflow")
+    
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         evt = cast(NatspecEvent, payload)
         match evt["type"]:
             case "master_spec_update":
-                await self._handler.render_content_link(
+                await self.render_content_link(
                     "Master spec updated", evt["spec"], "input.spec",
                 )
             case "stub_update":
-                await self._handler.render_content_link(
+                await self.render_content_link(
                     "Stub updated", evt["stub"], "Impl.sol",
                 )
 
@@ -154,7 +129,7 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         return NatspecTaskHandler(info.task_id, info.label, panel, self, tc)
 
     def create_event_handler(self, handler: NatspecTaskHandler, info: TaskInfo[Phase]) -> EventHandler:
-        return PipelineEventHandler(handler)
+        return handler
 
     # ── Pipeline completion ───────────────────────────────────
 
@@ -166,23 +141,24 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         switcher = self.query_one("#switcher", ContentSwitcher)
         switcher.current = "summary"
 
-        n_fail = len(result.failures)
-
         banner_text = Text()
         banner_text.append("\n━━ Pipeline Complete ━━\n", style="bold green")
-        banner_text.append(f"Contract: {result.contract_name} (solc {result.solc_version})\n")
-        banner_text.append(f"Failures: {n_fail}\n" if n_fail else "All properties succeeded\n")
-        if n_fail:
-            for f in result.failures:
-                banner_text.append(f"  \u2717 {f.prop.description}: {f.reason}\n", style="red")
+
+        files: dict[str, str] = {}
+
+        for c in result.contracts:
+            n_fail = len(c.failures)
+            banner_text.append(f"Contract: {c.name}\n")
+            banner_text.append(f"  Interface: {c.interface.path}")
+            banner_text.append(f"  Failures: {n_fail}\n" if n_fail else "All properties succeeded\n")
+            if n_fail:
+                for f in c.failures:
+                    banner_text.append(f"    \u2717 {f.prop.description}: {f.reason}\n", style="red")
+            files[f"certora/{c.stub.solidity_identifier}.spec"] = c.spec
+            files[f"interfaces/{c.interface.path}"] = c.interface.content
+            files[f"stubs/{c.stub.path}"] = c.stub.content
 
         await summary.mount(Static(banner_text))
-
-        files: dict[str, str] = {
-            "input.spec": result.spec,
-            "Impl.sol": result.stub,
-            "Intf.sol": result.interface,
-        }
 
         if self._ide is not None:
             preview_id: str | None = None

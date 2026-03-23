@@ -39,3 +39,6 @@ class EventQueue:
             while self._cursor < len(self._event_stream):
                 yield self._event_stream[self._cursor]
                 self._cursor += 1
+            assert self._cursor == len(self._event_stream)
+            self._cursor = 0
+            self._event_stream = []

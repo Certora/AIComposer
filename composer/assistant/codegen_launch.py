@@ -7,7 +7,7 @@ from composer.assistant.types import OrchestratorContext
 from composer.audit.db import DEFAULT_CONNECTION as AUDIT_DEFAULT
 from composer.input.files import upload_input
 from composer.input.types import ResumeFSData
-from composer.io.codegen_rich import CodeGenRichApp
+from composer.ui.codegen_rich import CodeGenRichApp
 from composer.io.protocol import WorkflowPurpose
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.workflow.types import WorkflowResult, WorkflowSuccess, WorkflowFailure, WorkflowCrash

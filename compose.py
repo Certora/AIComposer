@@ -14,7 +14,7 @@ from graphcore.graph import FlowInput
 from composer.assistant.agent import build_orchestrator
 from composer.assistant.handler import OrchestratorHandler
 from composer.assistant.types import OrchestratorContext, OrchestratorModelConfig
-from composer.io.ide_bridge import IDEBridge
+from composer.ui.ide_bridge import IDEBridge
 from composer.io.stream import EventQueue
 from composer.rag.db import DEFAULT_CONNECTION as RAG_DEFAULT
 from composer.workflow.services import create_llm

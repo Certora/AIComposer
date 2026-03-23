@@ -112,18 +112,17 @@ class ComponentGroup:
 class CVLJudge:
     """CVL property feedback judge step."""
 
-class Feedback:
-    """Feedback sub-step within CVL judge."""
-
 class CVLGeneration:
     """Abstraction for the CVL generation pipeline."""
+
+class Contract:
+    """An individual contract"""
 
 type Abstraction = CVLGeneration
 
 type Marker = (
     InvJudge | InvFormal | Properties | ComponentGroup
-    | CVLJudge | Feedback
-    | Abstraction
+    | CVLJudge | Abstraction | Contract
 )
 
 
@@ -210,7 +209,7 @@ class WorkflowContext[K: CacheTypes]:
     def cache_get(self, ty: type[K]) -> K | None:
         """Get a typed value from the cache. Returns None if caching disabled or not found."""
         if not issubclass(ty, BaseModel):
-            raise ValueError("Cannot use cache with non-basemodel keys")
+            raise ValueError(f"Cannot use cache with non-basemodel keys {ty}")
         if self.cache_namespace is None:
             return None
         if len(self.cache_namespace) < 1:

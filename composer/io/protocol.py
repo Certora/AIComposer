@@ -14,17 +14,16 @@ See ``DESIGN.md`` in this directory for the full event flow.
 """
 
 import enum
-from typing import Any, Protocol, Callable
+from typing import Protocol, Callable
 
 from graphcore.tools.vfs import VFSAccessor
 
 from composer.diagnostics.stream import ProgressUpdate
 from composer.human.types import HumanInteractionType
 from composer.core.state import ResultStateSchema, AIComposerState
-from composer.spec.ptypes import NatSpecState, HumanQuestionSchema
 
 
-class IOHandler[H, P](Protocol):
+class IOHandler[H](Protocol):
     """Protocol for consuming graph execution events.
 
     One ``IOHandler`` is active per ``with_handler()`` scope.  The
@@ -48,10 +47,6 @@ class IOHandler[H, P](Protocol):
 
     async def log_state_update(self, path: list[str], st: dict):
         """A graph node emitted new state (messages, tool results, etc.)."""
-        ...
-
-    async def progress_update(self, path: list[str], upd: P):
-        """Domain-specific progress notification.  Called directly, not via the event queue."""
         ...
 
     async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
@@ -81,7 +76,7 @@ class WorkflowPurpose(enum.Enum):
     NATREQ = "natreq"
 
 
-class CodeGenIOHandler(IOHandler[HumanInteractionType, ProgressUpdate], Protocol):
+class CodeGenIOHandler(IOHandler[HumanInteractionType], Protocol):
     """Extended handler for the code-generation workflow."""
 
     async def log_workflow_thread(self, purpose: WorkflowPurpose, thread_id: str) -> None:
@@ -92,14 +87,15 @@ class CodeGenIOHandler(IOHandler[HumanInteractionType, ProgressUpdate], Protocol
         """Display a fatal workflow error (crash, recursion limit, etc.)."""
         ...
 
+
+    async def progress_update(self, path: list[str], upd: ProgressUpdate) -> None:
+        """Domain-specific progress notification.  Called directly, not via the event queue."""
+        ...
+
+
     async def output(
         self,
         res: ResultStateSchema,
         mat: VFSAccessor[AIComposerState],
         st: AIComposerState
     ): ...
-
-
-class NatSpecIOHandler(IOHandler[HumanQuestionSchema, Any], Protocol):
-    """Extended handler for the single-agent NatSpec workflow."""
-    async def display_result(self, final_state: NatSpecState) -> None: ...

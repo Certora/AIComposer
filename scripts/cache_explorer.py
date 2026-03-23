@@ -8,20 +8,28 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+from contextvars import ContextVar
+from contextlib import contextmanager
+from typing import Iterable
 
 _repo_root = str(Path(__file__).parent.parent.absolute())
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
 
-from composer.io.cache_explorer import CacheNode, CacheExplorerApp, DummyServices
-from composer.spec.context import WorkflowContext, CacheKey, CVLGeneration, get_system_doc
-from composer.spec.component import ApplicationSummary, SOURCE_ANALYSIS_KEY
-from composer.spec.interface_gen import _CachedInterface
-from composer.spec.stub_gen import _CachedStub
+from composer.ui.cache_explorer import CacheNode, CacheExplorerApp, DummyServices, CacheTreeNode, OrgNode
+from composer.spec.context import (
+    WorkflowContext, CacheKey, CVLGeneration, get_system_doc, 
+    Contract, CacheTypes, Marker, ComponentGroup, Properties
+)
+from composer.spec.system_model import Application, ExplicitContract, ContractComponent, ExternalActor
+from composer.spec.natspec.interface_gen import InterfaceResult
+from composer.spec.natspec.system_analysis import SOURCE_ANALYSIS_KEY
+from composer.spec.natspec.stub_gen import StubDeclaration
 from composer.spec.bug import _BugAnalysisCache, BUG_ANALYSIS_KEY
-from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, CVL_JUDGE_KEY, LAST_ATTEMPT_KEY, FEEDBACK_KEY
-from composer.spec.pipeline import PROPERTIES_KEY, _component_cache_key, _batch_cache_key
+from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, CVL_JUDGE_KEY, LAST_ATTEMPT_KEY
+from composer.spec.natspec.pipeline import PROPERTIES_KEY, _component_cache_key, _batch_cache_key
 from composer.spec.util import string_hash
+
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +37,7 @@ from composer.spec.util import string_hash
 # ---------------------------------------------------------------------------
 
 type NatSpecCachedValue = (
-    ApplicationSummary | _CachedInterface | _CachedStub
+    Application | InterfaceResult | StubDeclaration
     | _BugAnalysisCache | GeneratedCVL | _LastAttemptCache
 )
 
@@ -38,88 +46,121 @@ type NatSpecCachedValue = (
 # Tree construction
 # ---------------------------------------------------------------------------
 
+_node_context = ContextVar[CacheTreeNode[NatSpecCachedValue] | None]("_node_context", default=None)
+
+@contextmanager
+def node(c: CacheTreeNode[NatSpecCachedValue]):
+    prev = _node_context.get()
+    if prev is not None:
+        prev.children.append(c)
+    tok = _node_context.set(c)
+    try:
+        yield
+    finally:
+        _node_context.reset(tok)
+
+@contextmanager
+def section(s: str):
+    with node(OrgNode(s)):
+        yield
+
+@contextmanager
+def node_for[T : CacheTypes, S : CacheTypes](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S] | None = None):
+    child_ctx = ctx.child(child)
+    value : S | None = None
+    if ty is not None:
+        value = child_ctx.cache_get(ty)
+    new_node = CacheNode(
+        label=label,
+        ctx=child_ctx,
+        value = value
+    )
+    with node(new_node): #type: ignore
+        yield child_ctx
+
+def leaf[T : CacheTypes, S : NatSpecCachedValue](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S]) -> CacheNode[S]:
+    child_ctx = ctx.child(child)
+    value : S | None = child_ctx.cache_get(ty)
+    return CacheNode[S](label=label, value=value, ctx=child_ctx)
+
+def memory[T: CacheTypes, S: Marker](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str):
+    return CacheNode[S](label=label, value=None, ctx=ctx.child(child))
+
+def build_cvl_generation_node(ctx: WorkflowContext[CVLGeneration]):
+    yield memory(ctx, CVL_JUDGE_KEY, "Feedback judge")
+    yield leaf(ctx, LAST_ATTEMPT_KEY, "Last attempt", _LastAttemptCache)
+
+def build_component_tree(contract_ctx: WorkflowContext[Properties], key: CacheKey[Properties, ComponentGroup], comp: ContractComponent):
+    with node_for(contract_ctx, key, comp.name) as feat_ctx:
+        d = leaf(feat_ctx, BUG_ANALYSIS_KEY, "Bug Analysis", _BugAnalysisCache)
+        yield d
+        if d.value is None:
+            return
+        with node_for(
+            feat_ctx,
+            _batch_cache_key(d.value.items),
+            "CVL Generation",
+            GeneratedCVL
+        ) as cvl_ctx:
+            yield from build_cvl_generation_node(
+                cvl_ctx.abstract(CVLGeneration)
+            )
+
+def build_contract_tree(contract_ctx: WorkflowContext[Contract], contract: ExplicitContract, summ: Application):
+    with node_for(contract_ctx, PROPERTIES_KEY, "properties") as prop_ctx:
+        for comp in contract.components:
+            comp_key = _component_cache_key(comp, summ.application_type)
+            yield from build_component_tree(prop_ctx, comp_key, comp)
+
+def build_tree_inner(root_ctx: WorkflowContext[None]):
+    sa_ctx = root_ctx.child(SOURCE_ANALYSIS_KEY)
+    summary = sa_ctx.cache_get(Application)
+    yield CacheNode(
+        label="source-analysis", ctx=sa_ctx, value=summary,
+    )
+
+    cached_intf: InterfaceResult | None = None
+    if summary is None:
+        return
+    intf_key = CacheKey[None, InterfaceResult](
+        f"interface-{string_hash(summary.model_dump_json())}"
+    )
+    intf_ctx = root_ctx.child(intf_key)
+    cached_intf = intf_ctx.cache_get(InterfaceResult)
+    yield CacheNode(
+        label="interface", ctx=intf_ctx, value=cached_intf,
+    )
+
+    if cached_intf is not None:
+        with section("Stubs"):
+            cache_prefix = f"stub-for-{string_hash(cached_intf.model_dump_json())}-"
+            for c in summary.contract_components:    
+                stub_key = CacheKey[None, StubDeclaration](
+                    cache_prefix + c.name
+                )
+                yield leaf(
+                    root_ctx, stub_key, f"Stub: {c.name}", StubDeclaration
+                )
+    for c in summary.contract_components:
+        contract_key = CacheKey[None, Contract](string_hash(c.model_dump_json()))
+        contract_ctx = root_ctx.child(contract_key)
+        with node_for(root_ctx, contract_key, f"Contract: {c.name}") as contract_ctx:
+            yield from build_contract_tree(contract_ctx, c, summary)
+
+
 def build_tree(root_ctx: WorkflowContext) -> CacheNode[NatSpecCachedValue]:
     """Build the NatSpec pipeline cache tree by reading the store."""
 
     root: CacheNode[NatSpecCachedValue] = CacheNode(label="root", ctx=root_ctx)
 
-    # --- source-analysis -> ApplicationSummary ---
-    sa_ctx = root_ctx.child(SOURCE_ANALYSIS_KEY)
-    summary = sa_ctx.cache_get(ApplicationSummary)
-    root.children.append(CacheNode(
-        label="source-analysis", ctx=sa_ctx, value=summary,
-    ))
-
-    # --- interface (key depends on summary hash) ---
-    cached_intf: _CachedInterface | None = None
-    if summary is not None:
-        intf_key = CacheKey[None, _CachedInterface](
-            f"interface-{string_hash(summary.model_dump_json())}"
-        )
-        intf_ctx = root_ctx.child(intf_key)
-        cached_intf = intf_ctx.cache_get(_CachedInterface)
-        root.children.append(CacheNode(
-            label="interface", ctx=intf_ctx, value=cached_intf,
-        ))
-
-        # --- stub (key depends on interface hash) ---
-        if cached_intf is not None:
-            stub_key = CacheKey[None, _CachedStub](
-                f"stub-for-{string_hash(cached_intf.intf)}"
-            )
-            stub_ctx = root_ctx.child(stub_key)
-            root.children.append(CacheNode(
-                label="stub", ctx=stub_ctx, value=stub_ctx.cache_get(_CachedStub),
-            ))
-
-    # --- properties (parent for component analysis children) ---
-    props_ctx = root_ctx.child(PROPERTIES_KEY)
-    props_node: CacheNode[NatSpecCachedValue] = CacheNode(label="properties", ctx=props_ctx)
-    root.children.append(props_node)
-
-    if summary is not None:
-        for comp in summary.components:
-            comp_ctx = props_ctx.child(
-                _component_cache_key(comp, summary.application_type)
-            )
-
-            comp_node: CacheNode[NatSpecCachedValue] = CacheNode(label=comp.name, ctx=comp_ctx)
-            props_node.children.append(comp_node)
-
-            # bug_analysis under component
-            ba_ctx = comp_ctx.child(BUG_ANALYSIS_KEY)
-            bug_analysis = ba_ctx.cache_get(_BugAnalysisCache)
-            comp_node.children.append(CacheNode(
-                label="bug_analysis", ctx=ba_ctx, value=bug_analysis,
-            ))
-
-            if bug_analysis is not None:
-                batch_ctx = comp_ctx.child(
-                    _batch_cache_key(bug_analysis.items)
-                )
-                batch_node: CacheNode[NatSpecCachedValue] = CacheNode(
-                    label=f"batch ({len(bug_analysis.items)} properties)",
-                    ctx=batch_ctx,
-                    value=batch_ctx.cache_get(GeneratedCVL),
-                )
-                comp_node.children.append(batch_node)
-
-                cvl_ctx = batch_ctx.abstract(CVLGeneration)
-                judge_ctx = cvl_ctx.child(CVL_JUDGE_KEY)
-                judge_node: CacheNode[NatSpecCachedValue] = CacheNode(
-                    label="judge", ctx=judge_ctx,
-                )
-                judge_node.children.append(CacheNode(
-                    label="feedback", ctx=judge_ctx.child(FEEDBACK_KEY),
-                ))
-                batch_node.children.append(judge_node)
-                la_ctx = cvl_ctx.child(LAST_ATTEMPT_KEY)
-                batch_node.children.append(CacheNode(
-                    label="last_attempt", ctx=la_ctx,
-                    value=la_ctx.cache_get(_LastAttemptCache),
-                ))
+    with node(root):
+        for n in build_tree_inner(root_ctx):
+            curr_node = _node_context.get()
+            assert curr_node is not None
+            curr_node.children.append(n) #type: ignore
 
     return root
+
 
 
 # ---------------------------------------------------------------------------
@@ -144,22 +185,29 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
                 for s in skipped:
                     lines.append(f"  Property {s.property_index}: {s.reason}")
 
-        case ApplicationSummary(application_type=app_type, components=comps):
+        case Application(application_type=app_type, components=comps):
             lines.append(f"Application type: {app_type}")
             lines.append(f"Components ({len(comps)}):")
             for c in comps:
-                lines.append(f"  - {c.name}")
-                lines.append(f"    {c.description}")
+                if isinstance(c, ExternalActor):
+                    lines.append(f"## External Actor: {c.name}")
+                    lines.append(f"    {c.description}")
+                else:
+                    lines.append(f"## Contract: {c.name}")
+                    lines.append("Contract components:")
+                    for cc in c.components:
+                        lines.append(f"- {cc.name}: {cc.description}")
 
-        case _CachedInterface(intf=intf):
+        case InterfaceResult():
             lines.append("")
-            lines.append("--- Interface ---")
-            lines.append(intf)
+            for (nm, decl) in val.name_to_interface.items():
+                lines.append(f"--- Interface {nm}---")
+                lines.append(decl.content)
 
-        case _CachedStub(stub=stub):
+        case StubDeclaration():
             lines.append("")
-            lines.append("--- Stub ---")
-            lines.append(stub)
+            lines.append(f"--- Stub {val.solidity_identifier} ---")
+            lines.append(val.content)
 
         case _BugAnalysisCache(items=items):
             lines.append(f"Properties ({len(items)}):")

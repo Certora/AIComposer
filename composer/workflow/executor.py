@@ -18,9 +18,9 @@ from graphcore.tools.vfs import VFSState
 
 from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
 from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools
-from composer.workflow.factories import get_checkpointer, get_cryptostate_builder, get_store, get_memory, get_vfs_tools, get_memory_ns
+from composer.workflow.factories import get_cryptostate_builder, get_vfs_tools, get_memory_ns
+from composer.workflow.services import get_checkpointer, get_store, get_memory, get_indexed_store
 from composer.workflow.types import PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
-from composer.workflow.services import get_indexed_store
 from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.prover.core import CloudConfig
@@ -36,7 +36,7 @@ from composer.tools.search import cvl_manual_tools
 from composer.templates.loader import load_jinja_template
 from composer.io.protocol import CodeGenIOHandler, WorkflowPurpose
 from composer.io.context import with_handler, run_graph
-from composer.io.codegen_events import CodeGenEventHandler
+from composer.ui.codegen_events import CodeGenEventHandler
 from composer.core.state import AIComposerInput, AIComposerExtra
 
 
@@ -314,13 +314,17 @@ async def execute_ai_composer_workflow(
     research_doc = CVL_RESEARCH_BASE_DOC + " Do NOT use this for source code questions — use the VFS tools for that."
     extra_tools.append(cvl_research_tool(research_ctx, cvl_builder, research_doc))
 
-    (workflow_builder, _, materializer) = get_cryptostate_builder(
+    (workflow_builder, materializer) = get_cryptostate_builder(
         llm=llm,
         fs_layer=fs_layer,
-        prompt_params=prompt_params,
         summarization_threshold=workflow_options.summarization_threshold,
-        extra_tools=extra_tools
     )
+
+    workflow_graph = workflow_builder.with_tools(extra_tools).with_sys_prompt_template(
+        "system_prompt.j2"
+    ).with_initial_prompt_template(
+        "synthesis_prompt.j2", **prompt_params
+    ).build()[0]
 
     audit_db.register_run(
         thread_id=thread_id,
@@ -331,7 +335,7 @@ async def execute_ai_composer_workflow(
         reqs=reqs_list
     )
 
-    workflow_exec = workflow_builder.compile(checkpointer=checkpointer, store=store)
+    workflow_exec = workflow_graph.compile(checkpointer=checkpointer, store=store)
     if reqs_list is not None:
         flow_input["input"].append(f"""
     Additionally, the implementation MUST satisfy the following requirements:

@@ -1,5 +1,7 @@
-  {
-    "stubPath": "stubs",
-    "typeshedPaths": ["stubs"],
-    "reportMissingModuleSource": "none"
-  }
+{
+  "include": ["composer"],
+  "stubPath": "stubs",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}

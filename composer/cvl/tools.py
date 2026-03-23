@@ -43,6 +43,10 @@ class PutCVLSchemaLG(BaseModel):
 
 PutCVLSchemaLG.__doc__ = put_cvl_description
 
+DEFAULT_READ_KEY = "did_read"
+
+DEFAULT_SPEC_KEY = "curr_spec"
+
 
 class PutCVLRaw(BaseModel):
     """
@@ -56,10 +60,13 @@ class PutCVLRaw(BaseModel):
     tool_call_id: Annotated[str, InjectedToolCallId]
 
 
-def _maybe_update_cvl(
+def maybe_update_cvl(
+    *,
     tool_call_id: str,
     pp: str,
+    spec_key: str,
     ast_json: dict | None = None,
+    reset_read: str | None = None
 ) -> str | Command:
     """
     Validate CVL syntax and update state if valid.
@@ -97,11 +104,14 @@ stderr:
 """
     except Exception:
         return "Syntax checker failed"
+    update = {}
+    update[spec_key] = pp
+    if reset_read:
+        update[reset_read] = False
     return tool_state_update(
         tool_call_id=tool_call_id,
         content="Accepted",
-        curr_spec=pp,
-        did_read=False,
+        **update
     )
 
 
@@ -116,7 +126,7 @@ def put_cvl(
         pp = pretty_print(CVLFile.model_validate(cvl_file))
     except Exception:
         return "Failed to pretty print the AST"
-    return _maybe_update_cvl(tool_call_id, pp, ast_json=cvl_file)
+    return maybe_update_cvl(tool_call_id=tool_call_id, pp=pp, ast_json=cvl_file, reset_read=DEFAULT_READ_KEY, spec_key=DEFAULT_SPEC_KEY)
 
 
 @tool(args_schema=PutCVLRaw)
@@ -125,7 +135,7 @@ def put_cvl_raw(
     cvl_file: str
 ) -> str | Command:
     """Put a CVL file using raw surface syntax."""
-    return _maybe_update_cvl(tool_call_id, cvl_file)
+    return maybe_update_cvl(tool_call_id=tool_call_id, pp=cvl_file, reset_read=DEFAULT_READ_KEY, spec_key=DEFAULT_SPEC_KEY)
 
 class WithCurrSpec(TypedDict):
     curr_spec: str | None
@@ -183,10 +193,13 @@ def get_cvl(
             return "No spec file written yet"
         spec = st["curr_spec"]
         if set_did_read:
+            update = {
+                DEFAULT_READ_KEY: True
+            }
             return tool_state_update(
                 tool_call_id=args["tool_call_id"],
                 content=spec,
-                did_read=True,
+                **update
             )
         return spec
     return get_cvl

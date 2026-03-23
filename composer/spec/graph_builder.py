@@ -5,7 +5,7 @@ Convenience helpers for building agent sub-workflows.
 - run_to_completion: Thin wrapper around context.run_graph for sub-workflows
 """
 
-from typing import Any, Callable, NotRequired, get_origin, get_args, cast
+from typing import Any, Callable, NotRequired, get_origin, get_args, cast, overload
 
 from pydantic import BaseModel
 
@@ -75,11 +75,11 @@ def bind_standard[_S: MessagesState, _C: StateLike | None, _I: FlowInput | None,
         max_messages=50
     )
 
-
-async def run_to_completion[I: StateLike, S: StateLike](
-    graph: CompiledStateGraph[S, None, I, Any],
+async def run_to_completion[I: StateLike, S: StateLike, C: StateLike | None](
+    graph: CompiledStateGraph[S, C, I, Any],
     input: I,
     thread_id: str,
+    context: C = None,
     *,
     checkpoint_id: str | None = None,
     recursion_limit: int = 100,
@@ -99,7 +99,7 @@ async def run_to_completion[I: StateLike, S: StateLike](
 
     return await _context_run_graph(
         graph=graph,
-        ctxt=None,
+        ctxt=context,
         input=input,
         run_conf=run_conf,
         description=description,

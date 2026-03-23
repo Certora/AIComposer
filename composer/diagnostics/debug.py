@@ -5,7 +5,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 
 from composer.input.types import CommandLineArgs
-from composer.workflow.factories import get_checkpointer, get_cryptostate_builder
+from composer.workflow.factories import get_cryptostate_builder
+from composer.workflow.services import get_checkpointer
 
 
 def setup_logging(debug: bool) -> None:
@@ -21,7 +22,6 @@ def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
         llm=llm,
         fs_layer=None,
         summarization_threshold=None,
-        prompt_params={"is_resume": False}
     )[0]
     config: RunnableConfig = {
         "configurable": {

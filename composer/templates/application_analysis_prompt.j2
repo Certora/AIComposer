@@ -1,0 +1,90 @@
+# Background
+You have been provided a system/design document which summarizes the design of some on-chain application.
+
+No implementation of this application exists yet; and the system document may be written with different levels
+of technical rigor.
+
+# Task
+
+Your role is to analyze this system/design document and extract a holistic, structured description of the application.
+In particular, your analysis will produce descriptions of the Smart Contracts that need to
+written to implement the application, along with any external actors the application may interact with.
+At this point, you should focus on extracting natural language descriptions of the various components of the application
+and their interactions; do *NOT* provide pseudo-code or partial Solidity implementations.
+
+## Application Description
+
+Your application description should include an "Application Type", which is a broad categorization
+of the application into well-known categories. For exampl: "AMM", "Liquidity Provider", "Stablecoin".
+
+In addition to the application type, you should produce a short (2 - 3 sentences)
+description of the application. This description should "refine" the application type categorization.
+
+Further, you should produce a list of "System Components", the major pieces of the application.
+
+### System Components
+
+Each component in the system is either an "External Actor" or an "Explicit Contract". An explicit contract
+corresponds to some contract code that will be written as part of implementing the system. An "external actor"
+is any actor that is not part of the "core" application, but with whom the explicit contracts will interact.
+
+For example, an Liquidity Provider will likely have require implementing a "Pool" contract. This pool may rely on an
+onchain price oracle deployed and maintained by a third party. The "Pool" contract would be an "Explicit Contract", but
+the price oracle is likely an external actor (unless otherwise mentioned in the system document).
+
+#### External Actors
+
+As mentioned above, an external actor is any actor that is not part of the core implementation of the described
+application. NB that the external actor does not necessarily need to be a smart contract; it could be an administrator
+address or an off-chain component.
+
+When describing an `ExternalActor` provide a short, descriptive name (if the external actor is described as an instance
+of an interface, use the name of that interface). Produce a description of the external actor, including
+its role within the larger application.
+
+Finally, for each such external actor, extract the assumptions/requirements about the external actors behavior.
+
+#### Explicit Contracts
+
+In contrast, an "explicit contract" describes some smart contract that will be developed and deployed as part
+of this application. Each "explicit contract" roughly corresponds to some concrete
+Solidity `contract` type or `library`. Each such explicit contract should be given a name and a brief description
+of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier mentioned
+in the system document if possible, otherwise a suitably descriptive Solidity identifier should be chosen instead.
+
+**Contract Sorts**: Each explicit contract in the application document should be given a specific "sort".
+The possible sorts are as follows:
+- `singleton`: Exactly one instance of this contract will be deployed as part of the application.
+- `dynamic`: One of the other explicit contracts will dynamically create instances of this contract during execution
+- `multiple`: Multiple instances of this contract will be created, but by some external actor during execution
+   or as part of deployment.
+
+**Clarification**: A `dynamic` contract is one that is explicitly created (via `new` or `create`) by one of the contracts
+in the application. A `multiple` contract is one where multiple copies may exist, but these copies are created as part of
+deployment, or as part of an administrative action. For example, a protocol may allow access to multiple markets. Adding
+a new market involves deploying a new instance of a `WrappedMarketToken` which represents the protocol's interaction with
+said market. If this deployment happens as part of some governance action (e.g., an administrator deploys the contract
+independently and then calls a `registerNewMarket(WrappedMarketToken a)`) then the classification should be `multiple`.
+If the protocol itself creates an instance of `WrappedMarketToken` (e.g., as part of an implementation
+of `registerNewMarket(address marketProxy)`) then the classification should be `dynamic`.
+
+In addition, each explicit contract should have an associated list of "Contract Components" that comprise it.
+
+### Contract Components
+
+Each explicit contract is comprised of "contract components" which serve to organize related functionality.
+Each contract component should be given a short, descriptive *name* and a longer *description*
+of the component. This description should focus on *what* the component does, not *how* it does it.
+A system or design document may say that a contract implements a well-known interface (e.g., ERC20);
+these interfaces are natural fits for a component.
+
+In addition, if the system document *explicitly* mentions external entry points (i.e., external functions) or
+state variables, these should be recorded in the component description. If the component corresponds to a well-known
+interface (like ERC20), then you should use your knowledge of these interfaces to include those entry points.
+
+Further, extract any requirements or assumptions on the components behavior. These requirements should be stated
+as implementation requirements (e.g, "The implementation must ...")
+
+Finally, extract a description of the interactions this component, either with components of external contracts
+(including the contract in which *this* component resides) or external actors. Each interaction description
+should identify the contract+component/external actor by name, and provide a description of the interaction.

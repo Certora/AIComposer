@@ -195,6 +195,28 @@ class CommonTools:
             **CommonTools.kb_displays(),
             **CommonTools.rough_draft_displays(),
         }
+    
+    @staticmethod
+    def feedback_tools() -> dict[str, "ToolDisplay | GroupedTool"]:
+        return {
+            "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
+            "record_skip": ToolDisplay(
+                lambda p: f"Skipping property #{p.get('property_index', '?')}",
+                _suppress_ack("Skip result", ("Recorded skip",)),
+            ),
+            "unskip_property": ToolDisplay(
+                lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
+                _suppress_ack("Unskip result", ("Removed skip",)),
+            ),
+        }
+    
+    @staticmethod
+    def cvl_manipulation() -> dict[str, ToolDisplay]:
+        return {
+            "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+            "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+            "get_cvl": ToolDisplay("Reading spec", None),
+        }
 
 
 # ---------------------------------------------------------------------------

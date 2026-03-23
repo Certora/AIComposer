@@ -13,11 +13,13 @@ from pydantic import Discriminator
 class MasterSpecUpdate(TypedDict):
     type: Literal["master_spec_update"]
     spec: str
+    contract_id: str
 
 
 class StubUpdate(TypedDict):
     type: Literal["stub_update"]
     stub: str
+    contract_id: str
 
 
 NatspecEvent = Annotated[

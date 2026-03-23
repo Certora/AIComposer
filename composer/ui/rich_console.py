@@ -12,11 +12,11 @@ from textual.validation import Validator
 
 from rich.text import Text
 
-from composer.io.ide_bridge import IDEBridge
-from composer.io.ide_content import IDEContentMixin
-from composer.io.log_screen import LogViewerMixin
-from composer.io.tool_display import ToolDisplayConfig
-from composer.io.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
+from composer.ui.ide_bridge import IDEBridge
+from composer.ui.ide_content import IDEContentMixin
+from composer.ui.log_screen import LogViewerMixin
+from composer.ui.tool_display import ToolDisplayConfig
+from composer.ui.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
 
 
 class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):

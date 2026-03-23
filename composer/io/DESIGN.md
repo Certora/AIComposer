@@ -93,7 +93,7 @@ to obtain the queue (for the sink) and the handler (for HITL).
 The drainer dispatches to two separate interfaces based on event
 type:
 
-### IOHandler[H, P]
+### IOHandler[H]
 
 A protocol that handles **structural** events — the lifecycle and
 state of graph execution.  Methods receive a `path` parameter for
@@ -106,10 +106,9 @@ nesting context.
 | `log_state_update(path, state)` | `StateUpdate` event |
 | `log_checkpoint_id(path, id)` | `NextCheckpoint` event |
 | `human_interaction(ty, ...)` | HITL interrupt (via `run_graph`, not drainer) |
-| `progress_update(path, upd)` | Called directly by domain code, not via queue |
 
-The type parameters `H` and `P` let workflows define their own HITL
-and progress schemas without touching the core types.
+The type parameter `H` lets workflows define their own HITL
+without touching the core types.
 
 ### EventHandler
 

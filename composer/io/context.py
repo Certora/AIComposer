@@ -47,7 +47,7 @@ from langchain_core.runnables import RunnableConfig
 from composer.io.graph_runner import SinkProtocol, run_graph as _run_graph
 
 
-_io_handler : ContextVar[None | tuple[EventQueue, IOHandler[Any, Any], EventHandler]] = ContextVar("_io_handler", default=None)
+_io_handler : ContextVar[None | tuple[EventQueue, IOHandler[Any], EventHandler]] = ContextVar("_io_handler", default=None)
 
 _current_sink : ContextVar[tuple[SinkProtocol, str] | None] = ContextVar("_current_sink", default=None)
 """Tracks the active event sink and thread_id for nesting detection.
@@ -68,7 +68,7 @@ def _unwrap(event: AllEvents) -> tuple[list[str], InnerEvent]:
 
 async def _queue_drainer(
     q: EventQueue,
-    h: IOHandler[Any, Any],
+    h: IOHandler[Any],
     event_handler: EventHandler
 ):
     """Background task: consume events and dispatch to handlers.
@@ -95,7 +95,7 @@ async def _queue_drainer(
 
 @asynccontextmanager
 async def with_handler(
-    h: IOHandler[Any, Any],
+    h: IOHandler[Any],
     event_handler: EventHandler
 ):
     """Install a handler pair and run a background drainer for this scope.

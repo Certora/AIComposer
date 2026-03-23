@@ -49,7 +49,25 @@ If you are facing a specific issue, use the knowledge base articles to search fo
 When you need to understand CVL syntax, patterns, or language features — especially for
 non-obvious constructs or features — delegate to the cvl_research tool rather than searching the manual yourself.
 
-Before writing your specification, use the `extended_reasoning` tool for in-context analysis of your collected information.
+Before writing your specification, use extended thinking to analyze your collected information.
+
+{% if not has_source %}
+You are writing a CVL file without any implementation, neither for the contract being verified or 
+the other contracts it may interact with.{% if has_stub_tools %}
+To model the state/storage of the contract under verification, you may use the stub tools described below.{% endif %}
+It may be that the formalization of some of these properties require reasoning about other contracts' behavior; either
+their state or function call behavior.
+
+To soundly capture this behavior you should use `ghost state` and `summaries` respectively. Consult the
+CVL manual/CVL Researcher for help in how to use these features to model the behavior of external contracts.
+
+Do *NOT* try to simulate or otherwise model the behavior/state of other contracts with state/functions in the contract
+you are verifying.
+{% endif %}
+
+{% if has_stub_tools %}
+{% include "natspec_stub_tools_guidance.j2" %}
+{% endif %}
 
 ## Step 2
 
@@ -76,23 +94,9 @@ and appropriately digest the feedback from the prover before actually editing yo
 As in step 2, if you are facing specific issues, use the knowledge base articles to search for help.
 {% endif %}
 
-{% if has_stub_tools %}
-{% include "natspec_stub_tools_guidance.j2" %}
-{% endif %}
-
 ## Step {{ "4" if has_prover else "3" }}
 
-{% if has_publish %}
-Publish your CVL specification using the `publish_spec` tool with a description of the properties
-you formalized. The publish tool will merge your work into the master specification.
-
-If the publish fails (e.g., merge conflict or typecheck error), you will receive feedback.
-Address the issues and try publishing again.
-
-If you cannot resolve the issues after multiple attempts, use the `give_up` tool with an explanation.
-{% else %}
-Deliver your CVL specification and an explanation using the "result" tool.
-{% endif %}
+{% include result_template %}
 
 IMPORTANT: Do not try to reason yourself about whether any property is true or possible — focus solely on authoring CVL which will *demonstrate* the desired properties.
 

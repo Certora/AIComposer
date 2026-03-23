@@ -6,7 +6,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langgraph.graph import MessagesState
 
-from composer.io.ide_bridge import IDEBridge
+from composer.ui.ide_bridge import IDEBridge
 from composer.assistant.launch_args import (
     LaunchCodegenArgs,
     LaunchNatSpecArgs,

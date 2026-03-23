@@ -18,7 +18,7 @@ from rich.text import Text
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from composer.diagnostics.handlers import normalize_content
-from composer.io.tool_display import ToolDisplayConfig
+from composer.ui.tool_display import ToolDisplayConfig
 
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
 
@@ -135,8 +135,8 @@ class MessageRenderer:
                     )
                 case "text":
                     text = c["text"]
-                    if text.strip():
-                        widgets.append(Static(dot("blue", text)))
+                    if (stripped := text.strip()):
+                        widgets.append(Static(dot("blue", stripped)))
                 case "tool_use":
                     tool_call_id = c.get("id")
                     name = c["name"]

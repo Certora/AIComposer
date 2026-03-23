@@ -13,13 +13,10 @@
        d. Reference types in *internal* method signatures (parameters and return) must *always* include the data location.
        e. Reference types in *external* method signatures from *libraries* must also *always* include the data location.
        f. The data location on reference types in other contexts is optional.
-<<<<<<< HEAD
-=======
        g. A method block entry without a specific contract identifier (e.g., `function foo() ...`) is implicitly qualified with the contract unfer verification. To refer to *any* method called `foo()`, you must use
           the `function _.foo() ...` syntax.
        h. A method block signature for a method which uses a user defined type alias must ALSO use the user defined type alias in the parameter/return types,
           *NOT* the underlying type alias.
->>>>>>> origin/master
     7. Unlike the methods block, parameter types in `preserved` blocks, signature literals, and dispatch list signatures should *not* include data locations.
     8. The contract name in `methods` block should be the contract type name, *not* the identifier bound by a `using` clause.
     9. With the exception of ghosts, values are immutable in CVL. That is, it is illegal to write `uint[] a = [1,2,3]; a[0] = 4;` Instead, values should be constrained via `require` statements.
@@ -31,11 +28,12 @@
     14. All CVL functions must end in a `return` statement, even if the function has no return value.
     15. Void functions in `CVL` should simply omit the returns clause. `returns void` should NOT be used.
     16. The return value of `@withrevert` calls should rarely be used, as it is undefined if the function in question reverted.
-<<<<<<< HEAD
-=======
     17. method block entries which are neither marked `envfree` nor have a summary serve no purpose. All external methods declared in the target smart contract are automatically exposed to a CVL specification; the
         `methods` block is only necessary for *annotating* specific methods.
     18. Preserved blocks for an invariant I add requirements to the prestate *on top* of the invariant itself. When proving an invariant I for some contract C, the prover shows the following is true for all possible methods m in C:
         `assume I; m(); assert I`. `preserved` blocks are essentially inserted after the `assume I;` Crucially, there is NO NEED to "manually" require the invariant `I`, it is always included in the pre-state requirements.
->>>>>>> origin/master
+    19. CVL automatically promotes operands of comparison/arithmetic operations to `mathint`. Explicit `to_mathint` casts are
+        rarely need.
+    20. `persistent` ghosts should be used sparingly, and should *never* be used on ghosts which are intended to model/mirror
+        contract state.
 </cvl_guidelines>
