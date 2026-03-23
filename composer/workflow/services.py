@@ -223,7 +223,7 @@ def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
         betas=(
             ["files-api-2025-04-14"]
             + (["context-management-2025-06-27"] if args.memory_tool else [])
-            + (["interleaved-thinking-2025-05-14"] if args.interleaved_thinking else [])
+            + (["interleaved-thinking-2025-05-14"] if effective_interleaved else [])
         ),
         thinking=thinking,
     )
