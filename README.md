@@ -26,7 +26,7 @@ NB: You will need to restart this docker image each time your host computer rest
 You will need to build the local RAG database used for CVL manual searches by the LLM.
 Instructions are as follows:
 
-1. Run the base script `./gen_docs.sh`; if it completes without error, you should have `cvl_manual.html` in your directory
+1. Run the base script `./gen_docs.sh`; if it completes without error, you should have a `prover-docs` folder in your directory that contains several html files
 2. Create a new python virtual environment for the RAG build process by running `python3 -m venv somepath` where `somepath` is some path
    on your filesystem
 3. Run `source somepath/bin/activate`.
@@ -37,16 +37,16 @@ Instructions are as follows:
 
 ## One-time Extended RAG Setup (for Sanity Analyzer)
 
-The vacuity analyzer requires additional prover documentation beyond the CVL manual. If you plan to use the vacuity analyzer, follow these additional steps:
+The sanity analyzer requires additional prover documentation beyond the CVL manual. If you plan to use the sanity analyzer, follow these additional steps:
 
-1. Run the extended documentation build script: `./gen_docs_extended.sh`; if it completes without error, you should have `cvl_manual.html` and a `prover_html/` directory
+1. Run the `gen_docs.sh` script if you did not already for the base RAG setup, you should have the `prover-docs` folder in your directory
 2. Using the same virtual environment from the previous RAG setup (or create a new one):
    - Run `source somepath/bin/activate`
    - Run `pip3 install -r ./rag_build_requirements.txt` (if not already installed)
    - Run `python3 ./ragbuild.py --connection "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db" prover-docs/cvl.html prover-docs/prover.html prover-docs/user-guide.html`
    - Run `deactivate`
 
-**Note:** The cex-analyzer and AI Composer use the standard `rag_db` (CVL-only), while vacuity-analyzer defaults to `extended_rag_db` (CVL + prover docs). You can override this with the `--rag-db` flag if needed.
+**Note:** The cex-analyzer and AI Composer use the standard `rag_db` (CVL-only), while sanity-analyzer defaults to `extended_rag_db` (CVL + prover docs). You can override this with the `--rag-db` flag if needed.
 
 ## One-time prover setup
 
