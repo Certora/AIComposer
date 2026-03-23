@@ -66,11 +66,13 @@ def get_section_header(s: Tag) -> Optional[Header]:
                     return None
             case _:
                 return None
-    assert head_tag is not None
+    if head_tag is None:
+        return None
     target = head_tag
     header = target.getText()
     level = int(target.name[1:])
     return Header(head=header, level=level)
+
 
 max_length = 2000
 nlp = spacy.load("en_core_web_sm")
@@ -390,15 +392,16 @@ def get_block_header(s: Tag) -> list[str]:
     headers = [""] * 6
     if section_label:
         headers[0] = section_label
-    headers[h.level - 1 + offset] = h.head
+    headers[min(h.level - 1 + offset, 5)] = h.head
     for p in s.parents:
         if p == main_body:
             break
         if p.name == "section":
             head = get_section_header(p)
             assert head is not None
-            assert headers[head.level - 1 + offset] == ""
-            headers[head.level - 1 + offset] = head.head
+            idx = min(head.level - 1 + offset, 5)
+            if not headers[idx]:
+                headers[idx] = head.head
     return headers
 
 def sanity_checker(s: BlockChunk) -> None:
@@ -412,26 +415,13 @@ def sanity_checker(s: BlockChunk) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG database from HTML documentation')
-    parser.add_argument('html_files', nargs='*', metavar='HTML_FILE',
+    parser.add_argument('files', nargs='+', metavar='HTML_FILE',
                         help='One or more HTML files to process directly')
-    parser.add_argument('--config', type=str,
-                        help='JSON config file listing html files and optional section labels')
     parser.add_argument('--connection', type=str, default=DEFAULT_CONNECTION,
                         help='Database connection string (default: rag_db)')
     args = parser.parse_args()
 
-    if bool(args.html_files) == bool(args.config):
-        parser.error('provide either positional HTML_FILE arguments or --config, not both (or neither)')
-
-    if args.config:
-        config_path = pathlib.Path(args.config)
-        with open(config_path, "r") as f:
-            raw = json.load(f)
-        # resolve file paths relative to the config file's directory
-        config_dir = config_path.parent
-        file_entries = [{"file": str(config_dir / e["file"]), "section": e.get("section", "")} for e in raw]
-    else:
-        file_entries = [{"file": str(f), "section": ""} for f in args.html_files]
+    file_entries = [{"file": (path:=pathlib.Path(f)), "section": path.stem} for f in args.files]
 
     db = PostgreSQLRAGDatabase(args.connection, get_model(), skip_test=False, create_schema=True)
     buffer: list[BlockChunk] = []
@@ -448,10 +438,17 @@ def main() -> None:
             s.decompose()
 
         # delete documentation of changes, not interesting to the LLM
-        # (only exists in CVL manual, not in extended manual)
-        changes = m.find("section", {"id": "changes-since-cvl-1"})
-        if isinstance(changes, Tag):
-            changes.decompose()
+        for section in m.find_all("section"):
+            if not isinstance(section, Tag):
+                continue
+            sid = (section.attrs or {}).get("id", "")
+            h = get_section_header(section)
+            heading = h.head if h else ""
+            if any(kw in sid or kw in heading for kw in (
+                "changelog", "release-note", "release note", "changes-since", "changes since",
+                "changes-introduced", "changes introduced", "changes to"
+            )):
+                section.decompose()
 
         main_body = m.find("div", {"itemprop": "articleBody"})
         assert isinstance(main_body, Tag), str(main_body)

@@ -31,11 +31,11 @@ Instructions are as follows:
    on your filesystem
 3. Run `source somepath/bin/activate`.
 4. Run `pip3 install -r ./rag_build_requirements.txt`
-5. Run `python3 ./ragbuild.py cvl_manual.html`.
+5. Run `python3 ./ragbuild.py prover-docs/cvl.html`.
 6. Run the command `deactivate`
 7. (Optional) cleanup `somepath`
 
-## One-time Extended RAG Setup (for Vacuity Analyzer)
+## One-time Extended RAG Setup (for Sanity Analyzer)
 
 The vacuity analyzer requires additional prover documentation beyond the CVL manual. If you plan to use the vacuity analyzer, follow these additional steps:
 
@@ -43,7 +43,7 @@ The vacuity analyzer requires additional prover documentation beyond the CVL man
 2. Using the same virtual environment from the previous RAG setup (or create a new one):
    - Run `source somepath/bin/activate`
    - Run `pip3 install -r ./rag_build_requirements.txt` (if not already installed)
-   - Run `python3 ./ragbuild.py --config rag_config_extended.json --connection "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db"`
+   - Run `python3 ./ragbuild.py --connection "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db" prover-docs/cvl.html prover-docs/prover.html prover-docs/user-guide.html`
    - Run `deactivate`
 
 **Note:** The cex-analyzer and AI Composer use the standard `rag_db` (CVL-only), while vacuity-analyzer defaults to `extended_rag_db` (CVL + prover docs). You can override this with the `--rag-db` flag if needed.

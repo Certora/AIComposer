@@ -4,7 +4,5 @@
 cryptosafe.db
 *.db*
 tags
-scripts/cvl_manual.html
-scripts/prover_html/
-*.html
+scripts/**/*.html
 **/node_modules
