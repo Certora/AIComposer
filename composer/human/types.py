@@ -38,6 +38,14 @@ class QuestionType(TypedDict):
     code: Annotated[Optional[str], "Any code snippet(s) that might be relevant to the question. " \
               "IMPORTANT: do NOT escape newlines or other special characters; this string will be directly printed to a terminal."]
 
+class ExtractionQuestionType(TypedDict):
+    """
+    Ask a question to the user during requirements extraction.
+    """
+    type: Literal["extraction_question"]
+    question: str
+    context: str
+
 class RequirementRelaxationType(TypedDict):
     """
 Ask the user to relax one of the requirements and remove its validation from the task completion criteria.
@@ -66,5 +74,5 @@ change to the requirements.
 
 
 # Type of the interrupt payload
-HumanInteractionType = Annotated[Union[ProposalType, QuestionType, RequirementRelaxationType], Discriminator("type")]
+HumanInteractionType = Annotated[Union[ProposalType, QuestionType, ExtractionQuestionType, RequirementRelaxationType], Discriminator("type")]
 

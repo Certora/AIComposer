@@ -1,9 +1,8 @@
-from typing import cast, TypedDict, TypeGuard, Optional
+from typing import cast, TypedDict, TypeGuard
 
 from composer.core.state import AIComposerState
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
 from composer.diagnostics.stream import AllUpdates, ProgressUpdate, AuditUpdate, UserUpdateTy, AuditUpdateTy
-from composer.audit.db import AuditDB
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
 known_nodes = {INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE}
@@ -66,7 +65,7 @@ def summarize_update(
                                 case "thinking":
                                     buff.append("Thinking...")
                                 case "text":
-                                    buff.append("Text: " + c["text"][:50] + "...")
+                                    buff.append("Text: " + c["text"])
                                 case "tool_use":
                                     buff.append("Call tool: " + c["name"])
                                 case _:
@@ -98,7 +97,7 @@ def summarize_update(
 # Custom update handler
 # +++++++++++++++++++++++++++
 
-user_guard: set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run"}
+user_guard: set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run", "rule_analysis", "summarization_notice", "prover_output", "cloud_polling"}
 
 def is_user_update(x: AllUpdates) -> TypeGuard[ProgressUpdate]:
     return x["type"] in user_guard
@@ -109,6 +108,14 @@ def print_prover_updates(payload: ProgressUpdate) -> None:
     elif payload["type"] == "prover_result":
         print("Prover run complete, rule status:")
         print("\n".join([f" * {k}: {v}" for (k, v) in payload["status"].items()]))
+    elif payload["type"] == "rule_analysis":
+        pass
+    elif payload["type"] == "summarization_notice":
+        print("Context compacted (summarization applied)")
+    elif payload["type"] == "prover_output":
+        print(payload["line"])
+    elif payload["type"] == "cloud_polling":
+        print(f"Cloud: {payload['message']}")
     else:
         assert payload["type"] == "prover_run"
         print(f"Running prover with args: {' '.join(payload['args'])}")
@@ -119,32 +126,3 @@ audit_guard: set[AuditUpdateTy] = {"manual_search", "rule_result", "summarizatio
 def is_audit_update(x: AllUpdates) -> TypeGuard[AuditUpdate]:
     return x["type"] in audit_guard
 
-def handle_audit_update(db: AuditDB, upd: AuditUpdate, thread_id: str) -> None:
-    match upd["type"]:
-        case "manual_search":
-            db.add_manual_result(
-                thread_id=thread_id,
-                tool_id=upd["tool_id"],
-                ref=upd["ref"]
-            )
-        case "rule_result":
-            db.add_rule_result(
-                thread_id=thread_id,
-                analysis=upd["analysis"],
-                result=upd["status"],
-                rule_name=upd["rule"],
-                tool_id=upd["tool_id"]
-            )
-        case "summarization":
-            db.register_summary(
-                thread_id=thread_id,
-                checkpoint_id=upd["checkpoint_id"],
-                summary=upd["summary"]
-            )
-        
-
-def handle_custom_update(p: AllUpdates, thread_id: str, audit_db: Optional[AuditDB]) -> None:
-    if is_user_update(p):
-        print_prover_updates(p)
-    elif is_audit_update(p) and audit_db is not None:
-        handle_audit_update(audit_db, p, thread_id=thread_id)
