@@ -536,8 +536,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
         if not headers:
             return None
 
-        # Build filter for exact header match
-        # ChromaDB requires $and for multiple conditions
+        # Build filter for exact header match on provided levels
         conditions = []
         for i, h in enumerate(headers, start=1):
             conditions.append({f"h{i}": {"$eq": h}})
@@ -552,11 +551,20 @@ class ChromaRAGDatabase(ComposerRAGDB):
         if not results['documents']:
             return None
 
-        # Sort by part and concatenate
-        parts = sorted(
-            zip(results['documents'], results['metadatas']),
-            key=lambda x: x[1].get('part', 0)
-        )
+        # Post-filter: exclude subsections where deeper headers exist.
+        # ChromaDB can't express "field IS NULL", so we filter in Python.
+        # This mirrors Postgres's "hN IS NOT DISTINCT FROM NULL" for N > len(headers).
+        depth = len(headers)
+        filtered = [
+            (doc, meta)
+            for doc, meta in zip(results['documents'], results['metadatas'])
+            if not any(meta.get(f"h{j}") for j in range(depth + 1, 7))
+        ]
+
+        if not filtered:
+            return None
+
+        parts = sorted(filtered, key=lambda x: x[1].get('part', 0))
         return "\n".join(doc for doc, _ in parts)
 
 
