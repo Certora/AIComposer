@@ -12,7 +12,7 @@ from langgraph.store.postgres import PostgresStore
 
 from graphcore.tools.memory import PostgresMemoryBackend
 
-from composer.input.types import ModelOptions
+from composer.input.types import ModelOptions, ModelOptionsBase
 
 
 T = TypeVar("T")
@@ -111,7 +111,6 @@ def _adapt_async(obj: T, pairs: list[tuple[str, str]]) -> T:
         setattr(obj, async_name, new_async_method)
     return obj
 
-
 def _get_composer_connection(
     *,
     user: str,
@@ -138,7 +137,6 @@ def _get_composer_connection(
     if row_factory is not None:
         return psycopg.connect(conn_string, autocommit=autocommit, row_factory=row_factory)
     return psycopg.connect(conn_string, autocommit=autocommit)
-
 
 def get_checkpointer() -> PostgresSaver:
     conn = _get_composer_connection(
@@ -200,8 +198,19 @@ def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
     )
     return PostgresMemoryBackend(ns, conn, init_from)
 
-def create_llm(args: ModelOptions) -> BaseChatModel:
-    """Create and configure the LLM."""
+_ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
+
+
+def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
+    """Create LLM; thinking disabled when args.thinking_tokens is None."""
+    thinking: dict[str, Any] | None
+    if args.thinking_tokens is None:
+        thinking = None
+    elif args.model in _ADAPTIVE_MODELS:
+        thinking = {"type": "adaptive"}
+    else:
+        thinking = {"type": "enabled", "budget_tokens": args.thinking_tokens}
+
     return ChatAnthropic(
         model_name=args.model,
         max_tokens_to_sample=args.tokens,
@@ -209,7 +218,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
         timeout=None,
         max_retries=2,
         stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
+        thinking=thinking,
         betas=([
             "files-api-2025-04-14",
             "context-management-2025-06-27"
@@ -217,3 +226,9 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
             "files-api-2025-04-14"
         ])
     )
+
+
+def create_llm(args: ModelOptions) -> BaseChatModel:
+    """Create and configure the LLM. Backwards-compatible; thinking always enabled."""
+    return create_llm_base(args)
+

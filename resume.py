@@ -1,15 +1,16 @@
 import pathlib
 import psycopg
-from typing import cast
+import asyncio
 import composer.certora as _
 
 from composer.input.parsing import resume_workflow_parser
-from composer.workflow.factories import create_llm
+from composer.workflow.services import create_llm
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
+from composer.ui.console import ConsoleHandler
 from composer.audit.db import AuditDB
 
-def main() -> int:
+async def main() -> int:
     """Main entry point for the AI Composer tool."""
     parser = resume_workflow_parser()
     args = parser.parse_args()
@@ -65,12 +66,14 @@ def main() -> int:
     llm = create_llm(args)
 
     print("Starting AI Composer resumption workflow...")
-    return execute_ai_composer_workflow(
+    result = await execute_ai_composer_workflow(
+        handler=ConsoleHandler(capture_prover_output=args.prover_capture_output),
         llm=llm,
         input=input_data,
         workflow_options=args
     )
+    return result.exit_code
 
 if __name__ == "__main__":
     import sys
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

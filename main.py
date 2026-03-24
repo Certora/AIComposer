@@ -1,12 +1,15 @@
 import composer.certora as _
 
+import asyncio
+
 from composer.input.parsing import fresh_workflow_argument_parser
-from composer.workflow.factories import create_llm
+from composer.workflow.services import create_llm
 from composer.input.files import upload_input
 from composer.workflow.executor import execute_ai_composer_workflow
+from composer.ui.console import ConsoleHandler
 from composer.diagnostics.debug import setup_logging, dump_fs
 
-def main() -> int:
+async def main() -> int:
     """Main entry point for the AI Composer tool."""
     parser = fresh_workflow_argument_parser()
     args = parser.parse_args()
@@ -26,12 +29,14 @@ def main() -> int:
     input_data = upload_input(args)
 
     print("Starting AI Composer workflow...")
-    return execute_ai_composer_workflow(
+    result = await execute_ai_composer_workflow(
+        handler=ConsoleHandler(capture_prover_output=args.prover_capture_output),
         llm=llm,
         input=input_data,
         workflow_options=args
     )
+    return result.exit_code
 
 if __name__ == "__main__":
     import sys
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))

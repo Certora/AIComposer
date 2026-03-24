@@ -106,7 +106,7 @@ async def poll_job(
     """
     return await asyncio.wait_for(_poll_job_inner(job, interval=interval, on_status=on_status), timeout=timeout)
 
-def _find_results_root(dest: Path) -> Path:
+def find_results_root(dest: Path) -> Path:
     """Navigate past the extra TarName/ top-level directory in the extracted archive."""
     children = [p for p in dest.iterdir() if p.is_dir()]
     if len(children) == 1 and (children[0] / "Reports").is_dir():
@@ -171,4 +171,4 @@ async def cloud_results(
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        yield _find_results_root(dest)
+        yield find_results_root(dest)

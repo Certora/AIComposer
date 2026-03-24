@@ -1,0 +1,25 @@
+{% from "component_detail.j2" import render_component %}
+
+{% if not context %}
+    {% if has_source %}
+    You may read the application source code to receive surrounding context as necessary.
+    {% else %}
+    No component context is available. Refer to the system document for application context.
+        {%- if has_stub_tools -%}
+            In addition, a basic "stub implementation" of the contract has been provided. This stub is NON-FUNCTIONAL, but simply
+            "sketches" the storage fields/external entry points that will be present in the final implementation.
+        {%- endif %}
+    {% endif %}
+{% else %}
+
+The Web3 application is described as: {{ context.application_type }}
+{% if has_source %}
+
+The entry point for the application is found in a smart contract called {{ contract_name }},
+located at {{ relative_path }} on the filesystem.
+{% endif %}
+
+The component you are analyzing is described as follows:
+
+{{ render_component(context.component) }}
+{% endif %}

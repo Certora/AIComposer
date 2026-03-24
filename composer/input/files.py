@@ -3,7 +3,7 @@ import os
 import zlib
 import anthropic
 
-from composer.input.types import CommandLineArgs, InputData, UploadedFile
+from composer.input.types import UploadPaths, InputData, UploadedFile
 
 def upload_file_if_needed(client: anthropic.Anthropic, file_path: str, uploaded_files: Dict[str, str]) -> UploadedFile:
     """Upload a file if not already uploaded, return UploadedFile."""
@@ -22,7 +22,7 @@ def upload_file_if_needed(client: anthropic.Anthropic, file_path: str, uploaded_
         print(f"Found existing {basename} with ID: {uploaded_files[crc_basename]} (canonical name {crc_basename})")
         return UploadedFile(file_id=uploaded_files[crc_basename], basename=basename, path=file_path)
 
-def upload_input(i: CommandLineArgs) -> InputData:
+def upload_input(i: UploadPaths) -> InputData:
     client = anthropic.Anthropic()
     d: Dict[str, str] = {}
     for f in client.beta.files.list():
