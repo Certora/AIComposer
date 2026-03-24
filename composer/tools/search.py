@@ -53,7 +53,7 @@ def _cvl_manual_search_factory(
     db_provider: Callable[[], PostgreSQLRAGDatabase]
 ) -> BaseTool:
     @tool("cvl_manual_search", args_schema=CVLManualSearchSchema)
-    def _cvl_manual_search(
+    async def _cvl_manual_search(
         question: str,
         tool_call_id: Annotated[str, InjectedToolCallId],
         similarity_cutoff: float = 0.5,
@@ -66,7 +66,7 @@ def _cvl_manual_search_factory(
 
         try:
             to_ret: list[SearchResultSchema] = []
-            for t in rag_db.find_refs(query=question, similarity_cutoff=similarity_cutoff, top_k=max_results, manual_section=manual_section):
+            for t in await rag_db.find_refs(query=question, similarity_cutoff=similarity_cutoff, top_k=max_results, manual_section=manual_section):
                 upd : ManualSearchResult = {
                     "type": "manual_search",
                     "tool_id": tool_call_id,
@@ -114,7 +114,7 @@ def _cvl_keyword_search_factory(
     db_provider: Callable[[], PostgreSQLRAGDatabase]
 ) -> BaseTool:
     @tool("cvl_keyword_search", args_schema=CVLKeywordSearchSchema)
-    def _cvl_keyword_search(
+    async def _cvl_keyword_search(
         query: str,
         min_depth: int = 0,
         limit: int = 10,
@@ -122,7 +122,7 @@ def _cvl_keyword_search_factory(
         """Search the CVL manual for sections matching keywords."""
         rag_db = db_provider()
         try:
-            hits = rag_db.search_manual_keywords(query, min_depth=min_depth, limit=limit)
+            hits = await rag_db.search_manual_keywords(query, min_depth=min_depth, limit=limit)
             if not hits:
                 return "No matching sections found."
             lines = []
@@ -138,13 +138,13 @@ def _cvl_get_section_factory(
     db_provider: Callable[[], PostgreSQLRAGDatabase]
 ) -> BaseTool:
     @tool("get_cvl_manual_section", args_schema=CVLGetSectionSchema)
-    def _get_cvl_manual_section(
+    async def _get_cvl_manual_section(
         headers: list[str],
     ) -> str:
         """Retrieve the full content of a CVL manual section by its headers."""
         rag_db = db_provider()
         try:
-            content = rag_db.get_manual_section(headers)
+            content = await rag_db.get_manual_section(headers)
             if content is None:
                 return f"No section found matching headers: {headers}"
             return content

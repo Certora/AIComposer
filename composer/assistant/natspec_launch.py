@@ -66,7 +66,7 @@ async def launch_natspec_workflow(
     checkpointer = get_checkpointer()
     store = get_store()
     rag_db = PostgreSQLRAGDatabase(
-        conn_string=ctx.config.rag_db, model=get_model(), skip_test=True,
+        conn_string=ctx.config.rag_db, model=get_model(),
     )
 
     services = _PipelineServices(checkpointer, store)

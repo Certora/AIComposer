@@ -562,7 +562,7 @@ async def execute(args: NatSpecArgs, handler: NatSpecIOHandler | None = None) ->
     checkpointer = get_checkpointer()
 
     rag_db = PostgreSQLRAGDatabase(
-        conn_string=args.rag_db, model=get_model(), skip_test=True
+        conn_string=args.rag_db, model=get_model()
     )
 
     document = pathlib.Path(args.input_file).read_text()

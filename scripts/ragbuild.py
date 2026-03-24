@@ -16,6 +16,7 @@
 from typing import Optional, Generator, cast, Iterable, Iterator
 
 from dataclasses import dataclass
+import asyncio
 import logging
 import argparse
 import contextvars
@@ -404,7 +405,7 @@ def sanity_checker(s: BlockChunk) -> None:
         if ref >= len(s.code_refs):
             print(f"Orphan ref {ref} in {s.chunk}")
 
-def main() -> None:
+async def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG database from HTML documentation')
     parser.add_argument('html_file', help='Path to the HTML file to process')
     args = parser.parse_args()
@@ -427,7 +428,8 @@ def main() -> None:
 
     main_body_ctx.set(main_body)
 
-    db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model(), skip_test=False)
+    db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model())
+    await db.test_connection()
     buffer : list[BlockChunk] = []
 
     sink = TextCollector()
@@ -445,14 +447,14 @@ def main() -> None:
             sanity_checker(t)
             buffer.append(t)
             if len(buffer) == 50:
-                db.add_chunks_batch(buffer)
+                await db.add_chunks_batch(buffer)
                 buffer = []
 
     if len(buffer) > 0:
-        db.add_chunks_batch(buffer)
+        await db.add_chunks_batch(buffer)
 
     for i in sink.chunks():
-        db.add_manual_section(i)
+        await db.add_manual_section(i)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

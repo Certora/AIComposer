@@ -176,7 +176,7 @@ async def summary_generation(
     if not rag_db:
         from composer.rag.models import get_model
         from composer.rag.db import DEFAULT_CONNECTION
-        rag_db = PostgreSQLRAGDatabase(conn_string=DEFAULT_CONNECTION, model=get_model(), skip_test=True)
+        rag_db = PostgreSQLRAGDatabase(conn_string=DEFAULT_CONNECTION, model=get_model())
     llm = llm_params
     if not isinstance(llm, BaseChatModel):
         from composer.workflow.factories import create_llm
