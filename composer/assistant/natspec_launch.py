@@ -13,8 +13,7 @@ from composer.assistant.launch_args import LaunchNatSpecArgs
 from composer.assistant.types import OrchestratorContext
 from composer.ui.pipeline_app import PipelineApp
 from composer.kb.knowledge_base import kb_tools
-from composer.rag.db import PostgreSQLRAGDatabase
-from composer.rag.models import get_model
+from composer.rag.db import create_rag_db, ComposerRAGDB
 from composer.spec.context import (
     WorkflowContext, SystemDoc, PlainBuilder, CVLOnlyBuilder, get_system_doc,
 )
@@ -44,7 +43,7 @@ class _PipelineServices:
 
 
 def _make_builders(
-    llm: BaseChatModel, rag_db: PostgreSQLRAGDatabase,
+    llm: BaseChatModel, rag_db: ComposerRAGDB,
 ) -> tuple[PlainBuilder, CVLOnlyBuilder, CVLOnlyBuilder]:
     base = Builder().with_llm(llm).with_loader(load_jinja_template)
     cvl_tools = cvl_manual_tools(rag_db)
@@ -65,9 +64,7 @@ async def launch_natspec_workflow(
     pipeline_llm = create_llm(ctx.config)
     checkpointer = get_checkpointer()
     store = get_store()
-    rag_db = PostgreSQLRAGDatabase(
-        conn_string=ctx.config.rag_db, model=get_model(), skip_test=True,
-    )
+    rag_db = create_rag_db(ctx.config.rag_db)
 
     services = _PipelineServices(checkpointer, store)
     analysis_builder, cvl_authorship, cvl_research = _make_builders(pipeline_llm, rag_db)
