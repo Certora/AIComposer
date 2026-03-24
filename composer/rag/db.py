@@ -387,7 +387,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
             return
 
         embeddings = cast(list[ndarray], self.tr.encode_document(
-            [d.chunk for d in chunks], show_progress_bar=False
+            [f"search_document: {d.chunk}" for d in chunks], show_progress_bar=False
         ))
 
         logger.info(f"Adding {len(chunks)} chunks to ChromaDB...")
@@ -428,7 +428,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
     def find_refs(self, query: str, similarity_cutoff: float = 0.5,
                   top_k: int = 10, manual_section: list[str] = []) -> list[ManualRef]:
         """Search for similar documents"""
-        query_embedding = cast(ndarray, self.tr.encode_query(query, show_progress_bar=False))
+        query_embedding = cast(ndarray, self.tr.encode_query(f"search_query: {query}", show_progress_bar=False))
 
         # Build where filter for manual_section if provided
         where_filter = None
