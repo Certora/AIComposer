@@ -15,8 +15,7 @@ from graphcore.tools.memory import memory_tool
 
 from composer.input.types import ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
-from composer.rag.db import PostgreSQLRAGDatabase
-from composer.rag.models import get_model
+from composer.rag.db import create_rag_db, ComposerRAGDB
 from composer.templates.loader import load_jinja_template
 from composer.tools.search import cvl_manual_tools
 from composer.workflow.services import create_llm, get_checkpointer, get_store, get_memory
@@ -52,7 +51,7 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
 class _PipelineServices:
     """Concrete ``WorkflowServices`` for the pipeline entry point."""
 
-    def __init__(self, checkpointer, store, rag_db: PostgreSQLRAGDatabase):
+    def __init__(self, checkpointer, store, rag_db: ComposerRAGDB):
         self._checkpointer = checkpointer
         self._store = store
         self._rag_db = rag_db
@@ -74,7 +73,7 @@ class _PipelineServices:
 # ---------------------------------------------------------------------------
 
 def _make_builders(
-    llm, rag_db: PostgreSQLRAGDatabase,
+    llm, rag_db: ComposerRAGDB,
 ) -> tuple[PlainBuilder, CVLOnlyBuilder, CVLOnlyBuilder]:
     """Create role-based builders for the pipeline.
 
@@ -118,9 +117,7 @@ async def main() -> int:
     llm = create_llm(args)
     checkpointer = get_checkpointer()
     store = get_store()
-    rag_db = PostgreSQLRAGDatabase(
-        conn_string=args.rag_db, model=get_model(), skip_test=True
-    )
+    rag_db = create_rag_db(args.rag_db)
 
     services = _PipelineServices(checkpointer, store, rag_db)
     analysis_builder, cvl_authorship, cvl_research = _make_builders(llm, rag_db)

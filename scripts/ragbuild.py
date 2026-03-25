@@ -31,7 +31,7 @@ if composer_dir not in sys.path:
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 import spacy #type: ignore
-from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
+from composer.rag.db import PostgreSQLRAGDatabase, create_rag_db, DEFAULT_CONNECTION
 from composer.rag.types import BlockChunk
 from composer.rag.text import get_code_refs, code_ref_tag
 from composer.rag.models import get_model
@@ -417,13 +417,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG database from HTML documentation')
     parser.add_argument('files', nargs='+', metavar='HTML_FILE',
                         help='One or more HTML files to process directly')
-    parser.add_argument('--connection', type=str, default=DEFAULT_CONNECTION,
-                        help='Database connection string (default: rag_db)')
+    parser.add_argument('--output', '-o',
+        help='Output directory for ChromaDB, or PostgreSQL connection string. '
+             f'Defaults to PostgreSQL ({DEFAULT_CONNECTION})')
     args = parser.parse_args()
 
     file_entries = [{"file": (path:=pathlib.Path(f)), "section": path.stem} for f in args.files]
 
-    db = PostgreSQLRAGDatabase(args.connection, get_model(), skip_test=False, create_schema=True)
+    output = args.output or DEFAULT_CONNECTION
+    if output.startswith("postgresql://"):
+        # PostgreSQL needs schema creation
+        db = PostgreSQLRAGDatabase(output, get_model(), skip_test=False, create_schema=True)
+    else:
+        # ChromaDB (directory path)
+        db = create_rag_db(output, get_model(), skip_test=False)
+
     buffer: list[BlockChunk] = []
 
     for entry in file_entries:
@@ -480,6 +488,8 @@ def main() -> None:
 
     if buffer:
         db.add_chunks_batch(buffer)
+
+    logger.info(f"RAG database created at {output}")
 
 if __name__ == "__main__":
     main()

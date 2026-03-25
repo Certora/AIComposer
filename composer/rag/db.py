@@ -1,6 +1,9 @@
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import Generator, cast, Any, Iterator, LiteralString
 import logging
+import sqlite3
+import os
 
 import psycopg
 from sentence_transformers import SentenceTransformer
@@ -15,7 +18,39 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
 SANITY_DEFAULT_CONNECTION: str = "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db"
 
-class PostgreSQLRAGDatabase:
+
+class ComposerRAGDB(ABC):
+    """Abstract base class for RAG database implementations."""
+
+    @abstractmethod
+    def add_chunks_batch(self, chunks: list[BlockChunk]) -> None:
+        """Add chunks to the database in batches."""
+        ...
+
+    @abstractmethod
+    def add_manual_section(self, ch: BlockChunk) -> None:
+        """Add a manual section for keyword search and exact retrieval."""
+        ...
+
+    @abstractmethod
+    def find_refs(self, query: str, similarity_cutoff: float = 0.5,
+                  top_k: int = 10, manual_section: list[str] = []) -> list[ManualRef]:
+        """Search for similar documents using semantic similarity."""
+        ...
+
+    @abstractmethod
+    def search_manual_keywords(self, query: str, *, min_depth: int = 0,
+                               limit: int = 10) -> list[ManualSectionHit]:
+        """Search sections by keywords using full-text search."""
+        ...
+
+    @abstractmethod
+    def get_manual_section(self, headers: list[str]) -> str | None:
+        """Retrieve full section content by exact headers."""
+        ...
+
+
+class PostgreSQLRAGDatabase(ComposerRAGDB):
     """Handle PostgreSQL database operations for RAG"""
 
     def __init__(self, conn_string: str, model: SentenceTransformer, skip_test : bool = True, create_schema=False):
@@ -310,3 +345,247 @@ class PostgreSQLRAGDatabase:
                 for row in rows:
                     parts.append(self._replace_manual_code_refs(cur, row[1], row[0]))
                 return "\n".join(parts)
+
+
+class ChromaRAGDatabase(ComposerRAGDB):
+    """ChromaDB-based RAG database (file-based, no PostgreSQL required)"""
+
+    def __init__(self, persist_dir: str, model: SentenceTransformer, skip_test: bool = True):
+        import chromadb
+
+        self.tr = model
+        self.persist_dir = persist_dir
+        self.client = chromadb.PersistentClient(path=persist_dir)
+        # Collection for semantic search (embedded chunks)
+        self.collection = self.client.get_or_create_collection(
+            name="cvl_manual",
+            metadata={"hnsw:space": "cosine"}
+        )
+        # Collection for section storage (exact retrieval by headers)
+        self.sections = self.client.get_or_create_collection(
+            name="cvl_manual_sections"
+        )
+        self._next_id = self.collection.count()
+        self._next_section_id = self.sections.count()
+
+        # Create FTS5 index for keyword search
+        self.fts_conn = sqlite3.connect(
+            os.path.join(persist_dir, "fts_index.db"),
+            check_same_thread=False
+        )
+        self.fts_conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
+                content,
+                h1, h2, h3, h4, h5, h6,
+                section_id UNINDEXED
+            )
+        """)
+        self.fts_conn.commit()
+
+    def add_chunks_batch(self, chunks: list[BlockChunk]) -> None:
+        """Add chunks to ChromaDB"""
+        if not chunks:
+            return
+
+        embeddings = cast(list[ndarray], self.tr.encode_document(
+            [f"search_document: {d.chunk}" for d in chunks], show_progress_bar=False
+        ))
+
+        logger.info(f"Adding {len(chunks)} chunks to ChromaDB...")
+
+        ids = []
+        documents = []
+        embedding_list = []
+        metadatas = []
+
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            doc_id = str(self._next_id + i)
+            ids.append(doc_id)
+
+            # Expand code refs inline
+            body = chunk.chunk
+            for j, code in enumerate(chunk.code_refs):
+                to_replace = code_ref_tag(j)
+                body = body.replace(to_replace, code)
+            documents.append(body)
+
+            embedding_list.append(embedding.tolist())
+
+            # Store headers in metadata
+            metadata = {}
+            for j, header in enumerate(chunk.headers, start=1):
+                if header:
+                    metadata[f"h{j}"] = header
+            metadatas.append(metadata)
+
+        self.collection.add(
+            ids=ids,
+            embeddings=embedding_list,
+            documents=documents,
+            metadatas=metadatas
+        )
+        self._next_id += len(chunks)
+
+    def find_refs(self, query: str, similarity_cutoff: float = 0.5,
+                  top_k: int = 10, manual_section: list[str] = []) -> list[ManualRef]:
+        """Search for similar documents"""
+        query_embedding = cast(ndarray, self.tr.encode_query(f"search_query: {query}", show_progress_bar=False))
+
+        # Build where filter for manual_section if provided
+        where_filter = None
+        if manual_section:
+            # ChromaDB uses $or for multiple conditions
+            or_conditions = []
+            for section in manual_section:
+                for i in range(1, 7):
+                    or_conditions.append({f"h{i}": section})
+            if or_conditions:
+                where_filter = {"$or": or_conditions}
+
+        results = self.collection.query(
+            query_embeddings=[query_embedding.tolist()],
+            n_results=top_k,
+            where=where_filter,
+            include=["documents", "metadatas", "distances"]
+        )
+
+        to_ret: list[ManualRef] = []
+        if not results['documents'] or not results['documents'][0]:
+            return to_ret
+
+        for i, doc in enumerate(results['documents'][0]):
+            # ChromaDB returns L2 distance by default, but we configured cosine
+            # For cosine distance: similarity = 1 - distance
+            distance = results['distances'][0][i] if results['distances'] else 0
+            similarity = 1 - distance
+
+            if similarity < similarity_cutoff:
+                continue
+
+            metadata = results['metadatas'][0][i] if results['metadatas'] else {}
+            headers = []
+            for j in range(1, 7):
+                h = metadata.get(f'h{j}')
+                if h:
+                    headers.append(h)
+                else:
+                    break
+
+            to_ret.append(ManualRef(headers=headers, content=doc, similarity=similarity))
+
+        return to_ret
+
+    def add_manual_section(self, ch: BlockChunk) -> None:
+        """Add a manual section for keyword search and exact retrieval."""
+        # Expand code refs inline
+        body = ch.chunk
+        for j, code in enumerate(ch.code_refs):
+            body = body.replace(code_ref_tag(j), code)
+
+        metadata: dict[str, str | int] = {"part": ch.part}
+        for i, h in enumerate(ch.headers, start=1):
+            if h:
+                metadata[f"h{i}"] = h
+
+        self.sections.add(
+            ids=[str(self._next_section_id)],
+            documents=[body],
+            metadatas=[metadata]
+        )
+
+        # Also insert into FTS index for keyword search
+        headers: list[str | None] = list(ch.headers) + [None] * (6 - len(ch.headers))
+        self.fts_conn.execute(
+            """INSERT INTO sections_fts(content, h1, h2, h3, h4, h5, h6, section_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (body, *headers[:6], str(self._next_section_id))
+        )
+        self.fts_conn.commit()
+
+        self._next_section_id += 1
+
+    def search_manual_keywords(self, query: str, *, min_depth: int = 0, limit: int = 10) -> list[ManualSectionHit]:
+        """Search sections by keywords using FTS5 full-text search."""
+        if min_depth < 0 or min_depth > 6:
+            raise ValueError("min_depth must be between 0 and 6")
+
+        depth_filter = f"AND h{min_depth} IS NOT NULL" if min_depth > 0 else ""
+
+        try:
+            cursor = self.fts_conn.execute(f"""
+                SELECT bm25(sections_fts) as rank, h1, h2, h3, h4, h5, h6
+                FROM sections_fts
+                WHERE sections_fts MATCH ?
+                {depth_filter}
+                ORDER BY rank
+                LIMIT ?
+            """, (query, limit))
+
+            return [
+                ManualSectionHit(
+                    headers=[h for h in row[1:7] if h],
+                    relevance=-row[0]  # bm25 returns negative scores, lower = better
+                )
+                for row in cursor.fetchall()
+            ]
+        except sqlite3.OperationalError:
+            # Handle invalid FTS query syntax gracefully
+            return []
+
+    def get_manual_section(self, headers: list[str]) -> str | None:
+        """Retrieve full section content by exact headers."""
+        if not headers:
+            return None
+
+        # Build filter for exact header match on provided levels
+        conditions = []
+        for i, h in enumerate(headers, start=1):
+            conditions.append({f"h{i}": {"$eq": h}})
+
+        where_filter = {"$and": conditions} if len(conditions) > 1 else conditions[0] if conditions else None
+
+        results = self.sections.get(
+            where=where_filter,
+            include=["documents", "metadatas"]
+        )
+
+        if not results['documents']:
+            return None
+
+        # Post-filter: exclude subsections where deeper headers exist.
+        # ChromaDB can't express "field IS NULL", so we filter in Python.
+        # This mirrors Postgres's "hN IS NOT DISTINCT FROM NULL" for N > len(headers).
+        depth = len(headers)
+        filtered = [
+            (doc, meta)
+            for doc, meta in zip(results['documents'], results['metadatas'])
+            if not any(meta.get(f"h{j}") for j in range(depth + 1, 7))
+        ]
+
+        if not filtered:
+            return None
+
+        parts = sorted(filtered, key=lambda x: x[1].get('part', 0))
+        return "\n".join(doc for doc, _ in parts)
+
+
+def create_rag_db(rag_db_path: str, model: SentenceTransformer | None = None, skip_test: bool = True) -> ComposerRAGDB:
+    """Create appropriate RAG database based on connection string format.
+
+    Args:
+        rag_db_path: Either a PostgreSQL connection string (postgresql://...)
+                     or a directory path for ChromaDB
+        model: SentenceTransformer model for embeddings. If None, uses default.
+        skip_test: Whether to skip connection test (default True)
+
+    Returns:
+        ComposerRAGDB instance (either PostgreSQL or ChromaDB)
+    """
+    from composer.rag.models import get_model
+    if model is None:
+        model = get_model()
+
+    if rag_db_path.startswith("postgresql://"):
+        return PostgreSQLRAGDatabase(conn_string=rag_db_path, model=model, skip_test=skip_test)
+    else:
+        return ChromaRAGDatabase(persist_dir=rag_db_path, model=model)

@@ -25,8 +25,7 @@ from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.prover.core import CloudConfig
 from composer.core.validation import ValidationType, prover, reqs as req_type
-from composer.rag.db import PostgreSQLRAGDatabase
-from composer.rag.models import get_model as get_rag_model
+from composer.rag.db import create_rag_db
 from composer.audit.db import AuditDB, AuditDBSink, ResumeArtifact, InputFileLike
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
@@ -302,7 +301,7 @@ async def execute_ai_composer_workflow(
         extra_tools.append(memory)
 
     # CVL research sub-agent — KB needs indexed store for semantic search
-    rag_db = PostgreSQLRAGDatabase(workflow_options.rag_db, get_rag_model(), skip_test=True)
+    rag_db = create_rag_db(workflow_options.rag_db)
     indexed_store = get_indexed_store(DefaultEmbedder())
     research_ctx = _CodegenResearchContext(
         _store=indexed_store,
