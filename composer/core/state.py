@@ -1,9 +1,10 @@
 from typing import NotRequired, Annotated
+from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 
 from langgraph.graph import MessagesState
 
-from graphcore.tools.vfs import VFSState
+from graphcore.tools.vfs import VFSState, VFSInput
 
 class ResultStateSchema(BaseModel):
     source: list[str] = Field(description="The relative filenames in the virtual FS to present to the user. IMPORTANT: "
@@ -21,7 +22,13 @@ def merge_skips(left: set[int], right: set[int]) -> set[int]:
     ret.update(right)
     return ret
 
-class AIComposerState(VFSState, MessagesState):
+class AIComposerExtra(TypedDict):
+    validation: Annotated[dict[str, str], merge_validation]
+    skipped_reqs: Annotated[set[int], merge_skips]
+    working_spec: str | None
+
+class AIComposerInput(VFSInput, AIComposerExtra):
+    pass
+
+class AIComposerState(VFSState, MessagesState, AIComposerExtra):
     generated_code: NotRequired[ResultStateSchema]
-    validation: Annotated[NotRequired[dict[str, str]], merge_validation]
-    skipped_reqs: Annotated[NotRequired[set[int]], merge_skips]

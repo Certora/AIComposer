@@ -1,10 +1,10 @@
 from typing import Annotated, Optional
-import hashlib
+
 from pydantic import Field
 
-from graphcore.graph import WithToolCallId, tool_return
+from graphcore.graph import tool_return
+from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 
-from langchain_core.tools import tool, InjectedToolCallId
 from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
@@ -15,7 +15,8 @@ from composer.core.context import AIComposerContext, compute_state_digest
 from composer.core.validation import prover as prover_key
 from composer.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
 
-class CertoraProverArgs(WithToolCallId):
+
+class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
     """
     Invoke the Certora Prover, a powerful symbolic reasoning tool for verifying the correctness of smart contracts.
 
@@ -27,7 +28,7 @@ class CertoraProverArgs(WithToolCallId):
 
     The Certora Prover will automatically check whether a smart contract instance (the "contract under verifiction")
     satisfies the provided specification on a per rule basis.
-     
+
     For each rule, the prover will give one of the following result:
     1. VERIFIED: the smart contract satisfies the rule for all possible inputs
     2. VIOLATED: The smart contract violates the specification. As part of this result, the prover will provide
@@ -75,66 +76,61 @@ class CertoraProverArgs(WithToolCallId):
               "all rules are run. Before delivering the finished code to the user, ensure that all rules pass on the most"
               "up to date version of the code. However, when iteratively developing code, it may be useful to focus on a"
               "single, 'problematic' rule.")
+    
+    use_working_spec : bool = Field(description="Use the working copy of the spec instead of the master copy.")
 
     state: Annotated[AIComposerState, InjectedState]
 
-
-@tool(args_schema=CertoraProverArgs)
-def certora_prover(
-    source_files: list[str],
-    # spec_file: str,
-    target_contract: str,
-    compiler_version: str,
-    loop_iter: int,
-    rule: Optional[str],
-    state: Annotated[AIComposerState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId]
-) -> Command:
-    result = prover_impl(
-        source_files,
-        target_contract,
-        compiler_version,
-        loop_iter,
-        rule, state,
-        tool_call_id
-    )
-    match result:
-        case str():
-            return tool_return(tool_call_id=tool_call_id, content=result)
-        case RawReport():
-            if result.all_verified:
-                ctxt = get_runtime(AIComposerContext).context
-                state_digest = compute_state_digest(c=ctxt, state=state)
+    async def run(self) -> Command:
+        result = await prover_impl(
+            self.source_files,
+            self.target_contract,
+            self.compiler_version,
+            self.loop_iter,
+            self.rule,
+            self.state,
+            self.tool_call_id,
+            self.use_working_spec
+        )
+        match result:
+            case str():
+                return tool_return(tool_call_id=self.tool_call_id, content=result)
+            case RawReport():
+                if result.all_verified and not self.use_working_spec:
+                    ctxt = get_runtime(AIComposerContext).context
+                    state_digest = compute_state_digest(c=ctxt, state=self.state)
+                    return Command(
+                        update={
+                            "messages": [
+                                ToolMessage(
+                                    tool_call_id=self.tool_call_id,
+                                    content=result.report
+                                )
+                            ],
+                            "validation": {
+                                prover_key: state_digest
+                            }
+                        }
+                    )
+                return tool_return(tool_call_id=self.tool_call_id, content=result.report)
+            case SummarizedReport():
                 return Command(
                     update={
                         "messages": [
                             ToolMessage(
-                                tool_call_id=tool_call_id,
-                                content=result.report
+                                tool_call_id=self.tool_call_id,
+                                content="... Output truncated ..."
+                            ),
+                            HumanMessage(
+                                content=[
+                                    "The prover output was too large for the context window. A TODO list extracted from its output is as follows",
+                                    result.todo_list
+                                ],
+                                display_tag="prover_summary"
                             )
-                        ],
-                        "validation": {
-                            prover_key: state_digest
-                        }
+                        ]
                     }
                 )
-            return tool_return(tool_call_id=tool_call_id, content=result.report)
-        case SummarizedReport():
-            return Command(
-                update={
-                    "messages": [
-                        ToolMessage(
-                            tool_call_id=tool_call_id,
-                            content="... Output truncated ..."
-                        ),
-                        HumanMessage(
-                            content=[
-                                "The prover output was too large for the context window. A TODO list extracted from its output is as follows",
-                                result.todo_list
-                            ]
-                        )
 
-                    ]
-                }
-            )
-    
+
+certora_prover = CertoraProverTool.as_tool("certora_prover")

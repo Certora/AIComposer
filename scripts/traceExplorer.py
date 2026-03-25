@@ -6,7 +6,7 @@ import pprint
 from langgraph.checkpoint.base import CheckpointTuple
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
-from composer.workflow.factories import get_checkpointer
+from composer.workflow.services import get_checkpointer
 
 thread_id = sys.argv[1]
 

@@ -16,7 +16,7 @@ from pydantic import Discriminator
 
 from composer.audit.types import ManualResult, RuleResult
 from composer.audit.db import AuditDB
-from composer.workflow.factories import get_checkpointer
+from composer.workflow.services import get_checkpointer
 from composer.templates.loader import load_jinja_template
 from composer.natreq.judge import ClassificationType
 

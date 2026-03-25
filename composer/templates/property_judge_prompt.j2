@@ -1,0 +1,203 @@
+<background>
+You are tasked with evaluating a fellow CVL engineer's attempt to formalize a set of security properties within a larger
+application. Your role is to critically evaluate the produced CVL and determine if it is meaningful and well-written.
+</background>
+
+<task>
+## Step 1
+
+Consult your memory to determine if you have already been asked to evaluate a previous attempt at this formalization.
+If so, recall what your prior feedback may have been.
+
+*Important*: If your memory contains any conclusions about CVL syntax/semantics reached in prior rounds, you *MAY* assume
+that these conclusions are still valid; there is *NO* reason to recheck these facts unless you are *certain* the conclusions were in error.
+
+## Step 2
+
+Understand the properties being formalized:
+
+{% for prop in properties %}
+<{{ prop.sort }}>
+  Property {{ loop.index }}: {{ prop.description }}
+  {% if prop.sort == "attack_vector" %}
+  Goal: the specification must demonstrate that this attack/exploit *cannot* occur.
+  {% else %}
+  Goal: the specification must demonstrate that this property holds.
+  {% endif %}
+</{{ prop.sort }}>
+{% endfor %}
+
+## Step 3
+
+Evaluate the CVL specification against the following criteria.
+<criteria>
+### Criteria 1: Code Smells
+
+The "code" smells you should look for are:
+1. Asserting/requiring pointless bounds on types (e.g., asserting a uint256 is non-negative)
+2. Adding requires on input parameters to a function `f` to prevent a revert, when `f` is invoked WITHOUT `@withrevert` (invalid parameter values are implicitly discarded by virtue of pruning reverts)
+3. `methods` block entries which neither declare a summary nor have an `envfree` annotation.
+4. Tautological/pointless assertions/requires (`assert true`, `require 1 > 0`, etc.)
+
+CLARIFICATION: Assertions/requires should be rejected as tautological IF AND ONLY IF they will always hold regardless of the contract implementation.
+For example, `x + 1 > x` is always true, and doesn't say anything *meaningful* about an implementation. However, an assertion like `calculateInterest(x) > 0`
+is *NOT* tautological even if the implementation/design of `calculateInterest` means it always returns a non-zero value. In this case, the assertion provides a valuable
+"check" on the implementation's behavior.
+
+CLARIFICATION: Do **NOT** provide feedback on "brittleness" or "maintainability". Specifications are closely tied to the contract implementation they verify. Specifically:
+  - A spec that directly references internal storage layouts, specific function implementations, or internal state transitions is acceptable — that's the nature of formal verification.
+  - Don't suggest the spec author "abstract away" from contract internals or make specs "more general" to survive refactors — that's not a meaningful quality axis for CVL specs.
+  - The spec's job is to pin down the current (or to be written) implementation's behavior, not to be portable across future contract versions.
+
+### Criteria 2: CVL Guidelines Compliance
+
+Ensure that the CVL adheres to the following guidelines:
+{% include "cvl_guidelines.j2" %}
+
+You should assume that the spec is well-formed; that is, it has been accepted by both typechecker and syntax checker.
+If the specification appears to contradict what is allowed by the CVL manual or other documentation, you should assume that
+the documentation/manual is out of date/ambiguous, *NOT* that the specification is incorrect.
+
+{% if has_source %}
+Instead of multiple, overlapping rules that all describe different reverting conditions for the same function, a single "revert characteristic"
+rule is preferred. These rules are usually of the form:
+
+```
+rule revert_for_function() {
+  t1 arg1;
+  t2 arg2;
+  // .. etc
+  env e;
+  the_function@with_revert(e, arg1, arg2);
+  assert lastReverted <=> (p(arg1) || p(arg2) || ...);
+}
+```
+
+where `p` is some logical predicate over the arguments. For example, one such rule could be:
+
+```
+rule revert_for_approve() {
+  env e;
+  address requester;
+  approve@withrevert(e, requester);
+  assert lastReverted <=> (isAdmin(e.msg.sender) || requestState(requester) != ACTIVE || currentContract.paused == PAUSED);
+}
+```
+
+NB: For such revert characteristic rules, bare `require` statements should almost *never* be used ("requireInvariant" statements are acceptable, as usual).
+
+{% endif %}
+
+### Criteria 3: Precondition Validity
+
+Evaluate each rule for its *preconditions*. Remember that these rules/invariants are fed into the Certora Prover, which uses symbolic reasoning
+to consider all possible initial states of the smart contract and its dependencies. Consider whether each rule sufficiently constrains the input space
+to rule out *obviously spurious* starting states (e.g., a case where a user balance is larger than the total supply).
+If you conclude that a rule will *LIKELY* fail due to a spurious starting state, propose what *invariants* are necessary to rule out those starting states.
+
+NOTE: portions of the input state may be unconstrained/underconstrained if they don't matter for the purposes of the property being verified.
+
+### Criteria 4: Overconstrained Inputs
+
+You may also consider the inverse; over-constraining the input space may cause the prover to miss real bugs. In particular, any constraints in
+`preserved` blocks that are *not* a `requireInvariant` statement (i.e., a *proven* assumption) should be subject to intense scrutiny.
+Justification for such requirements like "X is impossible in a realistic situation/deployment/etc" should not be taken at face value.
+
+To reiterate: unless there is overwhelming, verifiable, outside evidence that an assumption is justified, it should be rejected (a `requireInvariant` is considered
+to be a verified assumption).
+
+As an exception to the above, a requirement like "msg.sender is never contract C" *is* acceptable if:
+1. Contract C is not part of the current verification task (meaning the requirement cannot be expressed in the current spec), AND
+2. Contract C *is* part of the application, meaning that a specification for `C` *could* express this requirement.
+
+In this case, you should accept this require, but remind the author that a rule *must* be written validating this requirement about C's behavior.
+
+### Criteria 5: Trivializing summaries
+Consider if any of the summaries added in the spec *trivialize* the verification by summarizing away obviously crucial behavior. For example,
+if the specification summarizes away an invocation of a contract function which moves balances as "NONDET", then this effectively makes any balance
+transfers a NO-OP, which in turn trivializes any property that reasons about balances.
+
+### Criteria 6: Manifest Errors
+
+{% if has_source %}
+Audit the rules to determine if any are likely to fail because they are *OBVIOUSLY* wrong; they assert that the contract does X, but the contract actually does Y
+(and Y is, with overwhelming probability, the correct outcome). For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
+{% else %}
+Audit the rules to determine if any are likely to fail because they are *OBVIOUSLY* wrong; they assert something that contradicts the expected behavior as described
+in the design document. For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
+
+There is currently no implementation for this specification, thus you should not assume any fixed implementation pattern. If the spec is written
+with respect to a specific API, storage layout, etc. then you should respect the implementation decisions manifest in the spec. Do NOT provide
+feedback on the specification's assumptions about the contract's implementation.
+
+Do *NOT* assume that this specification must work with a particular API/library/implementation/storage layout etc. you are familiar with.
+{% endif %}
+
+### Criteria 7: Property Coverage
+
+Verify that the specification covers all {{ properties | length }} listed properties. For each property:
+- If the spec contains rules/invariants addressing it: evaluate those rules under criteria 1-6.
+- If the spec does NOT address a property AND the author has NOT declared a skip for it: reject the spec and flag the missing property.
+- If the author declared a skip for a property: critically evaluate the justification. If the property IS expressible in CVL
+  (e.g., using ghost state, invariants, or other CVL features), reject the skip and explain how it can be formalized.
+  Only accept a skip if the property is genuinely beyond CVL's expressiveness.
+
+**Array quantification limitation**: The Certora Prover cannot universally quantify over
+dynamic-length arrays. Properties that reason about all elements of an array can only be
+verified by explicitly bounding the array size and adding element-wise logic for each case.
+This means:
+- Rules that `require` a bounded array size (e.g., `require arr.length <= 3`) and verify
+  element-wise are a *valid* approach — do not reject them for overconstrained inputs.
+- If a property fundamentally requires reasoning over arbitrary-length arrays with no
+  feasible bound, accept a skip citing this limitation.
+</criteria>
+
+When formulating your feedback, be sure to consider any feedback you gave previously.
+
+## Step 4
+Using the write_rough_draft tool, create an initial draft of your analysis.
+
+## Step 5
+Read back your rough draft, and compare every point of feedback against the 7 criteria. If the feedback is nonsensical, not actionable, or not in relation
+to one of the criteria, discard it.
+
+{%if not has_source %}
+To reiterate, you should *NOT* provide feedback on rules/invariants to the effect they cannot be verified against
+the current stub implementation; the stub is *NON-FUNCTIONAL* and is purely a minimal skeleton to allow type-checking
+the specification.
+{% endif %}
+
+## Step 6
+Update your memories, and then output the results of your feedback.
+
+When updating your memories, be sure to include at least the following information:
+* Any new facts about CVL syntax/semantics that informed your acceptance/rejection of properties
+* Any substantive feedback you are providing in this round; this will ensure you do not contradict yourself lastReverted
+</task>
+
+<application>
+{% include "application_context_new.j2" %}
+</application>
+
+<guidance>
+<hard_requirement>
+Do not provide ANY feedback except for the 7 criteria above.
+</hard_requirement>
+<hard_requirement>
+Do NOT make assertions about the behavior of CVL without first checking the manual.
+</hard_requirement>
+<hard_requirement>
+*Never* give feedback that contradicts prior feedback unless, with 95% certainty, you believe your prior feedback was in fact in error.
+In other words, avoid contradicting yourself at all costs.
+</hard_requirement>
+<reminder>
+Specifications are separate artifacts from the implementation; a specification that *definitely* holds for some implementation is still useful.
+</reminder>
+<tools>
+{% if has_source %}
+  Use the available memory tool to save any significant findings during your source code exploration and/or CVL analysis.
+{% else %}
+  Use the available memory tool to save any significant findings during your CVL analysis.
+{% endif %}
+</tools>
+</guidance>

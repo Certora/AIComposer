@@ -30,7 +30,7 @@ if composer_dir not in sys.path:
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 import spacy #type: ignore
-from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
+from composer.rag.db import PostgreSQLRAGDatabase, create_rag_db, DEFAULT_CONNECTION
 from composer.rag.types import BlockChunk
 from composer.rag.text import get_code_refs, code_ref_tag
 from composer.rag.models import get_model
@@ -407,6 +407,9 @@ def sanity_checker(s: BlockChunk) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG database from HTML documentation')
     parser.add_argument('html_file', help='Path to the HTML file to process')
+    parser.add_argument('--output', '-o',
+        help='Output directory for ChromaDB, or PostgreSQL connection string. '
+             f'Defaults to PostgreSQL ({DEFAULT_CONNECTION})')
     args = parser.parse_args()
 
     with open(args.html_file, "r") as f:
@@ -427,7 +430,14 @@ def main() -> None:
 
     main_body_ctx.set(main_body)
 
-    db = PostgreSQLRAGDatabase(DEFAULT_CONNECTION, get_model(), skip_test=False, create_schema=True)
+    output = args.output or DEFAULT_CONNECTION
+    if output.startswith("postgresql://"):
+        # PostgreSQL needs schema creation
+        db = PostgreSQLRAGDatabase(output, get_model(), skip_test=False, create_schema=True)
+    else:
+        # ChromaDB (directory path)
+        db = create_rag_db(output, get_model(), skip_test=False)
+
     buffer : list[BlockChunk] = []
 
     sink = TextCollector()
@@ -453,6 +463,8 @@ def main() -> None:
 
     for i in sink.chunks():
         db.add_manual_section(i)
+
+    logger.info(f"RAG database created at {output}")
 
 if __name__ == "__main__":
     main()

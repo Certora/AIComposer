@@ -16,12 +16,11 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 
-from composer.rag.db import PostgreSQLRAGDatabase, DEFAULT_CONNECTION
-from composer.rag.models import get_model
+from composer.rag.db import create_rag_db, ComposerRAGDB, DEFAULT_CONNECTION
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
 
-from composer.workflow.factories import get_checkpointer
+from langgraph.checkpoint.memory import InMemorySaver
 
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.graph import build_workflow, FlowInput
@@ -56,7 +55,7 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
 
 @dataclass
 class ExplainerContext:
-    rag_db: PostgreSQLRAGDatabase
+    rag_db: ComposerRAGDB
 
 _analysis_doc = """REQUIRED: You MUST call this tool to submit your final analysis.
 Do NOT write your answer as plain text - the workflow cannot complete until you call this tool.
@@ -316,7 +315,7 @@ def _analyze_core(
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt,
         state_class=SimpleState
-    )[0].compile(checkpointer=get_checkpointer())
+    )[0].compile(checkpointer=InMemorySaver())
 
     conf : RunnableConfig = {"configurable": {}}
     tid : str
@@ -333,8 +332,10 @@ def _analyze_core(
 
     conf["recursion_limit"] = args.recursion_limit
 
+    rag_db = create_rag_db(args.rag_db)
+
     for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
-        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
+        rag_db=rag_db
     ), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)

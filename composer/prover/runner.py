@@ -1,5 +1,4 @@
-from typing import Optional, List, Callable
-import asyncio
+from typing import Optional, List, Callable, override
 from pathlib import Path
 
 from langgraph.config import get_stream_writer
@@ -7,7 +6,10 @@ from langgraph.runtime import get_runtime
 
 from langgraph.config import get_store
 
-from composer.diagnostics.stream import ProgressUpdate, AuditUpdate
+from composer.diagnostics.stream import (
+    AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysis,
+    ProverOutputEvent, CloudPollingEvent,
+)
 from composer.prover.ptypes import RuleResult
 from composer.prover.core import (
     RawReport, SummarizedReport, ProverOptions as CoreProverOptions,
@@ -16,49 +18,78 @@ from composer.prover.core import (
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
 
-import sys
-
 
 class _AuditCallbacks(ProverCallbacks):
-    def __init__(self, writer: Callable, tool_call_id: str, capture_output: bool) -> None:
+    def __init__(self, writer: Callable, tool_call_id: str) -> None:
         self._writer = writer
         self._tool_call_id = tool_call_id
-        self._capture_output = capture_output
 
+    @override
     async def on_stdout_line(self, line: str) -> None:
-        if not self._capture_output:
-            print(line)
+        evt: ProverOutputEvent = {
+            "type": "prover_output",
+            "tool_call_id": self._tool_call_id,
+            "line": line,
+        }
+        self._writer(evt)
 
+    @override
+    async def on_cloud_poll(self, status: str, message: str) -> None:
+        evt: CloudPollingEvent = {
+            "type": "cloud_polling",
+            "tool_call_id": self._tool_call_id,
+            "status": status,
+            "message": message,
+        }
+        self._writer(evt)
+
+    @override
     async def on_prover_run(self, args: list[str]) -> None:
-        run_message: ProgressUpdate = {
+        evt: ProverRun = {
             "type": "prover_run",
             "args": args,
+            "tool_call_id": self._tool_call_id,
         }
-        self._writer(run_message)
+        self._writer(evt)
 
+    @override
     async def on_prover_result(self, results: dict[str, RuleResult]) -> None:
-        result_message = {
+        evt: ProverResult = {
             "type": "prover_result",
+            "tool_call_id": self._tool_call_id,
             "status": {k: v.status for k, v in results.items()},
         }
-        self._writer(result_message)
+        self._writer(evt)
 
+    @override
+    async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None:
+        evt: RuleAnalysisResult = {
+            "type": "rule_analysis",
+            "tool_call_id": self._tool_call_id,
+            "rule": rule.path.pprint(),
+            "analysis": analysis,
+        }
+        self._writer(evt)
+
+    @override
     async def on_analysis_start(self, rule: RuleResult) -> None:
-        cex_event: ProgressUpdate = {
+        evt: CEXAnalysis = {
             "type": "cex_analysis",
+            "tool_call_id": self._tool_call_id,
             "rule_name": rule.name,
         }
-        self._writer(cex_event)
+        self._writer(evt)
 
+    @override
     async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None:
-        rule_audit_res: AuditUpdate = {
+        evt: AuditUpdate = {
             "analysis": analysis,
             "rule": rule.name,
             "status": rule.status,
             "type": "rule_result",
             "tool_id": self._tool_call_id,
         }
-        self._writer(rule_audit_res)
+        self._writer(evt)
 
 
 class _StoreCache:
@@ -76,7 +107,7 @@ class _StoreCache:
         self._store.put(("cex", self._tool_call_id), rule.path.pprint(), {"analysis": analysis})
 
 
-def certora_prover(
+async def certora_prover(
     source_files: List[str],
     target_contract: str,
     compiler_version: str,
@@ -84,12 +115,19 @@ def certora_prover(
     rule: Optional[str],
     state: AIComposerState,
     tool_call_id: str,
+    use_working_spec: bool
 ) -> SummarizedReport | RawReport | str:
+    if use_working_spec and not state["working_spec"]:
+        return "No working spec written."
     runtime = get_runtime(AIComposerContext)
     ctxt = runtime.context
     writer = get_stream_writer()
 
     with ctxt.vfs_materializer.materialize(state, debug=ctxt.prover_opts.keep_folder) as temp_dir:
+        if use_working_spec:
+            ws = state["working_spec"]
+            assert ws is not None
+            (Path(temp_dir) / "rules.spec").write_text(ws)
         try:
             args = source_files.copy()
             args.extend([
@@ -111,17 +149,17 @@ def certora_prover(
             store = get_store()
             cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
 
-            result = asyncio.run(run_prover(
+            result = await run_prover(
                 state,
                 Path(temp_dir),
                 args,
                 ctxt.llm,
                 tool_call_id,
-                CoreProverOptions(),
-                _AuditCallbacks(writer, tool_call_id, ctxt.prover_opts.capture_output),
+                CoreProverOptions(cloud=ctxt.prover_opts.cloud),
+                _AuditCallbacks(writer, tool_call_id),
                 analysis_cache=cache,
                 summarization_threshold=10,
-            ))
+            )
 
             # Preserve the rule-is-None check for all_verified
             if isinstance(result, RawReport) and rule is not None:
@@ -132,4 +170,4 @@ def certora_prover(
             print(e)
             import traceback
             traceback.print_exc()
-            sys.exit(1)
+            raise e

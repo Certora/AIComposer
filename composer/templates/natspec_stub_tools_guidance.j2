@@ -1,0 +1,29 @@
+
+<stub_tools>
+You have access to a shared verification stub — a minimal Solidity contract used as the
+verification target. The stub starts with only the interface implementation and grows as
+property agents request storage variables.
+
+Available tools:
+- `read_stub`: Read the current stub source code. Use this to understand what storage
+  variables are available for your specification.
+- `request_stub_field`: Request a new storage variable. Describe what you need
+  (e.g., "a mapping to track per-user deposit amounts"). The registry will either
+  return an existing field that serves the same purpose or create a new one.
+  Always use the returned field name in your CVL specification.
+- `advisory_typecheck`: Run the CVL typechecker on the current spec (from state) against
+  the current stub. Use this after writing your spec via `put_cvl` / `put_cvl_raw` to
+  catch type errors before attempting to publish or receive feedback. Takes no arguments.
+
+## Intended Use
+
+1. Before writing CVL, read the stub to see available fields
+2. If you need a storage variable not in the stub, use `request_stub_field`
+3. Write your CVL using the field names from the stub
+
+**Important**: Do NOT try to request `constant` fields; Solidity `constant` are compile time
+constants which are erased after compilation. The Prover operates on the compiled bytecode, and thus
+has no way to access or reason about constants. Instead, request a regular storage field, and
+include a parametric rule that states the storage field is immutable; that is, after calling any function
+`f` the storage field does not change.
+</stub_tools>
