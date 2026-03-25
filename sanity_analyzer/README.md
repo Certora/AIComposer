@@ -1,10 +1,10 @@
-# Vacuity Analyzer
+# Sanity Analyzer
 
-An AI-powered tool for diagnosing and explaining vacuity issues in unsatisfiable Certora Prover rules.
+An AI-powered tool for diagnosing and explaining sanity issues in unsatisfiable Certora Prover rules.
 
 ## What It Does
 
-When the Certora Prover encounters an unsatisfiable (unsat) rule, it generates an unsat core that shows which constraints are conflicting. The Vacuity Analyzer uses Claude to:
+When the Certora Prover encounters an unsatisfiable (unsat) rule, it generates an unsat core that shows which constraints are conflicting. The Sanity Analyzer uses Claude to:
 
 - Analyze the unsat core and identify the root cause of unsatisfiability
 - Explain why the constraints cannot be satisfied together
@@ -19,15 +19,15 @@ From the repository root:
 pip install -e .
 ```
 
-This will install the `vacuity-analyzer` command.
+This will install the `sanity-analyzer` command.
 
 ## Prerequisites
 
-Before using the vacuity analyzer, you need to set up the extended RAG database. See the [main README](../README.md) for instructions on:
+Before using the sanity analyzer, you need to set up the extended RAG database. See the [main README](../README.md) for instructions on:
 
 1. Setting up the PostgreSQL database
-2. Building the extended documentation (`gen_docs_extended.sh`)
-3. Populating the extended RAG database
+2. Building the documentation (`gen_docs.sh`)
+3. Populating the extended RAG database (`populate_extended_rag.sh`)
 
 ## Usage
 
@@ -36,7 +36,7 @@ Before using the vacuity analyzer, you need to set up the extended RAG database.
 The simplest usage automatically extracts rule and method names from the filename:
 
 ```bash
-vacuity-analyzer /path/to/report/Reports/UnsatCoreTAC-myRule-myMethod-description-0.txt
+sanity-analyzer /path/to/report/Reports/UnsatCoreTAC-myRule-myMethod-description-0.txt
 ```
 
 ### Explicit Rule and Method
@@ -44,7 +44,7 @@ vacuity-analyzer /path/to/report/Reports/UnsatCoreTAC-myRule-myMethod-descriptio
 You can also specify the rule and method explicitly:
 
 ```bash
-vacuity-analyzer /path/to/report/Reports/unsat_core.txt --rule myRule --method myMethod
+sanity-analyzer /path/to/report/Reports/unsat_core.txt --rule myRule --method myMethod
 ```
 
 ### Filename Format
@@ -102,12 +102,12 @@ Quick overview with:
 
 ### Example 1: Basic Usage
 ```bash
-vacuity-analyzer ./my_report/Reports/UnsatCoreTAC-sanity-checkBalance-Satisfy_end_of_methods-0.txt
+sanity-analyzer ./my_report/Reports/UnsatCoreTAC-sanity-checkBalance-Satisfy_end_of_methods-0.txt
 ```
 
 ### Example 2: With Explicit Parameters
 ```bash
-vacuity-analyzer ./Reports/unsat_core.txt \
+sanity-analyzer ./Reports/unsat_core.txt \
   --rule sanity \
   --method MyContract.checkBalance \
   --quiet
@@ -115,8 +115,8 @@ vacuity-analyzer ./Reports/unsat_core.txt \
 
 ### Example 3: Resuming a Session
 ```bash
-vacuity-analyzer ./Reports/unsat_core.txt \
-  --thread-id vacuity-analysis-abc123 \
+sanity-analyzer ./Reports/unsat_core.txt \
+  --thread-id sanity-analysis-abc123 \
   --checkpoint-id checkpoint-def456
 ```
 
@@ -140,7 +140,7 @@ Check that the path to the unsat core file is correct and the file exists.
 
 ## Technical Details
 
-The vacuity analyzer uses:
+The sanity analyzer uses:
 - **Claude Sonnet 4.5** for analysis with extended thinking
 - **Extended RAG database** with CVL manual + prover documentation
 - **LangGraph** for workflow orchestration
