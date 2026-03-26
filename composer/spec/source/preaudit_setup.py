@@ -7,9 +7,9 @@ against real source code.
 
 import json
 import os
-import subprocess
 import sys
 import tempfile
+from pydantic import BaseModel
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, Literal, Annotated
@@ -23,15 +23,13 @@ PREAUDIT_PATH = Path("/home/john/certora/PreAudit")
 PREAUDIT_SRC_PATH = PREAUDIT_PATH / "src"
 
 
-@dataclass
-class SetupSuccess:
+class SetupSuccess(BaseModel):
     """Result of running PreAudit compilation analysis and summary generation."""
     prover_config: dict  # Contents of compilation_config.conf
     summaries_path: Path  # Path to summaries-{Contract}.spec, if generated
     user_types: list[dict]
 
-@dataclass
-class SetupFailure:
+class SetupFailure(BaseModel):
     error: str
 
 type SetupResult = SetupSuccess | SetupFailure

@@ -270,13 +270,7 @@ class _SummaryCache(BaseModel):
 
 
 def _summary_key(d: ContractSetup) -> CacheKey[None, _SummaryCache]:
-    import json
-    cacher = string_hash("|".join([
-        d.model_dump_json(),
-        json.dumps(d.config.prover_config),
-        json.dumps(str(d.config.summaries_path)),
-        json.dumps(d.config.user_types)
-    ]))[:16]
+    cacher = string_hash(d.model_dump_json())[:16]
     return CacheKey("summary-" + cacher)
 
 # ---------------------------------------------------------------------------

@@ -38,8 +38,8 @@ from composer.spec.util import string_hash
 from composer.spec.gen_types import TypedTemplate
 from composer.spec.system_model import SourceApplication
 
-def system_setup_key(s: SourceApplication) -> CacheKey[None, "SystemDescriptionHarnessed"]:
-    return CacheKey[None, "SystemDescriptionHarnessed"](
+def system_setup_key(s: SourceApplication) -> CacheKey["ContractSetup", "SystemDescriptionHarnessed"]:
+    return CacheKey["ContractSetup", "SystemDescriptionHarnessed"](
         "system-setup-" + string_hash(s.model_dump_json())
     )
 
@@ -110,6 +110,11 @@ class HarnessAnalysisParams(TypedDict):
     contract_name: str
     relative_path: str
     context: SourceApplication
+
+
+class ContractSetup(BaseModel):
+    system_description: SystemDescriptionHarnessed
+    config: SetupSuccess
 
 HarnessAnalysis = TypedTemplate[HarnessAnalysisParams]("state_analysis.j2")
 
@@ -387,7 +392,7 @@ def apply_harness_result(
 
 
 async def run_setup_part1(
-    context: WorkflowContext[None],
+    context: WorkflowContext[ContractSetup],
     source: SourceCode,
     env: SourceEnvironment,
     application_desc: SourceApplication
@@ -454,7 +459,7 @@ async def run_setup_part1(
     return harnessed_system
 
 async def run_and_apply_part1(
-    context: WorkflowContext[None],
+    context: WorkflowContext[ContractSetup],
     source: SourceCode,
     env: SourceEnvironment,
     application_desc: SourceApplication
@@ -467,9 +472,7 @@ async def run_and_apply_part1(
             tgt.write_text(c.harness_definition.harness_source)
     return res
 
-class ContractSetup(BaseModel):
-    system_description: SystemDescriptionHarnessed
-    config: SetupSuccess
+config_key = CacheKey[None, ContractSetup]("config")
 
 async def run_setup(
     context: WorkflowContext[None],
@@ -477,7 +480,12 @@ async def run_setup(
     env: SourceEnvironment,
     application_desc: SourceApplication
 ) -> ContractSetup | None:
-    sys_desc = await run_and_apply_part1(context, source, env, application_desc)
+    config_ctxt = context.child(config_key)
+    if (cached := config_ctxt.cache_get(ContractSetup)) is not None:
+        if (Path(source.project_root) / cached.config.summaries_path).exists():
+            return cached
+
+    sys_desc = await run_and_apply_part1(config_ctxt, source, env, application_desc)
 
     extra_files = [
         c.path for c in sys_desc.transitive_closure if c.name != source.contract_name
@@ -492,9 +500,12 @@ async def run_setup(
 
     if isinstance(setup_result, SetupFailure):
         return None
-    
-    return ContractSetup(
+
+    to_ret = ContractSetup(
         system_description=sys_desc,
         config=setup_result
     )
+
+    config_ctxt.cache_put(to_ret)
+    return to_ret
 
