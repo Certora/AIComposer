@@ -23,6 +23,7 @@ from graphcore.graph import FlowInput
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.context import WorkflowContext, SourceCode, SourceBuilder, CacheKey, InvJudge
+from composer.spec.source.source_env import SourceEnvironment
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,7 @@ def _merge_invariant_feedback(
 async def get_invariant_formulation(
     ctx: WorkflowContext[None],
     source: SourceCode,
-    source_tools: SourceBuilder,
+    env: SourceEnvironment
 ) -> Invariants:
     """Run the structural invariant formulation agent.
 
@@ -133,7 +134,7 @@ async def get_invariant_formulation(
         pass
 
     feedback_graph = bind_standard(
-        source_tools,
+        env.builder,
         FeedbackST,
     ).with_sys_prompt(
         "You are a methodical formal verification expert working at Certora, Inc."
@@ -141,10 +142,10 @@ async def get_invariant_formulation(
         "invariant_judge_prompt.j2",
         contract_spec=source,
     ).with_tools(
-        [judge_ctx.get_memory_tool(), *get_rough_draft_tools(FeedbackST)]
+        [judge_ctx.get_memory_tool(), *get_rough_draft_tools(FeedbackST), *env.source_tools]
     ).with_input(
         FeedbackInput
-    ).compile_async(checkpointer=inv_ctx.checkpointer)
+    ).compile_async()
 
     sem = asyncio.Semaphore(3)
 
@@ -184,7 +185,7 @@ async def get_invariant_formulation(
     # -- Main formulation agent --
 
     graph = bind_standard(
-        source_tools,
+        env.builder,
         ST,
         doc="The structural/state invariants you identified",
         validator=_validate_invariants,
@@ -194,10 +195,10 @@ async def get_invariant_formulation(
         "structural_invariant_prompt.j2",
         contract_spec=source,
     ).with_tools(
-        [inv_ctx.get_memory_tool(), InvariantFeedbackTool.as_tool("invariant_feedback")]
+        [inv_ctx.get_memory_tool(), InvariantFeedbackTool.as_tool("invariant_feedback"), *env.source_tools]
     ).with_input(
         InvInput
-    ).compile_async(checkpointer=inv_ctx.checkpointer)
+    ).compile_async()
 
     st = await run_to_completion(
         graph=graph,

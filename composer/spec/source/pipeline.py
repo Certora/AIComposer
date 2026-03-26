@@ -15,9 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langgraph.store.base import BaseStore
 
-from composer.io.multi_job_app import (
+from composer.ui.multi_job_app import (
     TaskInfo, HandlerFactory, run_task,
 )
 from composer.io.autoprove_app import AutoProvePhase
@@ -27,21 +26,16 @@ from composer.spec.context import (
     CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
 from composer.spec.util import string_hash
-from composer.spec.component import (
-    ApplicationComponent,
-    ComponentInst,
-    run_component_analysis,
-    DESCRIPTION as COMPONENT_ANALYSIS_DESC,
-)
 from composer.spec.bug import run_bug_analysis
 from composer.spec.prop import PropertyFormulation
-from composer.spec.cvl_generation import (
-    GenerationEnv, GeneratedCVL, CVLResource, generate_batch_cvl,
-)
-from composer.spec.harness import setup_and_harness_agent, Configuration
-from composer.spec.summarizer import setup_summaries
-from composer.spec.struct_invariant import get_invariant_formulation
-from composer.spec.prover import get_prover_tool, CloudConfig
+from composer.spec.gen_types import CVLResource
+from composer.spec.source.harness import run_setup
+from composer.spec.source.system_analysis import run_component_analysis
+from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.source.summarizer import setup_summaries
+from composer.spec.system_model import ContractComponentInstance
+from composer.spec.cvl_generation import GeneratedCVL
+from composer.spec.source.prover import CloudConfig
 
 
 # ---------------------------------------------------------------------------
@@ -53,10 +47,9 @@ INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 
 
 def _component_cache_key(
-    component: ApplicationComponent,
-    app_type: str,
+    component: ContractComponentInstance,
 ) -> CacheKey[Properties, ComponentGroup]:
-    combined = "|".join([component.model_dump_json(), app_type])
+    combined = "|".join([component.app.model_dump_json(), str(component.ind), str(component._contract.ind)])
     return CacheKey(string_hash(combined))
 
 
@@ -75,67 +68,73 @@ class AutoProveResult:
     n_properties: int
     failures: list[str] = field(default_factory=list)
 
-from logging import getLogger
-
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
 async def run_autoprove_pipeline(
-    system_doc: SourceCode,
-    source_tools: SourceBuilder,
-    cvl_authorship: CVLBuilder,
-    cvl_research: CVLOnlyBuilder,
+    source_input: SourceCode,
     ctx: WorkflowContext[None],
-    store: BaseStore,
-    handler_factory: HandlerFactory[AutoProvePhase],
+    handler_factory: HandlerFactory[AutoProvePhase, None],
+    env: SourceEnvironment,
     *,
-    llm: BaseChatModel,
     cloud: CloudConfig | None = None,
     max_concurrent: int = 4,
 ) -> AutoProveResult:
     """Run the auto-prove multi-agent pipeline."""
     semaphore = asyncio.Semaphore(max_concurrent)
-    analysis_input = (system_doc, source_tools)
 
-    # ------------------------------------------------------------------
-    # Phase 1: Harness setup
-    # ------------------------------------------------------------------
-    config: Configuration = await run_task(
+    s = await run_task(
         handler_factory,
-        TaskInfo("harness-setup", "Harness Setup", AutoProvePhase.HARNESS),
-        lambda: setup_and_harness_agent(ctx, system_doc, llm),
+        TaskInfo("system-analysis", "System Analysis", AutoProvePhase.COMPONENT_ANALYSIS),
+        lambda: run_component_analysis(ctx, source_input, env=env)
     )
+
+    if s is None:
+        raise ValueError("we're fucked")
+
+    setup = await run_task(
+        handler_factory,
+        TaskInfo("setup", "Auto Setup", AutoProvePhase.HARNESS),
+        lambda: run_setup(
+            ctx, source_input, env, s
+        )
+    )
+    
+    if setup is None:
+        raise ValueError("we're still fucked")
 
     # Build initial resources from PreAudit-generated summaries
     resources: list[CVLResource] = [
         CVLResource(
-            import_path=config.summaries_path,
+            import_path=str(setup.config.summaries_path),
             required=True,
             description="PreAudit-generated summaries",
             sort="import",
         ),
     ]
 
-    # Build prover tool (needs config from phase 1)
-    prover_tool = get_prover_tool(
-        llm, config.config, system_doc.contract_name,
-        system_doc.project_root, cloud=cloud, semaphore=semaphore,
-    )
-
-    # ------------------------------------------------------------------
-    # Phase 2: Custom summaries
-    # ------------------------------------------------------------------
-    has_summarizable = any(
-        c.l == "SUMMARIZABLE" for c in config.external_contracts
-    )
-    if has_summarizable:
-        summary_resource: CVLResource = await run_task(
+    if setup.system_description.erc20_contracts or setup.system_description.external_interfaces:
+        summary_resource : CVLResource = await run_task(
             handler_factory,
             TaskInfo("summaries", "Custom Summaries", AutoProvePhase.SUMMARIES),
-            lambda: setup_summaries(ctx, system_doc, config, cvl_authorship, cvl_research),
+            lambda: setup_summaries(
+                ctx=ctx,
+                app=s,
+                config=setup,
+                env=env,
+                source=source_input
+            )
         )
         resources.append(summary_resource)
+    
+    raise ValueError("We out")
+
+    # Build prover tool (needs config from phase 1)
+    prover_tool = get_prover_tool(
+        llm, config.config, source_input.contract_name,
+        source_input.project_root, cloud=cloud, semaphore=semaphore,
+    )
 
     # ------------------------------------------------------------------
     # Phase 3: Structural invariants
@@ -143,7 +142,7 @@ async def run_autoprove_pipeline(
     invariants = await run_task(
         handler_factory,
         TaskInfo("invariants", "Structural Invariants", AutoProvePhase.INVARIANTS),
-        lambda: get_invariant_formulation(ctx, system_doc, source_tools),
+        lambda: get_invariant_formulation(ctx, source_input, source_tools),
     )
 
     if invariants.inv:
@@ -163,12 +162,12 @@ async def run_autoprove_pipeline(
             ]
 
             inv_env = GenerationEnv(
-                input=system_doc,
+                input=source_input,
                 cvl_authorship=cvl_authorship,
                 cvl_research=cvl_research,
-                source_tools=source_tools,
                 resources=list(resources),
-                prover_tool=prover_tool,
+                validation_tools=[("prover", prover_tool)],
+
             )
 
             inv_cvl = await run_task(
@@ -176,7 +175,7 @@ async def run_autoprove_pipeline(
                 TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
                 lambda: generate_batch_cvl(
                     inv_cvl_ctx.abstract(CVLGeneration),
-                    inv_props, None, inv_env,
+                    inv_props, inv_env,
                     with_memory=True,
                     description="Structural invariant CVL",
                 ),
@@ -184,7 +183,7 @@ async def run_autoprove_pipeline(
             inv_cvl_ctx.cache_put(inv_cvl)
 
         inv_spec_name = "invariants.spec"
-        (Path(system_doc.project_root) / "certora" / inv_spec_name).write_text(inv_cvl.cvl)
+        (Path(source_input.project_root) / "certora" / inv_spec_name).write_text(inv_cvl.cvl)
         resources.append(CVLResource(
             import_path=inv_spec_name,
             required=False,
@@ -258,7 +257,7 @@ async def run_autoprove_pipeline(
         ).abstract(CVLGeneration)
 
         env = GenerationEnv(
-            input=system_doc,
+            input=source_input,
             cvl_authorship=cvl_authorship,
             cvl_research=cvl_research,
             source_tools=source_tools,

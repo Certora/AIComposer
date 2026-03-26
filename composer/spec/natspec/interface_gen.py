@@ -19,6 +19,7 @@ from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder,
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.system_model import Application
 from composer.spec.util import string_hash
+from composer.spec.tool_env import BasicAgentTools
 
 from logging import getLogger
 
@@ -57,8 +58,7 @@ class InterfaceResult(BaseModel):
 async def generate_interface(
     ctx: WorkflowContext[None],
     summary: Application,
-    input: SystemDoc,
-    builder: PlainBuilder | CVLOnlyBuilder,
+    builder: PlainBuilder,
     solc_version: str,
 ) -> InterfaceResult:
     """Generate a Solidity interface from component analysis and system document.
@@ -131,18 +131,11 @@ async def generate_interface(
         "interface_generation_prompt.j2",
         summary=summary,
         solc_version=solc_version,
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
-
-    input_parts: list[str | dict] = [
-        # "The system/design document is:",
-        # input.content,
-    ]
+    ).compile_async()
 
     res = await run_to_completion(
         workflow,
-        FlowInput(input=input_parts),
+        FlowInput(input=[]),
         thread_id=ctx.uniq_thread_id(),
         recursion_limit=30,
         description=DESCRIPTION,

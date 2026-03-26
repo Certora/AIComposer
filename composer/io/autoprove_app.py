@@ -14,12 +14,12 @@ from textual.widgets import Static, RichLog
 
 from rich.text import Text
 
-from composer.io.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
+from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
 from composer.io.event_handler import EventHandler, NullEventHandler
-from composer.io.multi_job_app import (
+from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo, TaskHost,
 )
-from composer.spec.prover import ProverOutputEvent, CloudPollingEvent
+from composer.spec.source.prover import ProverOutputEvent, CloudPollingEvent
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +96,7 @@ def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
                 **CommonTools.source_displays(),
                 "result": CommonTools.result,
                 "memory": CommonTools.memory,
+                "explore_code": CommonTools.code_explorer
             })
         case AutoProvePhase.BUG_ANALYSIS:
             return ToolDisplayConfig(tool_display={

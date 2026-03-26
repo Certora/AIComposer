@@ -39,7 +39,7 @@ async def generate_stub(
     ctx: WorkflowContext[None],
     interface: InterfaceResult,
     contract_name: str,
-    builder: PlainBuilder | CVLOnlyBuilder,
+    builder: PlainBuilder,
     solc_version: str,
 ) -> StubDeclaration:
     """Generate a minimal Solidity stub that imports the interface and compiles.
@@ -113,9 +113,7 @@ async def generate_stub(
         interface_name=interface_name,
         the_interface=interface.name_to_interface[contract_name].content,
         solc_version=solc_version,
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
+    ).compile_async()
 
     input_parts : list[str | dict] = []
 

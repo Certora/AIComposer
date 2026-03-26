@@ -31,8 +31,7 @@ from composer.ui.multi_job_app import (
 from composer.spec.natspec.cas import SharedArtifact
 from composer.spec.context import (
     WorkflowContext,
-    SystemDoc, PlainBuilder, CVLOnlyBuilder,
-    CacheKey, Properties, ComponentGroup, CVLGeneration,
+    SystemDoc, CacheKey, Properties, ComponentGroup, CVLGeneration,
     Contract
 )
 from composer.spec.util import string_hash
@@ -42,10 +41,12 @@ from composer.spec.natspec.interface_gen import generate_interface, DESCRIPTION 
 from composer.spec.natspec.stub_gen import generate_stub, StubDeclaration
 from composer.spec.natspec.registry import StubRegistry
 from composer.spec.natspec.merge import make_publish_tools, make_advisory_typecheck_tool
-from composer.spec.cvl_generation import GenerationEnv, GeneratedCVL, generate_batch_cvl
-from composer.spec.gen_types import TemplateInstantiation, TypedTemplate, GenerationPrompt
+from composer.spec.cvl_generation import GeneratedCVL
+from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationSuccess
+from composer.spec.gen_types import TypedTemplate
 from composer.spec.natspec.system_analysis import run_component_analysis, DESCRIPTION as SYSTEM_DESC
 from composer.spec.system_model import ContractInstance, ContractComponentInstance, ContractComponent, Application
+from composer.spec.tool_env import ToolEnvironment
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ def _component_cache_key(
     return CacheKey(string_hash(combined))
 
 
-def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGroup, GeneratedCVL]:
+def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGroup, CVLGeneration]:
     combined = "|".join(p.model_dump_json() for p in props)
     return CacheKey(string_hash(combined))
 
@@ -121,8 +122,7 @@ class PipelineServices:
     sem: asyncio.Semaphore
     store: BaseStore
     factory: HandlerFactory[Phase, None]
-    builder: PlainBuilder
-    cvl_research: CVLOnlyBuilder
+    env: ToolEnvironment
 
 class NatspecGenerationParams(TypedDict):
     context: ContractComponentInstance
@@ -167,8 +167,6 @@ async def analyze_single_contract(
 
     prop_context = ctx.child(PROPERTIES_KEY)
 
-    analysis_input = (system_doc, services.builder)
-
     results: list[GeneratedCVL] = []
     failures: list[PropertyFailure] = []
 
@@ -193,7 +191,7 @@ async def analyze_single_contract(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{summary.contract.name}-{component_idx}", name, "bug_analysis"),
-            lambda: run_bug_analysis(feat_ctx, feat, analysis_input),
+            lambda: run_bug_analysis(feat_ctx, services.env, feat),
             semaphore,
         )
 
@@ -214,11 +212,11 @@ async def analyze_single_contract(
     async def _generate_batch(
         batch_idx: int,
         batch: _ComponentBatch,
-    ) -> GeneratedCVL:
+    ) -> GenerationSuccess | GaveUp:
         batch_ctx = batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
-        ).abstract(CVLGeneration)
+        )
         stub_tools = registry.get_tools(contract_name)
         typecheck_tool = make_advisory_typecheck_tool(
             lambda: registry.read_stub(contract_name), interface, stub.solidity_identifier, solc_version,
@@ -228,10 +226,9 @@ async def analyze_single_contract(
             master_spec=master_spec,
             stub_read=lambda: registry.read_stub(contract_name),
             interface=interface,
-            builder=services.cvl_research,
-            ctx=batch_ctx,
             contract_id=stub.solidity_identifier,
-            solc_version=solc_version
+            solc_version=solc_version,
+            env=services.env
         )
 
         prompt_extras = [
@@ -248,47 +245,19 @@ async def analyze_single_contract(
                 interface.name_to_interface[sib.name].content
             ])
 
-        prompts = GenerationPrompt(
-            cvl_prompt=TemplateInstantiation.create(
-                templ=NoSourceGenerationPrompt,
-                args={
-                    "context": batch.feat
-                }
-            ),
-            cvl_prompt_extras=[
-                f"The current stub implementation of the {contract_name} is",
-                stub_registry.read_stub(contract_name)
-            ],
-            feedback_prompt=TemplateInstantiation.create(
-                templ=FeedbackPrompt,
-                args={
-                    "context": batch.feat,
-                    "has_source": False
-                }
-            ),
-            feedback_prompt_extras=(lambda: [
-                f"The current typechecking stub for the {contract_name} stub is",
-                stub_registry.read_stub(contract_name),
-                "For reference, the system document for the application is",
-                system_doc.content
-            ])
-        )
-
-        env = GenerationEnv(
-            prompt=prompts,
-            cvl_authorship=services.cvl_research,
-            cvl_research=services.cvl_research,
-            extra_tools=[*stub_tools, typecheck_tool],
-            output_tools=list(publish)
-        )
-
         label = f"{contract_name} {batch.feat.component.name} ({len(batch.props)} properties)"
         return await run_task(
             handler_factory,
             TaskInfo(f"cvl-{contract_name}-{batch_idx}", label, "cvl_gen"),
-            lambda: generate_batch_cvl(
-                batch_ctx, batch.props, env, with_memory=True,
-                description=label,
+            lambda: generate_cvl_batch(
+                stub_reader=lambda: stub_registry.read_stub(contract_name),
+                contract_name=contract_name,
+                component=batch.feat,
+                ctx=batch_ctx,
+                env=services.env,
+                props=batch.props,
+                injected_tools=[*stub_tools, typecheck_tool, *publish],
+                system_doc=system_doc
             ),
             semaphore,
         )
@@ -302,35 +271,31 @@ async def analyze_single_contract(
     )
 
     for batch, result in zip(component_batches, generation_results):
-        if isinstance(result, BaseException):
-            for prop in batch.props:
-                failures.append(PropertyFailure(prop=prop, reason=str(result)))
-        elif isinstance(result, GeneratedCVL):
-            if result.commentary.startswith("GAVE_UP:"):
-                reason = result.commentary.removeprefix("GAVE_UP:").strip()
+        match result:
+            case BaseException():
+                for prop in batch.props:
+                    failures.append(PropertyFailure(prop=prop, reason=str(result)))
+            case GaveUp(reason=reason):
                 for prop in batch.props:
                     failures.append(PropertyFailure(prop=prop, reason=reason))
-            else:
-                results.append(result)
-                # Record skipped properties as failures
+                failures.append(PropertyFailure(prop=prop, reason=reason))
+            case GenerationSuccess():
                 for skip in result.skipped:
                     if skip.property_index in range(1, len(batch.props) + 1):
                         failures.append(PropertyFailure(
                             prop=batch.props[skip.property_index - 1],
                             reason=f"Skipped: {skip.reason}",
                         ))
+
     return ContractResult(
         spec=master_spec.read_unsync() or "",
         failures=failures
     )
 
-
-
 async def run_natspec_pipeline(
     system_doc: SystemDoc,
     solc_version: str,
-    analysis_builder: PlainBuilder,
-    cvl_research: CVLOnlyBuilder,
+    tool_env: ToolEnvironment,
     ctx: WorkflowContext[None],
     store: BaseStore,
     handler_factory: HandlerFactory[Phase, None],
@@ -372,7 +337,7 @@ async def run_natspec_pipeline(
     summary = await run_task(
         handler_factory,
         TaskInfo("component-analysis", SYSTEM_DESC, "component_analysis"),
-        lambda: run_component_analysis(ctx, system_doc, analysis_builder),
+        lambda: run_component_analysis(ctx, system_doc, tool_env),
     )
     if summary is None:
         raise ValueError("Component analysis produced no result — is the system doc empty?")
@@ -383,7 +348,7 @@ async def run_natspec_pipeline(
     interface = await run_task(
         handler_factory,
         TaskInfo("interface-gen", INTERFACE_GEN_DESC, "interface_gen"),
-        lambda: generate_interface(ctx, summary, system_doc, analysis_builder, solc_version),
+        lambda: generate_interface(ctx, summary, tool_env.builder, solc_version),
     )
 
     # ------------------------------------------------------------------
@@ -395,7 +360,7 @@ async def run_natspec_pipeline(
         res = await run_task(
             handler_factory,
             TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", "stub_gen"),
-            lambda: generate_stub(ctx, interface, contract_name, analysis_builder, solc_version),
+            lambda: generate_stub(ctx, interface, contract_name, tool_env.builder, solc_version),
         )
         return (contract_name, res)
 
@@ -408,15 +373,14 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
 
     registry = StubRegistry.create(
-        store, STUB_NS + (string_hash(str(system_doc.content)),), analysis_builder, ctx, interface, {
+        store, STUB_NS + (string_hash(str(system_doc.content)),), tool_env.builder, ctx, interface, {
             k: c.content for (k, c) in generated_stubs
         }, solc_version,
     )
 
     serv = PipelineServices(
         sem=semaphore,
-        builder=analysis_builder,
-        cvl_research=cvl_research,
+        env=tool_env,
         factory=handler_factory,
         store=store
     )

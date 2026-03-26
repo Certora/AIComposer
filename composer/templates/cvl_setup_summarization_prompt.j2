@@ -38,6 +38,57 @@ Another colleague of yours has already identified the components of this protoco
 rough sketch of the summary behavior.
 </background>
 
+<context>
+This application being targeted for formal verification is described as follows:
+
+{% import "harnessed_application_context.j2" %}
+
+The contract of interest being verified is {{ contract_name }} at path {{ contract_path }}.
+</context>
+
+**IMPORTANT**: The above context information is *AUTHORITATIVE* and you do *NOT* need to confirm or validate it.
+
+<summarization-instructions>
+{% if interfaces %}
+## Interfaces 
+{{ contract_name}} (or its transitive dependencies) interacts with an (unknown) instances of the following interfaces:
+{% for intf in interfaces %}
+* `{{ intf.name }}` found at {{ intf.path }}. The interaction between {{ contract_name }} (or its transitive dependencies)  and `{{ intf.name}}` is as follows: {{ intf.behavioral_spec }}
+{% endfor %}
+
+When summarizing interface API functions, you *must* use the "wildcard" receiver.
+{% endif %}
+
+{% if erc20_contracts %}
+## ERC20
+
+{{ contract_name }} or its dependencies interact with the following contract components identified to be standard ERC20 instances: {{ erc20_contracts | join(", ") }}
+
+To summarize this behavior use the following strategy:
+
+### Strategy
+
+{% import "erc20_advice.j2 "%}
+
+**IMPORTANT**: When crafting your strategy, determine if any other contract inputs to the prover are *NON*-standard ERC20 tokens
+which requires using the hybrid summarization strategy.
+{% endif %}
+</summarization-instructions>
+
+<prover-input>
+The following JSON is the configuration file that will be used in the prover. This *may* inform what features are available
+to you and what the relationship between contracts may be.
+
+```json
+{{ config | tojson }}
+```
+
+To be explicit, the contracts that will be ingested into the prover (and are thus available for manipulation in CVL specifications) is as follows:
+{% for c in included_contracts %}
+* `{{ c }}`
+{% endfor %}
+</prover-input>
+
 <task>
 Given the summarization instructions from your colleague, write a CVL specification which translates the instructions
 into CVL.
@@ -50,21 +101,18 @@ Read and understand the summarization instructions.
 
 ## Step 2
 
-Explore the source code to understand the APIs of the components being summarized.
-
-## Step 3
-
-Read the configuration file to understand what components are included in the Certora Prover's
-inputs, and the linking behavior.
+Explore the source code to understand the APIs of the interfaces being summarized (if any).
 
 **IMPORTANT**: Do NOT try to read other spec files to inform your summarization or to "gain context"; the other spec
 files in the project may be entirely unrelated to your task and you have no way to determine which files are relevant.
 
-## Step 4
+## Step 3
 
-Decide, for each summarized component/function/contract, whether the receiver should be wildcard or
-specific. Use the "resolution_guidance" tool for more information on the definition of these terms
-and how to make this determination.
+Analyze the provided prover configuration to understand what components are included in the Certora Prover's
+inputs, and the linking behavior.
+
+**IMPORTANT** Do NOT try to read any other prover configuration files; they may be entirely unrelated to this current
+task and you have no way to determine which files are relevant.
 
 ## Step 5
 
@@ -75,11 +123,6 @@ For each planned summary, determine the following:
 3. Whether the summary should be a wildcard or specific summary
 
 You *MUST* write your plan using the "write_plan" tool.
-
-If you are instructed to use the "standard erc20 summarization", use the "erc20_guidance" tools for more details
-on how this is accomplished. When considering whether the purely symbolic or hybrid approach is necessary,
-consider whether any of the inputs to the prover are ERC20 tokens. You may need to investigate the inheritance hierarchy
-to make this determination.
 
 ## Step 6
 
@@ -99,10 +142,6 @@ and well-typed. If not, edit your specification until it is correct.
 ## Step 9
 
 Signal the completion of your work by calling the "result" tool.
-
-<state>
-  Use the provided `memory` tool to track your progress through these tasks.
-</state>
 </task>
 
 <guidance>

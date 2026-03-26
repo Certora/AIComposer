@@ -46,6 +46,12 @@ class ExplicitContract(BaseModel):
     description : str = Field(description="A short description of what this contract's role is in the system")
     components : list[ContractComponent] = Field(description="Components making up this contract.")
 
+class SourceExplicitContract(ExplicitContract):
+    """
+    A concrete contract type in the system.
+    """
+    path: str = Field("The relative path to the file which defines the contract type this represents")
+
 class ExternalActor(BaseModel):
     """
     Some "external actor" to the system. This may be an administrator, an EOA,
@@ -55,15 +61,24 @@ class ExternalActor(BaseModel):
     description : str = Field(description="A short, technical description of this external actor")
     assumptions: list[str] = Field(description="A list of assumptions or requirements about this external actor's behavior")
 
+class SourceExternalActor(ExternalActor):
+    """
+    Some "external actor" to the system. This may be an administrator, an EOA,
+    or some off-chain component, or a contract deployed and managed by someone else.
+    """
+    path : str | None = Field(description="The relative path to the interface describing this external actor, if relevant.")
+
 type SystemComponent = ExternalActor | ExplicitContract
 
-class Application(BaseModel):
+class BaseApplication[T : SystemComponent](BaseModel):
+    application_type: str = Field(description="A concise, description of the type of application (AMM/Liquidity Provider/etc.)")
+    description: str = Field(description="A description of the application's main functionality (2 - 3 sentences max)")
+    components : list[T] = Field(description="The system components (explicit contract & external actors) that comprise this application")
+
+class Application(BaseApplication[SystemComponent]):
     """
     A description of the application.
     """
-    application_type: str = Field(description="A concise, description of the type of application (AMM/Liquidity Provider/etc.)")
-    description: str = Field(description="A description of the application's main functionality (2 - 3 sentences max)")
-    components : list[SystemComponent] = Field(description="The system components (explicit contract & external actors) that comprise this application")
 
     @cached_property
     def contract_components(self) -> list[ExplicitContract]:
@@ -73,12 +88,24 @@ class Application(BaseModel):
                 continue
             to_ret.append(c)
         return to_ret
-
+    
+class SourceApplication(BaseApplication[SourceExplicitContract | SourceExternalActor]):
+    """
+    A description of the application.
+    """
+    @cached_property
+    def contract_components(self) -> list[SourceExplicitContract]:
+        to_ret = []
+        for c in self.components:
+            if not isinstance(c, SourceExplicitContract):
+                continue
+            to_ret.append(c)
+        return to_ret
 
 @dataclass
 class ContractInstance:
     ind: int
-    app: Application
+    app: Application | SourceApplication
 
     @property
     def contract(self) -> ExplicitContract:
@@ -99,7 +126,7 @@ class ContractComponentInstance:
     _contract: ContractInstance
 
     @property
-    def app(self) -> Application:
+    def app(self) -> Application | SourceApplication:
         return self._contract.app
     
     @property

@@ -32,8 +32,9 @@ from composer.spec.context import (
     WorkflowContext, SourceCode, SourceBuilder, CVLBuilder, CVLOnlyBuilder,
     get_system_doc,
 )
-from composer.spec.autoprove_pipeline import run_autoprove_pipeline
-from composer.spec.prover import CloudConfig
+from composer.spec.source.pipeline import run_autoprove_pipeline
+from composer.spec.source.prover import CloudConfig
+from composer.spec.source.source_env import build_source_env
 
 from composer.io.autoprove_app import AutoProveApp
 
@@ -160,6 +161,8 @@ async def main() -> int:
         project_root=args.project_root,
         contract_name=contract_name,
         relative_path=relative_path,
+        forbidden_read=FS_FORBIDDEN_READ,
+        solidity_compiler="solc8.31"
     )
 
     # Set up services
@@ -190,20 +193,26 @@ async def main() -> int:
         memory_namespace=args.memory_ns,
     )
 
+    source_env = build_source_env(
+        llm=llm,
+        db=rag_db,
+        checkpoint=checkpointer,
+        forbidden_read=FS_FORBIDDEN_READ,
+        kb_ns=("cvl",),
+        root=args.project_root,
+        store=indexed_store
+    )
+
     # Set up TUI
     app = AutoProveApp()
 
     async def work():
         try:
             result = await run_autoprove_pipeline(
-                system_doc=system_doc,
-                source_tools=source_tools,
-                cvl_authorship=cvl_authorship,
-                cvl_research=cvl_research,
                 ctx=ctx,
-                store=store,
+                source_input=system_doc,
+                env=source_env,
                 handler_factory=app.make_handler,
-                llm=llm,
                 cloud=CloudConfig() if args.cloud else None,
                 max_concurrent=args.max_concurrent,
             )

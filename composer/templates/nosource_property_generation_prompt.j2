@@ -93,29 +93,11 @@ your justification is valid — do not skip properties lightly.
 You must attempt to formalize ALL properties before considering any skips.
 </skipping>
 
-{% if resources %}
-You may also make use of the following CVL resources, available as CVL files.
-
-{% for res in resources %}
-   <resource>
-      Description: {{ res.description }}
-      Import with: `import "{{ res.import_path }}";`
-
-      {% if res.required %}
-      You MUST ensure your final specification imports this file.
-      {% else %}
-      You may use this import at your discretion (e.g., it defines an invariant necessary to prove your rule/invariant).
-      {% endif %}
-   </resource>
-{% endfor %}
-{% endif %}
-
-{% if memory %}
 <state>
 Use the available memory tools to track your progress through this algorithm, any important lessons about CVL you may have learned,
 or any other significant, relevant information to this task. Be sure to update your memory *before* calling the result tool, as that will end the workflow.
 </state>
-{% endif %}
+
 </task>
 
 <guidance>

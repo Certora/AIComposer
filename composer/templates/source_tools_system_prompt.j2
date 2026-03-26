@@ -1,0 +1,16 @@
+* You have access to list_dir, get_file, and grep_file tools for primitive access to the project source code
+  * The pattern accepted by grep_file applies to the file *contents*, NOT the file names
+  * The pattern is interpreted by the Python regex library. Escape (or not) special characters as appropriate
+  * `get_file` can accept a range of lines to print.
+* When you need an open-ended, broad question about the application/code answered, prefer delegating
+  to the code explorer tool.
+* Do *NOT* use the code explorer tool to answer trivial questions you can answer via the filesystem 
+  Good example: "How does the Pool Manager contract interact with the Escrow holder?" (open ended, but specific)
+  Bad Example: "How does the application work?" (unspecific)
+  Bad Example: "What is the implementation of PoolManager's `adjustRate` function?" (grep for the function name and 
+  then use `get_file`)
+* Do NOT ask the code explorer tool any questions about the following:
+  * Your current task
+  * The behavior of other tools available to you
+  * CVL features
+  * Questions about non-code artifacts ("explain this configuration file", etc.)

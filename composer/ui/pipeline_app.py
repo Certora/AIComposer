@@ -22,7 +22,7 @@ from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
 from composer.spec.natspec.pipeline import Phase, PipelineResult
-from composer.spec.pipeline_events import NatspecEvent
+from composer.spec.natspec.pipeline_events import NatspecEvent
 
 
 # ---------------------------------------------------------------------------

@@ -115,6 +115,9 @@ class CommonTools:
         lambda items: f"Accessing memory x{len(items)}",
     )
     result = ToolDisplay("Delivering result", _suppress_ack("Result"))
+
+    code_explorer = ToolDisplay(lambda q: f"Code Exploration Request: {q["question"]}", "Code Explorer Answer")
+
     get_file = GroupedTool(
         "read",
         lambda p: p.get("path", "?"),

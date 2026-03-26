@@ -12,6 +12,7 @@ import uuid
 import base64
 from pathlib import Path
 from typing import Annotated, Protocol
+from typing_extensions import deprecated
 
 from pydantic import BaseModel
 
@@ -38,6 +39,7 @@ class SourceCode(SystemDoc):
     project_root: str
     contract_name: str
     relative_path: str
+    forbidden_read: str
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +127,6 @@ type Marker = (
     | CVLJudge | Abstraction | Contract
 )
 
-
-class ThreadProvider(Protocol):
-    def uniq_thread_id(self) -> str: ...
-
-
 # ---------------------------------------------------------------------------
 # WorkflowContext
 # ---------------------------------------------------------------------------
@@ -153,13 +150,7 @@ class WorkflowContext[K: CacheTypes]:
     cache_namespace: tuple[str, ...] | None
     _store: BaseStore
 
-    def kb_tools(self, read_only: bool) -> list[BaseTool]:
-        return self._services.kb_tools(read_only)
-
-    @property
-    def checkpointer(self) -> Checkpointer:
-        return self._services.checkpointer
-
+    @deprecated("use util")
     def uniq_thread_id(self) -> str:
         suff = uuid.uuid4().hex[:16]
         return f"{self.thread_id}-{suff}"

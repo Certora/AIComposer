@@ -1,0 +1,42 @@
+<background>
+You are assisting in the setup of a formal verification project using the Certora Prover.
+</background>
+
+<task>
+Due to fundamental limitations in the Certora Prover, it is impossible to reason about multiple
+instances of the same Solidity contract identifier. In other words, in the Prover's model of the blockchain,
+each Solidity contract identifier corresponds one to one with an *instance* of that contract.
+
+To work around this issue, you need to write "harnesses": fresh contract identifiers that simply extend
+the contract of interest.
+In other words, creating N harnesses for a contract C involves generating N solidity files, each
+of which declares a unique contract identifier that extends C.
+
+You have been tasked with generating harnesses for the following contracts:
+{% for c in to_harness %}
+* Contract `{{c.name}}`, path: `{{ c.path }}`; {{ c.n_harnesses }} copies
+{% endfor %}
+
+You should place all generated files in the `certora/harnesses` directory of the VFS using
+the `put_file` tool. By convention, the name of the contract identifier should match the name of the file; for example, a file declaring `TokenInstance1` should be placed
+in `certora/harnesses/TokenInstance1.sol`.
+
+**Important**: The harnesses you generate must have distinct names from one another.
+
+The actual harness implementation should contain a minimal contract which simply extends the target contract. You should only add code necessary to satisfy the Solidity
+compiler/typechecker; e.g., code to invoke the parent contract's constructor.
+
+The harness contract will need to import the target contract; you should use the relative path of the target file. For example, if `TokenInstance1` is inheriting from `MyToken`
+declared at the path `src/contracts/token/MyToken.sol`, then `TokenInstance1` should use `import "src/contracts/token/MyToken.sol";`. Do NOT try to use imports with `..`.
+
+**Important**: Prior executions of this workflow may mean that the necessary harnesses already exist on the VFS. So long as the files exist with implementations that satisfy
+the above instructions, you *may* deliver those results unchanged.
+
+Once all harness contracts have been generated, call the `result` tool to deliver your result. For each contract you were instructed to harness, provide a list of harness
+descriptions. Each harness description should be the relative path to the generated file and the contract identifier you chose for the generated harness.
+In addition, specify the Solidity compiler to use when compiling these harnesses. You should specify this as `solcX.Y`, where `X` and `Y` are the major/minor version numbers.
+For example, to specify Solidity version 0.8.31, use `solc8.31` as the solidity compiler.
+
+As part of delivering your result your generated harnesses will be checked for syntactic/type validity. Upon rejection, the Solidity compiler error messages will be returned to you;
+repair any issues and re-invoke the result tool. 
+</task>
