@@ -38,15 +38,19 @@ class CloudConfig:
 class ProverOptions:
     cloud: CloudConfig | None = None
 
+@dataclass
+class ProverReport:
+    rule_status: dict[str, bool]
 
 @dataclass
-class RawReport:
+class RawReport(ProverReport):
     report: str
-    all_verified: bool
-
+    @property
+    def all_verified(self) -> bool:
+        return all(self.rule_status.values())
 
 @dataclass
-class SummarizedReport:
+class SummarizedReport(ProverReport):
     report: str
     todo_list: str
 
@@ -245,11 +249,18 @@ async def run_prover(
     report = load_jinja_template("rule_feedback.j2", results=results_with_analysis)
 
     # 13. Count failures, possibly summarize
-    failed_count = sum(1 for r, _ in results_with_analysis if r.status == "VIOLATED")
+    failed_count = sum(1 for r, _ in results_with_analysis if r.status != "VERIFIED")
+
+    prover_report = {}
+    for i in parsed.values():
+        rule_name = i.path.rule
+        if rule_name in prover_report and not prover_report[rule_name]:
+            continue
+        prover_report[rule_name] = i.status == "VERIFIED"
 
     if summarization_threshold is not None and failed_count > summarization_threshold:
         todo_list = await _report_to_todo_list(llm, report)
-        return SummarizedReport(report=report, todo_list=todo_list)
+        return SummarizedReport(report=report, todo_list=todo_list, rule_status=prover_report)
 
     # 14. Normal return
-    return RawReport(report=report, all_verified=(failed_count == 0))
+    return RawReport(report=report, rule_status=prover_report)

@@ -49,19 +49,9 @@ class SourceCode(SystemDoc):
 class WorkflowServices(Protocol):
     """Minimal services available to all workflows."""
 
-    def kb_tools(self, read_only: bool) -> list[BaseTool]:
-        """Knowledge base tools (scan, get, optionally put)."""
-        ...
-
     def memory_tool(self, namespace: str) -> BaseTool:
         """Create a memory tool scoped to the given namespace."""
         ...
-
-    @property
-    def checkpointer(self) -> Checkpointer:
-        """LangGraph checkpointer for state persistence."""
-        ...
-
 
 # ---------------------------------------------------------------------------
 # Builder phantom markers and type aliases

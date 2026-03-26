@@ -1,9 +1,9 @@
-{% from "application_context.macro.j2" import render_applicaton_context %}
+{% from "application_context_macro.j2" import render_applicaton_context %}
 
 {% call(c) render_applicaton_context(context, False) %}
-{% if harnessed[c.name] %}
+{% if c.harnesses %}
 This contract component is modelled using the following concrete "harnesses":
-{% for h in harnessed[c.name] %}
+{% for h in c.harnesses %}
 * `{{ h.name}}` located at path `{{ h.path }}`
 {% endfor %}
 {% endif %}

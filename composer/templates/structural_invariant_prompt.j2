@@ -2,6 +2,14 @@
 {% include "invariant_explanation.j2" %}
 </background>
 
+<context>
+This invariant formulation is being performed for {{ contract_spec.contract_name }} at {{ contract_spec.relative_path }}.
+
+The following is a description of the application that {{ contract_spec.contract_name }} is a part of.
+
+{% include "harnessed_application_context.j2" %}
+</context>
+
 <task>
 Follow these instructions exactly:
 

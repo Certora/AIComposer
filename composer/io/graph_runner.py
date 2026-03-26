@@ -13,7 +13,7 @@ and connects it to the ``EventQueue`` / drainer infrastructure.
 
 from typing import Any, Protocol, Callable, Awaitable, cast
 
-from composer.io.events import AllEvents, NextCheckpoint, CustomUpdate, Start, End, StateUpdate
+from composer.io.events import GraphEvents, NextCheckpoint, CustomUpdate, Start, End, StateUpdate
 
 from langgraph._internal._typing import StateLike
 from langgraph.graph.state import CompiledStateGraph
@@ -24,7 +24,7 @@ from langchain_core.runnables import RunnableConfig
 
 class SinkProtocol(Protocol):
     """Write-only event sink.  Synchronous — must not block."""
-    def __call__(self, event: AllEvents) -> None:
+    def __call__(self, event: GraphEvents) -> None:
         ...
 
 type HumanHandler[T, S] = Callable[[T, S], Awaitable[str]]

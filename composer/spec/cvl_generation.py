@@ -144,6 +144,7 @@ class FeedbackToolContext:
     feedback_thunk: Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedbackProtocol]]
     num_props: int
 
+FEEDBACK_VALIDATION_KEY = "feedback"
 
 class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithAsyncImplementation[Command]):
     """
@@ -165,7 +166,7 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
             digest = _compute_digest(spec, skipped)
             return tool_state_update(
                 self.tool_call_id, msg,
-                validations={"feedback": digest},
+                validations={FEEDBACK_VALIDATION_KEY: digest},
             )
         return tool_state_update(self.tool_call_id, msg)
 
@@ -244,6 +245,7 @@ def static_tools() -> list[BaseTool]:
         ERC20TokenGuidance.as_tool("erc20_guidance"),
         UnresolvedCallGuidance.as_tool("unresolved_call_guidance"),
     ]
+
 
 async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CVLGenerationInput](
     ctx: WorkflowContext[CVLGeneration],

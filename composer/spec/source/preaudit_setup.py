@@ -12,16 +12,21 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict, Literal, Annotated
+from pydantic import Discriminator
+import asyncio
+
+from composer.io.context import emit_custom_event
 
 # Path to PreAudit source directory
-PREAUDIT_PATH = Path(__file__).parent.parent.parent.parent / "PreAudit"
+PREAUDIT_PATH = Path("/home/john/certora/PreAudit")
 PREAUDIT_SRC_PATH = PREAUDIT_PATH / "src"
 
 
 @dataclass
 class SetupSuccess:
     """Result of running PreAudit compilation analysis and summary generation."""
-    config: dict  # Contents of compilation_config.conf
+    prover_config: dict  # Contents of compilation_config.conf
     summaries_path: Path  # Path to summaries-{Contract}.spec, if generated
     user_types: list[dict]
 
@@ -31,7 +36,26 @@ class SetupFailure:
 
 type SetupResult = SetupSuccess | SetupFailure
 
-def run_preaudit_setup(
+class PreAuditComplete(TypedDict):
+    type: Literal["pre_audit_complete"]
+    return_code: int
+
+class PreAuditStart(TypedDict):
+    type: Literal["pre_audit_start"]
+
+class PreAuditStdout(TypedDict):
+    type: Literal["pre_audit_output"]
+    line: str
+
+type PreAuditEvents = Annotated[
+    PreAuditComplete | PreAuditStart | PreAuditStdout, Discriminator("type")
+]
+
+import logging
+
+_logger = logging.getLogger(__name__)
+
+async def run_preaudit_setup(
     project_root: Path,
     relative_path: str,
     main_contract: str,
@@ -64,27 +88,55 @@ def run_preaudit_setup(
     # Run orchestrator with --setup-only
     with tempfile.NamedTemporaryFile("r") as f:
         main_contract_path = f"{relative_path}:{contract_name}"
-        result = subprocess.run(
-            [
-                sys.executable, "-m", "orchestrator",
-                main_contract_path,
-                "--setup-only", f.name,
-                "--skip-hashing-bound-detection", "1024",
-                "--use-local-runner",
-                "--additional-contracts", *extra_files,
-                "--main-contracts",
-                main_contract_path
-            ],
+        args = [
+            sys.executable, "-m", "orchestrator",
+            main_contract_path,
+            "--setup-only", f.name,
+            "--skip-hashing-bound-detection", "1024",
+            "--use-local-runner",
+            "--additional-contracts", *extra_files,
+            "--main-contracts",
+            main_contract_path
+        ]
+        start_payload : PreAuditStart = {
+            "type": "pre_audit_start"
+        }
+        emit_custom_event(start_payload)
+        proc = await asyncio.subprocess.create_subprocess_exec(
+            *args,
             cwd=project_root,
-            text=True,
-            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env
         )
-        data = json.load(f)
+        assert proc.stdout is not None
+        while True:
+            raw = await proc.stdout.readline()
+            if not raw:
+                break
+            line = raw.decode().rstrip()
+            if not line:
+                continue
+            line_payload : PreAuditStdout = {
+                "type": "pre_audit_output",
+                "line": line
+            }
+            _logger.error(f"PREAUDIT: {line}")
+            emit_custom_event(line_payload)
+        returncode = await proc.wait()
+        all_output = await proc.stderr.read() # type: ignore
+        _logger.error(all_output.decode())
+        end_payload : PreAuditComplete = {
+            "type": "pre_audit_complete",
+            "return_code": returncode
+        }
+        emit_custom_event(end_payload)
+        if returncode != 0:
+            return SetupFailure(
+                error="PreAudit setup failed",
+            )
 
-    if result.returncode != 0:
-        return SetupFailure(
-            error="PreAudit setup failed",
-        )
+        data = json.load(f)
 
     summary_path = Path(data["contract_to_summary"][main_contract])
     if not summary_path.is_relative_to(certora_dir):
@@ -93,7 +145,7 @@ def run_preaudit_setup(
     udts = json.loads((project_root / ".certora_internal" / "all_user_defined_types.json").read_text())
 
     return SetupSuccess(
-        config=json.loads((project_root / data["contract_to_config"][main_contract]).read_text()),
+        prover_config=json.loads((project_root / data["contract_to_config"][main_contract]).read_text()),
         summaries_path=summary_path.relative_to(certora_dir),
         user_types=udts
     )

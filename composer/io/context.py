@@ -32,11 +32,11 @@ from composer.io.protocol import IOHandler
 from composer.io.stream import EventQueue
 from composer.io.event_handler import EventHandler
 
-from typing import Any
+from typing import Any, Mapping
 
 from composer.io.events import (
     AllEvents, InnerEvent, Nested, NextCheckpoint,
-    CustomUpdate, StateUpdate, Start, End,
+    CustomUpdate, StateUpdate, Start, End, GraphEvents, ProgressEvent
 )
 
 from langgraph._internal._typing import StateLike
@@ -57,7 +57,7 @@ Set by ``run_graph()``; when non-None at the start of a new
 sink with ``Nested(...)``."""
 
 
-def _unwrap(event: AllEvents) -> tuple[list[str], InnerEvent]:
+def _unwrap(event: GraphEvents) -> tuple[list[str], InnerEvent]:
     """Peel off Nested layers, collecting parent_ids into a path prefix."""
     path: list[str] = []
     while isinstance(event, Nested):
@@ -79,6 +79,9 @@ async def _queue_drainer(
     peeled off to reconstruct the execution path.
     """
     async for e in q.stream_events():
+        if isinstance(e, ProgressEvent):
+            await event_handler.handle_progress_event(e.payload)
+            continue
         (parents, inner) = _unwrap(e)
         match inner:
             case Start():
@@ -121,6 +124,12 @@ async def with_handler(
         except asyncio.CancelledError:
             pass
         _io_handler.reset(tok)
+
+def emit_custom_event(payload: Mapping[str, Any]):
+    curr_io = _io_handler.get()
+    if curr_io is None:
+        raise ValueError("No IO handler installed")
+    curr_io[0].push(ProgressEvent(dict(payload)))
 
 async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     graph: CompiledStateGraph[S, C, I, Any],

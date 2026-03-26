@@ -14,7 +14,8 @@ import os
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Callable, NotRequired, TypedDict, Iterator
+from typing import Annotated, Callable, NotRequired, Iterator
+from typing_extensions import TypedDict
 
 from langchain_core.messages import AnyMessage
 from langchain_core.tools import InjectedToolCallId, tool, BaseTool
@@ -30,8 +31,30 @@ from composer.prover.core import (
 )
 from composer.diagnostics.stream import ProverOutputEvent, CloudPollingEvent
 from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
-
 from graphcore.graph import tool_state_update
+from composer.spec.util import temp_certora_file
+
+DELETE_SKIP = "__delete_skip"
+
+VALIDATION_KEY = "prover"
+
+def _merge_rule_skips(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
+    to_ret = left.copy()
+    for (k,v) in right:
+        if v == DELETE_SKIP:
+            if k in to_ret:
+                del to_ret[k]
+            continue
+        to_ret[k] = v
+    return to_ret
+
+
+class ProverStateExtra(TypedDict):
+    rule_skips: Annotated[dict[str, str], _merge_rule_skips]
+    config: dict
+
+class StateWithSkips(CVLGenerationState, ProverStateExtra):
+    pass
 
 class _SpecCallbacks(ProverCallbacks):
     def __init__(self, writer: Callable, tool_call_id: str) -> None:
@@ -73,7 +96,7 @@ class VerifySpecSchema(BaseModel):
         default=None,
         description="Specific rules to verify. If None, verifies all rules."
     )
-    state: Annotated[CVLGenerationState, InjectedState]
+    state: Annotated[StateWithSkips, InjectedState]
 
 
 @contextmanager
@@ -83,36 +106,33 @@ def tmp_spec(
     content: str,
     prefix: str = "generated"
 ) -> Iterator[str]:
-    t_name = f"{prefix}_{uuid.uuid4().hex[:16]}.spec"
-    rel_path = "certora/" + t_name
-    full_path = (Path(root) / "certora" / t_name)
-    full_path.write_text(content)
-    try:
-        yield rel_path
-    finally:
-        os.unlink(full_path)
-
+    with temp_certora_file(
+        root=root,
+        ext="spec",
+        content=content,
+        prefix=prefix
+    ) as tmp:
+        yield tmp
 
 def get_prover_tool(
     llm: LLM,
-    conf: dict,
     main_contract: str,
     project_root: str,
     cloud: CloudConfig | None = None,
     semaphore: asyncio.Semaphore | None = None,
 ) -> BaseTool:
     sem = semaphore or asyncio.Semaphore(1)
-    stamper = make_validation_stamper("prover")
+    stamper = make_validation_stamper(VALIDATION_KEY)
 
     @tool(args_schema=VerifySpecSchema)
     async def verify_spec(
         tool_call_id: Annotated[str, InjectedToolCallId],
-        state: Annotated[CVLGenerationState, InjectedState],
+        state: Annotated[StateWithSkips, InjectedState],
         rules: list[str] | None = None
     ) -> str | Command:
         if state["curr_spec"] is None:
             return "Specification not yet put on VFS"
-
+        conf = state["config"]
         with tmp_spec(root=project_root, content=state["curr_spec"]) as generated:
             config = {
                 **conf,
@@ -124,25 +144,34 @@ def get_prover_tool(
 
             if rules:
                 config["rule"] = rules
-
-            certora_dir = Path(project_root) / "certora"
-            config_path = certora_dir / "verify.conf"
-            config_path.write_text(json.dumps(config, indent=2))
-
-            async with sem:
-                result = await run_prover(
-                    state,
-                    Path(project_root),
-                    [str(config_path)],
-                    llm,
-                    tool_call_id,
-                    ProverOptions(cloud=cloud),
-                    _SpecCallbacks(get_stream_writer(), tool_call_id),
-                )
+            
+            with temp_certora_file(
+                root = project_root,
+                content=json.dumps(config, indent=2),
+                ext="conf",
+                prefix="verify"
+            ) as config_path:
+                async with sem:
+                    result = await run_prover(
+                        state,
+                        Path(project_root),
+                        [str(config_path)],
+                        llm,
+                        tool_call_id,
+                        ProverOptions(cloud=cloud),
+                        _SpecCallbacks(get_stream_writer(), tool_call_id),
+                    )
 
             if isinstance(result, str):
                 return result
-            if rules is None and result.all_verified:
+            all_verified = True
+            for (r, stat) in result.rule_status.items():
+                if r in state["rule_skips"]:
+                    continue
+                if not stat:
+                    all_verified = False
+                    break
+            if rules is None and all_verified:
                 return tool_state_update(tool_call_id=tool_call_id, content=result.report, validations=stamper(state))
             return result.report
 

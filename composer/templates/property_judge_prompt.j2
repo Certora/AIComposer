@@ -175,9 +175,11 @@ When updating your memories, be sure to include at least the following informati
 * Any substantive feedback you are providing in this round; this will ensure you do not contradict yourself lastReverted
 </task>
 
+{%if context %}
 <application>
 {% include "application_context_new.j2" %}
 </application>
+{% endif %}
 
 <guidance>
 <hard_requirement>

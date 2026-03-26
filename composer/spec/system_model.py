@@ -52,6 +52,13 @@ class SourceExplicitContract(ExplicitContract):
     """
     path: str = Field("The relative path to the file which defines the contract type this represents")
 
+class HarnessDefinition(BaseModel):
+    path: str
+    name: str
+
+class HarnessedExplicitContract(SourceExplicitContract):
+    harnesses: list[HarnessDefinition]
+
 class ExternalActor(BaseModel):
     """
     Some "external actor" to the system. This may be an administrator, an EOA,
@@ -102,10 +109,23 @@ class SourceApplication(BaseApplication[SourceExplicitContract | SourceExternalA
             to_ret.append(c)
         return to_ret
 
+class HarnessedApplication(BaseApplication[HarnessedExplicitContract | SourceExternalActor]):
+    @cached_property
+    def contract_components(self) -> list[HarnessedExplicitContract]:
+        to_ret = []
+        for c in self.components:
+            if not isinstance(c, HarnessedExplicitContract):
+                continue
+            to_ret.append(c)
+        return to_ret
+
+
+type AnyApplication = Application | SourceApplication | HarnessedApplication
+
 @dataclass
 class ContractInstance:
     ind: int
-    app: Application | SourceApplication
+    app: AnyApplication
 
     @property
     def contract(self) -> ExplicitContract:
@@ -126,7 +146,7 @@ class ContractComponentInstance:
     _contract: ContractInstance
 
     @property
-    def app(self) -> Application | SourceApplication:
+    def app(self) -> AnyApplication:
         return self._contract.app
     
     @property

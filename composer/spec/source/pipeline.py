@@ -11,7 +11,6 @@ Phases:
 """
 
 import asyncio
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -22,20 +21,25 @@ from composer.ui.multi_job_app import (
 from composer.io.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, SourceBuilder, CVLBuilder, CVLOnlyBuilder,
-    CacheKey, Properties, ComponentGroup, CVLGeneration,
+    WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
 from composer.spec.util import string_hash
-from composer.spec.bug import run_bug_analysis
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
 from composer.spec.source.harness import run_setup
 from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.summarizer import setup_summaries
-from composer.spec.system_model import ContractComponentInstance
+from composer.spec.system_model import (
+    ContractComponentInstance, HarnessedApplication, SourceExplicitContract,
+    HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
+)
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import CloudConfig
+from composer.spec.source.prover import get_prover_tool
+from composer.spec.source.struct_invariant import get_invariant_formulation
+from composer.spec.source.author import batch_cvl_generation
+from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
 
 
 # ---------------------------------------------------------------------------
@@ -62,17 +66,12 @@ def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGrou
 # Result types
 # ---------------------------------------------------------------------------
 
-@dataclass
-class AutoProveResult:
-    n_components: int
-    n_properties: int
-    failures: list[str] = field(default_factory=list)
-
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
 async def run_autoprove_pipeline(
+    llm: BaseChatModel,
     source_input: SourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
@@ -104,6 +103,40 @@ async def run_autoprove_pipeline(
     if setup is None:
         raise ValueError("we're still fucked")
 
+    contract_to_harness : dict[str, list[HarnessDefinition]] = {}
+    for c in setup.system_description.transitive_closure:
+        if not c.harness_definition:
+            continue
+        if c.harness_definition.harness_of not in contract_to_harness:
+            contract_to_harness[c.harness_definition.harness_of] = []
+        contract_to_harness[c.harness_definition.harness_of].append(
+            HarnessDefinition(
+                name=c.name,
+                path=c.path
+            )
+        )
+
+    comp : list[SourceExternalActor | HarnessedExplicitContract] = []
+    for c in s.components:
+        if not isinstance(c, SourceExplicitContract):
+            comp.append(c)
+            continue
+        comp.append(HarnessedExplicitContract(
+            sort=c.sort,
+            name=c.name,
+            components=c.components,
+            description=c.description,
+            path=c.path,
+            harnesses=contract_to_harness.get(c.name, [])
+        ))
+
+
+    harnessed_app : HarnessedApplication = HarnessedApplication(
+        application_type=s.application_type,
+        description=s.description,
+        components=comp
+    )
+
     # Build initial resources from PreAudit-generated summaries
     resources: list[CVLResource] = [
         CVLResource(
@@ -120,19 +153,17 @@ async def run_autoprove_pipeline(
             TaskInfo("summaries", "Custom Summaries", AutoProvePhase.SUMMARIES),
             lambda: setup_summaries(
                 ctx=ctx,
-                app=s,
+                app=harnessed_app,
                 config=setup,
                 env=env,
                 source=source_input
             )
         )
         resources.append(summary_resource)
-    
-    raise ValueError("We out")
 
     # Build prover tool (needs config from phase 1)
     prover_tool = get_prover_tool(
-        llm, config.config, source_input.contract_name,
+        llm, source_input.contract_name,
         source_input.project_root, cloud=cloud, semaphore=semaphore,
     )
 
@@ -142,7 +173,7 @@ async def run_autoprove_pipeline(
     invariants = await run_task(
         handler_factory,
         TaskInfo("invariants", "Structural Invariants", AutoProvePhase.INVARIANTS),
-        lambda: get_invariant_formulation(ctx, source_input, source_tools),
+        lambda: get_invariant_formulation(ctx, source_input, env, harnessed_app),
     )
 
     if invariants.inv:
@@ -161,22 +192,18 @@ async def run_autoprove_pipeline(
                 for inv in invariants.inv
             ]
 
-            inv_env = GenerationEnv(
-                input=source_input,
-                cvl_authorship=cvl_authorship,
-                cvl_research=cvl_research,
-                resources=list(resources),
-                validation_tools=[("prover", prover_tool)],
-
-            )
-
             inv_cvl = await run_task(
                 handler_factory,
                 TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
-                lambda: generate_batch_cvl(
-                    inv_cvl_ctx.abstract(CVLGeneration),
-                    inv_props, inv_env,
-                    with_memory=True,
+                lambda: batch_cvl_generation(
+                    ctx=inv_cvl_ctx.abstract(CVLGeneration),
+                    component=None,
+                    props=inv_props,
+                    env=env,
+                    init_config=setup.config.prover_config,
+                    prover_tool=prover_tool,
+                    resources=resources,
+                    source=source_input,
                     description="Structural invariant CVL",
                 ),
             )
@@ -191,110 +218,17 @@ async def run_autoprove_pipeline(
             sort="import",
         ))
 
-    # ------------------------------------------------------------------
-    # Phase 4: Component analysis
-    # ------------------------------------------------------------------
-    summary = await run_task(
-        handler_factory,
-        TaskInfo("component-analysis", COMPONENT_ANALYSIS_DESC, AutoProvePhase.COMPONENT_ANALYSIS),
-        lambda: run_component_analysis(ctx, analysis_input),
-    )
-    if summary is None:
-        raise ValueError("Component analysis produced no result — is the system doc empty?")
-
-    # ------------------------------------------------------------------
-    # Phase 5: Per-component property extraction
-    # ------------------------------------------------------------------
     prop_context = ctx.child(PROPERTIES_KEY)
 
-    @dataclass
-    class _ComponentBatch:
-        feat: ComponentInst
-        props: list[PropertyFormulation]
-        feat_ctx: WorkflowContext[ComponentGroup]
-
-    async def _analyze_component(component_idx: int) -> _ComponentBatch | None:
-        feat = ComponentInst(summ=summary, ind=component_idx)
-        name = feat.component.name
-        feat_ctx = prop_context.child(
-            _component_cache_key(feat.component, summary.application_type),
-            {
-                "component": feat.component.model_dump(),
-                "app_type": summary.application_type,
-            },
-        )
-
-        props = await run_task(
-            handler_factory,
-            TaskInfo(f"bug-{component_idx}", name, AutoProvePhase.BUG_ANALYSIS),
-            lambda: run_bug_analysis(feat_ctx, feat, analysis_input),
-            semaphore,
-        )
-
-        if not props:
-            return None
-        return _ComponentBatch(feat=feat, props=props, feat_ctx=feat_ctx)
-
-    extraction_results = await asyncio.gather(*[
-        _analyze_component(i) for i in range(len(summary.components))
-    ])
-
-    component_batches = [b for b in extraction_results if b is not None]
-
-    if not component_batches:
-        raise ValueError("No properties extracted from any component.")
-
-    # ------------------------------------------------------------------
-    # Phase 6: Per-component CVL generation
-    # ------------------------------------------------------------------
-    async def _generate_batch(
-        batch_idx: int,
-        batch: _ComponentBatch,
-    ) -> GeneratedCVL:
-        batch_ctx = batch.feat_ctx.child(
-            _batch_cache_key(batch.props),
-            {"properties": [p.model_dump() for p in batch.props]},
-        ).abstract(CVLGeneration)
-
-        env = GenerationEnv(
-            input=source_input,
-            cvl_authorship=cvl_authorship,
-            cvl_research=cvl_research,
-            source_tools=source_tools,
-            resources=resources,
-            prover_tool=prover_tool,
-        )
-
-        label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
-        return await run_task(
-            handler_factory,
-            TaskInfo(f"cvl-{batch_idx}", label, AutoProvePhase.CVL_GEN),
-            lambda: generate_batch_cvl(
-                batch_ctx, batch.props, batch.feat, env, with_memory=True,
-                description=label,
-            ),
-            semaphore,
-        )
-
-    generation_results = await asyncio.gather(
-        *[
-            _generate_batch(i, batch)
-            for i, batch in enumerate(component_batches)
-        ],
-        return_exceptions=True,
+    res = await run_generation_pipeline(
+        source_input=source_input,
+        env=env,
+        handler_factory=handler_factory,
+        prop_context=prop_context,
+        prover_config=setup.config.prover_config,
+        prover_tool=prover_tool,
+        resources=resources,
+        semaphore=semaphore,
+        summary=harnessed_app
     )
-
-    failures: list[str] = []
-    n_properties = 0
-    for batch, result in zip(component_batches, generation_results):
-        n_properties += len(batch.props)
-        if isinstance(result, BaseException):
-            failures.append(f"{batch.feat.component.name}: {result}")
-        elif isinstance(result, GeneratedCVL) and result.commentary.startswith("GAVE_UP:"):
-            failures.append(f"{batch.feat.component.name}: {result.commentary}")
-
-    return AutoProveResult(
-        n_components=len(component_batches),
-        n_properties=n_properties,
-        failures=failures,
-    )
+    return res

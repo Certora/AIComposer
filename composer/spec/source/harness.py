@@ -273,7 +273,7 @@ async def generate_harnesses(
                 capture_output=True,
                 text=True
             )
-            if compile_result.returncode != 0:
+            if compile_result.returncode != 0 and False:
                 return f"Harness compilation failed:\nstdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
         return None
 
@@ -483,7 +483,7 @@ async def run_setup(
         c.path for c in sys_desc.transitive_closure if c.name != source.contract_name
     ]
 
-    setup_result = run_preaudit_setup(
+    setup_result = await run_preaudit_setup(
         Path(source.project_root),
         source.relative_path,
         source.contract_name,

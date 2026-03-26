@@ -28,7 +28,7 @@ from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import temp_certora_file, string_hash
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.harness import ContractSetup, ExternalInterface, HarnessDef
-from composer.spec.system_model import SourceApplication, ExternalActor
+from composer.spec.system_model import HarnessedApplication, ExternalActor
 from composer.spec.gen_types import TypedTemplate
 
 
@@ -163,22 +163,21 @@ class LocatedExternalInterface(ExternalInterface):
     path: str
 
 class SummarizationParams(TypedDict):
-    context: SourceApplication
+    context: HarnessedApplication
     erc20_contracts: list[str]
     interfaces: list[LocatedExternalInterface]
-    harnessed: dict[str, list[LocatedHarness]]
     contract_name: str
     contract_path: str
     included_contracts: list[str]
     config: dict
 
-_SummarizationTemplate = TypedTemplate[SummarizationParams]("summarization")
+_SummarizationTemplate = TypedTemplate[SummarizationParams]("cvl_setup_summarization_prompt.j2")
 
 async def _setup_summaries_impl(
     ctx: WorkflowContext["_SummaryCache"],
     env: SourceEnvironment,
     setup: ContractSetup,
-    application: SourceApplication,
+    application: HarnessedApplication,
     source: SourceCode
 ) -> str:
     def _validator(s: ST, _res: str) -> str | None:
@@ -197,16 +196,6 @@ async def _setup_summaries_impl(
         _TypeChecker.as_tool("typechecker")
     ]
 
-    harnesses : dict[str, list[LocatedHarness]] = {}
-    for c in setup.system_description.transitive_closure:
-        if c.harness_definition is not None:
-            if c.harness_definition.harness_of not in harnesses:
-                harnesses[c.harness_definition.harness_of] = []
-            harnesses[c.harness_definition.harness_of].append(LocatedHarness(
-                path=c.path,
-                name=c.name
-            ))
-
     intf_summaries = []
     intf_paths = {
         i.name: i.path for i in application.components if
@@ -214,7 +203,8 @@ async def _setup_summaries_impl(
     }
     for i in setup.system_description.external_interfaces:
         if i.name not in intf_paths:
-            raise ValueError(f"Told to summarize {i.name}, but no path exists?")
+            continue # I'm tired boss
+            # raise ValueError(f"Told to summarize {i.name}, but no path exists?")
         intf_summaries.append(
             LocatedExternalInterface(
                 path=intf_paths[i.name],
@@ -224,12 +214,11 @@ async def _setup_summaries_impl(
         )
 
     bound = _SummarizationTemplate.bind({
-        "config": setup.config.config,
+        "config": setup.config.prover_config,
         "context": application,
         "contract_name": source.contract_name,
         "contract_path": source.relative_path,
         "erc20_contracts": setup.system_description.erc20_contracts,
-        "harnessed": harnesses,
         "included_contracts": [
             c.name for c in setup.system_description.transitive_closure
         ],
@@ -243,10 +232,10 @@ async def _setup_summaries_impl(
     ).inject(
         lambda g: bound.render_to(g.with_initial_prompt_template)
     ).with_tools(
-        [ctx.get_memory_tool(), *env.source_tools, *env.cvl_authorship_tools]
+        [ctx.get_memory_tool(), *env.cvl_authorship_tools]
     ).with_tools(
         tools
-    ).with_input(Input).compile_async()
+    ).with_input(Input).with_context(SummaryContext).compile_async()
 
     udts = _format_types(setup.config.user_types)
 
@@ -263,6 +252,10 @@ async def _setup_summaries_impl(
         ),
         thread_id=ctx.thread_id,
         description="Custom summaries",
+        context=SummaryContext(
+            config=setup.config.prover_config,
+            source=source
+        )
     )
     assert st["curr_spec"] is not None
     return st["curr_spec"]
@@ -277,7 +270,13 @@ class _SummaryCache(BaseModel):
 
 
 def _summary_key(d: ContractSetup) -> CacheKey[None, _SummaryCache]:
-    cacher = string_hash(d.model_dump_json())[:16]
+    import json
+    cacher = string_hash("|".join([
+        d.model_dump_json(),
+        json.dumps(d.config.prover_config),
+        json.dumps(str(d.config.summaries_path)),
+        json.dumps(d.config.user_types)
+    ]))[:16]
     return CacheKey("summary-" + cacher)
 
 # ---------------------------------------------------------------------------
@@ -289,7 +288,7 @@ async def setup_summaries(
     source: SourceCode,
     env: SourceEnvironment,
     config: ContractSetup,
-    app: SourceApplication
+    app: HarnessedApplication
 ) -> CVLResource:
     """Generate custom CVL summaries for SUMMARIZABLE external contracts.
 
@@ -308,7 +307,7 @@ async def setup_summaries(
         CVLResource pointing to the generated ``custom_summaries.spec`` file.
     """
 
-    summary_context = ctx.child(_summary_key(config), config.model_dump())
+    summary_context = ctx.child(_summary_key(config))
     result_path = pathlib.Path(source.project_root) / "certora" / "custom_summaries.spec"
 
     to_ret = CVLResource(

@@ -44,7 +44,7 @@ def _validate_connectivity(
         if not isinstance(explicit, ExplicitContract):
             continue
         for sub_comp in explicit.components:
-            thing_interacts_with_str = f"Component {sub_comp.name} of {explicit.name} interacts with "
+            thing_interacts_with_str = f"Component {sub_comp.name} of {explicit.name} interacts with"
             for interaction in sub_comp.interactions:
                 if isinstance(interaction, ExternalDependency):
                     if interaction.external_actor not in known_external:
@@ -53,7 +53,7 @@ def _validate_connectivity(
                     if interaction.contract_name not in known_components:
                         return f"{thing_interacts_with_str} an unknown explicit contact: {interaction.contract_name}"
                     if interaction.component and interaction.component not in known_components[interaction.contract_name]:
-                        return f"{thing_interacts_with_str} unknown component {interaction.component} of explicit contract{ interaction.contract_name}" 
+                        return f"{thing_interacts_with_str} unknown component {interaction.component} of explicit contract {interaction.contract_name}"
     return None
 
 async def run_component_analysis[T: BaseApplication](

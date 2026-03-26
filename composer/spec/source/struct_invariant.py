@@ -22,8 +22,10 @@ from graphcore.graph import FlowInput
 
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.context import WorkflowContext, SourceCode, SourceBuilder, CacheKey, InvJudge
+from composer.spec.context import WorkflowContext, SourceCode, CacheKey, InvJudge
 from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.system_model import HarnessedApplication
+from composer.spec.gen_types import TypedTemplate
 
 
 # ---------------------------------------------------------------------------
@@ -73,11 +75,17 @@ def _merge_invariant_feedback(
         to_ret[k] = v
     return to_ret
 
+class InvariantParams(TypedDict):
+    context: HarnessedApplication
+    contract_spec: SourceCode
+
+_typed_invariant_prompt = TypedTemplate[InvariantParams]("structural_invariant_prompt.j2")
 
 async def get_invariant_formulation(
     ctx: WorkflowContext[None],
     source: SourceCode,
-    env: SourceEnvironment
+    env: SourceEnvironment,
+    app: HarnessedApplication
 ) -> Invariants:
     """Run the structural invariant formulation agent.
 
@@ -184,16 +192,20 @@ async def get_invariant_formulation(
 
     # -- Main formulation agent --
 
+    bound_template = _typed_invariant_prompt.bind({
+        "context": app,
+        "contract_spec": source
+    })
+
     graph = bind_standard(
         env.builder,
         ST,
         doc="The structural/state invariants you identified",
         validator=_validate_invariants,
-    ).with_sys_prompt(
-        "You are a methodical formal verification expert working at Certora, Inc."
-    ).with_initial_prompt_template(
-        "structural_invariant_prompt.j2",
-        contract_spec=source,
+    ).with_sys_prompt_template(
+        "cvl_summarization_system_prompt.j2"
+    ).inject(
+        lambda g: bound_template.render_to(g.with_initial_prompt_template)
     ).with_tools(
         [inv_ctx.get_memory_tool(), InvariantFeedbackTool.as_tool("invariant_feedback"), *env.source_tools]
     ).with_input(
@@ -203,7 +215,7 @@ async def get_invariant_formulation(
     st = await run_to_completion(
         graph=graph,
         input=InvInput(input=[], invariant_data={}),
-        thread_id=inv_ctx.uniq_thread_id(),
+        thread_id=inv_ctx.thread_id,
         description="Structural invariant formulation",
     )
 

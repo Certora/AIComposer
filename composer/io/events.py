@@ -45,6 +45,10 @@ class End:
     """Graph execution ended (success or failure)."""
     thread_id: str
 
+@dataclass
+class ProgressEvent:
+    payload: dict
+
 InnerEvent = StateUpdate | NextCheckpoint | CustomUpdate | Start | End
 
 @dataclass
@@ -54,7 +58,9 @@ class Nested:
     The drainer collects ``parent_id`` values into a path list so
     handlers know which nested execution produced the event.
     """
-    inner: "AllEvents"
+    inner: "GraphEvents"
     parent_id: str
 
-type AllEvents = InnerEvent | Nested
+type GraphEvents = InnerEvent | Nested
+
+type AllEvents = GraphEvents | ProgressEvent

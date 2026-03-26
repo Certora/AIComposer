@@ -38,7 +38,7 @@ class Properties(TypedDict):
     properties: list[PropertyFormulation]
 
 class FeedbackInherentParams(TypedDict):
-    context: ContractComponentInstance
+    context: ContractComponentInstance | None
     has_source: bool
 
 FeedbackTemplate = TypedTemplate[FeedbackInherentParams]("property_judge_prompt.j2")

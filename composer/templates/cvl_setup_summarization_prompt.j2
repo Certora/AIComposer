@@ -41,7 +41,7 @@ rough sketch of the summary behavior.
 <context>
 This application being targeted for formal verification is described as follows:
 
-{% import "harnessed_application_context.j2" %}
+{% include "harnessed_application_context.j2" %}
 
 The contract of interest being verified is {{ contract_name }} at path {{ contract_path }}.
 </context>
@@ -68,7 +68,7 @@ To summarize this behavior use the following strategy:
 
 ### Strategy
 
-{% import "erc20_advice.j2 "%}
+{% include "erc20_advice.j2" %}
 
 **IMPORTANT**: When crafting your strategy, determine if any other contract inputs to the prover are *NON*-standard ERC20 tokens
 which requires using the hybrid summarization strategy.
@@ -87,6 +87,8 @@ To be explicit, the contracts that will be ingested into the prover (and are thu
 {% for c in included_contracts %}
 * `{{ c }}`
 {% endfor %}
+
+You may look at the contents of `certora/erc7201.spec` to learn about what erc-7201 namespaces might be used in this application.
 </prover-input>
 
 <task>
@@ -105,6 +107,7 @@ Explore the source code to understand the APIs of the interfaces being summarize
 
 **IMPORTANT**: Do NOT try to read other spec files to inform your summarization or to "gain context"; the other spec
 files in the project may be entirely unrelated to your task and you have no way to determine which files are relevant.
+(The exception is `certora/erc7201.spec` mentioned above.)
 
 ## Step 3
 
@@ -124,10 +127,16 @@ For each planned summary, determine the following:
 
 You *MUST* write your plan using the "write_plan" tool.
 
+During your research, you may conclude learn important facts about the implementation or CVL. In this case, store this information in
+the memory folder `/memories/source_findings` and `/memories/cvl_findings` respectively. Update your memory *immediately* once you have learned
+new information.
+
 ## Step 6
 
 Review your plan by retrieving it via the "read_plan" tool. Double check that you have no invented
 any summaries that were not mentioned in your input. If you think updates or adjustments are required, return to step 5.
+
+Once you have accepted your plan, write it into your memory at `/memories/plan.md` for future reference.
 
 ## Step 7
 

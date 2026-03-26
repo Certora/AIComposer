@@ -11,26 +11,18 @@ from typing import cast, Protocol
 
 from langchain_core.tools import BaseTool
 
-from langgraph.store.base import BaseStore
-from langgraph.types import Checkpointer
 
-from graphcore.graph import Builder
 from graphcore.tools.memory import memory_tool
-from graphcore.tools.vfs import fs_tools
 
 from composer.input.types import ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.templates.loader import load_jinja_template
-from composer.tools.search import cvl_manual_tools
 from composer.workflow.services import create_llm, get_checkpointer, get_store, get_memory, get_indexed_store
-from composer.kb.knowledge_base import kb_tools
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, SourceBuilder, CVLBuilder, CVLOnlyBuilder,
-    get_system_doc,
+    WorkflowContext, SourceCode, get_system_doc,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline
 from composer.spec.source.prover import CloudConfig
@@ -62,44 +54,17 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
 class _AutoProveServices:
     """Concrete ``WorkflowServices`` for the auto-prove entry point."""
 
-    def __init__(self, checkpointer: Checkpointer, indexed_store: BaseStore):
-        self._checkpointer = checkpointer
-        self._indexed_store = indexed_store
-
-    def kb_tools(self, read_only: bool) -> list[BaseTool]:
-        return kb_tools(self._indexed_store, ("cvl",), read_only)
+    def __init__(self):
+        pass
 
     def memory_tool(self, namespace: str) -> BaseTool:
         backend = get_memory(namespace)
         return memory_tool(backend)
 
-    @property
-    def checkpointer(self) -> Checkpointer:
-        return self._checkpointer
-
 
 # ---------------------------------------------------------------------------
 # Builder construction
 # ---------------------------------------------------------------------------
-
-def _make_builders(
-    llm,
-    rag_db: PostgreSQLRAGDatabase,
-    project_root: str,
-) -> tuple[SourceBuilder, CVLBuilder, CVLOnlyBuilder]:
-    """Create role-based builders for the auto-prove pipeline.
-
-    Returns (source_tools, cvl_authorship, cvl_research).
-    """
-    base = Builder().with_llm(llm).with_loader(load_jinja_template)
-    cvl_manual = cvl_manual_tools(rag_db)
-    project_fs = fs_tools(project_root, forbidden_read=FS_FORBIDDEN_READ)
-
-    return (
-        base.with_tools(project_fs),
-        base.with_tools([*cvl_manual, *project_fs]),
-        base.with_tools(cvl_manual),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +127,6 @@ async def main() -> int:
         contract_name=contract_name,
         relative_path=relative_path,
         forbidden_read=FS_FORBIDDEN_READ,
-        solidity_compiler="solc8.31"
     )
 
     # Set up services
@@ -175,8 +139,7 @@ async def main() -> int:
         conn_string=args.rag_db, model=model, skip_test=True
     )
 
-    services = _AutoProveServices(checkpointer, indexed_store)
-    source_tools, cvl_authorship, cvl_research = _make_builders(llm, rag_db, args.project_root)
+    services = _AutoProveServices()
 
     cache_root: tuple[str, str] | None = None
     if args.cache_ns is not None:
@@ -209,6 +172,7 @@ async def main() -> int:
     async def work():
         try:
             result = await run_autoprove_pipeline(
+                llm=llm,
                 ctx=ctx,
                 source_input=system_doc,
                 env=source_env,

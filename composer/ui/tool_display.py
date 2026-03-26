@@ -161,6 +161,7 @@ class CommonTools:
             "put_file": CommonTools.put_file,
             "list_files": CommonTools.list_files,
             "grep_files": CommonTools.grep_files,
+            "explore_code": CommonTools.code_explorer
         }
 
     @staticmethod

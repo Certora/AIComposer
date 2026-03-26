@@ -7,10 +7,10 @@ prover lifecycle events directly via the ``NullEventHandler`` mixin.
 """
 
 import enum
-from typing import cast
+from typing import cast, override
 
 from textual.containers import VerticalScroll
-from textual.widgets import Static, RichLog
+from textual.widgets import Static, RichLog, Collapsible
 
 from rich.text import Text
 
@@ -20,6 +20,7 @@ from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo, TaskHost,
 )
 from composer.spec.source.prover import ProverOutputEvent, CloudPollingEvent
+from composer.spec.source.preaudit_setup import PreAuditEvents
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +134,9 @@ def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
 # AutoProveTaskHandler
 # ---------------------------------------------------------------------------
 
+from logging import getLogger
+_logger = getLogger(__name__)
+
 class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
     """Per-task handler that doubles as its own ``EventHandler``.
 
@@ -156,17 +160,19 @@ class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
 
     # ── Prover output streaming ──────────────────────────────
 
-    async def _ensure_prover_log(self, tool_call_id: str) -> RichLog:
+    async def _ensure_prover_log(self, tool_call_id: str, title: str = "Prover Output") -> RichLog:
         if tool_call_id in self._prover_logs:
+            _logger.warning("Returning existing log")
             return self._prover_logs[tool_call_id]
         log = RichLog(highlight=True, markup=False)
+        collapsible = Collapsible(log, title=title)
         log.styles.min_height = 15
         self._prover_logs[tool_call_id] = log
-        await self._mount_to(self._panel, log)
+        await self._mount_to(self._panel, collapsible)
         return log
 
     # ── EventHandler (from NullEventHandler mixin) ───────────
-
+    @override
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         evt = cast(AutoProveEvent, payload)
         match evt["type"]:
@@ -178,6 +184,23 @@ class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
                 evt = cast(CloudPollingEvent, evt)
                 log = await self._ensure_prover_log(evt["tool_call_id"])
                 log.write(Text(f"[{evt['status']}] {evt['message']}", style="dim"))
+
+    @override
+    async def handle_progress_event(self, payload: dict) -> None:
+        evt = cast(PreAuditEvents, payload)
+        _logger.error(str(payload))
+        match evt["type"]:
+            case "pre_audit_complete":
+                log = await self._ensure_prover_log("_preaudit_setup", "PreAudit Agent")
+                p : Collapsible = log.parent #type: ignore
+                p.collapsed = True
+            case "pre_audit_start":
+                log = await self._ensure_prover_log("_preaudit_setup", "PreAudit Agent")
+                p : Collapsible = log.parent #type: ignore
+                p.collapsed = False
+            case "pre_audit_output":
+                log = await self._ensure_prover_log("_preaudit_setup", "PreAudit Agent")
+                log.write(evt["line"])
 
 
 # ---------------------------------------------------------------------------

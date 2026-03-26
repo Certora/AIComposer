@@ -96,7 +96,7 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
             case str():
                 return tool_return(tool_call_id=self.tool_call_id, content=result)
             case RawReport():
-                if result.all_verified and not self.use_working_spec:
+                if result.all_verified and not self.use_working_spec and not self.rule:
                     ctxt = get_runtime(AIComposerContext).context
                     state_digest = compute_state_digest(c=ctxt, state=self.state)
                     return Command(

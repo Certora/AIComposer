@@ -161,10 +161,6 @@ async def certora_prover(
                 summarization_threshold=10,
             )
 
-            # Preserve the rule-is-None check for all_verified
-            if isinstance(result, RawReport) and rule is not None:
-                result = RawReport(report=result.report, all_verified=False)
-
             return result
         except Exception as e:
             print(e)
