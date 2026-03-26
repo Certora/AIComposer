@@ -204,10 +204,12 @@ _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
 def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
     """Create LLM; thinking disabled when args.thinking_tokens is None."""
     thinking: dict[str, Any] | None
+    effective_interleaved = args.interleaved_thinking
     if args.thinking_tokens is None:
         thinking = None
     elif args.model in _ADAPTIVE_MODELS:
         thinking = {"type": "adaptive"}
+        effective_interleaved = False
     else:
         thinking = {"type": "enabled", "budget_tokens": args.thinking_tokens}
 
@@ -218,13 +220,12 @@ def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
         timeout=None,
         max_retries=2,
         stop=None,
+        betas=(
+            ["files-api-2025-04-14"]
+            + (["context-management-2025-06-27"] if args.memory_tool else [])
+            + (["interleaved-thinking-2025-05-14"] if effective_interleaved else [])
+        ),
         thinking=thinking,
-        betas=([
-            "files-api-2025-04-14",
-            "context-management-2025-06-27"
-        ] if args.memory_tool else [
-            "files-api-2025-04-14"
-        ])
     )
 
 

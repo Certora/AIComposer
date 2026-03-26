@@ -45,6 +45,8 @@ class CodegenWorkflowArgs:
     tokens: int = 10_000
     thinking_tokens: int = 2048
     memory_tool: bool = True
+    interleaved_thinking: bool = False
+
 
 
 def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:

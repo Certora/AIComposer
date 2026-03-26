@@ -38,9 +38,10 @@ dependencies = [
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
+sanity-analyzer = "sanity_analyzer.analysis:main"
 
 [tool.setuptools.packages.find]
-include = ["analyzer*", "composer*"]
+include = ["analyzer*", "composer*", "sanity_analyzer*"]
 
 [tool.setuptools.package-dir]
 "" = "."

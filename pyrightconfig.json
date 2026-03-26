@@ -1,5 +1,5 @@
 {
-  "include": ["composer"],
+  "include": ["composer", "sanity_analyzer"],
   "stubPath": "stubs",
   "typeCheckingMode": "basic",
   "reportMissingImports": "none",

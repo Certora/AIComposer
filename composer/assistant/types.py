@@ -33,6 +33,8 @@ class OrchestratorModelConfig:
     thinking_tokens: int
     memory_tool: bool
     rag_db: str
+    interleaved_thinking: bool = False
+
 
 
 @dataclass
