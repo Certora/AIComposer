@@ -8,7 +8,7 @@ if composer_dir not in sys.path:
     sys.path.append(composer_dir)
 
 from composer.workflow.services import get_indexed_store
-from composer.kb.knowledge_base import DefaultEmbedder, KnowledgeBaseArticle
+from composer.kb.knowledge_base import DefaultEmbedder, KnowledgeBaseArticle, ReviewStatus
 
 store = get_indexed_store(DefaultEmbedder())
 
@@ -511,9 +511,13 @@ to_store : list[KnowledgeBaseArticle] = [
     {
         "title": d["title"],
         "symptom": d["symptom"],
-        "body": d["body"]
+        "body": d["body"],
+        "review_status": ReviewStatus.APPROVED,
+        "source": "human"
     } for d in CVL_HELP_MESSAGES
 ]
+
+known_titles = {d["title"] for d in CVL_HELP_MESSAGES}
 
 kb_ns = ("cvl", "agent", "knowledge")
 
@@ -523,3 +527,24 @@ for s in to_store:
         continue
     value : dict[str, Any] = s #type: ignore
     store.put(kb_ns, s["title"], value, index=["symptom"])
+
+# Migration: add review_status and source to existing articles that lack them
+print("Migrating existing articles...")
+migrated = 0
+offset = 0
+while True:
+    batch = store.search(kb_ns, limit=100, offset=offset)
+    if not batch:
+        break
+    for item in batch:
+        if "review_status" not in item.value:
+            if item.value.get("title") in known_titles:
+                item.value["review_status"] = ReviewStatus.APPROVED
+                item.value["source"] = "human"
+            else:
+                item.value["review_status"] = ReviewStatus.PENDING_REVIEW
+                item.value["source"] = "agent"
+            store.put(kb_ns, item.key, item.value, index=["symptom"])
+            migrated += 1
+    offset += 100
+print(f"Migrated {migrated} articles.")
