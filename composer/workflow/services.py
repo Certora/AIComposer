@@ -472,6 +472,7 @@ async def standard_connections(
                     store=store,
                     memory=mem
                 )
+                return
         yield StandardConnections(
             checkpointer=check,
             store=store,
