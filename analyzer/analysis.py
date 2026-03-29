@@ -1,5 +1,6 @@
 from typing import NotRequired, TypedDict, Iterator, Iterable, TypeVar, overload, Any, Generic
 from dataclasses import dataclass
+import asyncio
 import pathlib
 import os
 import tempfile
@@ -24,7 +25,7 @@ from composer.templates.loader import load_jinja_template
 from composer.workflow.services import get_checkpointer
 
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
-from graphcore.graph import build_workflow, FlowInput
+from graphcore.graph import build_async_workflow, FlowInput
 from graphcore.tools.results import result_tool_generator
 
 from analyzer.types import Ecosystem, AnalysisArgs
@@ -152,7 +153,7 @@ Examples:
     )
 
     args = parser.parse_args()
-    return analyze(cast(AnalysisArgs, args))
+    return asyncio.run(analyze(cast(AnalysisArgs, args)))
 
 ecosystem_params: dict[Ecosystem, EcosystemConfig] = {
     "evm": {
@@ -220,7 +221,7 @@ def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
         
         yield pathlib.Path(temp_dir, "TarName")
 
-def _analyze_core(
+async def _analyze_core(
     input_messages: Iterable[str],
     initial_prompt: str,
     report_dir: pathlib.Path,
@@ -287,7 +288,7 @@ def _analyze_core(
 
     system_prompt = load_jinja_template("analyzer_system_prompt.j2")
 
-    graph = build_workflow(
+    graph = build_async_workflow(
         input_type=FlowInput,
         context_schema=ExplainerContext,
         output_key="result",
@@ -313,8 +314,8 @@ def _analyze_core(
 
     conf["recursion_limit"] = args.recursion_limit
 
-    for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
-        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
+    async for (ty, d) in graph.astream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
+        rag_db=PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model())
     ), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
@@ -324,9 +325,9 @@ def _analyze_core(
             if not args.quiet:
                 print(d)
 
-    return graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
+    return (await graph.aget_state({"configurable": {"thread_id": tid}})).values["result"]
 
-def _analyze_from_report(
+async def _analyze_from_report(
     report_dir: pathlib.Path,
     args: AnalysisArgs
 ) -> int:
@@ -377,25 +378,25 @@ def _analyze_from_report(
         calltrace_xml
     ]
 
-    msg = _analyze_core(input_messages, initial_prompt, report_dir, args, _default_format)
+    msg = await _analyze_core(input_messages, initial_prompt, report_dir, args, _default_format)
     print(msg)
     return 0
 
-def analyze(
+async def analyze(
     args: AnalysisArgs
 ) -> int:
     """Analyze counterexamples, handling both local folders and URLs."""
     if _looks_like_url(args.folder):
         with _download_and_extract_report(args.folder) as report_dir:
-            return _analyze_from_report(report_dir, args)
+            return await _analyze_from_report(report_dir, args)
     else:
         report_dir = pathlib.Path(args.folder)
-        return _analyze_from_report(report_dir, args)
+        return await _analyze_from_report(report_dir, args)
 
 B = TypeVar("B", bound=BaseModel)
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs
@@ -403,7 +404,7 @@ def analyze_with_calltraces(
     ...
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -412,7 +413,7 @@ def analyze_with_calltraces(
     ...
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -420,7 +421,7 @@ def analyze_with_calltraces(
 ) -> B:
     ...
 
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -471,4 +472,4 @@ def analyze_with_calltraces(
         "args.folder must be a local folder path, not a URL. Use analyze() to handle URLs."
 
     report_dir = pathlib.Path(args.folder)
-    return _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)
+    return await _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)

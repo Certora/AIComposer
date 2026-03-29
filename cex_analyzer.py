@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 from typing import cast
 import sys
 
@@ -45,4 +46,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    sys.exit(analyze(cast(AnalysisArgs, args)))
+    sys.exit(asyncio.run(analyze(cast(AnalysisArgs, args))))

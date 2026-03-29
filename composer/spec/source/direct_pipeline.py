@@ -17,7 +17,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from composer.ui.multi_job_app import (
     TaskInfo, HandlerFactory, run_task,
 )
-from composer.io.autoprove_app import AutoProvePhase
+from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties,

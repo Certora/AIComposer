@@ -304,7 +304,7 @@ async def execute_ai_composer_workflow(
         extra_tools.append(memory)
 
     # CVL research sub-agent — KB needs indexed store for semantic search
-    rag_db = PostgreSQLRAGDatabase(workflow_options.rag_db, get_rag_model(), skip_test=True)
+    rag_db = PostgreSQLRAGDatabase(workflow_options.rag_db, get_rag_model())
     indexed_store = get_indexed_store(DefaultEmbedder())
     cvl_builder = Builder().with_llm(
         llm
@@ -390,6 +390,8 @@ async def execute_ai_composer_workflow(
         keep_folder=workflow_options.prover_keep_folders,
         cloud=None if workflow_options.local_prover else CloudConfig(),
     )
+
+    rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model())
     required_validations : list[ValidationType] = [prover]
     if reqs_list is not None:
         required_validations.append(req_type)

@@ -33,7 +33,7 @@ async def launch_natspec_workflow(
     store = get_store()
     the_model = get_model()
     rag_db = PostgreSQLRAGDatabase(
-        conn_string=ctx.config.rag_db, model=get_model(), skip_test=True,
+        conn_string=ctx.config.rag_db, model=get_model(),
     )
 
     thread_id = f"pipeline_{uuid.uuid4().hex[:12]}"
