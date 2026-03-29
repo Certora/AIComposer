@@ -221,8 +221,12 @@ class MessageRenderer:
         return ("User input", True)
     
     def get_flow_target(self, root: VerticalScroll, path: list[str]) -> VerticalScroll:
-        if len(path) > 1 and path[-2] in self.nested_containers:
+        # Walk from most specific to least specific: the current flow's container
+        # may not exist yet (render_start creates it), so fall back to the parent's.
+        if len(path) > 1 and path[-1] in self.nested_containers:
             return self.nested_containers[path[-1]]
+        if len(path) > 1 and path[-2] in self.nested_containers:
+            return self.nested_containers[path[-2]]
         return root
 
     async def render_start(self, root: VerticalScroll, *, path: list[str], description: str) -> None:

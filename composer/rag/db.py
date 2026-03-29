@@ -16,6 +16,15 @@ from composer.rag.text import code_ref_tag
 
 logger = logging.getLogger(__name__)
 
+# tqdm tries to create a multiprocessing.RLock on first use, which calls
+# fork_exec to start a resource tracker process.  In an async event loop
+# with open DB connections this fails with "bad value(s) in fds_to_keep"
+# and eventually hangs.  Pre-set a threading lock so tqdm never attempts
+# the fork.  This is the narrowest fix: no env-var side effects, and
+# sentence_transformers (which uses tqdm internally) just works.
+import threading
+from tqdm import tqdm as _tqdm_cls
+_tqdm_cls.set_lock(threading.RLock())
 
 DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
 
@@ -189,7 +198,7 @@ class PostgreSQLRAGDatabase:
                 payloads = []
                 for (i, code) in enumerate(ch.code_refs):
                     payloads.append((i, code, insert_res[0]))
-                async with conn.cursor() as cur:  
+                async with conn.cursor() as cur:
                     await cur.executemany("""
                         INSERT INTO manual_section_code_refs(
                             id, code_body, section_id
