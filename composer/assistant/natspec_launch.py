@@ -1,56 +1,22 @@
 import traceback
 import uuid
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
-from langgraph.store.base import BaseStore
-from langgraph.types import Checkpointer
 
-from graphcore.graph import Builder
 from graphcore.tools.memory import memory_tool as make_memory_tool
 
 from composer.assistant.launch_args import LaunchNatSpecArgs
 from composer.assistant.types import OrchestratorContext
 from composer.ui.pipeline_app import PipelineApp
-from composer.kb.knowledge_base import kb_tools
+from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.context import (
-    WorkflowContext, SystemDoc, PlainBuilder, CVLOnlyBuilder, get_system_doc,
+    WorkflowContext, SystemDoc, get_system_doc,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline, PipelineResult
 from composer.spec.util import string_hash
-from composer.templates.loader import load_jinja_template
-from composer.tools.search import cvl_manual_tools
-from composer.workflow.services import create_llm, get_checkpointer, get_store, get_memory
-
-
-class _PipelineServices:
-    """Concrete WorkflowServices for the orchestrator-launched pipeline."""
-
-    def __init__(self, checkpointer: Checkpointer, store: BaseStore):
-        self._checkpointer = checkpointer
-        self._store = store
-
-    def kb_tools(self, read_only: bool) -> list[BaseTool]:
-        return kb_tools(self._store, ("natspec_pipeline", "kb"), read_only)
-
-    def memory_tool(self, namespace: str) -> BaseTool:
-        return make_memory_tool(get_memory(namespace))
-
-    @property
-    def checkpointer(self) -> Checkpointer:
-        return self._checkpointer
-
-
-def _make_builders(
-    llm: BaseChatModel, rag_db: PostgreSQLRAGDatabase,
-) -> tuple[PlainBuilder, CVLOnlyBuilder, CVLOnlyBuilder]:
-    base = Builder().with_llm(llm).with_loader(load_jinja_template)
-    cvl_tools = cvl_manual_tools(rag_db)
-    cvl = base.with_tools(cvl_tools)
-    return base, cvl, cvl
-
+from composer.workflow.services import create_llm, get_checkpointer, get_store, get_memory, get_indexed_store
+from composer.spec.services import build_natspec_env
 
 async def launch_natspec_workflow(
     args: LaunchNatSpecArgs,
@@ -65,22 +31,28 @@ async def launch_natspec_workflow(
     pipeline_llm = create_llm(ctx.config)
     checkpointer = get_checkpointer()
     store = get_store()
+    the_model = get_model()
     rag_db = PostgreSQLRAGDatabase(
         conn_string=ctx.config.rag_db, model=get_model(), skip_test=True,
     )
-
-    services = _PipelineServices(checkpointer, store)
-    analysis_builder, cvl_authorship, cvl_research = _make_builders(pipeline_llm, rag_db)
 
     thread_id = f"pipeline_{uuid.uuid4().hex[:12]}"
     cache_root = (args.cache_namespace, string_hash(str(system_doc.content))) if args.cache_namespace else None
 
     wf_ctx = WorkflowContext.create(
-        services=services,
+        services=lambda ns: make_memory_tool(get_memory(ns)),
         thread_id=thread_id,
         store=store,
         cache_namespace=cache_root,
         memory_namespace=args.memory_namespace or None,
+    )
+
+    env = build_natspec_env(
+        llm=pipeline_llm,
+        db=rag_db,
+        checkpoint=checkpointer,
+        kb_ns=("cvl",),
+        store=get_indexed_store(DefaultEmbedder(the_model))
     )
 
     app = PipelineApp(ide=ctx.ide)
@@ -92,9 +64,8 @@ async def launch_natspec_workflow(
         try:
             pipeline_result = await run_natspec_pipeline(
                 system_doc=system_doc,
+                tool_env=env,
                 solc_version=args.solc_version,
-                analysis_builder=analysis_builder,
-                cvl_research=cvl_research,
                 ctx=wf_ctx,
                 store=store,
                 handler_factory=app.make_handler,

@@ -36,7 +36,7 @@ from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
 from composer.spec.gen_types import TypedTemplate
-from composer.spec.system_model import SourceApplication
+from composer.spec.system_model import SourceApplication, SourceExternalActor, SourceExplicitContract
 
 def system_setup_key(s: SourceApplication) -> CacheKey["ContractSetup", "SystemDescriptionHarnessed"]:
     return CacheKey["ContractSetup", "SystemDescriptionHarnessed"](
@@ -138,9 +138,32 @@ async def classifier_agent(
         "relative_path": source.relative_path
     })
 
+    external_lkp = {
+        c.name: c for c in app.components if isinstance(c, SourceExternalActor)
+    }
+
+    contract_lkp = {
+        c.name: c for c in app.contract_components
+    }
+
+    def result_validator(
+        s: AnalysisState,
+        res: AgentSystemDescription
+    ) -> str | None:
+        for ext in res.external_interfaces:
+            if ext.name not in external_lkp:
+                return f"External interface {ext.name} does not appear in the system description"
+            if external_lkp[ext.name].path is None:
+                return f"External interface {ext.name} doesn't have a path, and can't be identified as an interface"
+        for c in res.transitive_closure:
+            if c.name not in contract_lkp:
+                return f"Contract {c.name} in the interaction closure doesn't appear in the application description"
+        return None
+
     d = bind_standard(
         builder=env.builder,
-        state_type=AnalysisState
+        state_type=AnalysisState,
+        validator=result_validator
     ).with_input(
         FlowInput
     ).with_tools(
@@ -270,7 +293,7 @@ async def generate_harnesses(
                 [ f"contract {k} ({n} copies)" for (k,n) in check_copy.items() ]
             )
             return f"Missing harnesses in results: {error}"
-        
+
         with mat.materialize(s) as temp_dir:
             compile_result = subprocess.run(
                 [res.solidity_compiler] + all_files,
@@ -474,6 +497,9 @@ async def run_and_apply_part1(
 
 config_key = CacheKey[None, ContractSetup]("config")
 
+from logging import getLogger
+_logger = getLogger(__name__)
+
 async def run_setup(
     context: WorkflowContext[None],
     source: SourceCode,
@@ -482,7 +508,7 @@ async def run_setup(
 ) -> ContractSetup | None:
     config_ctxt = context.child(config_key)
     if (cached := config_ctxt.cache_get(ContractSetup)) is not None:
-        if (Path(source.project_root) / cached.config.summaries_path).exists():
+        if (Path(source.project_root) / "certora"  / cached.config.summaries_path).exists():
             return cached
 
     sys_desc = await run_and_apply_part1(config_ctxt, source, env, application_desc)

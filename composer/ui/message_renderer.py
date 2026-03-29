@@ -26,6 +26,9 @@ KNOWN_NODES: set[str] = {INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE}
 
 _DOT = "\u25cf "  # ● filled circle
 
+from logging import getLogger
+
+_logger = getLogger(__name__)
 
 def dot(style: str, text: Text | str) -> Text:
     """Prepend a colored dot to a Text or string for visual structure."""
@@ -131,7 +134,7 @@ class MessageRenderer:
                 case "thinking":
                     full_text = c.get("thinking", "")
                     widgets.append(
-                        Collapsible(Static(full_text), title="Thinking...", collapsed=True)
+                        Collapsible(Static(full_text, markup=False), title="Thinking...", collapsed=True)
                     )
                 case "text":
                     text = c["text"]
@@ -216,11 +219,17 @@ class MessageRenderer:
         if tag is not None:
             return _HUMAN_TAG_DISPLAY.get(tag, ("User input", True))
         return ("User input", True)
+    
+    def get_flow_target(self, root: VerticalScroll, path: list[str]) -> VerticalScroll:
+        if len(path) > 1 and path[-2] in self.nested_containers:
+            return self.nested_containers[path[-1]]
+        return root
 
     async def render_start(self, root: VerticalScroll, *, path: list[str], description: str) -> None:
         """Render a workflow start banner or nested collapsible."""
-        target = self.get_mount_target(root, path)
+        target = self.get_flow_target(root, path)
         if len(path) == 1:
+            _logger.debug("Starting top level workflow: %s", description)
             banner = Static(Text(f"━━ {description} ━━", style="bold"))
             await self._mount_to(target, banner)
         else:
@@ -254,13 +263,13 @@ class MessageRenderer:
                     self._on_tokens(m)
                 case SystemMessage():
                     self.reset_tool_collapsing()
-                    coll = Collapsible(Static(m.text()), title="System prompt", collapsed=True)
+                    coll = Collapsible(Static(m.text(), markup=False), title="System prompt", collapsed=True)
                     await self._mount_to(target, coll)
                 case HumanMessage():
                     self.reset_tool_collapsing()
                     title, collapsed = self.classify_human(m)
                     content = m.text()
-                    coll = Collapsible(Static(content), title=title, collapsed=collapsed)
+                    coll = Collapsible(Static(content, markup=False), title=title, collapsed=collapsed)
                     await self._mount_to(target, coll)
                 case ToolMessage():
                     coll = self.render_tool_result(m)

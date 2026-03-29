@@ -3,7 +3,7 @@ You have been tasked with formalizing a set of security properties within the co
 </background>
 
 <task>
-You must write a single CVL specification covering the following properties:
+You must write a single CVL specification covering the following properties for the contract {{ contract_name }}:
 
 {% for prop in properties %}
 <{{ prop.sort }}>
@@ -16,7 +16,7 @@ You must write a single CVL specification covering the following properties:
 </{{ prop.sort }}>
 {% endfor %}
 
-Follow procedure exactly:
+Follow this procedure exactly:
 
 ## Step 0
 
@@ -59,19 +59,67 @@ and may suggest how the property can in fact be formalized.
 ## Step 3
 
 Use the provided `verify_spec` tool to test your spec. If there are verification failures
-that point to errors in your specification, refine your specification, and return to step 2.
+that point to errors in your specification, refine your specification according to the following rules,
+and return to step 2.
 
-If there are failures from `HAVOC` from unresolved calls, use the `unresolved_call_guidance` tool for advice,
-do NOT try to make ghosts persistent as a workaround.
+### Verification Failure Remediation Strategies
 
-If the prover feedback requires non-trivial changes, be sure to use the `extended_reasoning` tool to reflect on
-and appropriately digest the feedback from the prover before actually editing your specification.
+* If the failure is due to an *impossible starting state*:
+  + Consider whether the impossible starting state can be rule out using an *invariant*. If so, author that invariant,
+    and add a `requireInvariant` to the rule/invariant preserved block.
+  + If the impossible starting state cannot be ruled out using an invariant, attempt to write a "justification rule",
+    i.e., a rule which proves that the assumption is *valid*. You may then use a bare `require` statement in the rule
+    or invariant, but reference your written justification rule
+  + If the above two approaches fail, you may still consider adding `require` statements, but add comments
+    that either document the trust assumption you are making and/or arguing for its Validity
+* If the failure is due to a HAVOC from an unresolved call:
+  + Was the call to a function whose implementation exists in the prover inputs? If so, it is likely the prover
+    could not resolve the callee contract and link to the extant implementation. In this case, you should consider
+    using a `DISPATCHER` summary. (with caveats, see below)
+  + If the call was to an function whose implementation doesn't exist in the scene, add a summary which
+    (soundly) models the behavior of the called function. In many cases, these summaries will have to model the
+    (unknown) callee contract's state, you should use "ghost variables" to model this.
+  + If the call was completely unresolved (no resolved selector/signature), consider using a "dispatch list"
+    summary. Analyze the location of the unresolved call, and consider what the callee functions might be.
+  + Do *NOT* try to mark ghost state as `persistent` to work around the HAVOC issue.
+  + Do *NOT* apply a `NONDET` summary to a side-effecting function to make the HAVOC "go away", this makes
+    the verification results useless.
+* If the counterexample appears to point to a potential issue in the code that should be reviewed by a security expert,
+  use the "expect fail" tool to mark that the rule failure may be legitimate.
+* If you have a parametric rule or invariant that is persistently failing on a method, and that method should
+  genuinely be excluded from the property/invariant being proven, use a `filtered` block to exclude it.
+  + You should not use this strategy lightly; only do so when you are 95% certain that the method in question
+    should be excluded from the property.
+* If the property or invariant is genuinely incorrect or actually invalid you may mark the property as "skipped" and
+  remove your attempts to formalize it from the spec
+* If the rule is failing due to a `SANITY_FAILURE`, this is due to the assertion in the rule/invariant being unreachable.
+  In other words, the preconditions in the rule and the logical encoding of the implementation's code are themselves
+  mutually unsatisfiable. In this case, you should try to identify places where `require` statements in your rule
+  may conflict with any assumptions/requirements in the code.
+* For any other logical errors/issues not described here, address the changes in a methodical way. Use your
+  adaptive thinking and the cvl researcher to come to *principled* solutions. Do *NOT* try to brute force
+  the solution by trying random changes.
 
-As in step 2, if you are facing specific issues, use the knowledge base articles to search for help.
+#### `DISPATCHER` Caveats
+
+The special `DISPATCHER` summary *unsoundly* assumes that the callee contract for an unresolved call exists in the prover
+input. This is acceptable if the callee contract is *definitely* one of the contracts in prover inputs. However,
+for something like an ERC20 token; the prover input may itself have some ERC20 token implementations in its inputs
+(e.g., a special token representing a voting share). If you use a `DISPATCHER` in this case, you will unsoundly
+assume *EVERY* token interacted with by *EVERY* contract must be one of the contracts in the prover inputs.
+
+Unless you can conclude that the DISPATCHER assumption is justified, use a hybrid summarization approach:
+within the generated summary, match the callee contract against known implementers in the prover input.
+For those callees, simply dispatch the call to the relevant implementation. For calls "outside" of the prover
+inputs, fall back on a sound model of the external behavior, using e.g., ghosts.
 
 ## Step 4
 
-{% include result_template %}
+Once all non-skipped properties have been approved by the feedback judge, AND all rules that are not expected
+as failing have been verified with the prover, deliver your result with the `result` tool. In order
+for your result to be accepted, you *must* have run the `verify_spec` tool *without* any `rule` arguments on
+the most recent version of the spec. Similarly, you *must* have received positive feedback from the feedback judge
+on the most recent change to your spec.
 
 IMPORTANT: Do not try to reason yourself about whether any property is true or possible — focus solely on authoring CVL which will *demonstrate* the desired properties.
 
@@ -107,9 +155,11 @@ your current approach. Be sure to update your memory *before* calling the result
 </state>
 </task>
 
+{% if context %}
 <context>
-  {% include "application_context.j2" %}
+  {% include "application_context_new.j2" %}
 </context>
+{% endif %}
 
 <guidance>
 {% include "cvl_guidelines.j2" %}

@@ -8,16 +8,13 @@ be passed explicitly to agents that need it.
 """
 
 from dataclasses import dataclass
-import uuid
 import base64
 from pathlib import Path
-from typing import Annotated, Protocol
-from typing_extensions import deprecated
+from typing import Annotated, Callable
 
 from pydantic import BaseModel
 
 from langgraph.store.base import BaseStore
-from langgraph.types import Checkpointer
 from langchain_core.tools import BaseTool
 
 from graphcore.graph import Builder
@@ -46,12 +43,8 @@ class SourceCode(SystemDoc):
 # Services protocol
 # ---------------------------------------------------------------------------
 
-class WorkflowServices(Protocol):
-    """Minimal services available to all workflows."""
-
-    def memory_tool(self, namespace: str) -> BaseTool:
-        """Create a memory tool scoped to the given namespace."""
-        ...
+type MemoryFactory = Callable[[str], BaseTool]
+type WorkflowServices = MemoryFactory
 
 # ---------------------------------------------------------------------------
 # Builder phantom markers and type aliases
@@ -140,11 +133,6 @@ class WorkflowContext[K: CacheTypes]:
     cache_namespace: tuple[str, ...] | None
     _store: BaseStore
 
-    @deprecated("use util")
-    def uniq_thread_id(self) -> str:
-        suff = uuid.uuid4().hex[:16]
-        return f"{self.thread_id}-{suff}"
-
     def abstract[T: Abstraction](self, ty: type[T]) -> "WorkflowContext[T]":
         return self  # type: ignore[return-value]
 
@@ -214,7 +202,7 @@ class WorkflowContext[K: CacheTypes]:
 
     def get_memory_tool(self) -> BaseTool:
         """Get a memory tool for this context's memory namespace."""
-        return self._services.memory_tool(self.memory_namespace)
+        return self._services(self.memory_namespace)
 
 
 # ---------------------------------------------------------------------------

@@ -18,12 +18,11 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from composer.ui.multi_job_app import (
     TaskInfo, HandlerFactory, run_task,
 )
-from composer.io.autoprove_app import AutoProvePhase
+from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
+    WorkflowContext, SourceCode, CacheKey, Properties, CVLGeneration,
 )
-from composer.spec.util import string_hash
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
 from composer.spec.source.harness import run_setup
@@ -31,7 +30,7 @@ from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.summarizer import setup_summaries
 from composer.spec.system_model import (
-    ContractComponentInstance, HarnessedApplication, SourceExplicitContract,
+    HarnessedApplication, SourceExplicitContract,
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
 )
 from composer.spec.cvl_generation import GeneratedCVL
@@ -49,17 +48,6 @@ from composer.spec.source.common_pipeline import run_generation_pipeline, AutoPr
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 
-
-def _component_cache_key(
-    component: ContractComponentInstance,
-) -> CacheKey[Properties, ComponentGroup]:
-    combined = "|".join([component.app.model_dump_json(), str(component.ind), str(component._contract.ind)])
-    return CacheKey(string_hash(combined))
-
-
-def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGroup, GeneratedCVL]:
-    combined = "|".join(p.model_dump_json() for p in props)
-    return CacheKey(string_hash(combined))
 
 
 # ---------------------------------------------------------------------------
@@ -203,8 +191,8 @@ async def run_autoprove_pipeline(
                     init_config=setup.config.prover_config,
                     prover_tool=prover_tool,
                     resources=resources,
-                    source=source_input,
                     description="Structural invariant CVL",
+                    source=source_input
                 ),
             )
             inv_cvl_ctx.cache_put(inv_cvl)

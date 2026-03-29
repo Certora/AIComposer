@@ -27,7 +27,7 @@ def temp_certora_file(
     finally:
         os.unlink(tgt)
 
-FS_FORBIDDEN_READ = r"(^lib/.*)|(^\.certora_internal.*)|(^\.git.*)|(^test/.*)|(^emv-.*)|(.*\.json$)|(^node_modules/(?!@openzeppelin/).*)"
+FS_FORBIDDEN_READ = r"(^lib/.*)|(^\.certora_internal.*)|(^\.git.*)|(^test/.*)|(^emv-.*)|(.*\.json$)|(^node_modules/.*(?<!\.sol)$)"
 
 def uniq_thread_id(prefix: str) -> str:
     suff = uuid.uuid4().hex[:16]

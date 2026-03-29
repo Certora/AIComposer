@@ -15,11 +15,10 @@ from graphcore.graph import FlowInput
 
 from langgraph.graph import MessagesState
 
-from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder, SystemDoc, CacheKey
+from composer.spec.context import WorkflowContext, PlainBuilder, CacheKey
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.system_model import Application
-from composer.spec.util import string_hash
-from composer.spec.tool_env import BasicAgentTools
+from composer.spec.util import string_hash, uniq_thread_id
 
 from logging import getLogger
 
@@ -136,7 +135,7 @@ async def generate_interface(
     res = await run_to_completion(
         workflow,
         FlowInput(input=[]),
-        thread_id=ctx.uniq_thread_id(),
+        thread_id=uniq_thread_id("interface-gen"),
         recursion_limit=30,
         description=DESCRIPTION,
     )

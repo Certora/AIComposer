@@ -28,6 +28,7 @@ from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.natspec.pipeline_events import StubUpdate
 from composer.spec.natspec.interface_gen import InterfaceResult
+from composer.spec.util import uniq_thread_id
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +183,7 @@ async def run_registry_agent(
     res = await run_to_completion(
         workflow,
         FlowInput(input=input_parts),
-        thread_id=ctx.uniq_thread_id(),
+        thread_id=uniq_thread_id("stub-registrar"),
         recursion_limit=20,
         description="Stub update",
     )

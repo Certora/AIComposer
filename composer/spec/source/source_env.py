@@ -56,7 +56,7 @@ class SourceParams(RAGInputs):
 def build_source_env(
     **params: Unpack[SourceParams]
 ) -> SourceEnvironment:
-    rag_env = build_rag_tool_env(has_source=True, **params)
+    rag_env = build_rag_tool_env(**params)
 
     basic_source = build_basic_source_tools(
         root=params["root"],

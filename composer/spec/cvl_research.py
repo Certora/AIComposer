@@ -2,24 +2,19 @@
 CVL research sub-agent: answers questions about CVL by searching the manual and knowledge base.
 """
 
-import uuid
-from typing import Any, Callable, Awaitable, NotRequired, Protocol, override, cast
+from typing import Any, Callable, Awaitable, NotRequired, Protocol, override
 
 from pydantic import Field
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import MessagesState
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Checkpointer
 
 from graphcore.graph import Builder, FlowInput
 from graphcore.tools.schemas import WithAsyncImplementation
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
-from composer.templates.loader import load_jinja_template
 from composer.spec.tool_env import BaseRAGTools, BasicAgentTools
 from composer.spec.util import uniq_thread_id
 
@@ -89,7 +84,6 @@ def _did_read_draft(s: _CVLResearchST, _: Any) -> str | None:
         return "You must read your rough draft before delivering your answer"
     return None
 
-
 def _build_research_tool(
     builder: Builder,
     runner: GraphRunner,
@@ -139,6 +133,12 @@ def _build_research_tool(
 
     return CVLResearchSchema.as_tool("cvl_research")
 
+class CachingCVLResearchEnv(CVLResearchEnv, Protocol):
+    cache_store: BaseStore
+
+def caching_cvl_research_tool(
+        
+)
 
 # ---------------------------------------------------------------------------
 # Public API — context-based (existing callers)

@@ -7,8 +7,8 @@ from langgraph.runtime import get_runtime
 from langgraph.config import get_store
 
 from composer.diagnostics.stream import (
-    AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysis,
-    ProverOutputEvent, CloudPollingEvent,
+    AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysisStart,
+    ProverOutputEvent, CloudPollingEvent, RuleAuditResult
 )
 from composer.prover.ptypes import RuleResult
 from composer.prover.core import (
@@ -18,9 +18,10 @@ from composer.prover.core import (
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
 
+type _ProverEvents = ProverOutputEvent | CloudPollingEvent | ProverRun | ProverResult | RuleAnalysisResult | CEXAnalysisStart | RuleAuditResult
 
 class _AuditCallbacks(ProverCallbacks):
-    def __init__(self, writer: Callable, tool_call_id: str) -> None:
+    def __init__(self, writer: Callable[[_ProverEvents], None], tool_call_id: str) -> None:
         self._writer = writer
         self._tool_call_id = tool_call_id
 
@@ -73,7 +74,7 @@ class _AuditCallbacks(ProverCallbacks):
 
     @override
     async def on_analysis_start(self, rule: RuleResult) -> None:
-        evt: CEXAnalysis = {
+        evt: CEXAnalysisStart = {
             "type": "cex_analysis",
             "tool_call_id": self._tool_call_id,
             "rule_name": rule.name,

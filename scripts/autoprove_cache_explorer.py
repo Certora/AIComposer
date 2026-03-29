@@ -11,18 +11,29 @@ import pathlib
 import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import Iterator
 
 _repo_root = str(pathlib.Path(__file__).parent.parent.absolute())
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
 
 from composer.ui.cache_explorer import CacheNode, OrgNode, CacheTreeNode, CacheExplorerApp, DummyServices
-from composer.spec.context import WorkflowContext, CacheKey, CacheTypes, get_system_doc
+from composer.spec.context import WorkflowContext, SourceCode, CacheKey, CacheTypes, get_system_doc, CVLGeneration, Marker
 from composer.spec.source.system_analysis import SOURCE_ANALYSIS_KEY
 from composer.spec.source.harness import (
-    system_setup_key, HARNESS_ANALYSIS_KEY,
-    SystemDescriptionHarnessed, AgentSystemDescription,
+    config_key,
+    system_setup_key,
+    harness_generation_key,
+    HARNESS_ANALYSIS_KEY,
+    ContractSetup,
+    SystemDescriptionHarnessed,
+    AgentSystemDescription,
+    HarnessResult,
 )
+from composer.spec.source.summarizer import _summary_key, _SummaryCache
+from composer.spec.source.struct_invariant import STRUCTURAL_INV_KEY, Invariants
+from composer.spec.source.common_pipeline import PROPERTIES_KEY, INV_CVL_KEY
+from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, LAST_ATTEMPT_KEY, CVL_JUDGE_KEY
 from composer.spec.system_model import SourceApplication, SourceExplicitContract, SourceExternalActor
 
 
@@ -30,11 +41,21 @@ from composer.spec.system_model import SourceApplication, SourceExplicitContract
 # Cache value type
 # ---------------------------------------------------------------------------
 
-type AutoProveCachedValue = SourceApplication | SystemDescriptionHarnessed | AgentSystemDescription
+type AutoProveCachedValue = (
+    SourceApplication
+    | ContractSetup
+    | SystemDescriptionHarnessed
+    | AgentSystemDescription
+    | HarnessResult
+    | _SummaryCache
+    | Invariants
+    | GeneratedCVL
+    | _LastAttemptCache
+)
 
 
 # ---------------------------------------------------------------------------
-# Tree construction helpers (same pattern as scripts/cache_explorer.py)
+# Tree construction helpers
 # ---------------------------------------------------------------------------
 
 _node_context: ContextVar[CacheTreeNode[AutoProveCachedValue] | None] = ContextVar(
@@ -56,45 +77,78 @@ def node(c: CacheTreeNode[AutoProveCachedValue]):
 
 @contextmanager
 def node_for[T: CacheTypes, S: CacheTypes](
-    ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S] | None = None
-):
+    ctx: WorkflowContext[T],
+    child: CacheKey[T, S],
+    label: str,
+    ty: type[S] | None = None,
+) -> Iterator[tuple[WorkflowContext[S], S | None]]:
     child_ctx = ctx.child(child)
     value: S | None = child_ctx.cache_get(ty) if ty is not None else None  # type: ignore[arg-type]
     new_node: CacheNode[AutoProveCachedValue] = CacheNode(label=label, ctx=child_ctx, value=value)  # type: ignore[arg-type]
     with node(new_node):
-        yield child_ctx
+        yield child_ctx, value
 
 
 def leaf[T: CacheTypes, S: AutoProveCachedValue](
     ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S]
-) -> CacheNode[AutoProveCachedValue]:
+) -> CacheNode[S]:
     child_ctx = ctx.child(child)
     value: S | None = child_ctx.cache_get(ty)
     return CacheNode(label=label, ctx=child_ctx, value=value)
 
+def memory[T: CacheTypes, S: Marker](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str):
+    return CacheNode[S](label=label, value=None, ctx=ctx.child(child))
 
 # ---------------------------------------------------------------------------
 # Tree construction
 # ---------------------------------------------------------------------------
 
-def build_tree_inner(root_ctx: WorkflowContext):
-    sa = leaf(root_ctx, SOURCE_ANALYSIS_KEY, "source-analysis", SourceApplication)
-    yield sa
+def build_tree_inner(root_ctx: WorkflowContext[None]):
+    sa_leaf = leaf(root_ctx, SOURCE_ANALYSIS_KEY, "source-analysis", SourceApplication)
+    yield sa_leaf
 
-    if sa.value is None:
-        return
+    # Read config value upfront so we can derive the summary key outside the with block
+    config_val = root_ctx.child(config_key).cache_get(ContractSetup)
 
-    with node_for(root_ctx, system_setup_key(sa.value), "setup", SystemDescriptionHarnessed) as setup_ctx:
-        yield leaf(setup_ctx, HARNESS_ANALYSIS_KEY, "harness-analysis", AgentSystemDescription)
+    with node_for(root_ctx, config_key, "config", ContractSetup) as (config_ctx, _):
+        if sa_leaf.value is not None:
+            with node_for(config_ctx, system_setup_key(sa_leaf.value), "setup", SystemDescriptionHarnessed) as (setup_ctx, _):
+                ha_leaf = leaf(setup_ctx, HARNESS_ANALYSIS_KEY, "harness-analysis", AgentSystemDescription)
+                yield ha_leaf
+                if ha_leaf.value is not None and ha_leaf.value.needs_harnessing():
+                    yield leaf(
+                        setup_ctx,
+                        harness_generation_key(ha_leaf.value),
+                        "harness-generation",
+                        HarnessResult,
+                    )
+
+    # Summary — key derivable only once ContractSetup is cached
+    if config_val is not None:
+        yield leaf(root_ctx, _summary_key(config_val), "summary", _SummaryCache)
+
+    yield leaf(root_ctx, STRUCTURAL_INV_KEY, "structural-inv", Invariants)
+    with node_for(root_ctx, INV_CVL_KEY, "invariant-cvl", GeneratedCVL) as (config_ctx, _):
+        gen_ctx = config_ctx.abstract(CVLGeneration)
+        yield leaf(
+            gen_ctx, LAST_ATTEMPT_KEY, "Last Attempt", _LastAttemptCache
+        )
+        yield memory(
+            gen_ctx, child=CVL_JUDGE_KEY, label="Feedback"
+        )
+
+    # Properties — namespace-only node (nothing stored at this key itself)
+    with node(OrgNode(label="properties")):
+        pass
 
 
-def build_tree(root_ctx: WorkflowContext) -> CacheNode[AutoProveCachedValue]:
+def build_tree(root_ctx: WorkflowContext[None]) -> CacheNode[AutoProveCachedValue]:
     root: CacheNode[AutoProveCachedValue] = CacheNode(label="root", ctx=root_ctx)
     with node(root):
         for n in build_tree_inner(root_ctx):
             curr = _node_context.get()
             assert curr is not None
-            curr.children.append(n)
+            curr.children.append(n) #type: ignore
     return root
 
 
@@ -119,6 +173,12 @@ def format_value(val: AutoProveCachedValue) -> list[str]:
                         loc = f"  ({path})" if path else ""
                         lines.append(f"[external] {name}{loc}")
                         lines.append(f"  {cdesc}")
+
+        case ContractSetup(system_description=sys_desc, config=cfg):
+            lines.append("Pre-audit setup: OK")
+            lines.append(f"Summaries path: {cfg.summaries_path}")
+            lines.append(f"User types: {len(cfg.user_types)}")
+            lines.append(f"Closure contracts: {len(sys_desc.transitive_closure)}")
 
         case AgentSystemDescription(
             non_trivial_state=nts,
@@ -164,6 +224,37 @@ def format_value(val: AutoProveCachedValue) -> list[str]:
                 lines.append(f"External interfaces ({len(ext_ifaces)}):")
                 for ei in ext_ifaces:
                     lines.append(f"  {ei.name}: {ei.behavioral_spec}")
+
+        case HarnessResult(name_to_source=name_to_source):
+            for contract, harnesses in name_to_source.items():
+                lines.append(f"{contract}:")
+                for h in harnesses:
+                    lines.append(f"  {h.harness_name}  →  {h.path}")
+
+        case _SummaryCache(content=content):
+            for line in content.splitlines()[:40]:
+                lines.append(line)
+            if len(content.splitlines()) > 40:
+                lines.append(f"... ({len(content.splitlines()) - 40} more lines)")
+
+        case Invariants(inv=invs):
+            lines.append(f"Invariants ({len(invs)}):")
+            for inv in invs:
+                lines.append(f"  {inv.description}")
+
+        case GeneratedCVL(commentary=commentary, cvl=cvl, skipped=skipped):
+            lines.append(f"Commentary: {commentary}")
+            if skipped:
+                lines.append(f"Skipped: {len(skipped)}")
+            lines.append("")
+            for line in cvl.splitlines()[:40]:
+                lines.append(line)
+            if len(cvl.splitlines()) > 40:
+                lines.append(f"... ({len(cvl.splitlines()) - 40} more lines)")
+        
+        case _LastAttemptCache(cvl=cvl):
+            lines.append("LAST ATTEMPT")
+            lines.append(cvl)
 
     return lines
 
@@ -217,7 +308,7 @@ def main() -> int:
     ))
     print(f"Root namespace: {root_ns}")
 
-    root_ctx: WorkflowContext = WorkflowContext.create(
+    root_ctx: WorkflowContext[None] = WorkflowContext.create(
         services=DummyServices(),  # type: ignore[arg-type]
         thread_id="explorer",
         store=store,

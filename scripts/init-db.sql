@@ -27,13 +27,31 @@ GRANT ALL PRIVILEGES ON SCHEMA public TO langgraph_store_user;
 GRANT ALL PRIVILEGES ON DATABASE langgraph_checkpoint_db TO langgraph_checkpoint_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO langgraph_checkpoint_user;
 
+\c memory_tool_db
+GRANT ALL PRIVILEGES ON DATABASE memory_tool_db TO memory_tool_user;
+GRANT ALL PRIVILEGES ON SCHEMA public TO memory_tool_user;
+
+CREATE TABLE IF NOT EXISTS memories_fs(
+    namespace TEXT NOT NULL,
+    entry_name TEXT NOT NULL,
+    full_path TEXT,
+    parent_path TEXT,
+    is_directory BOOL NOT NULL,
+    contents TEXT,
+    FOREIGN KEY(parent_path, namespace) REFERENCES memories_fs(full_path, namespace) ON DELETE CASCADE, -- good hierarchy
+    UNIQUE (namespace, full_path), -- unique paths within ns
+    UNIQUE (namespace, parent_path, entry_name), -- unique names within directories
+    CHECK (parent_path is NOT NULL OR (full_path = '/memories' AND is_directory AND entry_name = 'memories')),
+    CHECK (parent_path is NULL OR (full_path = concat(parent_path, '/', entry_name))), -- entry, path consistency
+    CHECK (contents IS NOT NULL != is_directory)
+);
+
+
 \c audit_db
 GRANT ALL PRIVILEGES ON DATABASE audit_db TO audit_db_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO audit_db_user;
 
-\c audit_db
-GRANT ALL PRIVILEGES ON DATABASE memory_tool_db TO memory_tool_user;
-GRANT ALL PRIVILEGES ON SCHEMA public TO memory_tool_user;
+CREATE INDEX IF NOT EXISTS memories_namespace_path ON memories_fs(namespace, full_path text_pattern_ops); -- text pattern ops lets us use the index for LIKE
 
 -- Create audit_db schema
 CREATE TABLE IF NOT EXISTS file_blobs(

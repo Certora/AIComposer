@@ -21,6 +21,7 @@ from composer.spec.gen_types import TemplateInstantiation, InjectedTemplate, Typ
 from composer.spec.cvl_generation import FeedbackToolContext, SkippedProperty
 from composer.spec.tool_env import BasicAgentTools
 from composer.spec.system_model import ContractComponentInstance
+from composer.spec.util import uniq_thread_id
 
 class PropertyFeedback(BaseModel):
     """
@@ -106,7 +107,7 @@ def property_feedback_judge(
         res = await run_to_completion(
             workflow,
             SpecJudgeInput(input=input_parts, curr_spec=cvl, memory=None, did_read=False),
-            thread_id=ctx.uniq_thread_id(),
+            thread_id=uniq_thread_id("feedback"),
             description="Property feedback judge",
         )
         assert "result" in res

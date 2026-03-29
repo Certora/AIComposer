@@ -46,27 +46,6 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     memory_ns: str | None
     cloud: bool
 
-
-# ---------------------------------------------------------------------------
-# WorkflowServices implementation
-# ---------------------------------------------------------------------------
-
-class _AutoProveServices:
-    """Concrete ``WorkflowServices`` for the auto-prove entry point."""
-
-    def __init__(self):
-        pass
-
-    def memory_tool(self, namespace: str) -> BaseTool:
-        backend = get_memory(namespace)
-        return memory_tool(backend)
-
-
-# ---------------------------------------------------------------------------
-# Builder construction
-# ---------------------------------------------------------------------------
-
-
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
@@ -139,7 +118,6 @@ async def main() -> int:
         conn_string=args.rag_db, model=model, skip_test=True
     )
 
-    services = _AutoProveServices()
 
     cache_root: tuple[str, str] | None = None
     if args.cache_ns is not None:
@@ -149,7 +127,7 @@ async def main() -> int:
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
     ctx = WorkflowContext.create(
-        services=services,
+        services=lambda namespace: memory_tool(get_memory(namespace)),
         thread_id=thread_id,
         store=store,
         cache_namespace=cache_root,

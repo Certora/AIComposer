@@ -38,4 +38,8 @@
         contract state.
     21. When referring to meaningful numerical constants in a specification (e.g., max fee percentage, asset expiry period, etc.) prefer using the `definition` feature of CVL
         to provide meaningful names to the constants.
+    22. Instead of `forall $type i` in a invariant, invariant parameters should be used instead. That is, instead of `invariant foo() forall uint i.logical_predicate(i)` simply write
+        `invariant foo(uint i) logical_predicate(i)`. The parameters of an invariant are implicitly universally quantified.
+    23. Direct storage access should be used instead of mirroring contract state in ghosts via hooks. The only reason to use hooks and ghosts to reason about storage state is
+        if the ghost state is used for anything other than simply reading the values.
 </cvl_guidelines>

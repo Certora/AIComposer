@@ -26,7 +26,7 @@ PREAUDIT_SRC_PATH = PREAUDIT_PATH / "src"
 class SetupSuccess(BaseModel):
     """Result of running PreAudit compilation analysis and summary generation."""
     prover_config: dict  # Contents of compilation_config.conf
-    summaries_path: Path  # Path to summaries-{Contract}.spec, if generated
+    summaries_path: str  # Path to summaries-{Contract}.spec, if generated
     user_types: list[dict]
 
 class SetupFailure(BaseModel):
@@ -88,13 +88,14 @@ async def run_preaudit_setup(
         main_contract_path = f"{relative_path}:{contract_name}"
         args = [
             sys.executable, "-m", "orchestrator",
-            main_contract_path,
             "--setup-only", f.name,
             "--skip-hashing-bound-detection", "1024",
             "--use-local-runner",
-            "--additional-contracts", *extra_files,
-            "--main-contracts",
-            main_contract_path
+            "--no-strip-contracts",
+            "--main-contract",
+            main_contract_path,
+            main_contract_path,
+            *extra_files
         ]
         start_payload : PreAuditStart = {
             "type": "pre_audit_start"
@@ -119,7 +120,6 @@ async def run_preaudit_setup(
                 "type": "pre_audit_output",
                 "line": line
             }
-            _logger.error(f"PREAUDIT: {line}")
             emit_custom_event(line_payload)
         returncode = await proc.wait()
         all_output = await proc.stderr.read() # type: ignore
@@ -144,6 +144,6 @@ async def run_preaudit_setup(
 
     return SetupSuccess(
         prover_config=json.loads((project_root / data["contract_to_config"][main_contract]).read_text()),
-        summaries_path=summary_path.relative_to(certora_dir),
+        summaries_path=str(summary_path.relative_to(certora_dir)),
         user_types=udts
     )

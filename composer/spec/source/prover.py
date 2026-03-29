@@ -10,26 +10,27 @@ Provides get_prover_tool() which creates a verify_spec tool that:
 
 import asyncio
 import json
-import os
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Callable, NotRequired, Iterator
+from typing import Annotated, Callable, Iterator, override
 from typing_extensions import TypedDict
 
-from langchain_core.messages import AnyMessage
 from langchain_core.tools import InjectedToolCallId, tool, BaseTool
 from langgraph.prebuilt import InjectedState
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field
 
 from langgraph.config import get_stream_writer
 from langgraph.types import Command
+from composer.prover.ptypes import RuleResult
 from graphcore.graph import LLM
 
 from composer.prover.core import (
-    CloudConfig, ProverOptions, ProverCallbacks, run_prover,
+    CloudConfig, ProverOptions, ProverCallbacks, run_prover, SummarizedReport
 )
-from composer.diagnostics.stream import ProverOutputEvent, CloudPollingEvent
+from composer.diagnostics.stream import (
+    ProverOutputEvent, CloudPollingEvent, RuleAnalysisResult,
+    CEXAnalysisStart, ProverRun, ProverResult
+)
 from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
 from graphcore.graph import tool_state_update
 from composer.spec.util import temp_certora_file
@@ -40,7 +41,7 @@ VALIDATION_KEY = "prover"
 
 def _merge_rule_skips(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
     to_ret = left.copy()
-    for (k,v) in right:
+    for (k,v) in right.items():
         if v == DELETE_SKIP:
             if k in to_ret:
                 del to_ret[k]
@@ -53,30 +54,65 @@ class ProverStateExtra(TypedDict):
     rule_skips: Annotated[dict[str, str], _merge_rule_skips]
     config: dict
 
+type ProverEvents = CEXAnalysisStart | CloudPollingEvent | ProverOutputEvent | RuleAnalysisResult | ProverRun | ProverResult
+
 class StateWithSkips(CVLGenerationState, ProverStateExtra):
     pass
 
 class _SpecCallbacks(ProverCallbacks):
-    def __init__(self, writer: Callable, tool_call_id: str) -> None:
+    def __init__(self, writer: Callable[[ProverEvents], None], tool_call_id: str) -> None:
         self._writer = writer
         self._tool_call_id = tool_call_id
 
+    @override
     async def on_stdout_line(self, line: str) -> None:
-        evt: ProverOutputEvent = {
+        self._writer({
             "type": "prover_output",
             "tool_call_id": self._tool_call_id,
             "line": line,
-        }
-        self._writer(evt)
+        })
 
+    @override
     async def on_cloud_poll(self, status: str, message: str) -> None:
-        evt: CloudPollingEvent = {
+        self._writer({
             "type": "cloud_polling",
             "tool_call_id": self._tool_call_id,
             "status": status,
             "message": message,
-        }
-        self._writer(evt)
+        })
+
+    @override
+    async def on_analysis_start(self, rule: RuleResult) -> None:
+        self._writer({
+            "type": "cex_analysis",
+            "rule_name": rule.path.pprint(),
+            "tool_call_id": self._tool_call_id
+        })
+    
+    @override
+    async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None:
+        self._writer({
+            "type": "rule_analysis",
+            "analysis": analysis,
+            "tool_call_id": self._tool_call_id,
+            "rule": rule.path.pprint()
+        })
+    
+    @override
+    async def on_prover_run(self, args: list[str]) -> None:
+        self._writer({
+            "type": "prover_run",
+            "tool_call_id": self._tool_call_id,
+            "args": args
+        })
+
+    @override
+    async def on_prover_result(self, results: dict[str, RuleResult]) -> None:
+        self._writer({
+            "type": "prover_result",
+            "tool_call_id": self._tool_call_id,
+            "status": { k: v.status for (k,v) in results.items() }
+        })
 
 
 class VerifySpecSchema(BaseModel):
@@ -136,7 +172,7 @@ def get_prover_tool(
         with tmp_spec(root=project_root, content=state["curr_spec"]) as generated:
             config = {
                 **conf,
-                "verify": f"{main_contract}:{generated}",
+                "verify": f"{main_contract}:certora/{generated}",
                 "parametric_contracts": main_contract,
                 "optimistic_loop": True,
                 "rule_sanity": "basic",
@@ -155,15 +191,18 @@ def get_prover_tool(
                     result = await run_prover(
                         state,
                         Path(project_root),
-                        [str(config_path)],
+                        [f"certora/{config_path}"],
                         llm,
                         tool_call_id,
                         ProverOptions(cloud=cloud),
                         _SpecCallbacks(get_stream_writer(), tool_call_id),
+                        summarization_threshold=10
                     )
 
             if isinstance(result, str):
                 return result
+            if isinstance(result, SummarizedReport):
+                return result.todo_list
             all_verified = True
             for (r, stat) in result.rule_status.items():
                 if r in state["rule_skips"]:

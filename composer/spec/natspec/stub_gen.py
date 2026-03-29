@@ -14,11 +14,12 @@ from graphcore.graph import FlowInput
 
 from langgraph.graph import MessagesState
 
-from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
+from composer.spec.context import WorkflowContext, PlainBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.context import CacheKey
 from composer.spec.util import string_hash
 from composer.spec.natspec.interface_gen import InterfaceResult
+from composer.spec.util import uniq_thread_id
 
 DESCRIPTION = "Stub generation"
 
@@ -120,7 +121,7 @@ async def generate_stub(
     res = await run_to_completion(
         workflow,
         FlowInput(input=input_parts),
-        thread_id=ctx.uniq_thread_id(),
+        thread_id=uniq_thread_id("stub-gen"),
         recursion_limit=20,
         description=f"{DESCRIPTION}: {contract_name}",
     )

@@ -7,7 +7,7 @@ from langchain_core.tools import BaseTool
 from composer.ui.multi_job_app import (
     TaskInfo, HandlerFactory, run_task,
 )
-from composer.io.autoprove_app import AutoProvePhase
+from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
@@ -102,7 +102,7 @@ async def run_generation_pipeline(
         return _ComponentBatch(feat=feat, props=props, feat_ctx=feat_ctx)
 
     extraction_results = await asyncio.gather(*[
-        _analyze_component(i) for i in range(len(summary.components))
+        _analyze_component(i) for i in range(len(contract_instance.contract.components))
     ])
 
     component_batches = [b for b in extraction_results if b is not None]
@@ -134,8 +134,8 @@ async def run_generation_pipeline(
                 props=batch.props,
                 prover_tool=prover_tool,
                 resources=resources,
-                source=source_input,
-                description=""
+                description=label,
+                source=source_input
             ),
             semaphore,
         )

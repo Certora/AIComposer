@@ -91,6 +91,8 @@ def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
                 "invariant_feedback": ToolDisplay("Getting feedback", "Invariant feedback"),
                 "result": CommonTools.result,
                 "memory": CommonTools.memory,
+                **CommonTools.source_displays(),
+                **CommonTools.rough_draft_displays()
             })
         case AutoProvePhase.COMPONENT_ANALYSIS:
             return ToolDisplayConfig(tool_display={
@@ -162,7 +164,6 @@ class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
 
     async def _ensure_prover_log(self, tool_call_id: str, title: str = "Prover Output") -> RichLog:
         if tool_call_id in self._prover_logs:
-            _logger.warning("Returning existing log")
             return self._prover_logs[tool_call_id]
         log = RichLog(highlight=True, markup=False)
         collapsible = Collapsible(log, title=title)

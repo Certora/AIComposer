@@ -26,6 +26,7 @@ from composer.spec.context import WorkflowContext, SourceCode, CacheKey, InvJudg
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import HarnessedApplication
 from composer.spec.gen_types import TypedTemplate
+from composer.spec.util import uniq_thread_id
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +176,7 @@ async def get_invariant_formulation(
                         memory=None,
                         did_read=False,
                     ),
-                    thread_id=judge_ctx.uniq_thread_id(),
+                    thread_id=uniq_thread_id("invariant-judge"),
                     description=f"Invariant feedback: {self.inv.name}",
                 )
                 assert "result" in res

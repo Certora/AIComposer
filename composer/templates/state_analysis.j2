@@ -109,8 +109,15 @@ interesting to the formal verification of {{ contract_name }}.
 ### Linked fields
 
 During this analysis, record the storage fields/state variales used to connect these contracts together.
-For example, if contract A stores the instance of `I` in a field called "rewardToken", record the relationship as
+For example, if contract A stores an instance of the `B` contract in in a field called "rewardToken"
+record the relationship as
+(A, ["rewardToken"], [B])
+
+Multiple possible instances may be stored in the same field. For example, if `A` actually stores an instance of
+the interface `I` in "rewardToken", and there are two implementers in the system (C1 and C2) record both potential
+callees:
 (A, ["rewardToken"], [C1, C2])
+
 If the contract address is stored in nested information, use Solidity style storage path expressions. For example:
 (A, ["registeredMarkets[*].rewards[*]"], [C1, C2])
 If the concrete index/key is known provide it, otherwise use `*` to denote "any index/key".

@@ -8,13 +8,10 @@ from langgraph.store.base import BaseStore
 from composer.templates.loader import load_jinja_template
 from graphcore.graph import Builder
 from composer.spec.tool_env import (
-    RAGTools, BaseRAGTools, BasicAgentTools, BaseSourceTools, SourceTools,
-    ToolEnvironment
+    RAGTools, BaseRAGTools, BasicAgentTools, ToolEnvironment
 )
 from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
-from graphcore.tools.vfs import fs_tools
 from composer.tools.search import cvl_manual_tools
-from composer.spec.code_explorer import code_explorer_tool
 from composer.kb.knowledge_base import kb_tools
 
 @dataclass(frozen=True)
@@ -89,7 +86,6 @@ class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
     pass
 
 def build_rag_tool_env(
-    has_source: bool,
     **params: Unpack[RAGInputs],
 ) -> RagToolEnv:
     llm = _BasicLLM(
@@ -124,7 +120,6 @@ def build_natspec_env(
     **params: Unpack[RAGInputs]
 ) -> ToolEnvironment:
     common_rag = build_rag_tool_env(
-        has_source=False,
         **params
     )
 
