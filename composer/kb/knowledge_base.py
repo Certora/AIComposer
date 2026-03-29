@@ -5,13 +5,15 @@ from pydantic import Field
 from langchain_core.tools import BaseTool
 from langgraph.store.base import BaseStore
 
-from graphcore.tools.schemas import WithImplementation
+from graphcore.tools.schemas import WithAsyncImplementation
 
 from composer.workflow.services import Embeddings
 
 from composer.rag.models import get_model
 
 from sentence_transformers import SentenceTransformer #type: ignore
+
+DEFAULT_KB_NS = ("cvl",)
 
 class DefaultEmbedder(Embeddings):
     def __init__(self, model: SentenceTransformer | None = None):
@@ -36,7 +38,7 @@ class KnowledgeBaseArticle(TypedDict):
 
 def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[BaseTool]:
     kb = kb_ns + ("agent", "knowledge")
-    class KBScan(WithImplementation[str]):
+    class KBScan(WithAsyncImplementation[str]):
         """
         Scan the knowledge base articles for help with a given problem
         """
@@ -45,11 +47,11 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
         offset: int | None = Field(description="Page through the results. Defaults to 0")
 
         @override
-        def run(self) -> str:
+        async def run(self) -> str:
             lim = self.limit if self.limit else 10
             offset = self.offset if self.offset else 0
             if self.symptom is None:
-                r = store.search(
+                r = await store.asearch(
                     kb,
                     offset=offset,
                     limit=lim
@@ -63,7 +65,7 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
                     ])
                 return "\n".join(to_ret)
             else:
-                r = store.search(
+                r = await store.asearch(
                     kb,
                     query=self.symptom,
                     limit=lim,
@@ -79,15 +81,15 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
                     ])
                 return "\n".join(to_ret)
         
-    class KBGet(WithImplementation[str]):
+    class KBGet(WithAsyncImplementation[str]):
         """
         Retrieve the contents of a knowledge base article
         """
         title: str = Field(description="The title of the article")
 
         @override
-        def run(self) -> str:
-            r = store.get(kb, self.title)
+        async def run(self) -> str:
+            r = await store.aget(kb, self.title)
             if r is None:
                 return f"No such article with title '{self.title}'"
             art = cast(KnowledgeBaseArticle, r.value)
@@ -99,7 +101,7 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
 {art['body']}
 """
         
-    class KBPut(WithImplementation[str]):
+    class KBPut(WithAsyncImplementation[str]):
         """
         Add a novel, non-trivial insight to the knowledge base.
 
@@ -127,8 +129,8 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
         body: str = Field(description="A markdown formatted article body describing your solution. IMPORTANT: The advice you give must be backed up by verifiable facts.")
 
         @override
-        def run(self) -> str:
-            it = store.get(kb, self.title)
+        async def run(self) -> str:
+            it = await store.aget(kb, self.title)
             if it is not None:
                 return f"An article with the title {self.title} already exists"
             article : KnowledgeBaseArticle = {
@@ -136,7 +138,7 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
                 "symptom": self.symptom,
                 "body": self.body
             }
-            store.put(kb, self.title, cast(dict, article), index=["description"])
+            await store.aput(kb, self.title, cast(dict, article), index=["symptom"])
             return "Contribution accepted."
     
     to_ret : list[BaseTool] = [KBScan.as_tool("scan_knowledge_base"), KBGet.as_tool("get_knowledge_base_article")]

@@ -166,7 +166,7 @@ async def run_autoprove_pipeline(
 
     if invariants.inv:
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
-        cached_inv_cvl = inv_cvl_ctx.cache_get(GeneratedCVL)
+        cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
 
         if cached_inv_cvl is not None:
             inv_cvl = cached_inv_cvl
@@ -195,7 +195,7 @@ async def run_autoprove_pipeline(
                     source=source_input
                 ),
             )
-            inv_cvl_ctx.cache_put(inv_cvl)
+            await inv_cvl_ctx.cache_put(inv_cvl)
 
         inv_spec_name = "invariants.spec"
         (Path(source_input.project_root) / "certora" / inv_spec_name).write_text(inv_cvl.cvl)

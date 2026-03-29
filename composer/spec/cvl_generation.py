@@ -255,7 +255,7 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
     description: str
 ) -> S:
     input_copy = in_state["input"].copy()
-    last_attempt = ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
+    last_attempt = await ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
     if last_attempt is not None:
         input_copy.append("Your last working draft was (you will need to re-put this onto the VFS):")
         input_copy.append(last_attempt.cvl)
@@ -274,4 +274,4 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
         last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values
         curr = last_state.get("curr_spec")
         if curr is not None:
-            ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=curr))
+            await ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=curr))

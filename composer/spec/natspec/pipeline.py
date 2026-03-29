@@ -180,7 +180,7 @@ async def analyze_single_contract(
     async def _analyze_component(component_idx: int) -> _ComponentBatch | None:
         feat = ContractComponentInstance(_contract=summary, ind=component_idx)
         name = f"{feat.contract.name}: {feat.component.name}"
-        feat_ctx = prop_context.child(
+        feat_ctx = await prop_context.child(
             _component_cache_key(feat.component, summary.app.application_type),
             {
                 "component": feat.component.model_dump(),
@@ -213,7 +213,7 @@ async def analyze_single_contract(
         batch_idx: int,
         batch: _ComponentBatch,
     ) -> GenerationSuccess | GaveUp:
-        batch_ctx = batch.feat_ctx.child(
+        batch_ctx = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
         )
@@ -394,7 +394,7 @@ async def run_natspec_pipeline(
 
     for (ind, contract) in enumerate(summary.contract_components):
         contract_key = CacheKey[None, Contract](string_hash(contract.model_dump_json()))
-        contract_ctx = ctx.child(contract_key, contract.model_dump())
+        contract_ctx = await ctx.child(contract_key, contract.model_dump())
         cont = analyze_single_contract(
             system_doc=system_doc,
             ctx=contract_ctx,

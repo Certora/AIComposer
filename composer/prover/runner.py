@@ -5,6 +5,7 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 
 from langgraph.config import get_store
+from langgraph.store.base import BaseStore
 
 from composer.diagnostics.stream import (
     AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysisStart,
@@ -94,18 +95,18 @@ class _AuditCallbacks(ProverCallbacks):
 
 
 class _StoreCache:
-    def __init__(self, store, tool_call_id: str) -> None:
+    def __init__(self, store: BaseStore, tool_call_id: str) -> None:
         self._store = store
         self._tool_call_id = tool_call_id
 
-    def get(self, rule: RuleResult) -> str | None:
-        d = self._store.get(("cex", self._tool_call_id), rule.path.pprint())
+    async def get(self, rule: RuleResult) -> str | None:
+        d = await self._store.aget(("cex", self._tool_call_id), rule.path.pprint())
         if d is not None:
             return d.value["analysis"]
         return None
 
-    def put(self, rule: RuleResult, analysis: str) -> None:
-        self._store.put(("cex", self._tool_call_id), rule.path.pprint(), {"analysis": analysis})
+    async def put(self, rule: RuleResult, analysis: str) -> None:
+        await self._store.aput(("cex", self._tool_call_id), rule.path.pprint(), {"analysis": analysis})
 
 
 async def certora_prover(

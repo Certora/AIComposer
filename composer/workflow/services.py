@@ -1,8 +1,9 @@
 import psycopg
-from typing import Any, Callable, TypedDict, Literal
+from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager
 from typing_extensions import TypeVar
 import inspect
 import os
+from dataclasses import dataclass
 from psycopg.rows import dict_row, RowFactory, DictRow, Row
 from contextlib import asynccontextmanager
 
@@ -20,7 +21,6 @@ from psycopg.connection_async import AsyncConnection
 from graphcore.tools.memory import PostgresMemoryBackend, AsyncPostgresBackend
 
 from composer.input.types import ModelOptions, ModelOptionsBase
-
 
 T = TypeVar("T")
 
@@ -434,3 +434,46 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
     """Create and configure the LLM. Backwards-compatible; thinking always enabled."""
     return create_llm_base(args)
 
+
+@dataclass
+class StandardConnections:
+    checkpointer: AsyncPostgresSaver
+    store: AsyncPostgresStore
+    memory: Callable[[str], AsyncPostgresBackend]
+
+@dataclass
+class IndexedConnections(StandardConnections):
+    indexed_store: AsyncPostgresStore
+
+
+@overload
+def standard_connections() -> AsyncContextManager[StandardConnections]:
+    ...
+
+@overload
+def standard_connections(*, embedder : Embeddings) -> AsyncContextManager[IndexedConnections]:
+    ...
+
+@asynccontextmanager
+async def standard_connections(
+    *,
+    embedder: Embeddings | None = None
+) -> AsyncIterator[StandardConnections | IndexedConnections]:
+    async with (
+        checkpointer_context() as check,
+        memory_backend_context() as mem,
+        store_context() as store
+    ):
+        if embedder is not None:
+            async with indexed_store_context(embedder) as ind:
+                yield IndexedConnections(
+                    checkpointer=check,
+                    indexed_store=ind,
+                    store=store,
+                    memory=mem
+                )
+        yield StandardConnections(
+            checkpointer=check,
+            store=store,
+            memory=mem
+        )

@@ -83,7 +83,7 @@ async def run_generation_pipeline(
     async def _analyze_component(component_idx: int) -> _ComponentBatch | None:
         feat = ContractComponentInstance(_contract=contract_instance, ind=component_idx)
         name = feat.component.name
-        feat_ctx = prop_context.child(
+        feat_ctx = await prop_context.child(
             _component_cache_key(feat),
             {
                 "component": feat.component.model_dump(),
@@ -117,10 +117,11 @@ async def run_generation_pipeline(
         batch_idx: int,
         batch: _ComponentBatch,
     ) -> GeneratedCVL:
-        batch_ctx = batch.feat_ctx.child(
+        batch_child = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
-        ).abstract(CVLGeneration)
+        )
+        batch_ctx = batch_child.abstract(CVLGeneration)
 
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
         return await run_task(

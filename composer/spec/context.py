@@ -10,7 +10,7 @@ be passed explicitly to agents that need it.
 from dataclasses import dataclass
 import base64
 from pathlib import Path
-from typing import Annotated, Callable
+from typing import Annotated, Callable, overload, Awaitable
 
 from pydantic import BaseModel
 
@@ -156,26 +156,49 @@ class WorkflowContext[K: CacheTypes]:
             cache_namespace=cache_ns,
             _store=store,
         )
+    
+    @overload
+    def child[NXT: CacheTypes](self, name_key: CacheKey[K, NXT]) -> "WorkflowContext[NXT]":
+        ...
 
-    def child[NXT: CacheTypes](self, name_key: CacheKey[K, NXT], tag: dict | None = None) -> "WorkflowContext[NXT]":
-        """Create a child context with derived namespaces."""
+    @overload
+    def child[NXT: CacheTypes](self, name_key: CacheKey[K, NXT], tag: dict) -> Awaitable["WorkflowContext[NXT]"]:
+        ...
+
+    def _child_pure[NXT: CacheTypes](
+        self, name_key: CacheKey[K, NXT],    
+    ) -> tuple["WorkflowContext[NXT]", tuple[str, ...] | None]:
         name = name_key.key
         child_cache_ns = (*self.cache_namespace, name) if self.cache_namespace else None
-        if child_cache_ns is not None and tag is not None:
-            self._store.put(
-                child_cache_ns,
-                "_desc",
-                tag
-            )
-        return WorkflowContext(
+        return (WorkflowContext(
             _services=self._services,
             thread_id=f"{self.thread_id}-{name}",
             memory_namespace=f"{self.memory_namespace}-{name}",
             cache_namespace=child_cache_ns,
             _store=self._store,
-        )
+        ), child_cache_ns)
 
-    def cache_get(self, ty: type[K]) -> K | None:
+    async def _child_async[NXT: CacheTypes](
+        self, name_key: CacheKey[K, NXT], tag: dict
+    ) -> "WorkflowContext[NXT]":
+        (nxt, cache_key) = self._child_pure(name_key)
+        if cache_key is not None:
+            await self._store.aput(cache_key, "_desc", tag)
+        return nxt
+        
+    def _child_sync[NXT: CacheTypes](
+        self, name_key: CacheKey[K, NXT]
+    ) -> "WorkflowContext[NXT]":
+        return self._child_pure(name_key)[0]
+
+    def child[NXT: CacheTypes](self, name_key: CacheKey[K, NXT], tag: dict | None = None) -> "WorkflowContext[NXT] | Awaitable[WorkflowContext[NXT]]":
+        """Create a child context with derived namespaces."""
+        if tag is None:
+            return self._child_sync(name_key)
+        else:
+            return self._child_async(name_key, tag)
+
+    async def cache_get(self, ty: type[K]) -> K | None:
         """Get a typed value from the cache. Returns None if caching disabled or not found."""
         if not issubclass(ty, BaseModel):
             raise ValueError(f"Cannot use cache with non-basemodel keys {ty}")
@@ -184,12 +207,12 @@ class WorkflowContext[K: CacheTypes]:
         if len(self.cache_namespace) < 1:
             raise ValueError("Cache prefix too small")
         full_key = self.cache_namespace[:-1]
-        result = self._store.get(full_key, self.cache_namespace[-1])
+        result = await self._store.aget(full_key, self.cache_namespace[-1])
         if result is None:
             return None
         return ty.model_validate(result.value)
 
-    def cache_put(self, value: K) -> None:
+    async def cache_put(self, value: K) -> None:
         """Put a typed value in the cache. No-op if caching disabled."""
         if not isinstance(value, BaseModel):
             raise ValueError("Caching not allowed for non-basemodel keys")
@@ -198,7 +221,7 @@ class WorkflowContext[K: CacheTypes]:
         if len(self.cache_namespace) < 1:
             raise ValueError("Cache prefix too small")
         full_key = self.cache_namespace[:-1]
-        self._store.put(full_key, self.cache_namespace[-1], value.model_dump())
+        await self._store.aput(full_key, self.cache_namespace[-1], value.model_dump())
 
     def get_memory_tool(self) -> BaseTool:
         """Get a memory tool for this context's memory namespace."""

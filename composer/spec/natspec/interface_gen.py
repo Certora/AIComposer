@@ -68,9 +68,9 @@ async def generate_interface(
         f"interface-{string_hash(summary.model_dump_json())}"
     )
 
-    child = ctx.child(cache_key, summary.model_dump())
+    child = await ctx.child(cache_key, summary.model_dump())
 
-    if (cached := child.cache_get(InterfaceResult)) is not None:
+    if (cached := await child.cache_get(InterfaceResult)) is not None:
         return cached
 
     solc_name = f"solc{solc_version}"
@@ -140,5 +140,5 @@ async def generate_interface(
         description=DESCRIPTION,
     )
     assert "result" in res
-    child.cache_put(res["result"])
+    await child.cache_put(res["result"])
     return res["result"]

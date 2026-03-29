@@ -391,7 +391,6 @@ async def execute_ai_composer_workflow(
         cloud=None if workflow_options.local_prover else CloudConfig(),
     )
 
-    rag_db = PostgreSQLRAGDatabase(rag_connection, get_rag_model())
     required_validations : list[ValidationType] = [prover]
     if reqs_list is not None:
         required_validations.append(req_type)

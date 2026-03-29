@@ -50,9 +50,9 @@ async def generate_stub(
 
     key = CacheKey[None, StubDeclaration](f"stub-for-{string_hash(interface.model_dump_json())}-{contract_name}")
 
-    child = ctx.child(key, {"intf": interface.model_dump(), "contract": contract_name})
+    child = await ctx.child(key, {"intf": interface.model_dump(), "contract": contract_name})
 
-    if (c := child.cache_get(StubDeclaration)) is not None:
+    if (c := await child.cache_get(StubDeclaration)) is not None:
         return c
 
     solc_name = f"solc{solc_version}"
@@ -126,5 +126,5 @@ async def generate_stub(
         description=f"{DESCRIPTION}: {contract_name}",
     )
     assert "result" in res
-    child.cache_put(res["result"])
+    await child.cache_put(res["result"])
     return res["result"]

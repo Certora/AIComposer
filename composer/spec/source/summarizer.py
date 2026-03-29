@@ -311,7 +311,7 @@ async def setup_summaries(
         sort="import",
     )
 
-    if (cached := summary_context.cache_get(_SummaryCache)) is not None:
+    if (cached := await summary_context.cache_get(_SummaryCache)) is not None:
         result_path.write_text(cached.content)
         return to_ret
 
@@ -319,6 +319,6 @@ async def setup_summaries(
         summary_context, env, config, app, source
     )
 
-    summary_context.cache_put(_SummaryCache(content=result))
+    await summary_context.cache_put(_SummaryCache(content=result))
     result_path.write_text(result)
     return to_ret

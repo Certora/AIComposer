@@ -45,7 +45,7 @@ async def run_bug_analysis(
     """
 
     component_analysis = ctx.child(BUG_ANALYSIS_KEY)
-    if (cached := component_analysis.cache_get(_BugAnalysisCache)) is not None:
+    if (cached := await component_analysis.cache_get(_BugAnalysisCache)) is not None:
         return cached.items
 
     builder = env.builder
@@ -82,5 +82,5 @@ async def run_bug_analysis(
 
     result: list[PropertyFormulation] = r["result"]
 
-    component_analysis.cache_put(_BugAnalysisCache(items=result))
+    await component_analysis.cache_put(_BugAnalysisCache(items=result))
     return result

@@ -10,9 +10,10 @@ from graphcore.graph import Builder
 from composer.spec.tool_env import (
     RAGTools, BaseRAGTools, BasicAgentTools, ToolEnvironment
 )
-from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
+from composer.spec.cvl_research import indexed_cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.tools.search import cvl_manual_tools
 from composer.kb.knowledge_base import kb_tools
+from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
 
 @dataclass(frozen=True)
 class _BasicLLM:
@@ -40,27 +41,33 @@ class _BaseRAGTools():
 
 def build_rag_tools(
     s: BaseRAGTools,
-    llm: BasicAgentTools
+    llm: BasicAgentTools,
+    store: BaseStore,
+    cache_ns: tuple[str, ...]
 ) -> RAGTools:
     
+    ind = AgentIndex(store=store, cache_ns=cache_ns)
+
     @dataclass(frozen=True)
     class _CVLResearchEnv(_BaseTools):
         base_rag_tools: tuple[BaseTool, ...]
+        agent_index: AgentIndex
     
     @dataclass(frozen=True)
     class _RAGTools:
         rag_tools: tuple[BaseTool, ...]
 
 
-    cvl_researcher = cvl_research_tool(
+    cvl_researcher = indexed_cvl_research_tool(
         _CVLResearchEnv(
             builder=llm.builder,
             has_source=llm.has_source,
-            base_rag_tools=s.base_rag_tools
+            base_rag_tools=s.base_rag_tools,
+            agent_index=ind
         ),
         CVL_RESEARCH_BASE_DOC
     )
-    return _RAGTools(s.base_rag_tools + (cvl_researcher,))
+    return _RAGTools(s.base_rag_tools + (cvl_researcher,RetrieveDocumentTool.bind(ind).as_tool("cvl_document_ref")))
 
 def build_basic_rag_tools(
     db: PostgreSQLRAGDatabase,
@@ -81,6 +88,7 @@ class RAGInputs(LLMInputs):
     db: PostgreSQLRAGDatabase
     store: BaseStore
     kb_ns: tuple[str, ...]
+    cvl_cache_ns: tuple[str, ...]
 
 class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
     pass
@@ -101,7 +109,9 @@ def build_rag_tool_env(
 
     full_rag_tools = build_rag_tools(
         llm=llm,
-        s=rag_tools
+        s=rag_tools,
+        store=params["store"],
+        cache_ns=params["cvl_cache_ns"]
     )
 
     @dataclass(frozen=True)

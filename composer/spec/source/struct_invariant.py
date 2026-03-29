@@ -103,7 +103,7 @@ async def get_invariant_formulation(
         Validated structural invariants.
     """
     inv_ctx = ctx.child(STRUCTURAL_INV_KEY)
-    if (cached := inv_ctx.cache_get(Invariants)) is not None:
+    if (cached := await inv_ctx.cache_get(Invariants)) is not None:
         return cached
 
     judge_ctx = inv_ctx.child(INV_JUDGE_KEY)
@@ -222,5 +222,5 @@ async def get_invariant_formulation(
 
     assert "result" in st
     to_ret: Invariants = st["result"]
-    inv_ctx.cache_put(to_ret)
+    await inv_ctx.cache_put(to_ret)
     return to_ret

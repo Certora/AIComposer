@@ -127,7 +127,7 @@ async def classifier_agent(
     env: SourceEnvironment,
 ) -> AgentSystemDescription:
     child = context.child(HARNESS_ANALYSIS_KEY)
-    if (cached := child.cache_get(AgentSystemDescription)) is not None:
+    if (cached := await child.cache_get(AgentSystemDescription)) is not None:
         return cached
     class AnalysisState(MessagesState):
         result: NotRequired[AgentSystemDescription]
@@ -184,7 +184,7 @@ async def classifier_agent(
     )
 
     assert "result" in res
-    child.cache_put(res["result"])
+    await child.cache_put(res["result"])
     return res["result"]
 
 class GeneratedHarness(BaseModel):
@@ -227,8 +227,8 @@ async def generate_harnesses(
     application: SourceApplication,
     instructions: AgentSystemDescription
 ) -> HarnessResult:
-    child = context.child(harness_generation_key(instructions), instructions.model_dump())
-    if (cached := child.cache_get(HarnessResult)) is not None:
+    child = await context.child(harness_generation_key(instructions), instructions.model_dump())
+    if (cached := await child.cache_get(HarnessResult)) is not None:
         return cached
 
     tool_conf = VFSToolConfig(
@@ -351,7 +351,7 @@ async def generate_harnesses(
     to_ret = HarnessResult(
         name_to_source=res_dict
     )
-    child.cache_put(to_ret)
+    await child.cache_put(to_ret)
     return to_ret
 
 def _multi_replace(
@@ -420,8 +420,8 @@ async def run_setup_part1(
     env: SourceEnvironment,
     application_desc: SourceApplication
 ) -> SystemDescriptionHarnessed:
-    setup_ctx = context.child(system_setup_key(application_desc), application_desc.model_dump())
-    if (cached := setup_ctx.cache_get(SystemDescriptionHarnessed)):
+    setup_ctx = await context.child(system_setup_key(application_desc), application_desc.model_dump())
+    if (cached := await setup_ctx.cache_get(SystemDescriptionHarnessed)):
         return cached
 
     analysis_results = await classifier_agent(
@@ -478,7 +478,7 @@ async def run_setup_part1(
                 ) for c in located_desc.transitive_closure
             ]
         )
-    setup_ctx.cache_put(harnessed_system)
+    await setup_ctx.cache_put(harnessed_system)
     return harnessed_system
 
 async def run_and_apply_part1(
@@ -507,7 +507,7 @@ async def run_setup(
     application_desc: SourceApplication
 ) -> ContractSetup | None:
     config_ctxt = context.child(config_key)
-    if (cached := config_ctxt.cache_get(ContractSetup)) is not None:
+    if (cached := await config_ctxt.cache_get(ContractSetup)) is not None:
         if (Path(source.project_root) / "certora"  / cached.config.summaries_path).exists():
             return cached
 
@@ -532,6 +532,6 @@ async def run_setup(
         config=setup_result
     )
 
-    config_ctxt.cache_put(to_ret)
+    await config_ctxt.cache_put(to_ret)
     return to_ret
 

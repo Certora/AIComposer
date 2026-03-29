@@ -66,8 +66,8 @@ class ProverCallbacks:
     async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None: pass
 
 class AnalysisCache(Protocol):
-    def get(self, rule: RuleResult) -> str | None: ...
-    def put(self, rule: RuleResult, analysis: str) -> None: ...
+    async def get(self, rule: RuleResult) -> str | None: ...
+    async def put(self, rule: RuleResult, analysis: str) -> None: ...
 
 
 @asynccontextmanager
@@ -227,13 +227,13 @@ async def run_prover(
         if rule.status != "VIOLATED":
             return (rule, None)
         if analysis_cache is not None:
-            cached = analysis_cache.get(rule)
+            cached = await analysis_cache.get(rule)
             if cached is not None:
                 return (rule, cached)
         await callbacks.on_analysis_start(rule)
         analysis = await analyze_cex_raw(llm, messages, rule, tool_call_id)
         if analysis is not None and analysis_cache is not None:
-            analysis_cache.put(rule, analysis)
+            await analysis_cache.put(rule, analysis)
         if analysis is not None:
             await callbacks.on_analysis_complete(rule, analysis)
         return (rule, analysis)

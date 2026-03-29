@@ -64,7 +64,7 @@ async def run_component_analysis[T: BaseApplication](
     extra_input: list[str | dict]
 ) -> T | None:
     """Analyze application components from a system doc and optionally source code."""
-    if (cached := child_ctxt.cache_get(ty)) is not None:
+    if (cached := await child_ctxt.cache_get(ty)) is not None:
         return cached
 
     memory = child_ctxt.get_memory_tool()
@@ -108,5 +108,5 @@ async def run_component_analysis[T: BaseApplication](
     assert "result" in res
     result: T = res["result"] #type: ignore trust me bro
 
-    child_ctxt.cache_put(result)
+    await child_ctxt.cache_put(result)
     return result
