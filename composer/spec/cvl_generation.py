@@ -271,7 +271,7 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
         )
         return r
     finally:
-        last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values
+        last_state = (await d.aget_state({"configurable": {"thread_id": ctx.thread_id}})).values
         curr = last_state.get("curr_spec")
         if curr is not None:
             await ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=curr))
