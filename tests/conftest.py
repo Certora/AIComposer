@@ -116,7 +116,9 @@ def certora_prover(
         return to_ret
     
     monkeypatch.setattr("composer.spec.source.prover.run_prover", mock_prover)
-    monkeypatch.setattr("composer.spec.source.prover.get_stream_writer", lambda _: None)
+    monkeypatch.setattr("composer.spec.source.prover.get_stream_writer", lambda: (
+        lambda _: None
+    ))
 
     the_tool = get_prover_tool(
         cloud=None,

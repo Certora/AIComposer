@@ -20,7 +20,9 @@ def temp_certora_file(
 ) -> Iterator[str]:
     """Write a temp file into the project's certora/ dir, yield its name, clean up."""
     tmp_name = f"{prefix}_{uuid.uuid1().hex[:16]}.{ext}"
-    tgt = Path(root) / "certora" / tmp_name
+    certora_dir = Path(root) / "certora"
+    certora_dir.mkdir(exist_ok=True, parents=True)
+    tgt = certora_dir / tmp_name
     tgt.write_text(content)
     try:
         yield tmp_name

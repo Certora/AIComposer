@@ -291,7 +291,7 @@ class CacheExplorerApp[V](App):
         backend = _get_memory_backend(self._editing_ns) if self._editing_ns else None
         if backend is None:
             return
-        content = backend.read_file(entry.path) or "<empty>"
+        content = backend.view(entry.path, None)
         self.query_one("#memory-content", Static).update(
             f"--- {entry.path} ---\n\n{content}"
         )
@@ -368,7 +368,7 @@ class CacheExplorerApp[V](App):
             return
 
         backend = _get_memory_backend(self._editing_ns)
-        content = backend.read_file(self._editing_file) or ""
+        content = backend.view(self._editing_file, None)
 
         self._editing = True
         self.query_one("#memory-content", Static).add_class("hidden")
@@ -385,7 +385,7 @@ class CacheExplorerApp[V](App):
         editor = self.query_one("#memory-editor", TextArea)
         content = editor.text
         backend = _get_memory_backend(self._editing_ns)
-        backend.write_file(self._editing_file, content)
+        backend.create(self._editing_file, content)
         self.notify(f"Saved: {self._editing_file}")
         self._cancel_edit_mode()
         if self._selected_node:
