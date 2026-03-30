@@ -1,8 +1,8 @@
-from typing import NotRequired, override, TypedDict
+from typing import NotRequired, override, TypedDict, Literal, Annotated
 import json
 
 from langchain_core.tools import BaseTool
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, Discriminator
 
 from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId, WithInjectedState
 from graphcore.tools.results import result_tool_generator
@@ -63,7 +63,7 @@ class ExpectRulePassage(WithAsyncImplementation[Command], WithInjectedId):
         return tool_state_update(
             tool_call_id=self.tool_call_id,
             content="Success",
-            rule_skip={
+            rule_skips={
                 self.rule_name: DELETE_SKIP
             }
         )
@@ -132,6 +132,7 @@ class AddFile(BaseModel):
     Add a new file to the input of the prover. If the name of the contract within the file does *NOT* match the file stem,
     specify the contract name explicitly, otherwise leave it null.
     """
+    type: Literal["add_file"]
     file_path: str = Field(description="The relative path to the file to include in the prover inputs")
     contract_name: str | None = Field(description="The name of the contract within `file_path` to ingest into the prover, if does not match the file stem")
 
@@ -140,6 +141,7 @@ class RemoveFile(BaseModel):
     Remove a file from the prover inputs. If the file is specified in the form `path/to/Contract.sol:Something`
     provide *only* the file path portion, i.e., `path/to/Contract.sol`
     """
+    type: Literal["remove_file"]
     path_to_remove: str = Field(description="The path to the file to remove from prover inputs")
 
 class AddLink(BaseModel):
@@ -153,6 +155,7 @@ class AddLink(BaseModel):
     NB that the link field *must* be at the top-level of the contract's storage. Link flags cannot be used
     to link fields in structs.
     """
+    type: Literal["add_link"]
     source_contract_name: str = Field(description="The name of the contract that is the source of the link")
     link_field_name: str = Field(description="The storage field holding the link within `source_contract_name`")
     target_contract_name : str = Field(description="The contract held in `link_field_name` of `source_contract_name`")
@@ -161,8 +164,11 @@ class RemoveLink(BaseModel):
     """
     Remove a link from one contract to another.
     """
+    type: Literal["remove_link"]
     source_contract_name : str = Field(description="The name of the contract whose link should be removed")
     link_field_name : str = Field(description="The storage field holding the link within `source_contract_name` that should be removed")
+
+type ConfigEdit = Annotated[RemoveLink | AddLink | AddFile | RemoveFile, Discriminator("type")]
 
 class ConfigEditTool(WithAsyncImplementation[Command | str], WithInjectedId, WithInjectedState[ProverStateExtra]):
     """
@@ -172,7 +178,7 @@ class ConfigEditTool(WithAsyncImplementation[Command | str], WithInjectedId, Wit
     The configuration change is atomic: if any of the edits fail to apply the configuration will remain unchanged,
     and the issue will be returned. Otherwise, the updated configuration is returned as the result of this call.
     """
-    edits: list[RemoveLink | AddLink | RemoveFile | AddFile] = Field(
+    edits: list[ConfigEdit] = Field(
         description="A list of the atomic edits to make to the file."
     )
 
@@ -222,6 +228,7 @@ class ConfigEditTool(WithAsyncImplementation[Command | str], WithInjectedId, Wit
                             if curr_src == src and curr_fld == fld:
                                 return f"Link for field {fld} in contract {src} already exists -> {curr_dst}"
                     new_links = list(curr_config.get("link", []))
+                    new_links.append(f"{src}:{fld}={tgt}")
                     curr_config["link"] = new_links
                 case RemoveLink(source_contract_name=src, link_field_name=fld):
                     if "link" not in curr_config:

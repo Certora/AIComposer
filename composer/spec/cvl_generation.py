@@ -139,9 +139,11 @@ LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 
 DESCRIPTION = "CVL generation"
 
+type FeedbackToolImpl = Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedbackProtocol]]
+
 @dataclass
 class FeedbackToolContext:
-    feedback_thunk: Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedbackProtocol]]
+    feedback_thunk: FeedbackToolImpl
     num_props: int
 
 FEEDBACK_VALIDATION_KEY = "feedback"
