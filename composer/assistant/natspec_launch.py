@@ -77,7 +77,7 @@ async def launch_natspec_workflow(
                 await app.on_pipeline_done(pipeline_result)
             except Exception as exc:
                 captured_error = exc
-                app.notify(f"Pipeline failed: {exc}", severity="error")
+                app.notify(f"Pipeline failed: {exc}", severity="error", markup=False)
                 app._pipeline_done = True
 
         app.set_work(work)

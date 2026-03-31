@@ -12,7 +12,7 @@ import base64
 from pathlib import Path
 from typing import Annotated, Callable, overload, Awaitable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from langgraph.store.base import BaseStore
 from langchain_core.tools import BaseTool
@@ -212,7 +212,11 @@ class WorkflowContext[K: CacheTypes]:
         result = await self._store.aget(full_key, self.cache_namespace[-1])
         if result is None:
             return None
-        return ty.model_validate(result.value)
+        try:
+            return ty.model_validate(result.value)
+        except ValidationError:
+            await self._store.adelete(full_key, self.cache_namespace[-1])
+            return None
 
     async def cache_put(self, value: K) -> None:
         """Put a typed value in the cache. No-op if caching disabled."""
