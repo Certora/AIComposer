@@ -78,7 +78,7 @@ async def run_autoprove_pipeline(
     )
 
     if s is None:
-        raise ValueError("we're fucked")
+        raise ValueError("System analysis failed")
 
     setup = await run_task(
         handler_factory,
@@ -89,7 +89,7 @@ async def run_autoprove_pipeline(
     )
     
     if setup is None:
-        raise ValueError("we're still fucked")
+        raise ValueError("Project setup failed")
 
     contract_to_harness : dict[str, list[HarnessDefinition]] = {}
     for c in setup.system_description.transitive_closure:

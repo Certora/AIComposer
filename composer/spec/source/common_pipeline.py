@@ -66,7 +66,7 @@ async def run_generation_pipeline(
             ind = i
             break
     if ind == -1:
-        raise ValueError("We're fucked again")
+        raise ValueError("Component not found")
     
     contract_instance = ContractInstance(
         ind, app=summary
