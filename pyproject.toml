@@ -26,8 +26,7 @@ dependencies = [
     "questionary>=2.1",
     "rich>=14.3",
     "sentence-transformers>=5.1",
-    "textual>=8.1",
-    "grapcore>=0.1.0"
+    "textual>=8.1"
 ]
 
 [tool.uv.sources]
