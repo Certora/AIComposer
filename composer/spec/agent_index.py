@@ -48,7 +48,6 @@ class AgentIndex:
         **doc: Unpack[AgentResult]
     ) -> str:
         key = self._question_key(doc["question"])
-        print(f"putting {doc['question']} -> {key}")
         r = await self.store.aget(self.cache_ns, key)
         if r is not None:
 
@@ -57,8 +56,6 @@ class AgentIndex:
         await self.store.aput(
             self.cache_ns, key, {**doc}, index=["answer"]
         )
-        test = await self.asearch(question=doc["question"])
-        print(test)
         return key
     
     async def aget(
@@ -73,9 +70,7 @@ class AgentIndex:
         self, question: str
     ) -> list[IndexedAgentResult] | KeyedAgentResult:
         key = self._question_key(question)
-        print(f"looking up {key}")
         cached = await self.aget(key)
-        print(cached)
         if cached is not None:
             return KeyedAgentResult(ref_string=key,  **cached)
         res = await self.store.asearch(

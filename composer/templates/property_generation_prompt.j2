@@ -62,6 +62,13 @@ Use the provided `verify_spec` tool to test your spec. If there are verification
 that point to errors in your specification, refine your specification according to the following rules,
 and return to step 2.
 
+**Clarification**: In general, every non-trivial change you make to your CVL file should first be vetted
+by the feedback tool to prevent you from "committing" to any problematic approach or implementation.
+However, if multiple attempts at a formalize a property continually yield prover counterexamples, you may try to fix that
+property by iteratively calling the prover with different CVL edits without necessarily calling the feedback tool
+before each invocation. Once you find a CVL formulation accepted by the prover, you should seek
+feedback as soon as possible.
+
 ### Verification Failure Remediation Strategies
 
 * If the failure is due to an *impossible starting state*:
@@ -165,3 +172,18 @@ your current approach. Be sure to update your memory *before* calling the result
 {% include "cvl_guidelines.j2" %}
 {% include "cvl_additions.j2" %}
 </guidance>
+
+## Rerun
+
+If your memories indicate that your task successfully completed and you have access to the prior attempt, you may
+assume that this task is being re-run to retrieve your output.
+You may assume that no inputs have changed, and any validated, proven spec remains so.
+When this happens, following this procedure:
+1. Put your "last attempt" CVL into the vfs
+2. Reskip any properties that your memory indicated you should skip
+3. Mark any rules as expected to fail as indicated by your memory
+4. Run the prover without any rules specified
+5. Run the feedback judge
+6. Deliver your result via the `result` tool.
+
+Do NOT skip step 4 & 5, they are necessary for the `result` tool to validate the spec you are trying to deliver.

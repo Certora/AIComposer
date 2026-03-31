@@ -263,12 +263,12 @@ class MessageRenderer:
                     self._on_tokens(m)
                 case SystemMessage():
                     self.reset_tool_collapsing()
-                    coll = Collapsible(Static(m.text(), markup=False), title="System prompt", collapsed=True)
+                    coll = Collapsible(Static(m.text, markup=False), title="System prompt", collapsed=True)
                     await self._mount_to(target, coll)
                 case HumanMessage():
                     self.reset_tool_collapsing()
                     title, collapsed = self.classify_human(m)
-                    content = m.text()
+                    content = m.text
                     coll = Collapsible(Static(content, markup=False), title=title, collapsed=collapsed)
                     await self._mount_to(target, coll)
                 case ToolMessage():

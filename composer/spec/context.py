@@ -72,6 +72,8 @@ type AnalysisInput = tuple[SourceCode, SourceBuilder] | tuple[SystemDoc, PlainBu
 
 type CacheTypes = None | BaseModel | Marker
 
+SNAPSHOT_NAMESPACE = ("snapshots",)
+
 
 class CacheKey[Parent: CacheTypes, Curr: CacheTypes]:
     def __init__(self, key: str):
@@ -226,6 +228,10 @@ class WorkflowContext[K: CacheTypes]:
     def get_memory_tool(self) -> BaseTool:
         """Get a memory tool for this context's memory namespace."""
         return self._services(self.memory_namespace)
+
+    async def save_snapshot(self, key: str, data: BaseModel) -> None:
+        """Store a snapshot in the global snapshots namespace."""
+        await self._store.aput(SNAPSHOT_NAMESPACE, key, data.model_dump())
 
 
 # ---------------------------------------------------------------------------

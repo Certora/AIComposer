@@ -5,43 +5,52 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ai-composer"
 version = "0.1.0"
-description = "AIComposer - a tool for generating verified implementations from documentation and CVL specifications"
+description = "AIComposer — a tool for generating verified implementations from documentation and CVL specifications"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Certora Ltd."}
 ]
 
 dependencies = [
-    "langchain-core==0.3.79",
-    "langchain==0.3.27",
-    "langchain-anthropic==0.3.21",
-    "langchain-community==0.3.29",
-    "langchain-text-splitters==0.3.11",
-    "langgraph-checkpoint-postgres==3.0.0",
-    "langgraph-sdk==0.2.6",
-    "langgraph==0.6.7",
-    "psycopg==3.2.12",
-    "psycopg-binary==3.2.12",
-    "sentence-transformers==5.1.0",
-    "torch==2.8.0",
-    "transformers==4.56.0",
-    "numpy==2.3.2",
-    "pydantic==2.11.7",
-    "pydantic-settings==2.10.1",
-    "PyMuPDF>=1.24.0",
+    "graphcore>=0.1",
+    "aiohttp>=3.13",
+    "attrs>=26.1",
+    "Jinja2>=3.1",
+    "langgraph-checkpoint-postgres>=3.0",
+    "numpy>=2.4",
+    "prompt-toolkit>=3.0",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.12",
+    "questionary>=2.1",
+    "rich>=14.3",
+    "sentence-transformers>=5.1",
+    "textual>=8.1",
+    "grapcore>=0.1.0"
 ]
+
+[tool.uv.sources]
+graphcore = { path = "./graphcore" }
+
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │ AUDIT NEEDED — these were in the old pyproject.toml but may not    │
+# │ be directly imported. grep composer/ for them; delete if unused.   │
+# │                                                                    │
+# │   "langchain-community>=0.3",                                     │
+# │   "langchain-text-splitters>=0.3",                                 │
+# │   "pydantic-settings>=2.10",                                      │
+# │   "PyMuPDF>=1.24",                                                │
+# └─────────────────────────────────────────────────────────────────────┘
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
 
 [tool.setuptools.packages.find]
-include = ["analyzer*", "composer*"]
+include = ["composer*"]
 
 [tool.setuptools.package-dir]
 "" = "."
 
 [tool.setuptools.package-data]
 composer = ["templates/*.j2"]
-

@@ -90,7 +90,8 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
                         if "configurable" in curr_config and "checkpoint_id" in curr_config["configurable"]:
                             del curr_config["configurable"]["checkpoint_id"]
                         interrupt_data = cast(H, payload["__interrupt__"][0].value)
-                        curr_state = cast(S, graph.get_state({"configurable": {"thread_id": tid}}).values)
+                        
+                        curr_state = cast(S, (await graph.aget_state({"configurable": {"thread_id": tid}})).values)
                         human_response = await human_handler(interrupt_data, curr_state)
                         graph_input = Command(resume=human_response)
                         interrupted = True
@@ -103,7 +104,8 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
             if interrupted:
                 continue
 
-            result_state = graph.get_state({"configurable": {"thread_id": tid}}).values
+            res_tuple = await graph.aget_state({"configurable": {"thread_id": tid}})
+            result_state = res_tuple.values
             return cast(S, result_state)
     finally:
         event_sink(End(tid))

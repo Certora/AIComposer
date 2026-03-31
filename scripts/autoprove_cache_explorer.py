@@ -9,16 +9,16 @@ import argparse
 import hashlib
 import pathlib
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
-from typing import Iterator
+from typing import AsyncIterator, AsyncGenerator
 
 _repo_root = str(pathlib.Path(__file__).parent.parent.absolute())
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
 
 from composer.ui.cache_explorer import CacheNode, OrgNode, CacheTreeNode, CacheExplorerApp, DummyServices
-from composer.spec.context import WorkflowContext, SourceCode, CacheKey, CacheTypes, get_system_doc, CVLGeneration, Marker
+from composer.spec.context import WorkflowContext, SourceCode, CacheKey, CacheTypes, get_system_doc, CVLGeneration, Marker, CVLJudge
 from composer.spec.source.system_analysis import SOURCE_ANALYSIS_KEY
 from composer.spec.source.harness import (
     config_key,
@@ -51,6 +51,7 @@ type AutoProveCachedValue = (
     | Invariants
     | GeneratedCVL
     | _LastAttemptCache
+    | CVLJudge
 )
 
 
@@ -75,25 +76,25 @@ def node(c: CacheTreeNode[AutoProveCachedValue]):
         _node_context.reset(tok)
 
 
-@contextmanager
-def node_for[T: CacheTypes, S: CacheTypes](
+@asynccontextmanager
+async def node_for[T: CacheTypes, S: CacheTypes](
     ctx: WorkflowContext[T],
     child: CacheKey[T, S],
     label: str,
     ty: type[S] | None = None,
-) -> Iterator[tuple[WorkflowContext[S], S | None]]:
+) -> AsyncIterator[tuple[WorkflowContext[S], S | None]]:
     child_ctx = ctx.child(child)
-    value: S | None = child_ctx.cache_get(ty) if ty is not None else None  # type: ignore[arg-type]
+    value: S | None = await child_ctx.cache_get(ty) if ty is not None else None  # type: ignore[arg-type]
     new_node: CacheNode[AutoProveCachedValue] = CacheNode(label=label, ctx=child_ctx, value=value)  # type: ignore[arg-type]
     with node(new_node):
         yield child_ctx, value
 
 
-def leaf[T: CacheTypes, S: AutoProveCachedValue](
+async def leaf[T: CacheTypes, S: AutoProveCachedValue](
     ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S]
 ) -> CacheNode[S]:
     child_ctx = ctx.child(child)
-    value: S | None = child_ctx.cache_get(ty)
+    value: S | None = await child_ctx.cache_get(ty)
     return CacheNode(label=label, ctx=child_ctx, value=value)
 
 def memory[T: CacheTypes, S: Marker](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str):
@@ -103,20 +104,20 @@ def memory[T: CacheTypes, S: Marker](ctx: WorkflowContext[T], child: CacheKey[T,
 # Tree construction
 # ---------------------------------------------------------------------------
 
-def build_tree_inner(root_ctx: WorkflowContext[None]):
-    sa_leaf = leaf(root_ctx, SOURCE_ANALYSIS_KEY, "source-analysis", SourceApplication)
+async def build_tree_inner(root_ctx: WorkflowContext[None]) -> AsyncGenerator[CacheTreeNode[AutoProveCachedValue], None]:
+    sa_leaf = await leaf(root_ctx, SOURCE_ANALYSIS_KEY, "source-analysis", SourceApplication)
     yield sa_leaf
 
     # Read config value upfront so we can derive the summary key outside the with block
-    config_val = root_ctx.child(config_key).cache_get(ContractSetup)
+    config_val = await root_ctx.child(config_key).cache_get(ContractSetup)
 
-    with node_for(root_ctx, config_key, "config", ContractSetup) as (config_ctx, _):
+    async with node_for(root_ctx, config_key, "config", ContractSetup) as (config_ctx, _):
         if sa_leaf.value is not None:
-            with node_for(config_ctx, system_setup_key(sa_leaf.value), "setup", SystemDescriptionHarnessed) as (setup_ctx, _):
-                ha_leaf = leaf(setup_ctx, HARNESS_ANALYSIS_KEY, "harness-analysis", AgentSystemDescription)
+            async with node_for(config_ctx, system_setup_key(sa_leaf.value), "setup", SystemDescriptionHarnessed) as (setup_ctx, _):
+                ha_leaf = await leaf(setup_ctx, HARNESS_ANALYSIS_KEY, "harness-analysis", AgentSystemDescription)
                 yield ha_leaf
                 if ha_leaf.value is not None and ha_leaf.value.needs_harnessing():
-                    yield leaf(
+                    yield await leaf(
                         setup_ctx,
                         harness_generation_key(ha_leaf.value),
                         "harness-generation",
@@ -125,12 +126,12 @@ def build_tree_inner(root_ctx: WorkflowContext[None]):
 
     # Summary — key derivable only once ContractSetup is cached
     if config_val is not None:
-        yield leaf(root_ctx, _summary_key(config_val), "summary", _SummaryCache)
+        yield await leaf(root_ctx, _summary_key(config_val), "summary", _SummaryCache)
 
-    yield leaf(root_ctx, STRUCTURAL_INV_KEY, "structural-inv", Invariants)
-    with node_for(root_ctx, INV_CVL_KEY, "invariant-cvl", GeneratedCVL) as (config_ctx, _):
+    yield await leaf(root_ctx, STRUCTURAL_INV_KEY, "structural-inv", Invariants)
+    async with node_for(root_ctx, INV_CVL_KEY, "invariant-cvl", GeneratedCVL) as (config_ctx, _):
         gen_ctx = config_ctx.abstract(CVLGeneration)
-        yield leaf(
+        yield await leaf(
             gen_ctx, LAST_ATTEMPT_KEY, "Last Attempt", _LastAttemptCache
         )
         yield memory(
@@ -142,10 +143,10 @@ def build_tree_inner(root_ctx: WorkflowContext[None]):
         pass
 
 
-def build_tree(root_ctx: WorkflowContext[None]) -> CacheNode[AutoProveCachedValue]:
+async def build_tree(root_ctx: WorkflowContext[None]) -> CacheNode[AutoProveCachedValue]:
     root: CacheNode[AutoProveCachedValue] = CacheNode(label="root", ctx=root_ctx)
     with node(root):
-        for n in build_tree_inner(root_ctx):
+        async for n in build_tree_inner(root_ctx):
             curr = _node_context.get()
             assert curr is not None
             curr.children.append(n) #type: ignore

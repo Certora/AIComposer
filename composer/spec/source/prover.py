@@ -12,7 +12,7 @@ import asyncio
 import json
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Callable, Iterator, override
+from typing import Annotated, Callable, Iterator, override, AsyncContextManager
 from typing_extensions import TypedDict
 
 from langchain_core.tools import InjectedToolCallId, tool, BaseTool
@@ -150,14 +150,28 @@ def tmp_spec(
     ) as tmp:
         yield tmp
 
+def _prover_sem(
+    cloud: CloudConfig | None = None
+) -> AsyncContextManager[None]:
+    if cloud is None:
+        return asyncio.Semaphore(1)
+    
+    class ToRet():
+        async def __aenter__(self):
+            return
+        
+        async def __aexit__(self, exc_type, exc, tb):
+            return
+        
+    return ToRet()
+
 def get_prover_tool(
     llm: LLM,
     main_contract: str,
     project_root: str,
     cloud: CloudConfig | None = None,
-    semaphore: asyncio.Semaphore | None = None,
 ) -> BaseTool:
-    sem = semaphore or asyncio.Semaphore(1)
+    sem = _prover_sem(cloud)
     stamper = make_validation_stamper(VALIDATION_KEY)
 
     @tool(args_schema=VerifySpecSchema)

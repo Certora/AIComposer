@@ -1,5 +1,5 @@
 
-from typing import Callable, NotRequired, Protocol, Sequence
+from typing import Callable, NotRequired, Protocol, Sequence, Any
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
@@ -44,13 +44,16 @@ class FeedbackInherentParams(TypedDict):
 
 FeedbackTemplate = TypedTemplate[FeedbackInherentParams]("property_judge_prompt.j2")
 
+FeedbackSystemTemplate = TypedTemplate[dict[str, Any]]("cvl_system_prompt.j2").bind({})
+
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
     env: FeedbackEnv,
     prompt: InjectedTemplate[Properties] | TemplateInstantiation,
     props: list[PropertyFormulation],
     *,
-    extra_inputs: list[str | dict] | Callable[[], list[str | dict]] | None = None
+    extra_inputs: list[str | dict] | Callable[[], list[str | dict]] | None = None,
+    system_prompt: TemplateInstantiation = FeedbackSystemTemplate
 ) -> FeedbackToolContext:
 
     builder = env.builder.with_tools(
@@ -83,6 +86,8 @@ def property_feedback_judge(
         SpecJudgeInput
     ).inject(
         lambda b: final_prompt.render_to(b.with_initial_prompt_template)
+    ).inject(
+        lambda g: system_prompt.render_to(g.with_sys_prompt_template)
     ).with_sys_prompt_template(
         "cvl_system_prompt.j2"
     ).with_tools([*rough_draft_tools, mem, get_cvl(ST), ]).compile_async()

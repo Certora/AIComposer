@@ -62,7 +62,7 @@ def _suppress_ack(
     *acks* lists the exact strings to treat as acknowledgements.
     """
     def _check(_name: str, msg: ToolMessage) -> str | None:
-        if msg.text().startswith(acks):
+        if msg.text.startswith(acks):
             return None
         return label
     return _check

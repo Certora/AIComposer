@@ -152,7 +152,7 @@ async def run_autoprove_pipeline(
     # Build prover tool (needs config from phase 1)
     prover_tool = get_prover_tool(
         llm, source_input.contract_name,
-        source_input.project_root, cloud=cloud, semaphore=semaphore,
+        source_input.project_root, cloud=cloud,
     )
 
     # ------------------------------------------------------------------

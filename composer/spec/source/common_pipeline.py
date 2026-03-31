@@ -1,6 +1,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+import pathlib
 
 from langchain_core.tools import BaseTool
 
@@ -121,10 +122,12 @@ async def run_generation_pipeline(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
         )
+        if (cached := await batch_child.cache_get(GeneratedCVL)) is not None:
+            return cached
         batch_ctx = batch_child.abstract(CVLGeneration)
 
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
-        return await run_task(
+        res = await run_task(
             handler_factory,
             TaskInfo(f"cvl-{batch_idx}", label, AutoProvePhase.CVL_GEN),
             lambda: batch_cvl_generation(
@@ -140,6 +143,8 @@ async def run_generation_pipeline(
             ),
             semaphore,
         )
+        await batch_child.cache_put(res)
+        return res
 
     generation_results = await asyncio.gather(
         *[
@@ -157,6 +162,11 @@ async def run_generation_pipeline(
             failures.append(f"{batch.feat.component.name}: {result}")
         elif isinstance(result, GeneratedCVL) and result.commentary.startswith("GAVE_UP:"):
             failures.append(f"{batch.feat.component.name}: {result.commentary}")
+        elif isinstance(result, GeneratedCVL):
+            certora_dir = pathlib.Path(source_input.project_root) / "certora"
+            certora_dir.mkdir(exist_ok=True, parents=True)
+            (certora_dir / f"autospec_{batch.feat.ind}.spec").write_text(result.cvl)
+            (certora_dir / f"autospec_{batch.feat.ind}.commentary.md").write_text(result.commentary)
 
     return AutoProveResult(
         n_components=len(component_batches),

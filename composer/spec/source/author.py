@@ -24,6 +24,7 @@ from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
 
 from graphcore.graph import FlowInput
+from composer.spec.source.snapshot import take_snapshot
 
 class SourceCVLGenerationExtra(CVLGenerationExtra, ProverStateExtra):
     pass
@@ -255,6 +256,11 @@ class ConfigEditTool(WithAsyncImplementation[Command | str], WithInjectedId, Wit
 
 _PropertyGenTemplate = TypedTemplate[PropertyGenParams]("property_generation_prompt.j2")
 
+class _HasSourceParams(TypedDict):
+    has_source: bool
+
+_PropertyJudgeSystemTemplate = TypedTemplate[_HasSourceParams]("property_judge_system_prompt.j2")
+
 async def batch_cvl_generation(
     ctx: WorkflowContext[CVLGeneration],
     init_config: dict,
@@ -266,6 +272,16 @@ async def batch_cvl_generation(
     description: str,
     source: SourceCode
 ) -> GeneratedCVL:
+    mem = await take_snapshot(
+        ctx,
+        props=props,
+        resources=resources,
+        source=source,
+        init_config=init_config,
+        component=component,
+        description=description,
+    )
+
     result_tool = result_tool_generator(
         "result", (str, "Commentary on your generated spec"),
         "Call to signal your completed cvl generation",
@@ -303,13 +319,15 @@ async def batch_cvl_generation(
         ctx.child(CVL_JUDGE_KEY), env, FeedbackTemplate.bind({
             "has_source": True,
             "context": component
-        }), props
+        }), props, system_prompt=_PropertyJudgeSystemTemplate.bind({
+            "has_source": True
+        })
     )
 
     res_state = await run_cvl_generator(
         ctx = ctx,
         d = task_graph,
-        description=description,
+        description=f"{description} ({mem})",
         ctxt=feedback_env,
         in_state=SourceCVLGenerationInput(
             curr_spec=None,
@@ -329,3 +347,4 @@ async def batch_cvl_generation(
         cvl=d,
         skipped=res_state["skipped"]
     )
+

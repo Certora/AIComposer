@@ -158,5 +158,22 @@ class ContractComponentInstance:
         return self._contract.sibling_contracts
 
     @property
+    def contract_index(self) -> int:
+        """Index of the parent contract within the application."""
+        return self._contract.ind
+
+    @property
     def component(self) -> ContractComponent:
         return self.contract.components[self.ind]
+
+    @staticmethod
+    def from_app(
+        app: AnyApplication,
+        contract_index: int,
+        component_index: int,
+    ) -> "ContractComponentInstance":
+        """Reconstruct from an application model and indices."""
+        return ContractComponentInstance(
+            ind=component_index,
+            _contract=ContractInstance(ind=contract_index, app=app),
+        )
