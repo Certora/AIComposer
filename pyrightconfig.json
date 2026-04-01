@@ -1,5 +1,6 @@
 {
   "include": ["composer"],
+  "extraPaths": ["graphcore"],
   "stubPath": "stubs",
   "typeCheckingMode": "basic",
   "reportMissingImports": "none",
