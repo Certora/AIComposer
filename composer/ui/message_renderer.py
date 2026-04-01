@@ -21,6 +21,7 @@ from composer.diagnostics.handlers import normalize_content
 from composer.ui.tool_display import ToolDisplayConfig
 
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
+from graphcore.utils import get_token_usage
 
 KNOWN_NODES: set[str] = {INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE}
 
@@ -67,15 +68,11 @@ class TokenStats:
 
     def update(self, msg: AIMessage) -> None:
         """Extract usage from the message and refresh the display widget."""
-        if not isinstance(msg.response_metadata, dict):
-            return
-        usage = msg.response_metadata.get("usage")
-        if usage is None:
-            return
-        self.input += usage.get("input_tokens", 0)
-        self.output += usage.get("output_tokens", 0)
-        self.cache_read += usage.get("cache_read_input_tokens", 0)
-        self.cache_write += usage.get("cache_creation_input_tokens", 0)
+        usage = get_token_usage(msg)
+        self.input += usage["input_tokens"]
+        self.output += usage["output_tokens"]
+        self.cache_read += usage["cache_read_input_tokens"]
+        self.cache_write += usage["cache_creation_input_tokens"]
         cost = self._cost()
         self._display.update(
             f"in:{self.input:,} out:{self.output:,} "
