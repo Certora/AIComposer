@@ -219,7 +219,7 @@ def format_value(val: AutoProveCachedValue) -> list[str]:
                 if c.harness_definition:
                     lines.append(f"    harness of: {c.harness_definition.harness_of}")
                 for lf in c.link_fields:
-                    lines.append(f"    links → {', '.join(lf.target)}")
+                    lines.append(f"    links → {', '.join(lf.target)} via {", ".join(lf.link_paths)}")
             if ext_ifaces:
                 lines.append("")
                 lines.append(f"External interfaces ({len(ext_ifaces)}):")

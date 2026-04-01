@@ -26,11 +26,16 @@ dependencies = [
     "questionary>=2.1",
     "rich>=14.3",
     "sentence-transformers>=5.1",
-    "textual>=8.1"
+    "textual>=8.1",
+    "websockets"
 ]
 
+[project.optional-dependencies]
+test=["pytest", "testcontainers[postgres]"]\
+ci=["pyright"]
+
 [tool.uv.sources]
-graphcore = { path = "./graphcore" }
+graphcore = { path = "./graphcore", editable = true }
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
