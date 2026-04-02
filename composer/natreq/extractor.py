@@ -20,9 +20,9 @@ from langgraph.types import interrupt
 from composer.audit.types import InputFileLike
 from composer.audit.db import ResumeArtifact
 from composer.input.types import RAGDBOptions
-from composer.rag.db import ComposerRAGDB, get_rag_db
+from composer.rag.db import ComposerRAGDB, rag_context
 from composer.rag.models import get_model
-from composer.workflow.services import get_checkpointer
+from composer.workflow.services import checkpointer_context
 from composer.tools.search import cvl_manual_search
 from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
@@ -146,58 +146,57 @@ async def get_requirements(
         explicit_thinking,
         *get_rough_draft_tools(ExtractionState),
     ]
-    built : CompiledStateGraph[ExtractionState, ExtractionContext, ExtractionInput, Any] = build_async_workflow(
-        state_class=ExtractionState,
-        context_schema=ExtractionContext,
-        input_type=ExtractionInput,
-        output_key="reqs",
-        tools_list=tools,
-        unbound_llm=llm,
-        summary_config=None,
-        sys_prompt=system_prompt,
-        initial_prompt=initial_prompt
-    )[0].compile(checkpointer=get_checkpointer())
+    async with (
+        checkpointer_context() as check,
+        rag_context(options.rag_db, get_model()) as db
+    ):
+        built : CompiledStateGraph[ExtractionState, ExtractionContext, ExtractionInput, Any] = build_async_workflow(
+            state_class=ExtractionState,
+            context_schema=ExtractionContext,
+            input_type=ExtractionInput,
+            output_key="reqs",
+            tools_list=tools,
+            unbound_llm=llm,
+            summary_config=None,
+            sys_prompt=system_prompt,
+            initial_prompt=initial_prompt
+        )[0].compile(checkpointer=check)
 
-    thread_id = uuid.uuid1().hex
+        thread_id = uuid.uuid1().hex
 
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
-    db = get_rag_db(
-        rag_connection_str=options.rag_db,
-        model=get_model(),
-    )
+        input_text : list[str | dict] = [
+            "The system document is as follows:",
+            sys_doc.string_contents,
+            "The spec file is as follows:",
+            spec_file.string_contents
+        ]
 
-    input_text : list[str | dict] = [
-        "The system document is as follows:",
-        sys_doc.string_contents,
-        "The spec file is as follows:",
-        spec_file.string_contents
-    ]
+        if resume_artifact is not None:
+            input_text.append("""
+    You have previously performed this analysis on a prior version of the spec file. You have access to the
+    memories you generated during that prior analysis. Be sure to consult those memories to inform your analysis
+    of the system document. In addition, be sure to analyze the difference between the two specification files,
+    being sure to determine which natural language requirements are no longer needed (as they are now covered by the
+    spec).
+    """)
+            input_text.append("The OLD spec file is as follows:")
+            input_text.append(
+                resume_artifact.spec_file
+            )
 
-    if resume_artifact is not None:
-        input_text.append("""
-You have previously performed this analysis on a prior version of the spec file. You have access to the
-memories you generated during that prior analysis. Be sure to consult those memories to inform your analysis
-of the system document. In addition, be sure to analyze the difference between the two specification files,
-being sure to determine which natural language requirements are no longer needed (as they are now covered by the
-spec).
-""")
-        input_text.append("The OLD spec file is as follows:")
-        input_text.append(
-            resume_artifact.spec_file
-        )
+        req_oracle : Callable[[tuple[str, str]], str] | None = None
+        if oracle is not None and len(oracle):
+            req_oracle = requirements_oracle(
+                llm,
+                [ pathlib.Path(p) for p in oracle ]
+            )
 
-    req_oracle : Callable[[tuple[str, str]], str] | None = None
-    if oracle is not None and len(oracle):
-        req_oracle = requirements_oracle(
-            llm,
-            [ pathlib.Path(p) for p in oracle ]
-        )
+        graph_input = ExtractionInput(input=input_text, memory=None, did_read=False)
 
-    graph_input = ExtractionInput(input=input_text, memory=None, did_read=False)
-
-    handler = OracleHandler(io, req_oracle)
-    async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
-        final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config, description="Requirements extraction")
-    assert "reqs" in final_state
-    return ExtractionResult(reqs=final_state["reqs"], thread_id=thread_id)
+        handler = OracleHandler(io, req_oracle)
+        async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
+            final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config, description="Requirements extraction")
+        assert "reqs" in final_state
+        return ExtractionResult(reqs=final_state["reqs"], thread_id=thread_id)
