@@ -14,7 +14,6 @@ from numpy import ndarray
 
 from composer.rag.types import ManualRef, BlockChunk, ManualSectionHit
 from composer.rag.text import code_ref_tag
-import urllib.parse
 
 import aiosqlite
 
@@ -43,6 +42,10 @@ _tqdm_cls.set_lock(threading.RLock())
 
 DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
 SANITY_DEFAULT_CONNECTION: str = "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db"
+
+
+type _RagHeader = str | None
+type _ContentHeaders = tuple[_RagHeader, _RagHeader, _RagHeader, _RagHeader, _RagHeader, _RagHeader]
 
 class ComposerRAGDB(ABC):
     """Abstract base class for RAG database implementations."""
@@ -245,14 +248,19 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 await conn.commit()
                 logger.info("✅ Database schema created successfully")
 
+    def _normalize_head(self, l: list[str]) -> _ContentHeaders:
+        headers : list[str | None] = [None] * 6
+        for (ind, h) in enumerate(l):
+            if h:
+                headers[ind] = h
+        return tuple(headers) #type: ignore[trust me bro]
+
     @override
     async def add_manual_section(self, ch: BlockChunk):
         async with self._get_connection() as conn:
             async with conn.transaction():
-                headers : list[str | None] = [None] * 6
-                for (ind, h) in enumerate(ch.headers):
-                    headers[ind] = h
-                data = (ch.chunk,) + tuple(headers) + (ch.part,)
+                headers = self._normalize_head(ch.headers)
+                data = (ch.chunk,) + headers + (ch.part,)
                 cur = await conn.execute("""
                     INSERT INTO manual_sections(
                         content, h1, h2, h3, h4, h5, h6, part
@@ -262,6 +270,7 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 insert_res = await cur.fetchone()
                 if insert_res is None:
                     raise Exception("Insertion didn't return ID")
+                print(insert_res)
                 payloads = []
                 for (i, code) in enumerate(ch.code_refs):
                     payloads.append((i, code, insert_res[0]))
@@ -286,7 +295,7 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
         async with self._get_connection() as conn, conn.transaction(), conn.cursor() as cur:
             for chunk, embedding in zip(chunks, embeddings):
                 try:
-                    headers = tuple([f if f else None for f in chunk.headers])
+                    headers = self._normalize_head(chunk.headers)
                     payload = (chunk.chunk, embedding.tolist()) + headers
                     await cur.execute("""
                         INSERT INTO documents
@@ -452,8 +461,9 @@ class ChromaRAGDatabase(ComposerRAGDB):
             raise
 
     async def _setup(self):
+        self.fts_conn = await self.fts_conn
         async with self._conn() as conn:
-            conn.execute("""
+            await conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
                     content,
                     h1, h2, h3, h4, h5, h6,
@@ -462,9 +472,9 @@ class ChromaRAGDatabase(ComposerRAGDB):
             """)
 
     @asynccontextmanager
-    @classmethod
-    async def rag_context(cls, persist_dir: str, model: SentenceTransformer):
-        to_ret = cls(persist_dir, model)
+    @staticmethod
+    async def rag_context(persist_dir: str, model: SentenceTransformer):
+        to_ret = ChromaRAGDatabase(persist_dir, model)
         await to_ret._setup()
         yield to_ret
 
@@ -583,7 +593,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
         # Also insert into FTS index for keyword search
         headers: list[str | None] = list(ch.headers) + [None] * (6 - len(ch.headers))
         async with self._conn() as conn:
-            conn.execute(
+            await conn.execute(
                 """INSERT INTO sections_fts(content, h1, h2, h3, h4, h5, h6, section_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (body, *headers[:6], str(self._next_section_id))
