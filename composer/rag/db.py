@@ -446,10 +446,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
         self._next_section_id = self.sections.count()
 
         # Create FTS5 index for keyword search
-        self.fts_conn = aiosqlite.connect(
-            os.path.join(persist_dir, "fts_index.db"),
-            check_same_thread=False
-        )
+        self.fts_loc = os.path.join(persist_dir, "fts_index.db")
 
     @asynccontextmanager
     async def _conn(self) -> AsyncIterator[aiosqlite.Connection]:
@@ -461,7 +458,10 @@ class ChromaRAGDatabase(ComposerRAGDB):
             raise
 
     async def _setup(self):
-        self.fts_conn = await self.fts_conn
+        self.fts_conn = await aiosqlite.connect(
+            self.fts_loc,
+            check_same_thread=False
+        )
         async with self._conn() as conn:
             await conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(

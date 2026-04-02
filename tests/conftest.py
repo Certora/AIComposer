@@ -4,7 +4,8 @@ Shared fixtures for composer tool infrastructure tests.
 
 
 import uuid
-from typing import AsyncIterator, Iterator, Callable, Iterable
+from typing import AsyncIterator, Iterator, Callable, Iterable, TYPE_CHECKING
+from contextlib import asynccontextmanager
 
 import psycopg
 import pytest
@@ -23,6 +24,9 @@ from composer.kb.knowledge_base import DefaultEmbedder
 from composer.spec.agent_index import AgentIndex
 from composer.prover.core import SummarizedReport, RawReport
 from composer.spec.source.prover import get_prover_tool, LLM
+
+if TYPE_CHECKING:
+    from testcontainers.postgres import PostgresContainer
 
 try:
     from testcontainers.postgres import PostgresContainer
@@ -43,15 +47,14 @@ needs_postgres = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="session")
-def pg_container() -> Iterator[PostgresContainer]:
+def pg_container() -> Iterator["PostgresContainer | None"]:
     if not _HAS_TESTCONTAINERS:
-        pytest.skip("testcontainers not installed")
+        return None
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
         yield pg
 
-
-@pytest_asyncio.fixture
-async def indexed_store(pg_container: PostgresContainer) -> AsyncIterator[AsyncPostgresStore]:
+@asynccontextmanager
+async def _get_test_database(pg_container: "PostgresContainer", for_rag: bool = False) -> AsyncIterator[PGAsyncPool | None]:
     uniq_db = "test_store_" + uuid.uuid4().hex[:16]
     admin_url = pg_container.get_connection_url(driver=None)
 
@@ -64,25 +67,56 @@ async def indexed_store(pg_container: PostgresContainer) -> AsyncIterator[AsyncP
         f":{pg_container.get_exposed_port(5432)}/{uniq_db}"
     )
 
-    pool = PGAsyncPool(
+    res = PGAsyncPool(
         conn_string,
         connection_class=AsyncConnection,
-        kwargs={"autocommit": True, "row_factory": dict_row},
-    )
-    async with pool:
-        store = AsyncPostgresStore(
-            pool,
-            index={
-                "embed": DefaultEmbedder(),
-                "dims": 768,
-                "fields": None,
-            },
-        )
-        await store.setup()
-        yield store
-
+        kwargs={"autocommit": True, "row_factory": dict_row} if not for_rag else {},
+    )    
+    async with res:
+        yield res
+    
     with psycopg.connect(admin_url, autocommit=True) as admin:
         admin.execute(SQL("DROP DATABASE {}").format(Identifier(uniq_db)))
+
+
+@pytest_asyncio.fixture
+async def pg_database_opt(pg_container: "PostgresContainer | None") -> AsyncIterator[PGAsyncPool | None]:
+    if pg_container is None:
+        yield None
+        return
+    async with _get_test_database(pg_container) as pool:
+        yield pool
+    
+@pytest_asyncio.fixture(scope="session")
+async def session_pg_database(pg_container: "PostgresContainer | None") -> AsyncIterator[PGAsyncPool | None]:
+    if pg_container is None:
+        yield None
+        return
+    async with _get_test_database(pg_container, for_rag=True) as pool:
+        yield pool
+
+@pytest_asyncio.fixture
+async def pg_database(pg_database_opt: PGAsyncPool | None) -> AsyncIterator[PGAsyncPool]:
+    if _HAS_TESTCONTAINERS:
+        pytest.skip("No pgcontainers")
+    assert pg_database_opt is not None
+    yield pg_database_opt
+
+@pytest_asyncio.fixture
+async def indexed_store(pg_database: PGAsyncPool) -> AsyncIterator[AsyncPostgresStore]:
+    if _HAS_TESTCONTAINERS:
+        pytest.skip("No pgcontainers")
+    assert pg_database is not None
+    store = AsyncPostgresStore(
+        pg_database,
+        index={
+            "embed": DefaultEmbedder(),
+            "dims": 768,
+            "fields": None,
+        },
+    )
+    await store.setup()
+    yield store
 
 
 @pytest_asyncio.fixture
@@ -125,7 +159,6 @@ def certora_prover(
         llm=fake_llm,
         main_contract="Dummy",
         project_root=str(tmp_path),
-        semaphore=None
     )
 
     def bind_tool(l: Iterable[ProverToolResponse]) -> BaseTool:
