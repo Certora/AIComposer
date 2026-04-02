@@ -16,7 +16,6 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "attrs" },
     { name = "chromadb" },
-    { name = "einops" },
     { name = "graphcore" },
     { name = "jinja2" },
     { name = "langgraph-checkpoint-postgres" },
@@ -35,6 +34,7 @@ ci = [
     { name = "pyright" },
 ]
 ml = [
+    { name = "einops" },
     { name = "sentence-transformers" },
 ]
 test = [
@@ -49,7 +49,6 @@ requires-dist = [
     { name = "aiosqlite" },
     { name = "attrs", specifier = ">=26.1" },
     { name = "chromadb", specifier = ">=0.4.0" },
-    { name = "einops" },
     { name = "graphcore", editable = "graphcore" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0" },
@@ -65,7 +64,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 ci = [{ name = "pyright" }]
-ml = [{ name = "sentence-transformers", specifier = ">=5.1" }]
+ml = [
+    { name = "einops" },
+    { name = "sentence-transformers", specifier = ">=5.1" },
+]
 test = [
     { name = "pytest", specifier = ">=9.0" },
     { name = "pytest-asyncio", specifier = ">=1.3" },
