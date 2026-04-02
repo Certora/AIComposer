@@ -11,7 +11,6 @@ from psycopg_pool.pool_async import AsyncConnectionPool
 
 from composer.rag.db import PostgreSQLRAGDatabase, ChromaRAGDatabase, ComposerRAGDB, BlockChunk
 from composer.rag.text import code_ref_tag
-from composer.rag.types import BlockChunk
 
 from .conftest import MockSentenceTransformer, EMBEDDING_DIM
 
