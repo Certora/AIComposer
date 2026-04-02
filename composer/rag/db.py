@@ -15,6 +15,7 @@ else:
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError:
+        # this is fine, SentenceTransformer is only used as a type annotation
         SentenceTransformer = "SentenceTransformer"
 
 from numpy import ndarray

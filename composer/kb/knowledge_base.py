@@ -1,4 +1,4 @@
-from typing import override, TypedDict, cast
+from typing import override, TypedDict, cast, TYPE_CHECKING
 
 from pydantic import Field
 
@@ -11,13 +11,21 @@ from composer.workflow.services import Embeddings
 
 from composer.rag.models import get_model
 
-from sentence_transformers import SentenceTransformer #type: ignore
+# tell the type checker we always import ST
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
+else:
+    # we're probably in test, in which case just gracefully pretend ST doesn't exist
+    try:
+        from sentence_transformers import SentenceTransformer #type: ignore
+    except ImportError:
+        pass
 
 DEFAULT_KB_NS = ("cvl",)
 
 class DefaultEmbedder(Embeddings):
-    def __init__(self, model: SentenceTransformer | None = None):
-        self.model : SentenceTransformer = get_model() if not model else model
+    def __init__(self, model: "SentenceTransformer | None" = None):
+        self.model : "SentenceTransformer" = get_model() if not model else model
 
     @override
     def embed_documents(self, texts: list[str]) -> list[list[float]]:

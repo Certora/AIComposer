@@ -26,7 +26,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "questionary" },
     { name = "rich" },
-    { name = "sentence-transformers" },
     { name = "textual" },
     { name = "websockets" },
 ]
@@ -34,6 +33,9 @@ dependencies = [
 [package.dev-dependencies]
 ci = [
     { name = "pyright" },
+]
+ml = [
+    { name = "sentence-transformers" },
 ]
 test = [
     { name = "pytest" },
@@ -57,13 +59,13 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12" },
     { name = "questionary", specifier = ">=2.1" },
     { name = "rich", specifier = ">=14.3" },
-    { name = "sentence-transformers", specifier = ">=5.1" },
     { name = "textual", specifier = ">=8.1" },
     { name = "websockets" },
 ]
 
 [package.metadata.requires-dev]
 ci = [{ name = "pyright" }]
+ml = [{ name = "sentence-transformers", specifier = ">=5.1" }]
 test = [
     { name = "pytest", specifier = ">=9.0" },
     { name = "pytest-asyncio", specifier = ">=1.3" },

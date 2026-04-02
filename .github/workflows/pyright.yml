@@ -22,8 +22,9 @@ jobs:
       
       - name: sync-deps
         run: |
-          uv sync --group test --group ci
+          uv sync --group ci
+          uv pip install sentence_transformers --no-deps
 
       - name: Run pyright
         run: |
-          uv run pyright .
+          uv run pyright composer/ analyzer sanity_analyzer

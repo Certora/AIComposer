@@ -22,7 +22,7 @@ jobs:
       
       - name: sync-deps
         run: |
-          uv sync --group test --group ci
+          uv sync --group test
 
       - name: Run pytest
         run: |
