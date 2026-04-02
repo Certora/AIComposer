@@ -1,0 +1,199 @@
+<background>
+You have been tasked with assisting in the setup for a formal verification project using the Certora Prover on a Web3 protocol.
+
+The main entrypoint of the protocl being verified is {{ contract_name }} located at {{ relative_path }}.
+
+As part of this setup, you need to construct any harness or mocks needed to faithfully model the protocol in which {{ contract_name }}
+resides.
+
+**IMPORTANT**: This process MAY require multiple judgment calls; before any making decisions, be certain to carefully consider your reasoning
+and justification. Correct results are more important than reaching results quickly.
+
+Before describing the task in detail, it is important to understand how the Certora Prover works.
+
+<certora_prover>
+The Certora Prover processes one or more contract instances and proves properties about these contracts. This processing
+and proving is done within some (abstract) model of the blockchain. Each contract instance roughly corresponds to a deploy
+contract on chain, in that each such instance has its own storage, code, methods, ets.
+
+With limited exceptions beyond the scope of this document,
+the Prover must be given the set of contract instances ahead of time; the CVL (Certora Verification Language)
+specification for these contract instances is likewise written with a static set of contract instances in mind.
+If any of these contract instances "interact" (via external calls) with contracts outside of this static model,
+the Prover will (by default) make pessimistic assumptions about these unknown actors' behavior.
+In summary, the prover models the blockchain as consisting of a static set of known
+contract instances, and "everything else" which is modelled imprecisely.
+
+As an alternative to this imprecise modelling, the user may provide "summary" annotations which specify the symbolic behavior of
+these external calls. These summaries may apply to a specific method on a specific contract, or on any
+external call which matches a specific signature. The actual language used to express these summaries is out of scope,
+but is generally restricted simple computations with minimal data structures.
+
+Thus, when providing inputs to the Prover, it is important to identify the set of contract instances
+with which the contracts under verification interacts or a reasonable model of the unknown external contracts'
+behavior.
+
+When constructing this static model, every (non-abstract) `contract` or `library` declaration in the input to the prover becomes an contract
+instance in the prover's model. In other words, every contract instance corresponds one to one with a `contract` or `library` declaration
+in the Solidity source code. For example, if the input to the prover contains a declaration for `contract C`, then the prover's model
+will have a contract instance called `C`, roughly corresponding to a instantiation of `C`.
+
+As a corollary of this approach, it is NOT possible to have two independent instances derived from the same contract declaration.
+This limitation is worked around by having "harnesses" which extend the contract in question with two different identifiers.
+For example, if two instances of `C` are required, two harness contracts `CInstance1` and `CInstance2` might be declared as
+`contract CInstance1 is C` and `contract CInstance2 is C` respectively.
+</certora_prover>
+</background>
+
+<context>
+This analysis is taking place in the context of the following application description:
+{% include "full_application_context.j2" %}
+</context>
+
+**IMPORTANT**: Although you have access to tools to read and explore the source code, you do *NOT* need
+to confirm the context information provided above. You MAY assume that the information presented in the application
+description is accurate and up-to-date. Only use the source code tools to answer questions unanswered by the above
+information or discover new facts not covered within.
+
+<definition>
+The following defines a "non-trivial state" for a Web3 protocol/application.
+
+Generally speaking a smart contract manages some "primary entity". Some examples follow:
+1. A MakerDAO vault manages multiple vaults, each of which records user collateral
+2. Synthetix manages user positions for synthetic assets
+3. EigenLayer tracks restaking positions, each position records which operators the staker has delegated to
+4. SeaPort/OpenSea tracks open orders for NFTs
+
+The smart contract/protocol will often include other state (admin whitelists, etc.) in addition to the primary entity.
+
+The "primary entity" may itself have nested state within it. For example, an on-chain auction contract may have multiple
+on-going auctions, each of which has a collection of bidders participating in the auction.
+
+Often the protocol when deployed is in a "trivial state"; there may be some basic configuration (e.g.,
+what underlying token assets a swap pool facilitates), but without any primary entities (e.g., no positions).
+
+By contrast, a "non-trivial state" refers to a state where there are *at least* two primary entities in the contract.
+(As an exception, if the contract only allows for a single primary entity, that singleton primary entity is the non-trivial state).
+Further, a "non-trivial state" must ALLOW the primary entities to be "sufficiently disjoint". The definition of "disjoint" for a primary
+entity depends on the shape of that entity; however, two positions could be "disjoint" if they are held by different accounts, two
+auctions might be disjoint if the auctions are for different assets and have different bidders.
+
+Note that the primary entites in a non-trivial state do not HAVE to be "sufficiently disjoint", simply that it MUST be possible.
+In other words, a non-trivial state must be sufficiently UNDER constrained to admit disjointness.
+</definition>
+
+<task>
+Given the description and implementation of the application containing {{ contract_name }}, identify which additional components
+need to harnessed and/or summarized.
+
+To that end follow these instructions exactly:
+
+## Step 1
+Analyze the application description and (optionally) the implementation, to determine the "primary entity", and its "non-trivial state".
+
+## Step 2
+Determine what contract components from the application description are necessary to model this "non-trivial state".
+
+Use your memory tool to record the results of this analysis at `/memories/non_trivial_state.md`
+
+## Step 3
+
+Compute the "transitive closure" of contracts that {{ contract_name }} interacts with. In other words, if {{ contract_name }}
+calls contract A, and contract A calls contract B, then contract B should be included. If contract A calls a method
+on from an interface I, and the application contains multiple implementers C1, C2, ... of I, those contracts C1, C2, ...
+should be included in the transitive closure.
+
+**IMPORTANT**: Do *NOT* include contracts that *only* call into {{ contract_name }}. These "driver" contracts are *NOT*
+interesting to the formal verification of {{ contract_name }}.
+
+### Linked fields
+
+During this analysis, record the storage fields/state variales used to connect these contracts together.
+For example, if contract A stores an instance of the `B` contract in in a field called "rewardToken"
+record the relationship as
+(A, ["rewardToken"], [B])
+
+Multiple possible instances may be stored in the same field. For example, if `A` actually stores an instance of
+the interface `I` in "rewardToken", and there are two implementers in the system (C1 and C2) record both potential
+callees:
+(A, ["rewardToken"], [C1, C2])
+
+If the contract address is stored in nested information, use Solidity style storage path expressions. For example:
+(A, ["registeredMarkets[*].rewards[*]"], [C1, C2])
+If the concrete index/key is known provide it, otherwise use `*` to denote "any index/key".
+
+If a contract references a contract via multiple such paths, record all such paths, e.g.:
+```
+(A, ["registeredMarkets[*].rewards[*]", "allTokens[*]"], [C1, C2])
+```
+
+Use your memory tool to record the results of this analysis at `/memories/closure.md`
+
+## Step 4
+
+For all such contracts in collected in step 4, follow this decision tree (stop at the first criteria which matches):
+1. If C is a *standard* ERC20 token, mark C as "ERC20"
+2. If C is classified as `MULTIPLE` or `DYNAMIC`: determine how many instances of C are necessary to model a non-trivial state.
+3. Otherwise, Mark C as "included"
+
+**IMPORTANT**: If one of the contracts is a NON-TRIVIAL extension to the ERC20 standard, where these extensions are *MEANINGFUL*
+to the application, do *NOT* classify the contract as "ERC20".
+
+NB: Any contract that is part of the non-trivial state (criteria 2) is considered "included".
+
+Uses your memory tool to record the results of this analysis at `/memories/classification.md`
+
+## Step 5
+
+For every external actor interacted with by included contracts of step 4 which has a corresponding interface,
+identify the interface functions invoked by the included contracts (which includes the {{ contract_name }} contract itself).
+Extract the behavior of the external actor accessed through these interface methods, consulting the documentation of the interface and any information in the system document.
+
+Example (Good):
+"The Pool contract registers new positions with an instance of IEscrow contract by calling `register(address, uint)`. This contract is intended to be a simple
+key-value store; positions may be queried via `get(address)` by the `MarketToken` instances managed by the `Pool`. The pool has no other ability to change the state of the escrow."
+(Describes the relevant behavior in terms of the Pool contract and the other included contracts)
+
+Example (Bad):
+"The pool contract registers new positions with an IEscrow contract.
+The `IEscrow` interface has `register(address, uint)` and `get(address)` functions"
+(Only recounts the interface, doesn't provide any new information)
+
+Example (Good):
+"The swap market contract calls an IOracle contract, which uses an (opaque to the market)
+algorithm to compute the current price from off chain data. The price is guaranteed to be between
+0 and 10 wei." (Only describes the detail
+necessary to understand the interaction with the swap market)
+
+Example (Bad):
+"The swap market contract calls the Oracle contract, which uses an algorithm
+to compute the current price from registered off chain data. A dedicated oracle
+admin is expected to run a validator node which is responsible for scraping price feeds from various
+chains and pushing this data to the oracle via transactions. This historical price data
+is fed into a price adjustment formula, which is a weighted average of the most recent week of data."
+(Far too much internal implementation detail)
+
+Use your memory tool to record the results of this analysis at `/memories/external_interactions.md`.
+
+## Step 6
+
+Output the results of your findings using the provided `result` tool, reading in information from your memory
+if needed.
+
+Your results consists of four parts:
+1. A natural language description of the non-trivial state of the {{ contract_name }}
+2. A list of "interface interactions", consisting of:
+   a. The name of the external actor
+   b. The natural language description of the behavior accessed via the interface
+3. The contracts of the application with which {{ contract_name }} transitively interacts (including itself), with the following information:
+   a. The name of the contract
+   b. A list of "link fields" used to connect this contract with others in this interaction closure
+   c. the number of instances needed to model a non-trivial state if the contract is `MULTIPLE` or `DYNAMIC` (null if inapplicable)
+4. A list of contracts classified at ERC20
+
+<state>
+  You will execute this task across multiple iterations with the provided tools; you should take your time and work methodically.
+  Use a file called `/memories/status.md` as your "working memory" to record your current task status, including what step
+  of the above instructions you are on, and what data you are currently working on.
+</state>
+</task>

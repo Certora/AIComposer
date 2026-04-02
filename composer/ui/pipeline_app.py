@@ -7,7 +7,7 @@ task handlers, event routing, tool configs, and completion behavior.
 
 import asyncio
 import pathlib
-from typing import cast
+from typing import cast, override
 
 from textual.containers import VerticalScroll
 from textual.widgets import Static, Input, Collapsible, ContentSwitcher
@@ -16,13 +16,13 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
-from composer.io.event_handler import EventHandler
+from composer.io.event_handler import EventHandler, NullEventHandler
 from composer.ui.ide_bridge import IDEBridge
 from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
 from composer.spec.natspec.pipeline import Phase, PipelineResult
-from composer.spec.pipeline_events import NatspecEvent
+from composer.spec.natspec.pipeline_events import NatspecEvent
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
 # NatspecTaskHandler
 # ---------------------------------------------------------------------------
 
-class NatspecTaskHandler(MultiJobTaskHandler[None]):
+class NatspecTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
     """Per-task handler with natspec-specific state detection and HITL formatting."""
 
     async def on_node_state(self, path: list[str], node_name: str, values: dict) -> None:
@@ -96,6 +96,7 @@ class NatspecTaskHandler(MultiJobTaskHandler[None]):
     def format_hitl_prompt(self, ty: None) -> list[Text | str]:
         raise NotImplementedError("no hitl tools in this workflow")
     
+    @override
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         evt = cast(NatspecEvent, payload)
         match evt["type"]:
@@ -107,6 +108,7 @@ class NatspecTaskHandler(MultiJobTaskHandler[None]):
                 await self.render_content_link(
                     "Stub updated", evt["stub"], "Impl.sol",
                 )
+
 
 
 # ---------------------------------------------------------------------------

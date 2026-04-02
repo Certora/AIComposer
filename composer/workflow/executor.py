@@ -1,4 +1,4 @@
-from typing import Optional, cast
+from typing import Optional, cast, Any
 import logging
 import uuid
 from dataclasses import dataclass
@@ -10,6 +10,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from langgraph.store.base import BaseStore
+from langgraph.graph.state import CompiledStateGraph
+from langgraph._internal._typing import StateLike
 from langgraph.types import Checkpointer
 
 from graphcore.graph import Builder
@@ -25,11 +27,12 @@ from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.prover.core import CloudConfig
 from composer.core.validation import ValidationType, prover, reqs as req_type
-from composer.rag.db import create_rag_db
+from composer.rag.db import PostgreSQLRAGDatabase
+from composer.rag.models import get_model as get_rag_model
 from composer.audit.db import AuditDB, AuditDBSink, ResumeArtifact, InputFileLike
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
-from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
+from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, _build_research_tool
 from composer.tools.relaxation import requirements_relaxation
 from composer.tools.search import cvl_manual_tools
 from composer.templates.loader import load_jinja_template
@@ -39,7 +42,7 @@ from composer.ui.codegen_events import CodeGenEventHandler
 from composer.core.state import AIComposerInput, AIComposerExtra
 
 
-_KB_NS = ("natspec_pipeline", "kb")
+_KB_NS = ("cvl",)
 
 
 @dataclass
@@ -301,17 +304,38 @@ async def execute_ai_composer_workflow(
         extra_tools.append(memory)
 
     # CVL research sub-agent — KB needs indexed store for semantic search
-    rag_db = create_rag_db(workflow_options.rag_db)
+    rag_db = PostgreSQLRAGDatabase(workflow_options.rag_db, get_rag_model())
     indexed_store = get_indexed_store(DefaultEmbedder())
-    research_ctx = _CodegenResearchContext(
-        _store=indexed_store,
-        _kb_ns=_KB_NS,
-        _checkpointer=checkpointer,
-        _thread_prefix=thread_id,
+    cvl_builder = Builder().with_llm(
+        llm
+    ).with_loader(
+        load_jinja_template
+    ).with_tools(
+        cvl_manual_tools(rag_db)
+    ).with_checkpointer(
+        checkpointer
+    ).with_tools(
+        make_kb_tools(indexed_store, _KB_NS, read_only=True)
     )
-    cvl_builder = Builder().with_llm(llm).with_loader(load_jinja_template).with_tools(cvl_manual_tools(rag_db))
+
     research_doc = CVL_RESEARCH_BASE_DOC + " Do NOT use this for source code questions — use the VFS tools for that."
-    extra_tools.append(cvl_research_tool(research_ctx, cvl_builder, research_doc))
+    async def runner[S: StateLike, I: StateLike](
+        graph: CompiledStateGraph[S, Any, I, Any],
+        i: I,
+    ) -> S:
+        return await run_graph(
+            ctxt=None,
+            description="CVL Researcher",
+            graph=graph,
+            input=i,
+            run_conf={
+                "recursion_limit": 100,
+                "configurable": {
+                    "thread_id": "research-" + uuid.uuid4().hex[:16]
+                }
+            }
+        )
+    extra_tools.append(_build_research_tool(cvl_builder, runner, research_doc))
 
     (workflow_builder, materializer) = get_cryptostate_builder(
         llm=llm,
@@ -323,7 +347,7 @@ async def execute_ai_composer_workflow(
         "system_prompt.j2"
     ).with_initial_prompt_template(
         "synthesis_prompt.j2", **prompt_params
-    ).build()[0]
+    ).build_async()[0]
 
     audit_db.register_run(
         thread_id=thread_id,
@@ -366,6 +390,7 @@ async def execute_ai_composer_workflow(
         keep_folder=workflow_options.prover_keep_folders,
         cloud=None if workflow_options.local_prover else CloudConfig(),
     )
+
     required_validations : list[ValidationType] = [prover]
     if reqs_list is not None:
         required_validations.append(req_type)

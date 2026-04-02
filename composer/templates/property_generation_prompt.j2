@@ -3,7 +3,7 @@ You have been tasked with formalizing a set of security properties within the co
 </background>
 
 <task>
-You must write a single CVL specification covering the following properties:
+You must write a single CVL specification covering the following properties for the contract {{ contract_name }}:
 
 {% for prop in properties %}
 <{{ prop.sort }}>
@@ -16,13 +16,12 @@ You must write a single CVL specification covering the following properties:
 </{{ prop.sort }}>
 {% endfor %}
 
-Follow procedure exactly:
+Follow this procedure exactly:
 
 ## Step 0
 
 Gather information about the Web3 application and its relationship with the properties above.
 Use this information to inform how you plan to formalize them.
-{% if has_source %}
 
 When collecting broad information about the source code (e.g., "where is X modified?", "what entry points are responsible
 for implementing feature Y") prefer using the code exploration tool instead of exploring the source code directly.
@@ -31,18 +30,14 @@ Do NOT use the exploration tool to answer questions like "What is the type signa
 these are better answered by "reading" the code directly.
 
 IMPORTANT: you may assume that the source code has not changed in any way that invalidates the exploration tool's answers.
-{% endif %}
-
 
 ## Step 1
 
 Write a single CVL (Certora Verification Language) specification which formalizes all of the properties listed above.
 Each property should have its own rule(s) or invariant(s) in the spec.
-{% if has_source %}
 
 When writing your specification, you may consult the implementation of the application to, e.g., understand the role
 of external arguments, etc.
-{% endif %}
 
 If you are facing a specific issue, use the knowledge base articles to search for help.
 
@@ -50,24 +45,6 @@ When you need to understand CVL syntax, patterns, or language features — espec
 non-obvious constructs or features — delegate to the cvl_research tool rather than searching the manual yourself.
 
 Before writing your specification, use extended thinking to analyze your collected information.
-
-{% if not has_source %}
-You are writing a CVL file without any implementation, neither for the contract being verified or 
-the other contracts it may interact with.{% if has_stub_tools %}
-To model the state/storage of the contract under verification, you may use the stub tools described below.{% endif %}
-It may be that the formalization of some of these properties require reasoning about other contracts' behavior; either
-their state or function call behavior.
-
-To soundly capture this behavior you should use `ghost state` and `summaries` respectively. Consult the
-CVL manual/CVL Researcher for help in how to use these features to model the behavior of external contracts.
-
-Do *NOT* try to simulate or otherwise model the behavior/state of other contracts with state/functions in the contract
-you are verifying.
-{% endif %}
-
-{% if has_stub_tools %}
-{% include "natspec_stub_tools_guidance.j2" %}
-{% endif %}
 
 ## Step 2
 
@@ -78,25 +55,78 @@ The feedback judge is aware of all properties in this batch. It will flag missin
 does not address a property and you have not declared a skip for it, the judge will reject your spec.
 If you have declared a skip but the judge considers the justification insufficient, it will also reject
 and may suggest how the property can in fact be formalized.
-{% if has_prover %}
 
 ## Step 3
 
 Use the provided `verify_spec` tool to test your spec. If there are verification failures
-that point to errors in your specification, refine your specification, and return to step 2.
+that point to errors in your specification, refine your specification according to the following rules,
+and return to step 2.
 
-If there are failures from `HAVOC` from unresolved calls, use the `unresolved_call_guidance` tool for advice,
-do NOT try to make ghosts persistent as a workaround.
+**Clarification**: In general, every non-trivial change you make to your CVL file should first be vetted
+by the feedback tool to prevent you from "committing" to any problematic approach or implementation.
+However, if multiple attempts at a formalize a property continually yield prover counterexamples, you may try to fix that
+property by iteratively calling the prover with different CVL edits without necessarily calling the feedback tool
+before each invocation. Once you find a CVL formulation accepted by the prover, you should seek
+feedback as soon as possible.
 
-If the prover feedback requires non-trivial changes, be sure to use the `extended_reasoning` tool to reflect on
-and appropriately digest the feedback from the prover before actually editing your specification.
+### Verification Failure Remediation Strategies
 
-As in step 2, if you are facing specific issues, use the knowledge base articles to search for help.
-{% endif %}
+* If the failure is due to an *impossible starting state*:
+  + Consider whether the impossible starting state can be rule out using an *invariant*. If so, author that invariant,
+    and add a `requireInvariant` to the rule/invariant preserved block.
+  + If the impossible starting state cannot be ruled out using an invariant, attempt to write a "justification rule",
+    i.e., a rule which proves that the assumption is *valid*. You may then use a bare `require` statement in the rule
+    or invariant, but reference your written justification rule
+  + If the above two approaches fail, you may still consider adding `require` statements, but add comments
+    that either document the trust assumption you are making and/or arguing for its Validity
+* If the failure is due to a HAVOC from an unresolved call:
+  + Was the call to a function whose implementation exists in the prover inputs? If so, it is likely the prover
+    could not resolve the callee contract and link to the extant implementation. In this case, you should consider
+    using a `DISPATCHER` summary. (with caveats, see below)
+  + If the call was to an function whose implementation doesn't exist in the scene, add a summary which
+    (soundly) models the behavior of the called function. In many cases, these summaries will have to model the
+    (unknown) callee contract's state, you should use "ghost variables" to model this.
+  + If the call was completely unresolved (no resolved selector/signature), consider using a "dispatch list"
+    summary. Analyze the location of the unresolved call, and consider what the callee functions might be.
+  + Do *NOT* try to mark ghost state as `persistent` to work around the HAVOC issue.
+  + Do *NOT* apply a `NONDET` summary to a side-effecting function to make the HAVOC "go away", this makes
+    the verification results useless.
+* If the counterexample appears to point to a potential issue in the code that should be reviewed by a security expert,
+  use the "expect fail" tool to mark that the rule failure may be legitimate.
+* If you have a parametric rule or invariant that is persistently failing on a method, and that method should
+  genuinely be excluded from the property/invariant being proven, use a `filtered` block to exclude it.
+  + You should not use this strategy lightly; only do so when you are 95% certain that the method in question
+    should be excluded from the property.
+* If the property or invariant is genuinely incorrect or actually invalid you may mark the property as "skipped" and
+  remove your attempts to formalize it from the spec
+* If the rule is failing due to a `SANITY_FAILURE`, this is due to the assertion in the rule/invariant being unreachable.
+  In other words, the preconditions in the rule and the logical encoding of the implementation's code are themselves
+  mutually unsatisfiable. In this case, you should try to identify places where `require` statements in your rule
+  may conflict with any assumptions/requirements in the code.
+* For any other logical errors/issues not described here, address the changes in a methodical way. Use your
+  adaptive thinking and the cvl researcher to come to *principled* solutions. Do *NOT* try to brute force
+  the solution by trying random changes.
 
-## Step {{ "4" if has_prover else "3" }}
+#### `DISPATCHER` Caveats
 
-{% include result_template %}
+The special `DISPATCHER` summary *unsoundly* assumes that the callee contract for an unresolved call exists in the prover
+input. This is acceptable if the callee contract is *definitely* one of the contracts in prover inputs. However,
+for something like an ERC20 token; the prover input may itself have some ERC20 token implementations in its inputs
+(e.g., a special token representing a voting share). If you use a `DISPATCHER` in this case, you will unsoundly
+assume *EVERY* token interacted with by *EVERY* contract must be one of the contracts in the prover inputs.
+
+Unless you can conclude that the DISPATCHER assumption is justified, use a hybrid summarization approach:
+within the generated summary, match the callee contract against known implementers in the prover input.
+For those callees, simply dispatch the call to the relevant implementation. For calls "outside" of the prover
+inputs, fall back on a sound model of the external behavior, using e.g., ghosts.
+
+## Step 4
+
+Once all non-skipped properties have been approved by the feedback judge, AND all rules that are not expected
+as failing have been verified with the prover, deliver your result with the `result` tool. In order
+for your result to be accepted, you *must* have run the `verify_spec` tool *without* any `rule` arguments on
+the most recent version of the spec. Similarly, you *must* have received positive feedback from the feedback judge
+on the most recent change to your spec.
 
 IMPORTANT: Do not try to reason yourself about whether any property is true or possible — focus solely on authoring CVL which will *demonstrate* the desired properties.
 
@@ -125,25 +155,35 @@ You may also make use of the following CVL resources, available as CVL files.
 {% endfor %}
 {% endif %}
 
-{% if memory %}
 <state>
 Use the available memory tools to track your progress through this algorithm, any important lessons about CVL you may have learned,
-or any other significant, relevant information to this task.{% if has_prover %} In particular, be sure to update your memory before calling the prover to summarize
-your current approach.{% endif %} Be sure to update your memory *before* calling the result tool, as that will end the workflow.
+or any other significant, relevant information to this task. In particular, be sure to update your memory before calling the prover to summarize
+your current approach. Be sure to update your memory *before* calling the result tool, as that will end the workflow.
 </state>
-{% endif %}
 </task>
 
+{% if context %}
 <context>
-  {% include "application_context.j2" %}
+  {% include "application_context_new.j2" %}
 </context>
+{% endif %}
 
 <guidance>
 {% include "cvl_guidelines.j2" %}
 {% include "cvl_additions.j2" %}
-  <tools>
-    When choosing between using the `memory` tool or the `extended_reasoning` tool:
-       extended_reasoning: synthesize information you've gathered in this conversation before making a decision.
-       memory: record lessons that should persist across runs (e.g., "this contract requires strengthened invariants for X").
-  </tools>
 </guidance>
+
+## Rerun
+
+If your memories indicate that your task successfully completed and you have access to the prior attempt, you may
+assume that this task is being re-run to retrieve your output.
+You may assume that no inputs have changed, and any validated, proven spec remains so.
+When this happens, following this procedure:
+1. Put your "last attempt" CVL into the vfs
+2. Reskip any properties that your memory indicated you should skip
+3. Mark any rules as expected to fail as indicated by your memory
+4. Run the prover without any rules specified
+5. Run the feedback judge
+6. Deliver your result via the `result` tool.
+
+Do NOT skip step 4 & 5, they are necessary for the `result` tool to validate the spec you are trying to deliver.

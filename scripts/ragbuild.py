@@ -31,7 +31,7 @@ if composer_dir not in sys.path:
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 import spacy #type: ignore
-from composer.rag.db import PostgreSQLRAGDatabase, create_rag_db, DEFAULT_CONNECTION
+from composer.rag.db import PostgreSQLRAGDatabase, get_rag_db, DEFAULT_CONNECTION
 from composer.rag.types import BlockChunk
 from composer.rag.text import get_code_refs, code_ref_tag
 from composer.rag.models import get_model
@@ -413,7 +413,7 @@ def sanity_checker(s: BlockChunk) -> None:
         if ref >= len(s.code_refs):
             print(f"Orphan ref {ref} in {s.chunk}")
 
-def main() -> None:
+async def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG database from HTML documentation')
     parser.add_argument('files', nargs='+', metavar='HTML_FILE',
                         help='One or more HTML files to process directly')
@@ -425,12 +425,7 @@ def main() -> None:
     file_entries = [{"file": (path:=pathlib.Path(f)), "section": path.stem} for f in args.files]
 
     output = args.output or DEFAULT_CONNECTION
-    if output.startswith("postgresql://"):
-        # PostgreSQL needs schema creation
-        db = PostgreSQLRAGDatabase(output, get_model(), skip_test=False, create_schema=True)
-    else:
-        # ChromaDB (directory path)
-        db = create_rag_db(output, get_model(), skip_test=False)
+    db = await get_rag_db(output, get_model())
 
     buffer: list[BlockChunk] = []
 
@@ -480,16 +475,17 @@ def main() -> None:
                 sanity_checker(t)
                 buffer.append(t)
                 if len(buffer) == 50:
-                    db.add_chunks_batch(buffer)
+                    await db.add_chunks_batch(buffer)
                     buffer = []
 
         for i in sink.chunks():
-            db.add_manual_section(i)
+            await db.add_manual_section(i)
 
     if buffer:
-        db.add_chunks_batch(buffer)
+        await db.add_chunks_batch(buffer)
 
     logger.info(f"RAG database created at {output}")
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())

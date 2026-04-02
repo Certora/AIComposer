@@ -13,7 +13,7 @@ and connects it to the ``EventQueue`` / drainer infrastructure.
 
 from typing import Any, Protocol, Callable, Awaitable, cast
 
-from composer.io.events import AllEvents, NextCheckpoint, CustomUpdate, Start, End, StateUpdate
+from composer.io.events import GraphEvents, NextCheckpoint, CustomUpdate, Start, End, StateUpdate
 
 from langgraph._internal._typing import StateLike
 from langgraph.graph.state import CompiledStateGraph
@@ -24,7 +24,7 @@ from langchain_core.runnables import RunnableConfig
 
 class SinkProtocol(Protocol):
     """Write-only event sink.  Synchronous — must not block."""
-    def __call__(self, event: AllEvents) -> None:
+    def __call__(self, event: GraphEvents) -> None:
         ...
 
 type HumanHandler[T, S] = Callable[[T, S], Awaitable[str]]
@@ -90,7 +90,7 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
                         if "configurable" in curr_config and "checkpoint_id" in curr_config["configurable"]:
                             del curr_config["configurable"]["checkpoint_id"]
                         interrupt_data = cast(H, payload["__interrupt__"][0].value)
-                        curr_state = cast(S, graph.get_state({"configurable": {"thread_id": tid}}).values)
+                        curr_state = cast(S, (await graph.aget_state({"configurable": {"thread_id": tid}})).values)
                         human_response = await human_handler(interrupt_data, curr_state)
                         graph_input = Command(resume=human_response)
                         interrupted = True
@@ -103,7 +103,7 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
             if interrupted:
                 continue
 
-            result_state = graph.get_state({"configurable": {"thread_id": tid}}).values
+            result_state = (await graph.aget_state({"configurable": {"thread_id": tid}})).values
             return cast(S, result_state)
     finally:
         event_sink(End(tid))

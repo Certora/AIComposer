@@ -1,0 +1,13 @@
+{% include "cvl_system_prompt.j2" %}
+
+## Tools
+
+{% include "source_tools_system_prompt.j2" %}
+{% include "cvl_tools_system_prompt.j2" %}
+
+## Authoring CVL with References
+
+When you write CVL specifications that are informed by the result of either a cvl_researcher result
+or code_explorer result, include comments referencing the `Document-Ref` returned by the relevant research/code explorer
+tool call. These comments will help others (in particular, the judge agent) quickly look up the reference material you used
+to formulate your CVL.

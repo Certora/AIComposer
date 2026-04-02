@@ -37,4 +37,4 @@ The Certora Prover found a violation for the rule {rule.name}, with the followin
     res = await acached_invoke(llm, new_messages)
     if not isinstance(res, AIMessage):
         return None
-    return res.text()
+    return res.text

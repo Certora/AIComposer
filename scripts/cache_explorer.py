@@ -9,8 +9,8 @@ import argparse
 import sys
 from pathlib import Path
 from contextvars import ContextVar
-from contextlib import contextmanager
-from typing import Iterable
+from contextlib import contextmanager, asynccontextmanager
+from typing import Awaitable
 
 _repo_root = str(Path(__file__).parent.parent.absolute())
 if _repo_root not in sys.path:
@@ -64,12 +64,12 @@ def section(s: str):
     with node(OrgNode(s)):
         yield
 
-@contextmanager
-def node_for[T : CacheTypes, S : CacheTypes](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S] | None = None):
+@asynccontextmanager
+async def node_for[T : CacheTypes, S : CacheTypes](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S] | None = None):
     child_ctx = ctx.child(child)
     value : S | None = None
     if ty is not None:
-        value = child_ctx.cache_get(ty)
+        value = await child_ctx.cache_get(ty)
     new_node = CacheNode(
         label=label,
         ctx=child_ctx,
@@ -78,43 +78,43 @@ def node_for[T : CacheTypes, S : CacheTypes](ctx: WorkflowContext[T], child: Cac
     with node(new_node): #type: ignore
         yield child_ctx
 
-def leaf[T : CacheTypes, S : NatSpecCachedValue](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S]) -> CacheNode[S]:
+async def leaf[T : CacheTypes, S : NatSpecCachedValue](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str, ty: type[S]) -> CacheNode[S]:
     child_ctx = ctx.child(child)
-    value : S | None = child_ctx.cache_get(ty)
+    value : S | None = await child_ctx.cache_get(ty)
     return CacheNode[S](label=label, value=value, ctx=child_ctx)
 
 def memory[T: CacheTypes, S: Marker](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str):
     return CacheNode[S](label=label, value=None, ctx=ctx.child(child))
 
-def build_cvl_generation_node(ctx: WorkflowContext[CVLGeneration]):
+async def build_cvl_generation_node(ctx: WorkflowContext[CVLGeneration]):
     yield memory(ctx, CVL_JUDGE_KEY, "Feedback judge")
-    yield leaf(ctx, LAST_ATTEMPT_KEY, "Last attempt", _LastAttemptCache)
+    yield (await leaf(ctx, LAST_ATTEMPT_KEY, "Last attempt", _LastAttemptCache))
 
-def build_component_tree(contract_ctx: WorkflowContext[Properties], key: CacheKey[Properties, ComponentGroup], comp: ContractComponent):
-    with node_for(contract_ctx, key, comp.name) as feat_ctx:
-        d = leaf(feat_ctx, BUG_ANALYSIS_KEY, "Bug Analysis", _BugAnalysisCache)
+async def build_component_tree(contract_ctx: WorkflowContext[Properties], key: CacheKey[Properties, ComponentGroup], comp: ContractComponent):
+    async with node_for(contract_ctx, key, comp.name) as feat_ctx:
+        d = await leaf(feat_ctx, BUG_ANALYSIS_KEY, "Bug Analysis", _BugAnalysisCache)
         yield d
         if d.value is None:
             return
-        with node_for(
+        async with node_for(
             feat_ctx,
             _batch_cache_key(d.value.items),
             "CVL Generation",
             GeneratedCVL
         ) as cvl_ctx:
-            yield from build_cvl_generation_node(
+            async for t in build_cvl_generation_node(
                 cvl_ctx.abstract(CVLGeneration)
-            )
+            ): yield t
 
-def build_contract_tree(contract_ctx: WorkflowContext[Contract], contract: ExplicitContract, summ: Application):
-    with node_for(contract_ctx, PROPERTIES_KEY, "properties") as prop_ctx:
+async def build_contract_tree(contract_ctx: WorkflowContext[Contract], contract: ExplicitContract, summ: Application):
+    async with node_for(contract_ctx, PROPERTIES_KEY, "properties") as prop_ctx:
         for comp in contract.components:
             comp_key = _component_cache_key(comp, summ.application_type)
-            yield from build_component_tree(prop_ctx, comp_key, comp)
+            async for t in build_component_tree(prop_ctx, comp_key, comp): yield t
 
-def build_tree_inner(root_ctx: WorkflowContext[None]):
+async def build_tree_inner(root_ctx: WorkflowContext[None]):
     sa_ctx = root_ctx.child(SOURCE_ANALYSIS_KEY)
-    summary = sa_ctx.cache_get(Application)
+    summary = await sa_ctx.cache_get(Application)
     yield CacheNode(
         label="source-analysis", ctx=sa_ctx, value=summary,
     )
@@ -126,7 +126,7 @@ def build_tree_inner(root_ctx: WorkflowContext[None]):
         f"interface-{string_hash(summary.model_dump_json())}"
     )
     intf_ctx = root_ctx.child(intf_key)
-    cached_intf = intf_ctx.cache_get(InterfaceResult)
+    cached_intf = await intf_ctx.cache_get(InterfaceResult)
     yield CacheNode(
         label="interface", ctx=intf_ctx, value=cached_intf,
     )
@@ -144,17 +144,17 @@ def build_tree_inner(root_ctx: WorkflowContext[None]):
     for c in summary.contract_components:
         contract_key = CacheKey[None, Contract](string_hash(c.model_dump_json()))
         contract_ctx = root_ctx.child(contract_key)
-        with node_for(root_ctx, contract_key, f"Contract: {c.name}") as contract_ctx:
-            yield from build_contract_tree(contract_ctx, c, summary)
+        async with node_for(root_ctx, contract_key, f"Contract: {c.name}") as contract_ctx:
+            async for t in build_contract_tree(contract_ctx, c, summary): yield t
 
 
-def build_tree(root_ctx: WorkflowContext) -> CacheNode[NatSpecCachedValue]:
+async def build_tree(root_ctx: WorkflowContext) -> CacheNode[NatSpecCachedValue]:
     """Build the NatSpec pipeline cache tree by reading the store."""
 
     root: CacheNode[NatSpecCachedValue] = CacheNode(label="root", ctx=root_ctx)
 
     with node(root):
-        for n in build_tree_inner(root_ctx):
+        async for n in build_tree_inner(root_ctx):
             curr_node = _node_context.get()
             assert curr_node is not None
             curr_node.children.append(n) #type: ignore

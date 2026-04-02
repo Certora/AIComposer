@@ -4,5 +4,9 @@
 cryptosafe.db
 *.db*
 tags
-scripts/**/*.html
+scripts/cvl_manual.html
 **/node_modules
+*.html
+.venv/
+build/
+*.egg-info/

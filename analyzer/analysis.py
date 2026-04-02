@@ -1,29 +1,29 @@
 from typing import NotRequired, TypedDict, Iterator, Iterable, TypeVar, overload, Any, Generic
 from dataclasses import dataclass
+import asyncio
 import pathlib
 import os
 import tempfile
 import tarfile
 import urllib.request
 import urllib.parse
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 
 import uuid
 
 from langgraph.graph import MessagesState
 
-from langchain_anthropic import ChatAnthropic
+from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 
-from composer.rag.db import create_rag_db, ComposerRAGDB, DEFAULT_CONNECTION
+from composer.rag.db import DEFAULT_CONNECTION
+from composer.workflow.services import create_llm
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
 
-from langgraph.checkpoint.memory import InMemorySaver
-
-from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
-from graphcore.graph import build_workflow, FlowInput
+from graphcore.tools.vfs import fs_tools
+from graphcore.graph import FlowInput, Builder
 from graphcore.tools.results import result_tool_generator
 
 from analyzer.types import Ecosystem, AnalysisArgs
@@ -41,7 +41,7 @@ class EcosystemConfig(TypedDict):
 T = TypeVar("T")
 
 
-class SimpleState(VFSState, MessagesState, Generic[T]):
+class SimpleState(MessagesState, Generic[T]):
     result: NotRequired[T]
 
 def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R.RulePath) -> R.RuleResult | None:
@@ -52,10 +52,6 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
             if d.path == target:
                 return d
     return None
-
-@dataclass
-class ExplainerContext:
-    rag_db: ComposerRAGDB
 
 _analysis_doc = """REQUIRED: You MUST call this tool to submit your final analysis.
 Do NOT write your answer as plain text - the workflow cannot complete until you call this tool.
@@ -151,7 +147,7 @@ Examples:
     )
 
     args = parser.parse_args()
-    return analyze(cast(AnalysisArgs, args))
+    return asyncio.run(analyze(cast(AnalysisArgs, args)))
 
 ecosystem_params: dict[Ecosystem, EcosystemConfig] = {
     "evm": {
@@ -219,7 +215,7 @@ def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
         
         yield pathlib.Path(temp_dir, "TarName")
 
-def _analyze_core(
+async def _analyze_core(
     input_messages: Iterable[str],
     initial_prompt: str,
     report_dir: pathlib.Path,
@@ -257,45 +253,36 @@ def _analyze_core(
         )
     else:
         raise ValueError(f"Invalid type parameter: {d}")
-
-    (v_tools, _) = vfs_tools(
-        ty=SimpleState[T],
-        conf=VFSToolConfig(
-            immutable=True,
-            forbidden_read=r"^\..*$",
-            fs_layer=str(report_dir / "inputs" / ".certora_sources")
-        )
+    
+    v_tools = fs_tools(
+        fs_layer=str(report_dir / "inputs" / ".certora_sources"),
+        forbidden_read=r"^\..*$"
     )
 
     tools = [result_tool, *v_tools]
+
+    to_run = Builder[None, None, None]().with_loader(
+        load_jinja_template
+    ).with_llm(
+        create_llm(args)
+    ).with_sys_prompt_template(
+        "analyzer_system_prompt.j2"
+    ).with_initial_prompt(
+        initial_prompt
+    ).with_checkpointer(
+        InMemorySaver()
+    ).with_tools(
+        tools
+    ).with_state(SimpleState).with_input(FlowInput).with_output_key("result")
+
     if args.ecosystem == "evm":
         #import here to lazily load sentencetransformers
         from composer.tools.search import cvl_manual_search
-        tools.append(cvl_manual_search(ExplainerContext))
+        from composer.rag.models import get_model
+        from composer.rag.db import get_rag_db
+        to_run = to_run.with_tools([cvl_manual_search(await get_rag_db(args.rag_db, get_model()))])
 
-    llm = ChatAnthropic(
-        model_name="claude-sonnet-4-5-20250929",
-        max_tokens_to_sample=args.tokens,
-        temperature=1,
-        timeout=None,
-        max_retries=2,
-        stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
-        betas=["interleaved-thinking-2025-05-14", "context-management-2025-06-27"],
-    )
-
-    system_prompt = load_jinja_template("analyzer_system_prompt.j2")
-
-    graph = build_workflow(
-        input_type=FlowInput,
-        context_schema=ExplainerContext,
-        output_key="result",
-        tools_list=tools,
-        unbound_llm=llm,
-        sys_prompt=system_prompt,
-        initial_prompt=initial_prompt,
-        state_class=SimpleState
-    )[0].compile(checkpointer=InMemorySaver())
+    graph = to_run.compile_async()
 
     conf : RunnableConfig = {"configurable": {}}
     tid : str
@@ -311,12 +298,7 @@ def _analyze_core(
         conf["configurable"]["checkpoint_id"] = args.checkpoint_id
 
     conf["recursion_limit"] = args.recursion_limit
-
-    rag_db = create_rag_db(args.rag_db)
-
-    for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
-        rag_db=rag_db
-    ), config=conf, stream_mode=["checkpoints", "updates"]):
+    for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
             if not args.quiet:
@@ -325,9 +307,9 @@ def _analyze_core(
             if not args.quiet:
                 print(d)
 
-    return graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
+    return (await graph.aget_state({"configurable": {"thread_id": tid}})).values["result"]
 
-def _analyze_from_report(
+async def _analyze_from_report(
     report_dir: pathlib.Path,
     args: AnalysisArgs
 ) -> int:
@@ -378,25 +360,25 @@ def _analyze_from_report(
         calltrace_xml
     ]
 
-    msg = _analyze_core(input_messages, initial_prompt, report_dir, args, _default_format)
+    msg = await _analyze_core(input_messages, initial_prompt, report_dir, args, _default_format)
     print(msg)
     return 0
 
-def analyze(
+async def analyze(
     args: AnalysisArgs
 ) -> int:
     """Analyze counterexamples, handling both local folders and URLs."""
     if _looks_like_url(args.folder):
         with _download_and_extract_report(args.folder) as report_dir:
-            return _analyze_from_report(report_dir, args)
+            return await _analyze_from_report(report_dir, args)
     else:
         report_dir = pathlib.Path(args.folder)
-        return _analyze_from_report(report_dir, args)
+        return await _analyze_from_report(report_dir, args)
 
 B = TypeVar("B", bound=BaseModel)
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs
@@ -404,7 +386,7 @@ def analyze_with_calltraces(
     ...
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -413,7 +395,7 @@ def analyze_with_calltraces(
     ...
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -421,7 +403,7 @@ def analyze_with_calltraces(
 ) -> B:
     ...
 
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -472,4 +454,4 @@ def analyze_with_calltraces(
         "args.folder must be a local folder path, not a URL. Use analyze() to handle URLs."
 
     report_dir = pathlib.Path(args.folder)
-    return _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)
+    return await _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)

@@ -26,8 +26,9 @@ from graphcore.tools.schemas import WithAsyncImplementation
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.pipeline_events import StubUpdate
+from composer.spec.natspec.pipeline_events import StubUpdate
 from composer.spec.natspec.interface_gen import InterfaceResult
+from composer.spec.util import uniq_thread_id
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +117,7 @@ async def run_registry_agent(
     field_metadata: FieldMetadata,
     interface: InterfaceResult,
     solc_version: str,
-    builder: PlainBuilder | CVLOnlyBuilder,
+    builder: PlainBuilder,
     ctx: WorkflowContext,
 ) -> RegistryResult:
     """Spawn a fresh registry agent to handle a single field request.
@@ -156,9 +157,7 @@ async def run_registry_agent(
         "produce the complete updated stub source code."
     ).with_initial_prompt_template(
         "registry_prompt.j2",
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
+    ).compile_async()
 
     input_parts: list[str | dict] = [
         "The field request is:",
@@ -184,7 +183,7 @@ async def run_registry_agent(
     res = await run_to_completion(
         workflow,
         FlowInput(input=input_parts),
-        thread_id=ctx.uniq_thread_id(),
+        thread_id=uniq_thread_id("stub-registrar"),
         recursion_limit=20,
         description="Stub update",
     )

@@ -159,9 +159,8 @@ def _dump_memory(backend: PostgresMemoryBackend) -> str | None:
             if is_dir:
                 _walk(child)
             else:
-                content = backend.read_file(child)
-                if content is not None:
-                    parts.append(f"### {child}\n{content}")
+                content = backend.view(child, None)
+                parts.append(f"### {child}\n{content}")
 
     try:
         _walk("/memories")
@@ -216,12 +215,7 @@ async def _extract_one(
     extracted = result.text
 
     if extracted.strip():
-        target_path = "/memories/decisions.md"
-        existing = backend.read_file(target_path)
-        if existing is not None:
-            backend.write_file(target_path, extracted)
-        else:
-            backend.create(target_path, extracted)
+        backend.create("/memories/decisions.md", extracted)
 
     n_interactions = len(data.interactions)
     n_summaries = len(data.summaries)

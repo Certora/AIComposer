@@ -5,10 +5,11 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 
 from langgraph.config import get_store
+from langgraph.store.base import BaseStore
 
 from composer.diagnostics.stream import (
-    AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysis,
-    ProverOutputEvent, CloudPollingEvent,
+    AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysisStart,
+    ProverOutputEvent, CloudPollingEvent, RuleAuditResult
 )
 from composer.prover.ptypes import RuleResult
 from composer.prover.core import (
@@ -18,9 +19,10 @@ from composer.prover.core import (
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
 
+type _ProverEvents = ProverOutputEvent | CloudPollingEvent | ProverRun | ProverResult | RuleAnalysisResult | CEXAnalysisStart | RuleAuditResult
 
 class _AuditCallbacks(ProverCallbacks):
-    def __init__(self, writer: Callable, tool_call_id: str) -> None:
+    def __init__(self, writer: Callable[[_ProverEvents], None], tool_call_id: str) -> None:
         self._writer = writer
         self._tool_call_id = tool_call_id
 
@@ -73,7 +75,7 @@ class _AuditCallbacks(ProverCallbacks):
 
     @override
     async def on_analysis_start(self, rule: RuleResult) -> None:
-        evt: CEXAnalysis = {
+        evt: CEXAnalysisStart = {
             "type": "cex_analysis",
             "tool_call_id": self._tool_call_id,
             "rule_name": rule.name,
@@ -93,18 +95,18 @@ class _AuditCallbacks(ProverCallbacks):
 
 
 class _StoreCache:
-    def __init__(self, store, tool_call_id: str) -> None:
+    def __init__(self, store: BaseStore, tool_call_id: str) -> None:
         self._store = store
         self._tool_call_id = tool_call_id
 
-    def get(self, rule: RuleResult) -> str | None:
-        d = self._store.get(("cex", self._tool_call_id), rule.path.pprint())
+    async def get(self, rule: RuleResult) -> str | None:
+        d = await self._store.aget(("cex", self._tool_call_id), rule.path.pprint())
         if d is not None:
             return d.value["analysis"]
         return None
 
-    def put(self, rule: RuleResult, analysis: str) -> None:
-        self._store.put(("cex", self._tool_call_id), rule.path.pprint(), {"analysis": analysis})
+    async def put(self, rule: RuleResult, analysis: str) -> None:
+        await self._store.aput(("cex", self._tool_call_id), rule.path.pprint(), {"analysis": analysis})
 
 
 async def certora_prover(
@@ -160,10 +162,6 @@ async def certora_prover(
                 analysis_cache=cache,
                 summarization_threshold=10,
             )
-
-            # Preserve the rule-is-None check for all_verified
-            if isinstance(result, RawReport) and rule is not None:
-                result = RawReport(report=result.report, all_verified=False)
 
             return result
         except Exception as e:

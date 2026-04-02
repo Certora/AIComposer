@@ -24,7 +24,7 @@ class RuleAnalysisResult(UserUpdateData[Literal["rule_analysis"]]):
     rule: str
     analysis: str
 
-class CEXAnalysis(UserUpdateData[Literal["cex_analysis"]]):
+class CEXAnalysisStart(UserUpdateData[Literal["cex_analysis"]]):
     tool_call_id: str
     rule_name: str
 
@@ -66,7 +66,7 @@ class ManualSearchResult(AuditResult[Literal["manual_search"]]):
     ref: ManualRef
 
 ProgressUpdate = Annotated[
-    Union[CEXAnalysis, ProverResult, ProverRun, RuleAnalysisResult, SummarizationNotice, ProverOutputEvent, CloudPollingEvent], Discriminator("type")
+    Union[CEXAnalysisStart, ProverResult, ProverRun, RuleAnalysisResult, SummarizationNotice, ProverOutputEvent, CloudPollingEvent], Discriminator("type")
 ]
 
 AuditUpdate = Annotated[

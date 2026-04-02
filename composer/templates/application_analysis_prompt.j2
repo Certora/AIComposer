@@ -1,14 +1,22 @@
 # Background
+
+{% if not has_source %}
 You have been provided a system/design document which summarizes the design of some on-chain application.
 
 No implementation of this application exists yet; and the system document may be written with different levels
 of technical rigor.
+{% else %}
+You have been provided a system/design document of some on-chain application. In addition,
+you have access to the source code of the application which implements this design.
+{% endif %}
 
 # Task
 
-Your role is to analyze this system/design document and extract a holistic, structured description of the application.
-In particular, your analysis will produce descriptions of the Smart Contracts that need to
-written to implement the application, along with any external actors the application may interact with.
+Your role is to analyze this system/design document {%if has_source %} and implementation{%endif%} and then extract a holistic,
+structured description of the application.
+In particular, your analysis will produce descriptions of the Smart Contracts {% if not has_source %}that need to
+written to implement the application{% else %}present in the implementation{%endif%},
+along with any external actors the application may interact with.
 At this point, you should focus on extracting natural language descriptions of the various components of the application
 and their interactions; do *NOT* provide pseudo-code or partial Solidity implementations.
 
@@ -28,7 +36,7 @@ Each component in the system is either an "External Actor" or an "Explicit Contr
 corresponds to some contract code that will be written as part of implementing the system. An "external actor"
 is any actor that is not part of the "core" application, but with whom the explicit contracts will interact.
 
-For example, an Liquidity Provider will likely have require implementing a "Pool" contract. This pool may rely on an
+For example, a Liquidity Provider will likely have require implementing a "Pool" contract. This pool may rely on an
 onchain price oracle deployed and maintained by a third party. The "Pool" contract would be an "Explicit Contract", but
 the price oracle is likely an external actor (unless otherwise mentioned in the system document).
 
@@ -42,6 +50,11 @@ When describing an `ExternalActor` provide a short, descriptive name (if the ext
 of an interface, use the name of that interface). Produce a description of the external actor, including
 its role within the larger application.
 
+{% if has_source %}
+If application/possible, provide the relative path to the Solidity file which contains the definition of the interface
+describing this external actor.
+{% endif %}
+
 Finally, for each such external actor, extract the assumptions/requirements about the external actors behavior.
 
 #### Explicit Contracts
@@ -49,8 +62,9 @@ Finally, for each such external actor, extract the assumptions/requirements abou
 In contrast, an "explicit contract" describes some smart contract that will be developed and deployed as part
 of this application. Each "explicit contract" roughly corresponds to some concrete
 Solidity `contract` type or `library`. Each such explicit contract should be given a name and a brief description
-of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier mentioned
-in the system document if possible, otherwise a suitably descriptive Solidity identifier should be chosen instead.
+of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier {%if not has_source %}mentioned
+in the system document if possible, otherwise a suitably descriptive Solidity identifier should be chosen instead.{%else%}
+used in the implementation.{%endif%}
 
 **Contract Sorts**: Each explicit contract in the application document should be given a specific "sort".
 The possible sorts are as follows:
@@ -67,6 +81,11 @@ said market. If this deployment happens as part of some governance action (e.g.,
 independently and then calls a `registerNewMarket(WrappedMarketToken a)`) then the classification should be `multiple`.
 If the protocol itself creates an instance of `WrappedMarketToken` (e.g., as part of an implementation
 of `registerNewMarket(address marketProxy)`) then the classification should be `dynamic`.
+
+{% if has_source %}
+As part of your extraction, provide the relative path to the Solidity file which contains the definition of the
+contract you are describing.
+{% endif %}
 
 In addition, each explicit contract should have an associated list of "Contract Components" that comprise it.
 
@@ -88,3 +107,36 @@ as implementation requirements (e.g, "The implementation must ...")
 Finally, extract a description of the interactions this component, either with components of external contracts
 (including the contract in which *this* component resides) or external actors. Each interaction description
 should identify the contract+component/external actor by name, and provide a description of the interaction.
+
+## On Interactions
+
+Your enumeration of contracts and external actors should be as comprehensive as possible given the information you
+are provided with. For example, if the main entrypoint of the application interacts with some contract A,
+and that contract itself interacts with an external actor B, a description of both `A` and `B` should be included
+in your system description.
+
+**CLARIFICATION**: Your transitive exploration should "halt" at the boundaries of external actors. Do *NOT*
+hypothesize, speculate, or infer what other actors the external actors may themselves interact with. In other words,
+
+{% if has_source %}
+**CLARIFICATION**: In modern applications, it is quite common to write components which interact with each other
+via interfaces. However, despite this implementation/design abstraction, there is often a single, known implementation of
+these interfaces.
+
+When some contract A interacts with another contract via an interface type I, use the following heuristics to determine
+whether this other contract should be an external actor or not:
+* Is there a single implementation of the interface I in the code base? If so, take that implementation to be a contract component
+* If the interface corresponds to a well-known standard (ERC20, ERC4626, ERC721, etc.) AND the system design *explicitly* works with
+   any implementation of these standards, then that contract should be an external actor
+* If the interface defines an application/domain specific *extension* to one of these standards, *AND* one or more implementations
+   of these interface exists, DO NOT classify it as an external actor
+* If there are multiple implementations S1, S2, ... of the interface in the code base, describe the interaction as being with an external
+  actor, but include S1, S2, ... etc as explicit contract components whose role is to implement interface I.
+{% endif %}
+
+# Memory
+
+You have access to a memory tool which may include your prior progress on this task.
+You should assume that the documentation or source code you are analyzing has NOT changed
+since the memories were written. You do *NOT* need to reverify or validate any claims or information
+in your memory. You may immediately proceed with that information as if you derived it yourself.

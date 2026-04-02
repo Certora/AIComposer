@@ -1,0 +1,56 @@
+{% macro render_applicaton_context(context, show_sort) %}
+
+# {{ context.application_type }}
+
+**Description**: {{ context.description }}
+
+This application is comprised of the following components.
+
+## Components
+
+{% for c in context.components %}
+### {{ "Contract" if c.sort else "External Actor"}}: {{ c.name }}
+
+**Description**: {{ c.description }}
+
+{% if c.sort %}
+{% if show_sort %}
+**Sort**: {{ c.sort }} (see below)
+{% endif %}
+{% if c.components %}
+This contract is comprised of the following components:
+
+#### Sub-Components
+{%for sub in c.components %}
+
+**Component Name**: {{ sub.name }}
+**Description**: {{ sub.description }}
+
+{% if sub.interactions %}
+This component interacts with other components in the application or external actors as follows:
+{% for int in sub.interactions %}
+{% if int.contract_name %}
+* Interaction with component `{{ int.component }}` of `{{ int.contract_name }}`: {{ int.description }}
+{%else%}
+* Interaction with external actor {{ int.external_actor }}: {{ int.description }}
+{% endif %}
+{% endfor %}{# end interactions loop #}
+{% endif %}{# end interactions #}
+{% endfor %}
+{%endif%}{# end components loop #}
+{{ caller(c) }}{# render callback #}
+{% else %}
+{% if c.path %}
+The application interacts with this external actor via the interface at {{ c.path }}
+{% endif %}
+{%endif%}
+{% endfor %}
+{%if show_sort %}
+<sort>
+Each contract component is assigned a "sort", defined as follows:
+* `dynamic`: instances of the contract are dynamically created by the application itself.
+* `multiple`: multiple instances are expected to be deployed by some external actor/administrator and then registered with the application
+* `singleton`: if only one instance will exist in a deployed application
+</sort>
+{%endif%}
+{% endmacro %}

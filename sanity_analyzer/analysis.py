@@ -1,25 +1,25 @@
 from typing import NotRequired
 import pathlib
 import uuid
-import json
 
 from langgraph.graph import MessagesState
 from langchain_core.runnables.config import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, Field
 
 from composer.input.parsing import add_protocol_args
 from composer.input.types import ModelOptions, WorkflowOptions
-from composer.rag.db import PostgreSQLRAGDatabase, SANITY_DEFAULT_CONNECTION
+from composer.rag.db import SANITY_DEFAULT_CONNECTION, get_rag_db
 from composer.rag.models import get_model
 from composer.tools.search import cvl_manual_search
 from composer.templates.loader import load_jinja_template
-from composer.workflow.services import create_llm, get_memory, get_checkpointer
+from composer.workflow.services import create_llm, get_memory
 
 from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
 
 from graphcore.tools.memory import memory_tool
 from graphcore.tools.vfs import fs_tools
-from graphcore.graph import build_workflow, FlowInput
+from graphcore.graph import build_workflow, FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
 
 from sanity_analyzer.types import SanityAnalysisArgs
@@ -192,8 +192,7 @@ def parse_unsat_core_filename(filename: str) -> tuple[str | None, str | None]:
 
     return rule, None
 
-
-def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
+async def async_analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
     unsat_core_txt_path = pathlib.Path(args.unsat_core_txt_path).resolve()
 
     # Extract report directory - check if txt file is in Reports subdirectory
@@ -249,7 +248,7 @@ def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
     if args.thread_id is None:
         print(f"Chose thread id: {tid}")
 
-    rag_db = PostgreSQLRAGDatabase(conn_string=args.rag_db, model=get_model(), skip_test=True)
+    rag_db = await get_rag_db(args.rag_db, model=get_model())
     tools = [cvl_manual_search(rag_db), sanity_analysis_output_tool, *get_rough_draft_tools(SanityState), *v_tools]
     if args.memory_tool:
         tools.append(memory_tool(get_memory(tid, "sanity")))
@@ -268,7 +267,7 @@ def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
         sys_prompt=system_prompt,
         initial_prompt=initial_prompt,
         state_class=SanityState
-    )[0].compile(checkpointer=get_checkpointer())
+    )[0].compile(checkpointer=InMemorySaver())
 
     conf: RunnableConfig = {"configurable": {}}
 
@@ -278,7 +277,7 @@ def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
 
     conf["recursion_limit"] = args.recursion_limit
 
-    for (ty, d) in graph.stream(input=SanityInput(input=[
+    async for (ty, d) in graph.astream(input=SanityInput(input=[
         f"The rule being analyzed is: {rule}",
         f"Method context: {method if method else 'N/A'}",
         f"Unsat core data:\n{unsat_core_txt_content}"
@@ -290,5 +289,9 @@ def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
             if not args.quiet:
                 print(d)
 
-    final_result = graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
+    final_result = (await graph.aget_state({"configurable": {"thread_id": tid}})).values["result"]
     return final_result
+
+def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
+    import asyncio
+    return asyncio.run(async_analyze(args))

@@ -20,7 +20,8 @@ from langgraph.types import interrupt
 from composer.audit.types import InputFileLike
 from composer.audit.db import ResumeArtifact
 from composer.input.types import RAGDBOptions
-from composer.rag.db import create_rag_db, ComposerRAGDB
+from composer.rag.db import PostgreSQLRAGDatabase
+from composer.rag.models import get_model
 from composer.workflow.services import get_checkpointer
 from composer.tools.search import cvl_manual_search
 from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
@@ -47,7 +48,7 @@ class ExtractionInput(FlowInput, RoughDraftState):
 
 @dataclass
 class ExtractionContext:
-    rag_db: ComposerRAGDB
+    rag_db: PostgreSQLRAGDatabase
 
 class HumanClarificationArgs(BaseModel):
     """
@@ -161,7 +162,10 @@ async def get_requirements(
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
-    db = create_rag_db(options.rag_db)
+    db = PostgreSQLRAGDatabase(
+        conn_string=options.rag_db,
+        model=get_model(),
+    )
 
     input_text : list[str | dict] = [
         "The system document is as follows:",

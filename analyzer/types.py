@@ -24,6 +24,7 @@ class AnalysisArgsD():
     model: str
     rag_db: str
     model: str
+    interleaved_thinking: bool = True
     method: str | None = None
     thread_id: str | None = None
     checkpoint_id: str | None = None
