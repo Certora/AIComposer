@@ -46,12 +46,11 @@ CREATE TABLE IF NOT EXISTS memories_fs(
     CHECK (contents IS NOT NULL != is_directory)
 );
 
+CREATE INDEX IF NOT EXISTS memories_namespace_path ON memories_fs(namespace, full_path text_pattern_ops); -- text pattern ops lets us use the index for LIKE
 
 \c audit_db
 GRANT ALL PRIVILEGES ON DATABASE audit_db TO audit_db_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO audit_db_user;
-
-CREATE INDEX IF NOT EXISTS memories_namespace_path ON memories_fs(namespace, full_path text_pattern_ops); -- text pattern ops lets us use the index for LIKE
 
 -- Create audit_db schema
 CREATE TABLE IF NOT EXISTS file_blobs(

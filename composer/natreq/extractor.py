@@ -20,7 +20,7 @@ from langgraph.types import interrupt
 from composer.audit.types import InputFileLike
 from composer.audit.db import ResumeArtifact
 from composer.input.types import RAGDBOptions
-from composer.rag.db import PostgreSQLRAGDatabase
+from composer.rag.db import ComposerRAGDB, get_rag_db
 from composer.rag.models import get_model
 from composer.workflow.services import get_checkpointer
 from composer.tools.search import cvl_manual_search
@@ -48,7 +48,7 @@ class ExtractionInput(FlowInput, RoughDraftState):
 
 @dataclass
 class ExtractionContext:
-    rag_db: PostgreSQLRAGDatabase
+    rag_db: ComposerRAGDB
 
 class HumanClarificationArgs(BaseModel):
     """
@@ -162,8 +162,8 @@ async def get_requirements(
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
-    db = PostgreSQLRAGDatabase(
-        conn_string=options.rag_db,
+    db = get_rag_db(
+        rag_connection_str=options.rag_db,
         model=get_model(),
     )
 

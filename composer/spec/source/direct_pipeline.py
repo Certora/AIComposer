@@ -73,7 +73,7 @@ async def run_autoprove_pipeline(
     )
 
     if s is None:
-        raise ValueError("we're fucked")
+        raise ValueError("System analysis failed")
 
     contract_to_harness : dict[str, list[HarnessDefinition]] = {}
     
