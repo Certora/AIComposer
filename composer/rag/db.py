@@ -9,7 +9,14 @@ from psycopg_pool.pool_async import AsyncConnectionPool
 from psycopg.cursor_async import AsyncCursor
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import TupleRow
-from sentence_transformers import SentenceTransformer
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
+else:
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        SentenceTransformer = "SentenceTransformer"
+
 from numpy import ndarray
 
 from composer.rag.types import ManualRef, BlockChunk, ManualSectionHit
