@@ -19,6 +19,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+          cache-suffix: pyright
       
       - name: sync-deps
         run: |
