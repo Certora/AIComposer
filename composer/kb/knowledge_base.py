@@ -24,7 +24,7 @@ class DefaultEmbedder(Embeddings):
         return self.model.encode_document(
             texts
         ).tolist() #type: ignore
-    
+
     @override
     def embed_query(self, text: str) -> list[float]:
         return self.model.encode_query(

@@ -129,7 +129,7 @@ class SnapshotViewerApp(App):
         mnemonic: str | None = None,
     ):
         super().__init__()
-        self._thread_id = thread_id
+        self._lg_thread_id = thread_id
         self._messages = messages
         self._checkpoint_id = checkpoint_id
         self._mnemonic = mnemonic
@@ -140,7 +140,7 @@ class SnapshotViewerApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        title_parts = [f"Thread: {self._thread_id}"]
+        title_parts = [f"Thread: {self._lg_thread_id}"]
         if self._mnemonic:
             title_parts.insert(0, self._mnemonic)
         self.title = " | ".join(title_parts)

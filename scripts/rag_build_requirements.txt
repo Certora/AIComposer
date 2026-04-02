@@ -140,3 +140,5 @@ nvidia-nccl-cu12==2.27.3; sys_platform == 'linux'
 nvidia-nvjitlink-cu12==12.8.93; sys_platform == 'linux'
 nvidia-nvtx-cu12==12.8.90; sys_platform == 'linux'
 triton==3.4.0; sys_platform == 'linux'
+psycopg[pool]
+aiosqlite

@@ -95,8 +95,6 @@ class ComposerRAGDB(ABC):
                 self.tr.encode_document, [f"search_document: {d.chunk}" for d in doc], show_progress_bar=False
             ))
 
-
-
 type RagConnection = str | AsyncConnectionPool[AsyncConnection[TupleRow]] | AsyncConnection[TupleRow]
 
 class PostgreSQLRAGDatabase(ComposerRAGDB):
@@ -122,7 +120,8 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                     """)
                     if not await cur.fetchone():
                         logger.warning("❌ Documents table not found, creating...")
-                        await self._create_schema()
+                        async with conn.transaction():
+                            await self._create_schema(cur)
                     else:
                         logger.info("✅ Documents table found")
 
@@ -153,100 +152,93 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
         elif isinstance(self.conn_string, AsyncConnection):
             assert self._lock is not None
             async with self._lock:
-                try:
                     yield self.conn_string
-                    await self.conn_string.commit()
-                except:
-                    await self.conn_string.rollback()
-                    raise
         else:
             async with self.conn_string.connection() as conn:
                 yield conn
 
-    async def _create_schema(self) -> None:
+    async def _create_schema(self, cur: AsyncCursor) -> None:
         """Create database schema"""
-        async with self._get_connection() as conn:
-            async with conn.cursor() as cur:
-                # create vector extension
-                await cur.execute("""
-                    CREATE EXTENSION IF NOT EXISTS vector;
-                """)
+        # create vector extension
+        await cur.execute("""
+            CREATE EXTENSION IF NOT EXISTS vector;
+        """)
 
-                # Create documents table
-                await cur.execute("""
-                    CREATE TABLE IF NOT EXISTS documents (
-                        id SERIAL PRIMARY KEY,
-                        content TEXT,
-                        embedding vector(768),
-                        h1 TEXT,
-                        h2 TEXT,
-                        h3 TEXT,
-                        h4 TEXT,
-                        h5 TEXT,
-                        h6 TEXT,
-                        created_at TIMESTAMP DEFAULT NOW()
-                    );
+        # Create documents table
+        await cur.execute("""
+            CREATE TABLE IF NOT EXISTS documents (
+                id SERIAL PRIMARY KEY,
+                content TEXT,
+                embedding vector(768),
+                h1 TEXT,
+                h2 TEXT,
+                h3 TEXT,
+                h4 TEXT,
+                h5 TEXT,
+                h6 TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
 
-                    CREATE TABLE IF NOT EXISTS code_refs (
-                        id SERIAL PRIMARY KEY,
-                        ref_number INTEGER,
-                        code_body TEXT,
-                        parent_doc integer REFERENCES documents(id)
-                    );
-                """)
+            CREATE TABLE IF NOT EXISTS code_refs (
+                id SERIAL PRIMARY KEY,
+                ref_number INTEGER,
+                code_body TEXT,
+                parent_doc integer REFERENCES documents(id)
+            );
+        """)
 
-                # Create indexes
-                await cur.execute("""
-                    CREATE INDEX IF NOT EXISTS documents_embedding_idx
-                    ON documents USING hnsw (embedding vector_cosine_ops);
-                """)
+        # Create indexes
+        await cur.execute("""
+            CREATE INDEX IF NOT EXISTS documents_embedding_idx
+            ON documents USING hnsw (embedding vector_cosine_ops);
+        """)
 
-                await cur.execute("""
-                    CREATE INDEX IF NOT EXISTS code_refs_lkp ON code_refs(parent_doc);
-                """)
 
-                await cur.execute("""
-                    CREATE INDEX IF NOT EXISTS section_h1 ON documents (h1);
-                    CREATE INDEX IF NOT EXISTS section_h2 ON documents (h2);
-                    CREATE INDEX IF NOT EXISTS section_h3 ON documents (h3);
-                    CREATE INDEX IF NOT EXISTS section_h4 ON documents (h4);
-                """)
+        await cur.execute("""
+            CREATE INDEX IF NOT EXISTS code_refs_lkp ON code_refs(parent_doc);
+        """)
 
-                await cur.execute("""
-                    CREATE EXTENSION IF NOT EXISTS pg_trgm;
-                    CREATE TABLE IF NOT EXISTS manual_sections(
-                        id SERIAL PRIMARY KEY,
-                        content TEXT,
-                        h1 TEXT,
-                        h2 TEXT,
-                        h3 TEXT,
-                        h4 TEXT,
-                        h5 TEXT,
-                        h6 TEXT,
-                        part INTEGER,
-                        created_at TIMESTAMP DEFAULT NOW(),
-                        CONSTRAINT parts_unique UNIQUE (h1, h2, h3, h4, h5, h6, part)
-                    );
-                    CREATE INDEX IF NOT EXISTS manual_ts_idx ON manual_sections USING gin(
-                        to_tsvector('english', content)
-                    );
-                    CREATE INDEX IF NOT EXISTS manual_trgm_idx ON manual_sections USING gin(
-                        content gin_trgm_ops
-                    );
+        await cur.execute("""
+            CREATE INDEX IF NOT EXISTS section_h1 ON documents (h1);
+            CREATE INDEX IF NOT EXISTS section_h2 ON documents (h2);
+            CREATE INDEX IF NOT EXISTS section_h3 ON documents (h3);
+            CREATE INDEX IF NOT EXISTS section_h4 ON documents (h4);
+        """)
 
-                    CREATE TABLE IF NOT EXISTS manual_section_code_refs(
-                        id INTEGER,
-                        code_body TEXT,
-                        section_id INTEGER,
-                        CONSTRAINT id_section_id_pk PRIMARY KEY(id, section_id),
-                        CONSTRAINT section_id_manual_section_fk FOREIGN KEY(section_id) REFERENCES manual_sections(id)
-                    );
-                """)
+        await cur.execute("""
+            CREATE EXTENSION IF NOT EXISTS pg_trgm;
+            CREATE TABLE IF NOT EXISTS manual_sections(
+                id SERIAL PRIMARY KEY,
+                content TEXT,
+                h1 TEXT,
+                h2 TEXT,
+                h3 TEXT,
+                h4 TEXT,
+                h5 TEXT,
+                h6 TEXT,
+                part INTEGER,
+                created_at TIMESTAMP DEFAULT NOW(),
+                CONSTRAINT parts_unique UNIQUE (h1, h2, h3, h4, h5, h6, part)
+            );
+            CREATE INDEX IF NOT EXISTS manual_ts_idx ON manual_sections USING gin(
+                to_tsvector('english', content)
+            );
+            CREATE INDEX IF NOT EXISTS manual_trgm_idx ON manual_sections USING gin(
+                content gin_trgm_ops
+            );
 
-                await cur.execute("CREATE INDEX IF NOT EXISTS documents_content_idx ON documents USING gin(to_tsvector('english', content));")
+            CREATE TABLE IF NOT EXISTS manual_section_code_refs(
+                id INTEGER,
+                code_body TEXT,
+                section_id INTEGER,
+                CONSTRAINT id_section_id_pk PRIMARY KEY(id, section_id),
+                CONSTRAINT section_id_manual_section_fk FOREIGN KEY(section_id) REFERENCES manual_sections(id)
+            );
+        """)
 
-                await conn.commit()
-                logger.info("✅ Database schema created successfully")
+        await cur.execute("CREATE INDEX IF NOT EXISTS documents_content_idx ON documents USING gin(to_tsvector('english', content));")
+
+        logger.info("✅ Database schema created successfully")
 
     def _normalize_head(self, l: list[str]) -> _ContentHeaders:
         headers : list[str | None] = [None] * 6
@@ -270,7 +262,6 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 insert_res = await cur.fetchone()
                 if insert_res is None:
                     raise Exception("Insertion didn't return ID")
-                print(insert_res)
                 payloads = []
                 for (i, code) in enumerate(ch.code_refs):
                     payloads.append((i, code, insert_res[0]))

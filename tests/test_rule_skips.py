@@ -13,7 +13,7 @@ from composer.spec.source.prover import (
 from composer.spec.cvl_generation import check_completion
 from composer.prover.core import RawReport, SummarizedReport
 
-from graphcore.tests.conftest import Scenario, tool_call_raw, ToolCallDict
+from graphcore.testing import Scenario, tool_call_raw, ToolCallDict
 from graphcore.tools.results import result_tool_generator
 
 from .conftest import ProverMock, ProverToolResponse

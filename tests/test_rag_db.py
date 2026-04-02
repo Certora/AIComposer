@@ -1,6 +1,6 @@
 """Tests for composer.rag.db — PostgreSQLRAGDatabase insert and retrieval."""
 
-from typing import Any, AsyncIterator, TYPE_CHECKING, Iterator
+from typing import AsyncIterator, TYPE_CHECKING, Iterator
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -13,13 +13,13 @@ from composer.rag.db import PostgreSQLRAGDatabase, ChromaRAGDatabase, ComposerRA
 from composer.rag.text import code_ref_tag
 from composer.rag.types import BlockChunk
 
+from .conftest import MockSentenceTransformer, EMBEDDING_DIM
+
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
-EMBEDDING_DIM = 768
 
-
-# ── Mock embedding model ──
+# ── Test corpus ──
 
 @dataclass
 class MockManualSection:
@@ -60,21 +60,6 @@ _TEST_CORPUS : TestCorpus  = {
         "What are hooks in CVL?"
     )
 }
-
-class MockSentenceTransformer:
-    """Returns pre-registered vectors keyed by the exact text the DB layer passes."""
-
-    def __init__(self) -> None:
-        self._vectors: dict[str, ndarray] = {}
-
-    def register(self, text: str, vector: ndarray) -> None:
-        self._vectors[text] = vector
-
-    def encode_query(self, text: str, **_: Any) -> ndarray:
-        return self._vectors[text]
-
-    def encode_document(self, texts: list[str], **_: Any) -> list[ndarray]:
-        return [self._vectors[t] for t in texts]
 
 def _random_unit_vector(rng: np.random.RandomState) -> ndarray:
     vec = rng.randn(EMBEDDING_DIM).astype(np.float32)

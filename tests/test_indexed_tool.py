@@ -5,19 +5,31 @@ Requires Docker (uses testcontainers for a throwaway Postgres instance).
 """
 import pytest
 import pytest_asyncio
+import uuid
 
-from typing import override
+from typing import override, TYPE_CHECKING, Callable, AsyncIterator
 from pydantic import Field
 
 from langgraph.graph import MessagesState
 
 from composer.spec.agent_index import AgentIndex, IndexedTool
 
-from graphcore.tests.conftest import Scenario, tool_call_raw, ToolCallDict
+from graphcore.testing import Scenario, tool_call_raw, ToolCallDict, InitializedScenario
 
-from .conftest import needs_postgres
+from langgraph.store.postgres.aio import AsyncPostgresStore
+
+from psycopg_pool.pool_async import AsyncConnectionPool as PGAsyncPool
+from composer.kb.knowledge_base import DefaultEmbedder
+from composer.spec.agent_index import AgentIndex
+
+from .conftest import needs_postgres, QnATransformer, EMBEDDING_DIM
 
 pytestmark = [pytest.mark.asyncio, needs_postgres]
+
+type AskScenario = InitializedScenario[MessagesState]
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 # ---------------------------------------------------------------------------
@@ -64,11 +76,37 @@ SEED_DATA = [
     },
 ]
 
+@pytest.fixture
+def qna_fixture(qna_factory: Callable[[], QnATransformer]) -> QnATransformer:
+    to_ret = qna_factory()
+    for data in SEED_DATA:
+        to_ret.register(
+            doc=data["answer"],
+            questions=(data["question"])
+        )
+    return to_ret
+
+@pytest_asyncio.fixture
+async def indexed_store(pg_database: PGAsyncPool, qna_fixture: QnATransformer) -> AsyncIterator[AsyncPostgresStore]:
+    assert pg_database is not None
+    store = AsyncPostgresStore(
+        pg_database,
+        index={
+            "embed": DefaultEmbedder(model=qna_fixture.as_transformer),
+            "dims": EMBEDDING_DIM,
+            "fields": None,
+        },
+    )
+    await store.setup()
+    yield store
+
+@pytest_asyncio.fixture
+async def index(indexed_store: AsyncPostgresStore) -> AgentIndex:
+    return AgentIndex(indexed_store, ("test", "indexed_tool", uuid.uuid4().hex))
 
 # ---------------------------------------------------------------------------
 # Tool call constructors
 # ---------------------------------------------------------------------------
-
 
 def _ask(question: str) -> ToolCallDict:
     return tool_call_raw(_ASK, question=question)
@@ -80,7 +118,7 @@ def _ask(question: str) -> ToolCallDict:
 
 
 @pytest_asyncio.fixture
-async def ask_scenario(index: AgentIndex):
+async def ask_scenario(index: AgentIndex) -> AskScenario:
     for doc in SEED_DATA:
         await index.aput(**doc)
     answer_question_calls.clear()
@@ -111,7 +149,7 @@ def _response_and_calls(st: MessagesState) -> tuple[str, int]:
 
 
 class TestIndexedToolCacheHit:
-    async def test_exact_match_returns_cached(self, ask_scenario):
+    async def test_exact_match_returns_cached(self, ask_scenario: AskScenario):
         resp, calls = await ask_scenario.turn(
             _ask("What are the state variables of the Vault contract?"),
         ).map_run(_response_and_calls)
@@ -121,7 +159,7 @@ class TestIndexedToolCacheHit:
 
 
 class TestIndexedToolCacheMiss:
-    async def test_novel_question_calls_answer_question(self, ask_scenario):
+    async def test_novel_question_calls_answer_question(self, ask_scenario: AskScenario):
         resp, calls = await ask_scenario.turn(
             _ask("What ERC-20 tokens does the Vault interact with?"),
         ).map_run(_response_and_calls)
@@ -131,7 +169,7 @@ class TestIndexedToolCacheMiss:
 
 
 class TestIndexedToolRecache:
-    async def test_novel_then_reask_is_cached(self, ask_scenario):
+    async def test_novel_then_reask_is_cached(self, ask_scenario: AskScenario):
         # First call: cache miss
         _, calls_after_first = await ask_scenario.turn(
             _ask("What ERC-20 tokens does the Vault interact with?"),

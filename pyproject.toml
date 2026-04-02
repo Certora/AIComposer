@@ -29,7 +29,8 @@ dependencies = [
     "textual>=8.1",
     "websockets",
     "chromadb>=0.4.0",
-    "aiosqlite"
+    "aiosqlite",
+    "einops"
 ]
 
 [dependency-groups]

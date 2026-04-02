@@ -32,7 +32,7 @@ from graphcore.tools.results import result_tool_generator
 from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 from graphcore.graph import tool_state_update
 
-from graphcore.tests.conftest import Scenario, tool_call_raw, ToolCallDict
+from graphcore.testing import Scenario, tool_call_raw, ToolCallDict
 
 pytestmark = pytest.mark.asyncio
 
