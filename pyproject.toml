@@ -28,14 +28,13 @@ dependencies = [
     "textual>=8.1",
     "websockets",
     "chromadb>=0.4.0",
-    "aiosqlite",
-    "einops"
+    "aiosqlite"
 ]
 
 [dependency-groups]
 test = ["pytest>=9.0", "pytest-asyncio>=1.3", "testcontainers>=4.0"]
 ci = ["pyright"]
-ml = ["sentence-transformers>=5.1"] # save CI
+ml = ["sentence-transformers>=5.1", "einops"] # save CI
 
 [tool.uv.sources]
 graphcore = { path = "./graphcore", editable = true }

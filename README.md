@@ -9,11 +9,12 @@ AI Composer is a tool for generating verified implementations from documentation
 You will need at least Python 3.12, Docker (with compose), and a Claude API key, and the ability to build
 the documentation (see [here](https://github.com/Certora/Documentation/?tab=readme-ov-file#building-the-documentation)),
 and a working, local installation of the prover (see [here](https://github.com/certora/certoraprover)). The Claude API Key should be in your
-environment under `ANTHROPIC_API_KEY`.
+environment under `ANTHROPIC_API_KEY`. You will also need a suitably recent version of `uv`.
 
 ## One-time DB setup
 
 You will need to provision the various Postgres databases used by AI Composer. Do this as follows:
+
 1. cd into `scripts/`
 2. run `docker compose create && docker compose start`. This will initialize a local postgres database. NB: no attempt has been made
    to ensure this database is secure; caveat emptor
@@ -22,17 +23,19 @@ NB: You will need to restart this docker image each time your host computer rest
 
 ## One-time RAG Setup
 
-You will need to build the local RAG database used for CVL manual searches by the LLM.
-Instructions are as follows:
+You will need to build the local RAG database used for CVL manual searches by the LLM:
 
-1. Run the base script `./gen_docs.sh`; if it completes without error, you should have `cvl_manual.html` in your directory
-2. Create a new python virtual environment for the RAG build process by running `python3 -m venv somepath` where `somepath` is some path
-   on your filesystem
-3. Run `source somepath/bin/activate`.
-4. Run `pip3 install -r ./rag_build_requirements.txt`
-5. Run `python3 ./ragbuild.py cvl_manual.html`.
-6. Run the command `deactivate`
-7. (Optional) cleanup `somepath`
+1. Run `./gen_docs.sh` to build the HTML documentation into `prover-docs/`
+2. Run `./populate_rag.sh` to populate the standard `rag_db`
+
+## One-time Extended RAG Setup (for Sanity Analyzer)
+
+The sanity analyzer requires additional prover documentation beyond the CVL manual:
+
+1. Run `./gen_docs.sh` (if not already done for the base RAG setup)
+2. Run `./populate_extended_rag.sh` to populate the `extended_rag_db`
+
+**Note:** The cex-analyzer and AI Composer use the standard `rag_db` (CVL-only), while sanity-analyzer defaults to `extended_rag_db` (CVL + prover docs). You can override this with the `--rag-db` flag if needed.
 
 ## One-time prover setup
 
@@ -41,9 +44,9 @@ variable is configured to point to the output of this build (`CertoraProver/targ
 
 ## AI Composer Requirements
 
-Install the requirements for AI Composer via `pip3 install -r ./requirements.txt`. You may do this in
+Install the requirements for AI Composer via `uv sync --group ml`. You may do this in
 a virtual environment, and in such case you also need to install the dependencies for the `certora-cli`:
-`pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
+`uv pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
 available system-wide. Also be sure to activate this new virtual environment each time you want to run AI Composer.
 
 ## Solidity Compilers
@@ -69,11 +72,11 @@ Where `cvl_input.spec` is the CVL specification the implementation must conform 
 contains an `interface` definition which the generated contract must implement, and `system_doc.txt`
 is a text file containing a description of the overall system (defining key concepts, etc.)
 
-AI Composer will iterate some number of times while it attempts to generate code. This process is *semi* automatic;
+AI Composer will iterate some number of times while it attempts to generate code. This process is _semi_ automatic;
 AI Composer may ask for help via the human in the loop tool, propose spec changes, or ask for requirement relaxation.
 It is recommended that you "babysit" the process as it runs.
 
-A basic trace of what the tool is doing is displayed to stdout. You can enable `--debug` to see *very* verbose output, but
+A basic trace of what the tool is doing is displayed to stdout. You can enable `--debug` to see _very_ verbose output, but
 more friendly debugging options are described below.
 
 Once generation is completed, the generated sources and the LLM commentary is dumped to stdout.
@@ -82,35 +85,38 @@ Once generation is completed, the generated sources and the LLM commentary is du
 
 A few options can help tweak your experience:
 
-* `--prover-capture-output false` will have the prover runs invoked by the AI Composer print its output to stdout/stderr instead of being captured
-* `--prover-keep-folders` will print the temporary directories used for the prover runs, and not clean them up
-* `--debug-prompt-override PROMPT` will append whatever text you provide in `PROMPT` to the initial prompt. Useful for instructing the LLM to do different things
-* `--tokens T` How many tokens to sample from the LLM. This needs to be *relatively* high due to the amount of code that needs to be generated
-* `--thinking-tokens T` how many tokens of the overall token budget should be used for thinking
-* `--model` The name of the Anthropic model to use for the task. Defaults to sonnet
-* `--thread-id` and `--checkpoint-id` are used for resuming workflows that crash or need tweaking (see below)
-* `--summarization-threshold` enables the summarization of older messages after a certain threshold
+- `--prover-capture-output false` will have the prover runs invoked by the AI Composer print its output to stdout/stderr instead of being captured
+- `--prover-keep-folders` will print the temporary directories used for the prover runs, and not clean them up
+- `--debug-prompt-override PROMPT` will append whatever text you provide in `PROMPT` to the initial prompt. Useful for instructing the LLM to do different things
+- `--tokens T` How many tokens to sample from the LLM. This needs to be _relatively_ high due to the amount of code that needs to be generated
+- `--thinking-tokens T` how many tokens of the overall token budget should be used for thinking
+- `--model` The name of the Anthropic model to use for the task. Defaults to sonnet
+- `--thread-id` and `--checkpoint-id` are used for resuming workflows that crash or need tweaking (see below)
+- `--summarization-threshold` enables the summarization of older messages after a certain threshold
 
 ### Resuming Workflows
 
 The `--thread-id` and `--checkpoint-id` options allow you to resume AI Composer execution from a specific point in time. Together, these identifiers describe a checkpoint in the execution history where the workflow can be resumed.
 
 **Thread ID**: Identifies a specific execution session of AI Composer. This is displayed early in the output when starting a workflow:
+
 ```
 Selected thread id: crypto_session_6511ace2-cfbf-11f0-aeb6-e8cf83d12a2d
 ```
 
 **Checkpoint ID**: Identifies a specific point within that session. This is displayed throughout execution as the workflow progresses:
+
 ```
 current checkpoint: 1f0cfbf9-bbd9-6365-8001-90d0fca3dbdf
 ```
 
 To resume from a specific checkpoint, provide both identifiers:
+
 ```
 python3 ./main.py --thread-id crypto_session_6511ace2-cfbf-11f0-aeb6-e8cf83d12a2d --checkpoint-id 1f0cfbf9-bbd9-6365-8001-90d0fca3dbdf cvl_input.spec interface_file.sol system_doc.txt
 ```
 
-This will restart execution from exactly that point in the workflow. NB the checkpoint ID does *not* need to be the most recent; you can "time travel" if you decide
+This will restart execution from exactly that point in the workflow. NB the checkpoint ID does _not_ need to be the most recent; you can "time travel" if you decide
 you dislike a decision you made previously.
 
 ## Debugging Options
@@ -154,9 +160,9 @@ with the output of a prior session. This is referred to as "meta-iteration".
 
 Meta iteration can be done in one of two ways:
 
-* use `materialize` command of `resume.py` (described above) to materialize the result of a prior run into a folder,
-arbitrarily changing the contents of that folder, and then using the `resume-dir` command of `resume.py`, OR
-* using `resume-id` with the thread ID of a completed run and passing in an updated specification file
+- use `materialize` command of `resume.py` (described above) to materialize the result of a prior run into a folder,
+  arbitrarily changing the contents of that folder, and then using the `resume-dir` command of `resume.py`, OR
+- using `resume-id` with the thread ID of a completed run and passing in an updated specification file
 
 In the former case, the invocation looks like this:
 
