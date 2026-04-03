@@ -13,6 +13,7 @@ import uuid
 from langgraph.graph import MessagesState
 
 from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core.messages import AIMessage
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 
@@ -26,6 +27,7 @@ from composer.input.parsing import add_protocol_args
 from graphcore.tools.vfs import fs_tools
 from graphcore.graph import FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
+from graphcore.utils import get_token_usage
 
 from analyzer.types import Ecosystem, AnalysisArgs
 from pydantic import BaseModel
@@ -61,6 +63,21 @@ When you have reached a conclusion about the counterexample, call this tool imme
 _default_text = "The textual analysis explaining the counterexample. You MAY use markdown in your output."
 
 _default_format = (str, _default_text)
+
+
+def _accumulate_token_usage(update: dict, usage_dict: dict[str, int] | None) -> None:
+    """Extract token usage from stream update messages and accumulate into usage_dict."""
+    if usage_dict is None:
+        return
+    for node_output in update.values():
+        if not isinstance(node_output, dict):
+            continue
+        for msg in node_output.get("messages", []):
+            if isinstance(msg, AIMessage):
+                usage = get_token_usage(msg)
+                for key, val in usage.items():
+                    usage_dict[key] = usage_dict.get(key, 0) + val
+
 
 def main() -> int:
     """CLI entry point for the analyzer."""
@@ -199,7 +216,8 @@ async def _analyze_core(
     initial_prompt: str,
     report_dir: pathlib.Path,
     args: AnalysisArgs,
-    out_type: tuple[type[T], str] | type[T]
+    out_type: tuple[type[T], str] | type[T],
+    token_usage: dict[str, int] | None = None
 ) -> T:
     """Run the analysis workflow with custom calltraces and prompt.
 
@@ -288,6 +306,8 @@ async def _analyze_core(
             if not args.quiet:
                 print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
         else:
+                if isinstance(d, dict):
+                    _accumulate_token_usage(d, token_usage)
             if not args.quiet:
                 print(d)
 
@@ -365,7 +385,9 @@ B = TypeVar("B", bound=BaseModel)
 async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
-    args: AnalysisArgs
+    args: AnalysisArgs,
+    output: None = None,
+    token_usage: dict[str, int] | None = None
 ) -> str:
     ...
 
@@ -374,7 +396,8 @@ async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
-    output: tuple[type[T], str]
+    output: tuple[type[T], str],
+    token_usage: dict[str, int] | None = None
 ) -> T:
     ...
 
@@ -383,7 +406,8 @@ async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
-    output: type[B]
+    output: type[B],
+    token_usage: dict[str, int] | None = None
 ) -> B:
     ...
 
@@ -391,7 +415,8 @@ async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
-    output: tuple[type, str] | type | None = None
+    output: tuple[type, str] | type | None = None,
+    token_usage: dict[str, int] | None = None
 ) -> Any:
     """Run analysis workflow with custom calltraces and prompt.
 
@@ -438,4 +463,4 @@ async def analyze_with_calltraces(
         "args.folder must be a local folder path, not a URL. Use analyze() to handle URLs."
 
     report_dir = pathlib.Path(args.folder)
-    return await _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)
+    return await _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format, token_usage)
