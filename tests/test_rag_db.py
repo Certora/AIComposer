@@ -129,6 +129,7 @@ async def rag_db_raw(
     else:
         if postgres_rag is None:
             pytest.skip("PG Containers not installed")
+            return
         yield postgres_rag
 
 @pytest_asyncio.fixture(scope="session")
