@@ -275,39 +275,44 @@ async def _analyze_core(
         tools
     ).with_state(SimpleState).with_input(FlowInput).with_output_key("result")
 
+    async def _run_graph(to_run):
+        graph = to_run.compile_async()
+
+        conf : RunnableConfig = {"configurable": {}}
+        tid : str
+        if args.thread_id is not None:
+            tid = args.thread_id
+        else:
+            tid = f"cex-analysis-{uuid.uuid1().hex}"
+            if not args.quiet:
+                print(f"Chose thread id: {tid}")
+
+        conf["configurable"]["thread_id"] = tid
+        if args.checkpoint_id is not None:
+            conf["configurable"]["checkpoint_id"] = args.checkpoint_id
+
+        conf["recursion_limit"] = args.recursion_limit
+        async for (ty, d) in graph.astream(input=FlowInput(input=list(input_messages)), config=conf, stream_mode=["checkpoints", "updates"]):
+            if ty == "checkpoints":
+                assert isinstance(d, dict)
+                if not args.quiet:
+                    print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
+            else:
+                if not args.quiet:
+                    print(d)
+
+        return (await graph.aget_state({"configurable": {"thread_id": tid}})).values["result"]
+
     if args.ecosystem == "evm":
         #import here to lazily load sentencetransformers
         from composer.tools.search import cvl_manual_search
         from composer.rag.models import get_model
-        from composer.rag.db import get_rag_db
-        to_run = to_run.with_tools([cvl_manual_search(await get_rag_db(args.rag_db, get_model()))])
-
-    graph = to_run.compile_async()
-
-    conf : RunnableConfig = {"configurable": {}}
-    tid : str
-    if args.thread_id is not None:
-        tid = args.thread_id
+        from composer.rag.db import rag_context
+        async with rag_context(args.rag_db, get_model()) as rag_db:
+            to_run = to_run.with_tools([cvl_manual_search(rag_db)])
+            return await _run_graph(to_run)
     else:
-        tid = f"cex-analysis-{uuid.uuid1().hex}"
-        if not args.quiet:
-            print(f"Chose thread id: {tid}")
-
-    conf["configurable"]["thread_id"] = tid
-    if args.checkpoint_id is not None:
-        conf["configurable"]["checkpoint_id"] = args.checkpoint_id
-
-    conf["recursion_limit"] = args.recursion_limit
-    for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), config=conf, stream_mode=["checkpoints", "updates"]):
-        if ty == "checkpoints":
-            assert isinstance(d, dict)
-            if not args.quiet:
-                print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
-        else:
-            if not args.quiet:
-                print(d)
-
-    return (await graph.aget_state({"configurable": {"thread_id": tid}})).values["result"]
+        return await _run_graph(to_run)
 
 async def _analyze_from_report(
     report_dir: pathlib.Path,

@@ -475,7 +475,10 @@ class ChromaRAGDatabase(ComposerRAGDB):
     async def rag_context(persist_dir: str, model: SentenceTransformer):
         to_ret = ChromaRAGDatabase(persist_dir, model)
         await to_ret._setup()
-        yield to_ret
+        try:
+            yield to_ret
+        finally:
+            await to_ret.fts_conn.close()
 
     @override
     async def add_chunks_batch(self, chunks: list[BlockChunk]) -> None:
