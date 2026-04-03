@@ -27,8 +27,7 @@ dependencies = [
     "rich>=14.3",
     "textual>=8.1",
     "websockets",
-    "chromadb>=0.4.0",
-    "aiosqlite"
+    "chromadb>=0.4.0"
 ]
 
 [dependency-groups]

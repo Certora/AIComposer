@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, cast, Any, LiteralString, override, TYPE_CHECKING
+from dataclasses import dataclass
 import asyncio
 import logging
 from abc import ABC, abstractmethod
@@ -9,6 +10,7 @@ from psycopg_pool.pool_async import AsyncConnectionPool
 from psycopg.cursor_async import AsyncCursor
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import TupleRow
+
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 else:
@@ -23,9 +25,7 @@ from numpy import ndarray
 from composer.rag.types import ManualRef, BlockChunk, ManualSectionHit
 from composer.rag.text import code_ref_tag
 
-import aiosqlite
-
-_NO_CHROMA = True
+import sqlite3
 
 if TYPE_CHECKING:
     import chromadb
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 try:
     import chromadb
 except ImportError:
-    _NO_CHROMA = True
+    pass
 
 
 logger = logging.getLogger(__name__)
@@ -423,8 +423,6 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 parts.append(await self._replace_manual_code_refs(cur, row[1], row[0]))
             return "\n".join(parts)
 
-
-
 class ChromaRAGDatabase(ComposerRAGDB):
     """ChromaDB-based RAG database (file-based, no PostgreSQL required)"""
 
@@ -447,28 +445,85 @@ class ChromaRAGDatabase(ComposerRAGDB):
         # Create FTS5 index for keyword search
         self.fts_loc = os.path.join(persist_dir, "fts_index.db")
 
+        self.did_setup = False
+        self.setup_lock = asyncio.Lock()
+
+    @dataclass
+    class ASqliteCursor:
+        cursor: sqlite3.Cursor
+
+        async def fetchall(self) -> list[sqlite3.Row]:
+            return await asyncio.to_thread(self.cursor.fetchall)
+
+    @dataclass
+    class AsyncSqlite:
+        conn: sqlite3.Connection
+
+        async def execute(self, query: str, params: "sqlite3._Parameters | None" = None) -> "ChromaRAGDatabase.ASqliteCursor":
+            if params is not None:
+                cur = await asyncio.to_thread(
+                    self.conn.execute, query, params
+                )
+                return ChromaRAGDatabase.ASqliteCursor(cur)
+            else:
+                cur = await asyncio.to_thread(
+                    self.conn.execute, query
+                )
+                return ChromaRAGDatabase.ASqliteCursor(cur)
+            
+        async def rollback(self):
+            await asyncio.to_thread(
+                self.conn.rollback
+            )
+
+        async def commit(self):
+            await asyncio.to_thread(
+                self.conn.commit
+            )
+
+    async def _setup_internal(self):
+        if self.did_setup:
+            return
+        async with self.setup_lock:
+            if self.did_setup:
+                return
+            async with self._raw_conn() as conn:
+                await conn.execute(
+                    "PRAGMA journal_mode=WAL"
+                )
+                await conn.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
+                        content,
+                        h1, h2, h3, h4, h5, h6,
+                        section_id UNINDEXED
+                    )
+                """
+                )
+                await conn.commit()
+                self.did_setup = True
+
     @asynccontextmanager
-    async def _conn(self) -> AsyncIterator[aiosqlite.Connection]:
+    async def _raw_conn(self):
+        conn = sqlite3.connect(self.fts_loc, check_same_thread=False)
         try:
-            yield self.fts_conn
-            await self.fts_conn.commit()
+            yield ChromaRAGDatabase.AsyncSqlite(conn)
+        finally:
+            conn.close()
+
+    @asynccontextmanager
+    async def _conn(self) -> AsyncIterator["ChromaRAGDatabase.AsyncSqlite"]:
+        await self._setup_internal()
+        conn = ChromaRAGDatabase.AsyncSqlite(sqlite3.connect(self.fts_loc, check_same_thread=False))
+        try:
+            yield conn
+            await conn.commit()
         except:
-            await self.fts_conn.rollback()
+            await conn.rollback()
             raise
 
     async def _setup(self):
-        self.fts_conn = await aiosqlite.connect(
-            self.fts_loc,
-            check_same_thread=False
-        )
-        async with self._conn() as conn:
-            await conn.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
-                    content,
-                    h1, h2, h3, h4, h5, h6,
-                    section_id UNINDEXED
-                )
-            """)
+        await self._setup_internal()
 
     @asynccontextmanager
     @staticmethod
@@ -627,7 +682,7 @@ class ChromaRAGDatabase(ComposerRAGDB):
                     )
                     for row in await cursor.fetchall()
                 ]
-        except aiosqlite.OperationalError:
+        except sqlite3.OperationalError:
             # Handle invalid FTS query syntax gracefully
             return []
 

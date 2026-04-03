@@ -1,5 +1,4 @@
 from typing import NotRequired, TypedDict, Iterator, Iterable, TypeVar, overload, Any, Generic
-from dataclasses import dataclass
 import asyncio
 import pathlib
 import os
@@ -7,7 +6,7 @@ import tempfile
 import tarfile
 import urllib.request
 import urllib.parse
-from contextlib import contextmanager, asynccontextmanager
+from contextlib import contextmanager
 
 import uuid
 
@@ -21,6 +20,9 @@ from composer.rag.db import DEFAULT_CONNECTION
 from composer.workflow.services import create_llm
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
+
+from composer.input.types import ModelOptions, LanggraphOptions, RAGDBOptions
+from composer.input.parsing import add_protocol_args
 
 from graphcore.tools.vfs import fs_tools
 from graphcore.graph import FlowInput, Builder
@@ -108,43 +110,9 @@ Examples:
         default="evm"
     )
 
-    parser.add_argument(
-        '--recursion-limit',
-        type=int,
-        default=30,
-        help="The recursion limit to use for the cex analysis"
-    )
-
-    parser.add_argument(
-        "--thread-id",
-        type=str,
-        help="The thread id (for resuming halted/crashed runs)"
-    )
-
-    parser.add_argument(
-        "--checkpoint-id",
-        type=str,
-        help="The checkpoint id (for resuming halted/crashed runs)"
-    )
-
-    parser.add_argument(
-        "--thinking-tokens",
-        type=int,
-        default=2048
-    )
-
-    parser.add_argument(
-        "--tokens",
-        type=int,
-        default=4096
-    )
-
-    parser.add_argument(
-        "--rag-db",
-        type=str,
-        default=DEFAULT_CONNECTION,
-        help="Database connection string for CVL manual search"
-    )
+    add_protocol_args(parser, ModelOptions)
+    add_protocol_args(parser, LanggraphOptions)
+    add_protocol_args(parser, RAGDBOptions)
 
     args = parser.parse_args()
     return asyncio.run(analyze(cast(AnalysisArgs, args)))
@@ -193,15 +161,27 @@ def _looks_like_url(path: str) -> bool:
 @contextmanager
 def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
     """Download tar.gz from Certora URL and extract to temporary directory."""
-    zip_url = url.replace('/output/', '/zipOutput/')
+
+    res = urllib.parse.urlparse(
+        url
+    )
+
+    path_component = pathlib.PurePosixPath(res.path).parts
+    if not (len(path_component) == 4 and path_component[0] == "/" and path_component[1] == "output"):
+        raise ValueError(f"{url} does not appear to be an `/output` url")
+
+    job_id = path_component[3]
+
+    qs = urllib.parse.parse_qs(res.query)
+    if "anonymousKey" not in qs:
+        raise ValueError(f"No anonymous key found in url {url}")
     
-    certora_key = os.environ.get("CERTORAKEY")
-    if not certora_key:
-        raise ValueError("CERTORAKEY environment variable not set")
+    anon_key = qs["anonymousKey"][0]
+    
+    zip_url = f"{res.scheme}://{res.netloc}/v1/domain/jobs/{job_id}/f/outputs?anonymousKey={anon_key}"
     
     with tempfile.TemporaryDirectory(prefix="certora_report_") as temp_dir:
-        request = urllib.request.Request(zip_url)
-        request.add_header('Cookie', f'certoraKey={certora_key}')
+        request = urllib.request.Request(zip_url, headers={"User-Agent": "curl/8.0"})
         
         with urllib.request.urlopen(request) as response:
             tar_path = os.path.join(temp_dir, "report.tar.gz")
@@ -298,7 +278,7 @@ async def _analyze_core(
         conf["configurable"]["checkpoint_id"] = args.checkpoint_id
 
     conf["recursion_limit"] = args.recursion_limit
-    for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), config=conf, stream_mode=["checkpoints", "updates"]):
+    async for (ty, d) in graph.astream(input=FlowInput(input=list(input_messages)), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
             if not args.quiet:
