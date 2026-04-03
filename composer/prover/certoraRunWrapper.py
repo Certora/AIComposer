@@ -32,13 +32,17 @@ All other arguments past the first are passed through to `run_certora`.
 
 os.putenv("DONT_USE_VERIFICATION_RESULTS_FOR_EXITCODE", "1")
 
-certora_path = os.environ.get("CERTORA")
-if certora_path is None:
-    sys.exit(1)
+from typing import TYPE_CHECKING
 
-sys.path.append(certora_path)
+if TYPE_CHECKING:
+    from certoraRun import run_certora
+else:
+    if (certora_path := os.environ.get("CERTORA")) is None:
+        from certora_cli.certoraRun import run_certora
+    else:
+        sys.path.append(certora_path)
 
-from certoraRun import run_certora
+        from certoraRun import run_certora
 
 output = sys.argv[1]
 

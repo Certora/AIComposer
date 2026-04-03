@@ -32,9 +32,14 @@ from composer.spec.source.harness import (
 )
 from composer.spec.source.summarizer import _summary_key, _SummaryCache
 from composer.spec.source.struct_invariant import STRUCTURAL_INV_KEY, Invariants
-from composer.spec.source.common_pipeline import PROPERTIES_KEY, INV_CVL_KEY
+from composer.spec.source.common_pipeline import PROPERTIES_KEY, INV_CVL_KEY, _component_cache_key, _batch_cache_key
+from composer.spec.bug import _BugAnalysisCache, BUG_ANALYSIS_KEY
 from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, LAST_ATTEMPT_KEY, CVL_JUDGE_KEY
-from composer.spec.system_model import SourceApplication, SourceExplicitContract, SourceExternalActor
+from composer.spec.system_model import (
+    SourceApplication, SourceExplicitContract, SourceExternalActor,
+    HarnessedApplication, HarnessedExplicitContract, HarnessDefinition,
+    ContractInstance, ContractComponentInstance,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +56,7 @@ type AutoProveCachedValue = (
     | Invariants
     | GeneratedCVL
     | _LastAttemptCache
+    | _BugAnalysisCache
     | CVLJudge
 )
 
@@ -104,7 +110,68 @@ def memory[T: CacheTypes, S: Marker](ctx: WorkflowContext[T], child: CacheKey[T,
 # Tree construction
 # ---------------------------------------------------------------------------
 
-async def build_tree_inner(root_ctx: WorkflowContext[None]) -> AsyncGenerator[CacheTreeNode[AutoProveCachedValue], None]:
+def _build_harnessed_app(
+    sa: SourceApplication,
+    config_val: ContractSetup | None,
+) -> HarnessedApplication:
+    """Reconstruct the HarnessedApplication the same way pipeline.py does."""
+    contract_to_harness: dict[str, list[HarnessDefinition]] = {}
+    if config_val is not None:
+        for c in config_val.system_description.transitive_closure:
+            if not c.harness_definition:
+                continue
+            contract_to_harness.setdefault(c.harness_definition.harness_of, []).append(
+                HarnessDefinition(name=c.name, path=c.path)
+            )
+
+    comp: list[SourceExternalActor | HarnessedExplicitContract] = []
+    for c in sa.components:
+        if not isinstance(c, SourceExplicitContract):
+            comp.append(c)
+            continue
+        comp.append(HarnessedExplicitContract(
+            sort=c.sort,
+            name=c.name,
+            components=c.components,
+            description=c.description,
+            path=c.path,
+            harnesses=contract_to_harness.get(c.name, []),
+        ))
+
+    return HarnessedApplication(
+        application_type=sa.application_type,
+        description=sa.description,
+        components=comp,
+    )
+
+
+async def _build_cvl_gen_nodes(
+    ctx: WorkflowContext[CVLGeneration],
+) -> AsyncGenerator[CacheTreeNode[AutoProveCachedValue], None]:
+    yield memory(ctx, child=CVL_JUDGE_KEY, label="Feedback")
+    yield await leaf(ctx, LAST_ATTEMPT_KEY, "Last Attempt", _LastAttemptCache)
+
+
+async def _build_component_nodes(
+    prop_ctx: WorkflowContext,
+    feat: ContractComponentInstance,
+) -> AsyncGenerator[CacheTreeNode[AutoProveCachedValue], None]:
+    comp_key = _component_cache_key(feat)
+    async with node_for(prop_ctx, comp_key, feat.component.name) as (feat_ctx, _):
+        bug_leaf = await leaf(feat_ctx, BUG_ANALYSIS_KEY, "Bug Analysis", _BugAnalysisCache)
+        yield bug_leaf
+        if bug_leaf.value is None:
+            return
+        batch_key = _batch_cache_key(bug_leaf.value.items)
+        async with node_for(feat_ctx, batch_key, "CVL Generation", GeneratedCVL) as (cvl_ctx, _):
+            async for n in _build_cvl_gen_nodes(cvl_ctx.abstract(CVLGeneration)):
+                yield n
+
+
+async def build_tree_inner(
+    root_ctx: WorkflowContext[None],
+    contract_name: str,
+) -> AsyncGenerator[CacheTreeNode[AutoProveCachedValue], None]:
     sa_leaf = await leaf(root_ctx, SOURCE_ANALYSIS_KEY, "source-analysis", SourceApplication)
     yield sa_leaf
 
@@ -129,8 +196,8 @@ async def build_tree_inner(root_ctx: WorkflowContext[None]) -> AsyncGenerator[Ca
         yield await leaf(root_ctx, _summary_key(config_val), "summary", _SummaryCache)
 
     yield await leaf(root_ctx, STRUCTURAL_INV_KEY, "structural-inv", Invariants)
-    async with node_for(root_ctx, INV_CVL_KEY, "invariant-cvl", GeneratedCVL) as (config_ctx, _):
-        gen_ctx = config_ctx.abstract(CVLGeneration)
+    async with node_for(root_ctx, INV_CVL_KEY, "invariant-cvl", GeneratedCVL) as (inv_cvl_ctx, _):
+        gen_ctx = inv_cvl_ctx.abstract(CVLGeneration)
         yield await leaf(
             gen_ctx, LAST_ATTEMPT_KEY, "Last Attempt", _LastAttemptCache
         )
@@ -138,15 +205,40 @@ async def build_tree_inner(root_ctx: WorkflowContext[None]) -> AsyncGenerator[Ca
             gen_ctx, child=CVL_JUDGE_KEY, label="Feedback"
         )
 
-    # Properties — namespace-only node (nothing stored at this key itself)
+    # Properties — per-component bug analysis + CVL generation
+    if sa_leaf.value is None:
+        with node(OrgNode(label="properties (no source analysis)")):
+            pass
+        return
+
+    harnessed_app = _build_harnessed_app(sa_leaf.value, config_val)
+
+    # Find the main contract
+    contract_ind = -1
+    for i, c in enumerate(harnessed_app.contract_components):
+        if c.name == contract_name:
+            contract_ind = i
+            break
+
+    if contract_ind == -1:
+        with node(OrgNode(label=f"properties (contract '{contract_name}' not found)")):
+            pass
+        return
+
+    contract_instance = ContractInstance(contract_ind, app=harnessed_app)
+    prop_ctx = root_ctx.child(PROPERTIES_KEY)
+
     with node(OrgNode(label="properties")):
-        pass
+        for comp_idx in range(len(contract_instance.contract.components)):
+            feat = ContractComponentInstance(_contract=contract_instance, ind=comp_idx)
+            async for n in _build_component_nodes(prop_ctx, feat):
+                yield n
 
 
-async def build_tree(root_ctx: WorkflowContext[None]) -> CacheNode[AutoProveCachedValue]:
+async def build_tree(root_ctx: WorkflowContext[None], contract_name: str) -> CacheNode[AutoProveCachedValue]:
     root: CacheNode[AutoProveCachedValue] = CacheNode(label="root", ctx=root_ctx)
     with node(root):
-        async for n in build_tree_inner(root_ctx):
+        async for n in build_tree_inner(root_ctx, contract_name):
             curr = _node_context.get()
             assert curr is not None
             curr.children.append(n) #type: ignore
@@ -253,6 +345,16 @@ def format_value(val: AutoProveCachedValue) -> list[str]:
             if len(cvl.splitlines()) > 40:
                 lines.append(f"... ({len(cvl.splitlines()) - 40} more lines)")
         
+        case _BugAnalysisCache(items=items):
+            lines.append(f"Properties ({len(items)}):")
+            for p in items:
+                methods = p.methods
+                lines.append(f"  - [{p.sort}] {p.description}")
+                if isinstance(methods, list):
+                    lines.append(f"    methods: {', '.join(methods)}")
+                else:
+                    lines.append(f"    methods: {methods}")
+
         case _LastAttemptCache(cvl=cvl):
             lines.append("LAST ATTEMPT")
             lines.append(cvl)
@@ -322,7 +424,7 @@ def main() -> int:
         status += f"  |  Memory NS: {args.memory_ns}"
 
     app = CacheExplorerApp(
-        build_tree=lambda: build_tree(root_ctx),
+        build_tree=lambda: build_tree(root_ctx, contract_name),
         format_value=format_value,
         store=store,
         status=status,

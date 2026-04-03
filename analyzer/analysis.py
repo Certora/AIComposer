@@ -16,7 +16,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 
-from composer.rag.db import DEFAULT_CONNECTION
 from composer.workflow.services import create_llm
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
