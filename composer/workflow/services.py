@@ -188,7 +188,7 @@ async def _get_async_composer_pool(
     return pool
 
 
-from typing import AsyncIterable, AsyncIterator, Iterable, Iterator, NotRequired, TYPE_CHECKING, Generic
+from typing import AsyncIterator
 
 class _ConnInfo(TypedDict):
     user: str

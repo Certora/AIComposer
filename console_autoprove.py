@@ -1,7 +1,5 @@
 """Entry point for the auto-prove pipeline — console (no TUI) mode."""
 
-import composer.certora as _
-
 import asyncio
 
 from composer.ui.autoprove_console import AutoProveConsoleHandler

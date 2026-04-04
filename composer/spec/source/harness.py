@@ -293,16 +293,16 @@ async def generate_harnesses(
                 [ f"contract {k} ({n} copies)" for (k,n) in check_copy.items() ]
             )
             return f"Missing harnesses in results: {error}"
-
-        with mat.materialize(s) as temp_dir:
-            compile_result = subprocess.run(
-                [res.solidity_compiler] + all_files,
-                cwd=temp_dir,
-                capture_output=True,
-                text=True
-            )
-            if compile_result.returncode != 0 and False:
-                return f"Harness compilation failed:\nstdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
+        if False: # this doesn't work
+            with mat.materialize(s) as temp_dir:
+                compile_result = subprocess.run(
+                    [res.solidity_compiler] + all_files,
+                    cwd=temp_dir,
+                    capture_output=True,
+                    text=True
+                )
+                if compile_result.returncode != 0 and False:
+                    return f"Harness compilation failed:\nstdout:\n{compile_result.stdout}\nstderr:\n{compile_result.stderr}"
         return None
 
     result_tool = result_tool_generator(

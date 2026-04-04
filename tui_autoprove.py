@@ -1,7 +1,5 @@
 """Entry point for the auto-prove multi-agent pipeline TUI."""
 
-import composer.certora as _
-
 import asyncio
 
 from composer.ui.autoprove_app import AutoProveApp

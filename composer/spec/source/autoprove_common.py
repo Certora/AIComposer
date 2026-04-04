@@ -1,7 +1,5 @@
 """Entry point for the auto-prove multi-agent pipeline TUI."""
 
-import composer.certora as _
-
 import argparse
 import hashlib
 import pathlib
@@ -103,7 +101,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
 
     system_doc = SourceCode(
         content=content,
-        project_root=args.project_root,
+        project_root=str(project_root),
         contract_name=contract_name,
         relative_path=relative_path,
         forbidden_read=FS_FORBIDDEN_READ,

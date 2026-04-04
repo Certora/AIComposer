@@ -89,7 +89,7 @@ async def run_preaudit_setup(
         main_contract_path = f"{relative_path}:{contract_name}"
         args = [
             sys.executable, "-m", "orchestrator",
-            "--setup-only", f.name,
+            "--composer-setup", f.name,
             "--skip-hashing-bound-detection", "1024",
             "--use-local-runner",
             "--no-strip-contracts",
