@@ -7,7 +7,7 @@ sub-agent with file system tools (list_files, get_file, grep_files).
 
 from typing import NotRequired, override, Protocol, Any
 
-from pydantic import Field
+from pydantic import Field, BaseModel
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -70,7 +70,7 @@ def _code_explorer_graph(
         checkpointer=InMemorySaver()
     )
 
-class _ExploreCodeCommon(WithAsyncImplementation[str]):
+class _ExploreCodeCommon(BaseModel):
     """
     Delegate a focused question about the source code to a code exploration sub-agent.
     The sub-agent has its own conversation thread with file tools (list_files, get_file,
@@ -96,7 +96,7 @@ def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
     """
     graph = _code_explorer_graph(env)
 
-    class ExploreCodeSchema(_ExploreCodeCommon):
+    class ExploreCodeSchema(_ExploreCodeCommon, WithAsyncImplementation[str]):
         __doc__ = _ExploreCodeCommon.__doc__
 
         @override
@@ -159,4 +159,4 @@ and are established facts — do not re-derive or re-verify them.
             assert "result" in res
             return res["result"]
 
-    return CodeExplorerTool.as_tool("code_explorer")
+    return CodeExplorerTool.bind(env.index).as_tool("code_explorer")
