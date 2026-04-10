@@ -27,6 +27,11 @@ from composer.prover.ptypes import RuleResult
 from composer.prover.results import read_and_format_run_result
 from composer.templates.loader import load_jinja_template
 
+import os
+
+if os.environ["CERTORA"] not in sys.path:
+    sys.path.append(os.environ["CERTORA"])
+
 
 @dataclass
 class CloudConfig:
