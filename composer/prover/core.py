@@ -11,7 +11,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, Protocol, overload, cast
+from typing import AsyncIterator, cast
 from abc import ABC, abstractmethod
 import json
 import logging
@@ -71,10 +71,37 @@ class ProverCallbacks:
     async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None: pass
     async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None: pass
 
-class AnalysisCache(Protocol):
-    async def get(self, rule: RuleResult) -> str | None: ...
-    async def put(self, rule: RuleResult, analysis: str) -> None: ...
+class CexHandler(ABC):
+    @abstractmethod
+    async def analyze_cex(
+        self, rule: RuleResult, tid: str
+    ) -> str | None:
+        ...
 
+class SummarizingCexHandler(CexHandler):
+    def __init__(self, summarization_threshold: int):
+        super().__init__()
+        self.summarization_threshold = summarization_threshold
+
+    @abstractmethod
+    async def summarize(
+        self, report: str
+    ) -> str:
+        ...
+
+class DefaultCexHandler(SummarizingCexHandler):
+    def __init__(self, llm: LLM, state: MessagesState, summarization_threshold: int = 10):
+        super().__init__(summarization_threshold)
+        self.state = state
+        self.llm = llm
+
+    async def analyze_cex(self, rule: RuleResult, tid: str) -> str | None:
+        messages = self.state["messages"]
+        analysis = await analyze_cex_raw(self.llm, messages, rule, tid)
+        return analysis
+
+    async def summarize(self, report: str) -> str:
+        return await _report_to_todo_list(self.llm, report)
 
 @asynccontextmanager
 async def _local_results(path: Path) -> AsyncIterator[Path]:
@@ -108,47 +135,13 @@ PROVER REPORT:
     res = await acached_invoke(llm, fresh_messages)
     return res.text
 
-@overload
 async def run_prover(
-    state: MessagesState,
     folder: Path,
     args: list[str],
-    llm: LLM,
     tool_call_id: str,
     options: ProverOptions,
     callbacks: ProverCallbacks,
-    *,
-    analysis_cache: AnalysisCache | None = None
-) -> str | RawReport:
-    ...
-
-@overload
-async def run_prover(
-    state: MessagesState,
-    folder: Path,
-    args: list[str],
-    llm: LLM,
-    tool_call_id: str,
-    options: ProverOptions,
-    callbacks: ProverCallbacks,
-    *,
-    analysis_cache: AnalysisCache | None = None,
-    summarization_threshold: int
-) -> str | RawReport | SummarizedReport:
-    ...
-
-
-async def run_prover(
-    state: MessagesState,
-    folder: Path,
-    args: list[str],
-    llm: LLM,
-    tool_call_id: str,
-    options: ProverOptions,
-    callbacks: ProverCallbacks,
-    *,
-    analysis_cache: AnalysisCache | None = None,
-    summarization_threshold: int | None = None,
+    cex: CexHandler
 ) -> RawReport | SummarizedReport | str:
     """Execute the Certora prover and return structured results.
 
@@ -228,22 +221,13 @@ async def run_prover(
     # 9. Notify prover_result callback
     await callbacks.on_prover_result(parsed)
 
-    # 10. Parallel CEX analysis
-    messages = state["messages"]
-
     async def _analyze(rule: RuleResult) -> tuple[RuleResult, str | None]:
         if rule.status != "VIOLATED":
             return (rule, None)
-        if analysis_cache is not None:
-            cached = await analysis_cache.get(rule)
-            if cached is not None:
-                return (rule, cached)
         await callbacks.on_analysis_start(rule)
-        analysis = await analyze_cex_raw(llm, messages, rule, tool_call_id)
-        if analysis is not None and analysis_cache is not None:
-            await analysis_cache.put(rule, analysis)
-        if analysis is not None:
-            await callbacks.on_analysis_complete(rule, analysis)
+        res = await cex.analyze_cex(rule, tool_call_id)
+        if res is not None:
+            await callbacks.on_analysis_complete(rule, res)
         return (rule, analysis)
 
     jobs = [_analyze(res) for res in parsed.values()]
@@ -256,18 +240,18 @@ async def run_prover(
     # 12. Format results as markdown
     report = load_jinja_template("rule_feedback.j2", results=results_with_analysis)
 
-    # 13. Count failures, possibly summarize
-    failed_count = sum(1 for r, _ in results_with_analysis if r.status != "VERIFIED")
-
     prover_report = {}
+    failed_count = 0
     for i in parsed.values():
         rule_name = i.path.rule
+        if i.status != "VERIFIED":
+            failed_count += 1
         if rule_name in prover_report and not prover_report[rule_name]:
             continue
         prover_report[rule_name] = i.status == "VERIFIED"
 
-    if summarization_threshold is not None and failed_count > summarization_threshold:
-        todo_list = await _report_to_todo_list(llm, report)
+    if isinstance(cex, SummarizingCexHandler) and cex.summarization_threshold < failed_count:
+        todo_list = await cex.summarize(report)
         return SummarizedReport(report=report, todo_list=todo_list, rule_status=prover_report)
 
     # 14. Normal return

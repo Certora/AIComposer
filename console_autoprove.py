@@ -2,6 +2,8 @@
 
 import asyncio
 
+import composer.bind as _
+
 from composer.ui.autoprove_console import AutoProveConsoleHandler
 from composer.spec.source.autoprove_common import _entry_point, Executor
 

@@ -25,7 +25,7 @@ from composer.prover.ptypes import RuleResult
 from graphcore.graph import LLM
 
 from composer.prover.core import (
-    CloudConfig, ProverOptions, ProverCallbacks, run_prover, SummarizedReport
+    CloudConfig, ProverOptions, ProverCallbacks, run_prover, SummarizedReport, DefaultCexHandler
 )
 from composer.diagnostics.stream import (
     ProverOutputEvent, CloudPollingEvent, RuleAnalysisResult,
@@ -203,14 +203,12 @@ def get_prover_tool(
             ) as config_path:
                 async with sem:
                     result = await run_prover(
-                        state,
                         Path(project_root),
                         [f"certora/{config_path}"],
-                        llm,
                         tool_call_id,
                         ProverOptions(cloud=cloud),
                         _SpecCallbacks(get_stream_writer(), tool_call_id),
-                        summarization_threshold=10
+                        DefaultCexHandler(llm, state, summarization_threshold=10)
                     )
 
             if isinstance(result, str):

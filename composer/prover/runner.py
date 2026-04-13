@@ -7,6 +7,8 @@ from langgraph.runtime import get_runtime
 from langgraph.config import get_store
 from langgraph.store.base import BaseStore
 
+from graphcore.graph import LLM
+
 from composer.diagnostics.stream import (
     AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysisStart,
     ProverOutputEvent, CloudPollingEvent, RuleAuditResult
@@ -14,7 +16,7 @@ from composer.diagnostics.stream import (
 from composer.prover.ptypes import RuleResult
 from composer.prover.core import (
     RawReport, SummarizedReport, ProverOptions as CoreProverOptions,
-    ProverCallbacks, AnalysisCache, run_prover,
+    ProverCallbacks, run_prover, DefaultCexHandler
 )
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
@@ -93,21 +95,25 @@ class _AuditCallbacks(ProverCallbacks):
         }
         self._writer(evt)
 
-
-class _StoreCache:
-    def __init__(self, store: BaseStore, tool_call_id: str) -> None:
+class _CachingCEXAnalyzer(DefaultCexHandler):
+    def __init__(
+        self,
+        state: AIComposerState,
+        llm: LLM,
+        store: BaseStore
+    ):
+        super().__init__(llm=llm, state=state, summarization_threshold=10)
         self._store = store
-        self._tool_call_id = tool_call_id
-
-    async def get(self, rule: RuleResult) -> str | None:
-        d = await self._store.aget(("cex", self._tool_call_id), rule.path.pprint())
+    
+    @override
+    async def analyze_cex(self, rule: RuleResult, tid: str) -> str | None:
+        d = await self._store.aget(("cex", tid), rule.path.pprint())
         if d is not None:
             return d.value["analysis"]
-        return None
-
-    async def put(self, rule: RuleResult, analysis: str) -> None:
-        await self._store.aput(("cex", self._tool_call_id), rule.path.pprint(), {"analysis": analysis})
-
+        res = await super().analyze_cex(rule, tid)
+        if res is not None:
+            await self._store.aput(("cex", tid), rule.path.pprint(), {"analysis": res})
+        return res
 
 async def certora_prover(
     source_files: List[str],
@@ -149,18 +155,14 @@ async def certora_prover(
                 args.extend(["--rule", rule])
 
             store = get_store()
-            cache: AnalysisCache | None = _StoreCache(store, tool_call_id) if store is not None else None
 
             result = await run_prover(
-                state,
                 Path(temp_dir),
                 args,
-                ctxt.llm,
                 tool_call_id,
                 CoreProverOptions(cloud=ctxt.prover_opts.cloud),
                 _AuditCallbacks(writer, tool_call_id),
-                analysis_cache=cache,
-                summarization_threshold=10,
+                _CachingCEXAnalyzer(state, ctxt.llm, store)
             )
 
             return result

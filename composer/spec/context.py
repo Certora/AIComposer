@@ -58,12 +58,9 @@ class CVL_TOOLS:
 
 type SourceBuilder = Annotated[Builder[None, None, None], SOURCE_TOOLS]
 type CVLOnlyBuilder = Annotated[Builder[None, None, None], CVL_TOOLS]
-type CVLBuilder = Annotated[Builder[None, None, None], SOURCE_TOOLS, CVL_TOOLS]
 
 
 type PlainBuilder = Builder[None, None, None]
-
-type AnalysisInput = tuple[SourceCode, SourceBuilder] | tuple[SystemDoc, PlainBuilder]
 
 
 # ---------------------------------------------------------------------------

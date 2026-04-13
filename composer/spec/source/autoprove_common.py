@@ -6,9 +6,6 @@ import pathlib
 import uuid
 from typing import cast, Protocol, Callable, Awaitable
 
-import composer.bind as _
-
-
 from graphcore.tools.memory import async_memory_tool
 
 from composer.input.types import ModelOptions, RAGDBOptions
@@ -25,7 +22,7 @@ from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResul
 from composer.spec.source.prover import CloudConfig
 from composer.spec.source.source_env import build_source_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
-from composer.ui.autoprove_app import AutoProveApp, AutoProvePhase
+from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.ui.multi_job_app import HandlerFactory
