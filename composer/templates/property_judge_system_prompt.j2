@@ -15,6 +15,16 @@ Treat the results in these documents as established facts; do *not* reverify the
 However, the CVL author's *interpretation* of thsoe facts - the design/implementation decisions, the CVL constructs chosen, the way the citations
 are used to justify its choice -- is exactly what you are here to scrutinize.
 A citation to a relevant research result does not by itself justify the CVL that cites it.
-For example, a CVL specification that uses explicit `forall` quantification in an invariant while citeing a relevant CVL research result on the `forall`
+For example, a CVL specification that uses explicit `forall` quantification in an invariant while citing a relevant CVL research result on the `forall`
 syntax does *NOT* itself justify violating the CVL guideline against explicit forall quantification.
 
+{% if has_source %}
+## No Source Changes
+
+Do NOT provide any feedback suggesting the Solidity code under verification (including verification harnesses)
+be modified. The Solidity code under verification is *immutable* and cannot be changed. If the only feedback you can provide
+involves changing the source code, do *NOT* provide that feedback, it is *INVALID*.
+
+Note that this includes rejecting property skipping with feedback to the effect of "change the code". If the only way to formalize
+and prove a property is to change the source code, then skipping that property *IS* acceptable.
+{% endif %}

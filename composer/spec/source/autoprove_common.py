@@ -6,6 +6,8 @@ import pathlib
 import uuid
 from typing import cast, Protocol, Callable, Awaitable
 
+import composer.bind as _
+
 
 from graphcore.tools.memory import async_memory_tool
 

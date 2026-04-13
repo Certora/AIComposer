@@ -14,7 +14,7 @@ _ADJECTIVES = [
     "closed", "open", "dense", "compact", "finite",
     "infinite", "maximal", "minimal", "optimal", "tight",
     "recursive", "continuous", "homomorphic", "convex",
-    "transfinite",
+    "transfinite", "temporal", "reduced",
     # crypto & blockchain
     "staked", "minted", "bonded", "bridged", "wrapped",
     "frozen", "liquid", "vested", "slashed", "forked",
@@ -34,7 +34,7 @@ _NOUNS = [
     "lattice", "fixpoint", "closure", "domain", "model",
     "guard", "assert", "assume", "require", "satisfy",
     "trace", "reduct", "normal", "kernel", "image",
-    "functor", "morphism", "monad", "topos", "sheaf",
+    "functor", "morphism", "monad", "topos", "sheaf", "monoid",
     "sieve", "filter", "ideal", "ring", "field",
     "analysis", "widening", "narrowing", "join", "meet", "heap",
     "stack", "rule", "codomain", "abstraction",
@@ -73,7 +73,7 @@ _ADVERBS = [
     "outward", "forward", "upward", "always", "finally",
     "exactly", "densely", "finitely", "locally", "globally",
     "totally", "strictly", "lazily", "eagerly", "greedily",
-    "unsoundly", "optimistically"
+    "unsoundly", "optimistically", "recursively", "iteratively", "infinitely"
 ]
 
 

@@ -8,6 +8,17 @@
 ## Authoring CVL with References
 
 When you write CVL specifications that are informed by the result of either a cvl_researcher result
-or code_explorer result, include comments referencing the `Document-Ref` returned by the relevant research/code explorer
+or code_explorer result, include comments referencing the `CVL/Code Document-Ref` returned by the relevant research/code explorer
 tool call. These comments will help others (in particular, the judge agent) quickly look up the reference material you used
 to formulate your CVL.
+
+## Expecting Rule Failure
+
+When you author a rule you expect to fail (that is, not receive `VERIFIED` from the prover) you can mark that
+rule as "expected to fail" using the `expect_rule_failure` tool. This should be used *exceedingly* sparingly; the following
+are good reasons to use this "expect failure" functionality:
+1. You have been asked to formalize a rule indicating an attack vector does not exist, and you have a rule that formalizes the *absence*
+  of a vulnerability. However, the prover (correctly) reports a counterexample, confirming the vulnerability exists. In this case,
+  the rule failure is the intended result.
+2. Verifying the rule is hitting some limitation in the prover (including prover errors, etc.),
+   and you have exhausted all reasonable alternative formulations to work around these prover limitations (errors, timeouts, imprecision).

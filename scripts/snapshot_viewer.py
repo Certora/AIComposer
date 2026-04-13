@@ -322,7 +322,7 @@ def main():
     group.add_argument("--thread", help="Thread ID directly (skip snapshot lookup)")
     args = parser.parse_args()
 
-    mnemonic: str | None = None
+
     if args.thread:
         thread_id = args.thread
     else:

@@ -1,7 +1,7 @@
 from typing import Literal, Optional, TypeVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-StatusCodes = Literal["VERIFIED", "VIOLATED", "TIMEOUT", "ERROR", "SANITY_FAILED"]
+StatusCodes = Literal["VERIFIED", "VIOLATED", "TIMEOUT", "ERROR", "SANITY_FAILED", "SKIPPED"]
 
 class _Missing:
     pass
@@ -58,10 +58,14 @@ class RuleResult:
     name is the name of the rule, status is the status of the rule.
     If status == VIOLATED, then cex_dump is non-null, and will contain the XML representation
     of the CEX
+
+    If status == ERROR, error_msg is non-none
     """
     path: RulePath
     cex_dump: Optional[str]
     status: StatusCodes
+
+    error_messages: list[str] = field(default_factory=list)
 
     @property
     def name(self) -> str:

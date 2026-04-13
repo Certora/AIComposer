@@ -18,12 +18,6 @@ import asyncio
 
 from composer.io.context import emit_custom_event
 
-# Path to PreAudit source directory
-PREAUDIT_PATH = os.environ.get("PREAUDIT_PATH")
-if PREAUDIT_PATH is None:
-    raise ValueError("You must set the PREAUDIT_PATH in your environment")
-PREAUDIT_SRC_PATH = Path(PREAUDIT_PATH) / "src"
-
 class SetupSuccess(BaseModel):
     """Result of running PreAudit compilation analysis and summary generation."""
     prover_config: dict  # Contents of compilation_config.conf
@@ -71,6 +65,14 @@ async def run_preaudit_setup(
     Returns:
         SetupResult with compilation config and summaries path
     """
+
+    # Path to PreAudit source directory
+    PREAUDIT_PATH = os.environ.get("PREAUDIT_PATH")
+    if PREAUDIT_PATH is None:
+        raise ValueError("You must set the PREAUDIT_PATH in your environment")
+    PREAUDIT_SRC_PATH = Path(PREAUDIT_PATH) / "src"
+
+
     contract_name = main_contract
     assert (project_root / relative_path).is_file()
 

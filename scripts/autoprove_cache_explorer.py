@@ -30,6 +30,7 @@ from composer.spec.source.harness import (
     AgentSystemDescription,
     HarnessResult,
 )
+from composer.spec.source.autoprove_common import _root_cache_key
 from composer.spec.source.summarizer import _summary_key, _SummaryCache
 from composer.spec.source.struct_invariant import STRUCTURAL_INV_KEY, Invariants
 from composer.spec.source.common_pipeline import PROPERTIES_KEY, INV_CVL_KEY, _component_cache_key, _batch_cache_key
@@ -366,18 +367,6 @@ def format_value(val: AutoProveCachedValue) -> list[str]:
 # CLI
 # ---------------------------------------------------------------------------
 
-def _root_cache_key(
-    project_root: str,
-    system_doc_path: pathlib.Path,
-    relative_path: str,
-    contract_name: str,
-) -> str:
-    """Same logic as tui_autoprove._root_cache_key."""
-    doc_hash = hashlib.sha256(system_doc_path.read_bytes()).hexdigest()
-    combined = "|".join([project_root, doc_hash, relative_path, contract_name])
-    return hashlib.sha256(combined.encode()).hexdigest()[:16]
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Cache & Memory Explorer for Auto-Prove pipeline"
@@ -407,7 +396,7 @@ def main() -> int:
     store = get_store()
 
     root_ns = (args.cache_ns, _root_cache_key(
-        str(project_root), sys_path, relative_path, contract_name,
+        args.project_root, sys_path, relative_path, contract_name,
     ))
     print(f"Root namespace: {root_ns}")
 

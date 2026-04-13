@@ -141,6 +141,11 @@ Verify that the specification covers all {{ properties | length }} listed proper
 - If the author declared a skip for a property: critically evaluate the justification. If the property IS expressible in CVL
   (e.g., using ghost state, invariants, or other CVL features), reject the skip and explain how it can be formalized.
   Only accept a skip if the property is genuinely beyond CVL's expressiveness.
+{% if has_source %}
+  If the property being skipped could be formalized with Solidity code changes, the skip is VALID. Do *NOT* reject
+  skips with advice to change the Solidity code. The Solidity code is *IMMUTABLE* and suggestions to change the Solidity
+  code are INVALID.
+{% endif %}
 
 **Array quantification limitation**: The Certora Prover cannot universally quantify over
 dynamic-length arrays. Properties that reason about all elements of an array can only be
