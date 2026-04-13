@@ -1,9 +1,16 @@
-from typing import Protocol, Literal
+from typing import Protocol, Literal, TypedDict
 from dataclasses import dataclass
 
 from composer.input.types import ModelOptions, LangraphOptions, RAGDBOptions
 
 Ecosystem = Literal["evm", "soroban", "move", "solana"]
+
+class TokenUsageDict(TypedDict, total=False):
+    """Dictionary for accumulating token usage across LLM calls."""
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    cache_creation_input_tokens: int
 
 class AnalysisArgs(ModelOptions, LangraphOptions, RAGDBOptions, Protocol):
     folder: str
