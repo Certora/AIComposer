@@ -27,6 +27,11 @@ class PreprocessedPDF:
     links: list[str] = field(default_factory=list)
 
 
+def pdf_key(path: Path) -> str:
+    pdf_bytes = path.read_bytes()
+    content_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    return content_hash
+
 def preprocess_pdf(path: Path) -> PreprocessedPDF:
     """Preprocess a PDF file: compute hash, base64 encode, extract links.
 

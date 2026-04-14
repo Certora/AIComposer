@@ -11,9 +11,13 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from composer.corpus.pipeline import STAGE_NAMES, StateCache, process_all
-from composer.workflow.services import create_llm_base, get_store
+import composer.bind as _
 
+from composer.corpus.pipeline import STAGE_NAMES, StateCache, process_all
+from composer.workflow.services import create_llm_base, store_context
+from composer.io.context import with_handler
+from composer.io.event_handler import NullEventHandler
+from composer.io.protocol import NullIOHandler
 
 @dataclass
 class LLMConfig:
@@ -22,7 +26,7 @@ class LLMConfig:
     tokens: int
     thinking_tokens: int | None
     memory_tool: bool = False
-
+    interleaved_thinking: bool = False
 
 async def main() -> int:
     parser = argparse.ArgumentParser(
@@ -102,16 +106,20 @@ async def main() -> int:
         thinking_tokens=args.thinking_tokens,
     ))
 
-    store = get_store()
-    cache = StateCache(store, args.cache_dir, namespace=args.cache_namespace)
-    sem = asyncio.Semaphore(args.concurrency)
 
-    await process_all(
-        args.pdf_dir, args.work_dir, cache, args.output_dir,
-        llm_triage, llm_extraction, llm_analysis,
-        sem,
-        force_stages=frozenset(args.force),
-    )
+    async with store_context() as store, with_handler(
+        NullIOHandler(), NullEventHandler()
+    ):
+        cache = StateCache(store, args.cache_dir, namespace=args.cache_namespace)
+        sem = asyncio.Semaphore(args.concurrency)
+        report_sem = asyncio.Semaphore(10)
+
+        await process_all(
+            cache, pdf_dir=args.pdf_dir, work_dir=args.work_dir, output_dir=args.output_dir,
+            llm_triage=llm_triage, llm_extraction=llm_extraction, llm_analysis=llm_analysis,
+            sem=sem, report_sem=report_sem,
+            force_stages=frozenset(args.force)
+        )
 
     return 0
 

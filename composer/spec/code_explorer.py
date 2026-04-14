@@ -9,20 +9,17 @@ from typing import NotRequired, override, Protocol, Any
 
 from pydantic import Field, BaseModel
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 
-from graphcore.graph import Builder, FlowInput, MessagesState
+from graphcore.graph import FlowInput, MessagesState
 from graphcore.tools.schemas import WithAsyncImplementation
-from graphcore.tools.vfs import fs_tools
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.templates.loader import load_jinja_template
 from composer.spec.tool_env import BaseSourceTools, BasicAgentTools
 from composer.spec.util import uniq_thread_id
-from composer.spec.agent_index import AgentIndex, IndexedTool, WithAgentIndex
+from composer.spec.agent_index import AgentIndex, IndexedTool
 
 
 CODE_EXPLORER_SYS_PROMPT = """\

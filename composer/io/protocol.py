@@ -69,6 +69,26 @@ class IOHandler[H](Protocol):
         """
         ...
 
+class NullIOHandler[H]:
+    async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str):
+        pass
+
+    async def log_state_update(self, path: list[str], st: dict):
+        pass
+
+    async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
+        pass
+
+    async def log_end(self, path: list[str]):
+        pass
+
+    async def human_interaction(
+        self,
+        ty: H,
+        debug_thunk: Callable[[], None]
+    ) -> str:
+        raise NotImplementedError("HITL not implemented")
+
 
 class WorkflowPurpose(enum.Enum):
     """Identifies which sub-workflow a thread belongs to."""

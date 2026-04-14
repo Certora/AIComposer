@@ -7,6 +7,8 @@ document their verification mechanism.
 """
 
 from typing import NotRequired
+from pathlib import Path
+from dataclasses import dataclass
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -47,8 +49,9 @@ class AnalyzedRule(BaseModel):
         description="Notable implementation details: helper functions, dispatchers, summarizations, etc."
     )
     commentary: str = Field(
-        description="A high-level description of the property being checked/enforced by the rule AND why this matters to the protocol."
+        description="Why this matters to the protocol."
     )
+    property_description: str = Field(description="A brief description of the property being checked by the rule/invariant.")
 
 
 class UnmatchedRuleResult(BaseModel):
@@ -74,10 +77,40 @@ class SourceTreeAnalysisResult(BaseModel):
 class _AnalysisST(MessagesState):
     result: NotRequired[SourceTreeAnalysisResult]
 
+_LIBRARY_INDICATORS = frozenset({
+    "openzeppelin-contracts", "openzeppelin-contracts-upgradeable", "@openzeppelin",
+    "solady", "solmate", "forge-std", "ds-test",
+    "prb-math", "prb-test", "prb-proxy", "erc4626-tests",
+})
+
+def lib_dir_is_packages(path: str) -> bool:
+    if (lib_dir := Path(path) / "lib").exists():
+        for li in _LIBRARY_INDICATORS:
+            if (lib_dir / li).exists():
+                return True
+    return False
+
+def _forbid_read_re(
+    path: str
+) -> str:
+    forbid_node_modules = "^node_modules/.*$"
+    if not lib_dir_is_packages(path):
+        return forbid_node_modules
+    return f"({forbid_node_modules})|(^lib/.*$)"
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+@dataclass
+class Env:
+    base_source_tools: tuple[BaseTool, ...]
+    builder: Builder[None, None, None]
+
+    @property
+    def has_source(self) -> bool:
+        return True
+    
 
 async def analyze_source_tree(
     rules: list[RuleRef],
@@ -107,19 +140,20 @@ async def analyze_source_tree(
     Returns:
         Tuple of (corpus entries, unmatched rules).
     """
-    repo_fs = fs_tools(source_path)
-    explorer = code_explorer_tool(llm, source_path)
+    repo_fs = fs_tools(source_path, forbidden_read=_forbid_read_re(source_path))
+
+    build = Builder().with_llm(llm).with_loader(load_jinja_template)
+
+    explorer = code_explorer_tool(Env(tuple(repo_fs), build))
 
     all_tools: list[BaseTool] = [*repo_fs, explorer]
     if extra_tools:
         all_tools.extend(extra_tools)
 
-    builder = Builder().with_llm(llm).with_tools(
-        all_tools
-    ).with_loader(load_jinja_template)
-
     graph = bind_standard(
-        builder, _AnalysisST,
+        build, _AnalysisST,
+    ).with_tools(
+        all_tools
     ).with_input(
         FlowInput,
     ).with_sys_prompt_template(

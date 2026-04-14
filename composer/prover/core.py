@@ -11,7 +11,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, cast
+from typing import AsyncIterator, cast, override
 from abc import ABC, abstractmethod
 import json
 import logging
@@ -74,7 +74,7 @@ class ProverCallbacks:
 class CexHandler(ABC):
     @abstractmethod
     async def analyze_cex(
-        self, rule: RuleResult, tid: str
+        self, rule: RuleResult
     ) -> str | None:
         ...
 
@@ -90,14 +90,16 @@ class SummarizingCexHandler(CexHandler):
         ...
 
 class DefaultCexHandler(SummarizingCexHandler):
-    def __init__(self, llm: LLM, state: MessagesState, summarization_threshold: int = 10):
+    def __init__(self, tid: str, llm: LLM, state: MessagesState, summarization_threshold: int = 10):
         super().__init__(summarization_threshold)
         self.state = state
         self.llm = llm
+        self.tid = tid
 
-    async def analyze_cex(self, rule: RuleResult, tid: str) -> str | None:
+    @override
+    async def analyze_cex(self, rule: RuleResult) -> str | None:
         messages = self.state["messages"]
-        analysis = await analyze_cex_raw(self.llm, messages, rule, tid)
+        analysis = await analyze_cex_raw(self.llm, messages, rule, self.tid)
         return analysis
 
     async def summarize(self, report: str) -> str:
@@ -138,7 +140,6 @@ PROVER REPORT:
 async def run_prover(
     folder: Path,
     args: list[str],
-    tool_call_id: str,
     options: ProverOptions,
     callbacks: ProverCallbacks,
     cex: CexHandler
@@ -225,7 +226,7 @@ async def run_prover(
         if rule.status != "VIOLATED":
             return (rule, None)
         await callbacks.on_analysis_start(rule)
-        res = await cex.analyze_cex(rule, tool_call_id)
+        res = await cex.analyze_cex(rule)
         if res is not None:
             await callbacks.on_analysis_complete(rule, res)
         return (rule, analysis)

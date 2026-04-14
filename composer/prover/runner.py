@@ -98,21 +98,22 @@ class _AuditCallbacks(ProverCallbacks):
 class _CachingCEXAnalyzer(DefaultCexHandler):
     def __init__(
         self,
+        tid: str,
         state: AIComposerState,
         llm: LLM,
         store: BaseStore
     ):
-        super().__init__(llm=llm, state=state, summarization_threshold=10)
+        super().__init__(tid, llm=llm, state=state, summarization_threshold=10)
         self._store = store
     
     @override
-    async def analyze_cex(self, rule: RuleResult, tid: str) -> str | None:
-        d = await self._store.aget(("cex", tid), rule.path.pprint())
+    async def analyze_cex(self, rule: RuleResult) -> str | None:
+        d = await self._store.aget(("cex", self.tid), rule.path.pprint())
         if d is not None:
             return d.value["analysis"]
-        res = await super().analyze_cex(rule, tid)
+        res = await super().analyze_cex(rule)
         if res is not None:
-            await self._store.aput(("cex", tid), rule.path.pprint(), {"analysis": res})
+            await self._store.aput(("cex", self.tid), rule.path.pprint(), {"analysis": res})
         return res
 
 async def certora_prover(
@@ -159,10 +160,9 @@ async def certora_prover(
             result = await run_prover(
                 Path(temp_dir),
                 args,
-                tool_call_id,
                 CoreProverOptions(cloud=ctxt.prover_opts.cloud),
                 _AuditCallbacks(writer, tool_call_id),
-                _CachingCEXAnalyzer(state, ctxt.llm, store)
+                _CachingCEXAnalyzer(tool_call_id, state, ctxt.llm, store)
             )
 
             return result

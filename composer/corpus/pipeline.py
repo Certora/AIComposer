@@ -74,17 +74,17 @@ class StateCache:
     def _namespace(self, pdf_hash: str) -> tuple[str, ...]:
         return (self._namespace_prefix, str(_CACHE_VERSION), pdf_hash)
 
-    def load(self, pdf_hash: str) -> PipelineState | None:
+    async def load(self, pdf_hash: str) -> PipelineState | None:
         """Load pipeline state from the store. Returns None if not found."""
-        item = self._store.get(self._namespace(pdf_hash), "state")
+        item = await self._store.aget(self._namespace(pdf_hash), "state")
         if item is None:
             return None
         return PipelineState.model_validate(item.value)
 
-    def save(self, state: PipelineState) -> None:
+    async def save(self, state: PipelineState) -> None:
         """Write state to both store and local JSON."""
         dumped = state.model_dump()
-        self._store.put(self._namespace(state.pdf_hash), "state", dumped)
+        await self._store.aput(self._namespace(state.pdf_hash), "state", dumped)
         json_path = self._cache_dir / f"{state.pdf_hash}.json"
         json_path.write_text(json.dumps(dumped, indent=2))
 
@@ -118,19 +118,37 @@ def _url_dir_name(url: str) -> str:
     """Derive a short, filesystem-safe directory name from a URL."""
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
+async def ensure_report(
+    work_dir: Path,
+    state: PipelineState,
+    url: str,
+    report_sem: asyncio.Semaphore
+) -> Path | None:
+    if url in state.source_dirs and (dir := (work_dir / state.source_dirs[url])).exists():
+        return dir
+    url_dir = _url_dir_name(url)
+    res_path = work_dir / state.pdf_hash / url_dir
+    result = await download_sources(url, res_path, report_sem)
+    if result is not None:
+        return None
+    state.source_dirs[url] = str(res_path.relative_to(work_dir))
+    return res_path
+
 
 # ---------------------------------------------------------------------------
 # Single PDF processing
 # ---------------------------------------------------------------------------
 
 async def process_single_pdf(
+    pdf_dir: Path,
     pdf_path: Path,
     work_dir: Path,
     cache: StateCache,
     llm_triage: BaseChatModel,
     llm_extraction: BaseChatModel,
     llm_analysis: BaseChatModel,
-    sem: asyncio.Semaphore,
+    llm_sem: asyncio.Semaphore,
+    report_sem: asyncio.Semaphore,
     extra_tools: list[BaseTool] | None = None,
     force_stages: frozenset[str] = frozenset(),
 ) -> ProcessedReport | None:
@@ -143,9 +161,9 @@ async def process_single_pdf(
     pdf = preprocess_pdf(pdf_path)
 
     # Load or create state
-    state = cache.load(pdf.content_hash) or PipelineState(
+    state = await cache.load(pdf.content_hash) or PipelineState(
         pdf_hash=pdf.content_hash,
-        pdf_path=str(pdf_path),
+        pdf_path=str(pdf_path.relative_to(pdf_dir)),
     )
 
     _apply_force(state, force_stages)
@@ -155,15 +173,15 @@ async def process_single_pdf(
 
     # Stage 1: Triage
     if state.triage is None:
-        async with sem:
+        async with llm_sem:
             state.triage = await triage_report(pdf, llm_triage)
-        cache.save(state)
+        await cache.save(state)
 
     triage = state.triage
 
     if triage.report_type != "formal_verification":
         state.skipped_reason = f"Report type: {triage.report_type}"
-        cache.save(state)
+        await cache.save(state)
         return _assemble_result(state)
 
     # Stage 2: Resolve cloud run links from PDF
@@ -173,18 +191,18 @@ async def process_single_pdf(
     ]
     if not prover_urls:
         state.skipped_reason = "No cloud run URLs found in PDF"
-        cache.save(state)
+        await cache.save(state)
         return _assemble_result(state)
 
-    resolved_links = await resolve_cloud_links(prover_urls, sem)
+    resolved_links = await resolve_cloud_links(prover_urls, llm_sem)
 
     # Stage 3: Extraction (with resolved link context)
     if state.extraction is None:
-        async with sem:
+        async with llm_sem:
             state.extraction = await extract_report(
                 pdf, triage, resolved_links, llm_extraction,
             )
-        cache.save(state)
+        await cache.save(state)
 
     extraction = state.extraction
 
@@ -192,18 +210,17 @@ async def process_single_pdf(
     cloud_urls = list({link.output_url for link in resolved_links})
     pdf_work_dir = work_dir / pdf.content_hash
 
-    for url in cloud_urls:
-        if url in state.source_dirs and Path(state.source_dirs[url]).exists():
-            continue
-        dest = pdf_work_dir / _url_dir_name(url)
-        result = await download_sources(url, dest, sem)
-        if result is not None:
-            state.source_dirs[url] = str(result)
-            cache.save(state)
+    download_jobs = [
+        ensure_report(
+            work_dir, state, url, report_sem
+        ) for url in cloud_urls
+    ]
+    await asyncio.gather(*download_jobs)
+    await cache.save(state)
 
     if not state.source_dirs:
         state.skipped_reason = "No sources downloaded (all URLs failed)"
-        cache.save(state)
+        await cache.save(state)
         return _assemble_result(state)
 
     # Stage 5: Analysis — one agent per source tree
@@ -235,7 +252,7 @@ async def process_single_pdf(
         state_lock = asyncio.Lock()
 
         async def _analyze_one(url: str) -> None:
-            async with sem:
+            async with llm_sem:
                 entries, unmatched = await analyze_source_tree(
                     rules_by_url[url],
                     state.source_dirs[url],
@@ -246,7 +263,7 @@ async def process_single_pdf(
             async with state_lock:
                 state.analyzed_trees[url] = entries
                 state.unmatched.extend(unmatched)
-                cache.save(state)
+                await cache.save(state)
 
         await asyncio.gather(
             *(_analyze_one(u) for u in pending_urls)
@@ -260,14 +277,16 @@ async def process_single_pdf(
 # ---------------------------------------------------------------------------
 
 async def process_all(
+    cache: StateCache,
+    *,
     pdf_dir: Path,
     work_dir: Path,
-    cache: StateCache,
     output_dir: Path,
     llm_triage: BaseChatModel,
     llm_extraction: BaseChatModel,
     llm_analysis: BaseChatModel,
     sem: asyncio.Semaphore,
+    report_sem: asyncio.Semaphore,
     extra_tools: list[BaseTool] | None = None,
     force_stages: frozenset[str] = frozenset(),
 ) -> None:
@@ -287,10 +306,11 @@ async def process_all(
         print(f"[{idx + 1}/{total}] Processing {path.name}...")
         try:
             result = await process_single_pdf(
+                pdf_dir,
                 path, work_dir, cache,
                 llm_triage, llm_extraction, llm_analysis,
                 sem, extra_tools=extra_tools,
-                force_stages=force_stages,
+                force_stages=force_stages, report_sem=report_sem
             )
             if result is not None and result.skipped_reason:
                 print(f"  Skipped: {result.skipped_reason}")

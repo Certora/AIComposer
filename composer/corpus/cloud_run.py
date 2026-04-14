@@ -218,14 +218,6 @@ async def resolve_cloud_links(
     )
     return [r for r in results if r is not None]
 
-# Known library directory names — if any appear as direct children of lib/,
-# the entire lib/ tree is excluded.
-_LIBRARY_INDICATORS = frozenset({
-    "openzeppelin-contracts", "openzeppelin-contracts-upgradeable", "@openzeppelin",
-    "solady", "solmate", "forge-std", "ds-test",
-    "prb-math", "prb-test", "prb-proxy", "erc4626-tests",
-})
-
 
 def _to_zip_url(output_url: str) -> str | None:
     """Transform a cloud run output URL into its zipInput download URL.
@@ -244,18 +236,17 @@ def _to_zip_url(output_url: str) -> str | None:
             file=sys.stderr,
         )
         return None
+    
+    p = PurePosixPath(parsed.path).parts
 
-    new_path = parsed.path.replace("/output/", "/zipInput/", 1)
-    new_query = urlencode({"anonymousKey": keys[0]})
-    return urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        new_path,
-        "",  # params
-        new_query,
-        "",  # fragment
-    ))
+    if len(p) != 4 or p[0] != "/" or p[1] != "output":
+        return None
+    
+    job_id = p[3]
+    new_query = urlencode({"anonymousKey": keys[0]})    
+    final_url = f"{parsed.scheme}://{parsed.netloc}/v1/domain/jobs/{job_id}/f/inputs?{new_query}"
 
+    return final_url
 
 def _extract_sources(zip_bytes: bytes) -> dict[str, bytes]:
     """Extract files from the .certora_sources directory inside a ZIP.
@@ -286,36 +277,11 @@ def _extract_sources(zip_bytes: bytes) -> dict[str, bytes]:
     return result
 
 
-def _filter_libraries(files: dict[str, bytes]) -> dict[str, bytes]:
-    """Filter out known library directories from extracted sources.
-
-    Always excludes ``node_modules/``. Excludes ``lib/`` only if it
-    contains subdirectories matching known library indicators.
-    """
-    exclude_lib = False
-    for path in files:
-        parts = PurePosixPath(path).parts
-        if len(parts) >= 2 and parts[0] == "lib" and parts[1] in _LIBRARY_INDICATORS:
-            exclude_lib = True
-            break
-
-    result: dict[str, bytes] = {}
-    for path, content in files.items():
-        parts = PurePosixPath(path).parts
-        if parts[0] == "node_modules":
-            continue
-        if exclude_lib and parts[0] == "lib":
-            continue
-        result[path] = content
-
-    return result
-
-
 async def download_sources(
     url: str,
     dest: Path,
     sem: asyncio.Semaphore,
-) -> Path | None:
+) -> str | None:
     """Download and extract sources for a single cloud run URL.
 
     Args:
@@ -327,27 +293,25 @@ async def download_sources(
         Path to the source directory, or None if the URL lacks anonymousKey.
     """
     if dest.exists():
-        return dest
+        return None
 
     zip_url = _to_zip_url(url)
     if zip_url is None:
-        return None
+        return "No zip url found"
 
     async with sem:
         timeout = aiohttp.ClientTimeout(total=300)
-        async with aiohttp.ClientSession(headers=_NO_BROTLI_HEADERS, cookies={
-            "certoraKey": os.environ["CERTORAKEY"]
-        }) as session:
+        async with aiohttp.ClientSession(headers=_NO_BROTLI_HEADERS) as session:
             async with session.get(zip_url, timeout=timeout) as resp:
                 resp.raise_for_status()
                 zip_bytes = await resp.read()
-
-    files = _filter_libraries(_extract_sources(zip_bytes))
+    
+    full_source = _extract_sources(zip_bytes)
 
     dest.mkdir(parents=True, exist_ok=True)
-    for rel_path, content in files.items():
+    for rel_path, content in full_source.items():
         out = dest / rel_path
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(content)
 
-    return dest
+    return None

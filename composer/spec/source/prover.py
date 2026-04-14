@@ -205,10 +205,9 @@ def get_prover_tool(
                     result = await run_prover(
                         Path(project_root),
                         [f"certora/{config_path}"],
-                        tool_call_id,
                         ProverOptions(cloud=cloud),
                         _SpecCallbacks(get_stream_writer(), tool_call_id),
-                        DefaultCexHandler(llm, state, summarization_threshold=10)
+                        DefaultCexHandler(tool_call_id, llm, state, summarization_threshold=10)
                     )
 
             if isinstance(result, str):

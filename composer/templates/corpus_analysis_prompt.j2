@@ -21,7 +21,18 @@ For each rule below, search the source tree, locate its CVL implementation, and 
    - **Read the Solidity source code** that the rule is verifying to understand the protocol behavior being specified.
    - Explain the *mechanism* — how the rule achieves verification (ghost variables, hooks, invariant preservation strategy, etc.).
    - Explain *why* the property matters and *why* the rule is written the way it is.
-4. Submit your result with all analyzed rules and any unmatched rules.
+4. Submit your result with all analyzed rules and any unmatched rules. Your result for each rule should have the following fields:
+   1. `rule_name`: the name of the rule being reported on
+   2. `cvl_code`: The full CVL source code of the rule, including all helper functions/definitions
+   3. `spec_file`: the path to the `.spec` file containing the rule (relative to repo root)
+   4. `mechanism`: A description of how the rule achieves its verification goal; what ghost variables, hooks, invariant
+       preservation strategies, etc. it relied on
+   5. `implementation_notes`: Notable implementation details; helper functions, summarizations, etc.
+   6. `property_description`: A brief, high-level description of the property being checked by the rule/invariant.
+   7. `commentary`: *WHY* this rule matters to the protocol
+
+**CLARIFICATION**: `mechanism` should focus on the verification strategies (inductive strengthening used, supporting lemmas, ghost state, etc.),
+whereas `implementation_notes` should focus on specific CVL implementation details (what definitions/helpers were used)
 
 ## What makes a good vs bad analysis
 
