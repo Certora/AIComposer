@@ -93,7 +93,7 @@ def lib_dir_is_packages(path: str) -> bool:
 def _forbid_read_re(
     path: str
 ) -> str:
-    forbid_node_modules = "^node_modules/.*$"
+    forbid_node_modules = "\\.certora_.+|^node_modules/.*$"
     if not lib_dir_is_packages(path):
         return forbid_node_modules
     return f"({forbid_node_modules})|(^lib/.*$)"
@@ -192,11 +192,13 @@ async def analyze_source_tree(
                 rule_description=ref.rule.description,
                 status=ref.rule.status,
                 assumptions=ref.group.assumptions,
+
                 cvl_code=ar.cvl_code,
                 spec_file=ar.spec_file,
                 mechanism=ar.mechanism,
                 implementation_notes=ar.implementation_notes,
-                commentary=ar.commentary
+                commentary=ar.commentary,
+                extracted_property_description=ar.property_description
             ))
 
     unmatched: list[UnmatchedRule] = []

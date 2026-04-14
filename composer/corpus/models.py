@@ -127,14 +127,21 @@ class CorpusEntry(BaseModel):
     cloned repository and extracting its implementation details.
     """
     rule_name: str = Field(description="Name of the CVL rule or invariant")
+
+    # property group data
     property_id: str = Field(description="ID of the parent property group")
     property_title: str = Field(description="Title of the parent property group")
     property_description: str = Field(description="Description of the parent property group")
-    rule_description: str = Field(description="Natural language description of what this rule checks")
+
+    # rule data
+    rule_description: str = Field(description="Natural language description of what this rule checks extracted from the report")
     status: str = Field(description="Verification status from the report")
     assumptions: str | None = Field(
         default=None, description="Assumptions inherited from the parent property group"
     )
+
+    # extracted data
+
     cvl_code: str = Field(description="The CVL source code of the rule")
     spec_file: str = Field(description="Path to the .spec file containing this rule (relative to repo root)")
     mechanism: str = Field(
@@ -147,6 +154,7 @@ class CorpusEntry(BaseModel):
         description="Notable implementation details: helper functions used, dispatchers, summarizations, etc."
     )
     commentary: str
+    extracted_property_description: str | None = Field(default=None)
 
 
 class UnmatchedRule(BaseModel):
@@ -209,3 +217,5 @@ class PipelineState(BaseModel):
         default=None,
         description="If set, processing was aborted at this reason",
     )
+
+    report_links: list[str] | None = Field(description="All of the output URLs extracted from the report", default=None)

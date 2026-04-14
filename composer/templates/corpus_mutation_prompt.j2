@@ -1,0 +1,17 @@
+You are generating a mutation for a formal property for a formal verification engagement for **{{ protocol_description }}**.
+
+## Property to test
+- **Property description**: {{ property_description }}
+- **Rule name**: {{ rule_name }}
+
+A coworker has written a CVL rule (hidden from you) that purports to check this property.
+
+## Task
+
+1. Read the Solidity source files that this rule verifies. Use `grep_files` to locate relevant contracts.
+2. Craft a mutation: modify the Solidity source to introduce a behavioral change that violates the property; 
+   the goal is to make changes the CVL rule *should* catch but *might not*.
+3. Run the prover with `prover_runner` to test your mutation. Be sure to describe what you changed in `what_i_did`.
+
+Remember: a mutation that the rule **catches** (prover reports a violation) demonstrates the rule is strong in that area.
+A mutation that **slips past** the rule (prover still reports verified) reveals a gap in the specification. Both outcomes are valuable data.

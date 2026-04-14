@@ -34,6 +34,24 @@ For each rule below, search the source tree, locate its CVL implementation, and 
 **CLARIFICATION**: `mechanism` should focus on the verification strategies (inductive strengthening used, supporting lemmas, ghost state, etc.),
 whereas `implementation_notes` should focus on specific CVL implementation details (what definitions/helpers were used)
 
+**CLARIFICATION**: There can and should be significant overlap between the `property_description` you output for a rule and the original rule description. You should
+base your output `property_description` on the rule description, elaborating with any signficant details you extract from your analysis. The resulting
+description should still be a concise, high-level, natural language description of *property* checked by the rule (NOT the rule itself).
+
+Here are some examples for this distinction:
+
+GOOD:
+**Input Rule Description**: The rule ensures all states are valid (too vague)
+**Output Property Description**: The rule ensures all states are valid, in particular, all user orders are backed by a bid (adds important details)
+
+GOOD:
+**Input Rule Description**: This rule ensures only administrative roles can issue emergency pauses (sufficiently detailed)
+**Output Property Description**: This rule ensures only administrative roles can issue emergency pauses (copied verbatim, input was sufficient)
+
+BAD:
+**Input Rule Description**: This rule ensures only administrative roles can issue emergency pauses (sufficiently detailed)
+**Output Property Description**: This rule ensures only administrative roles can issue emergency pauses by first assuming the caller address is a non-administrator and invoking the ... (goes into inappropriate implementation detail)
+
 ## What makes a good vs bad analysis
 
 Your analysis should explain *why* the property matters and *why* the rule is written the way it is — not just recount the rule body. In particular, your explanation should try to explain

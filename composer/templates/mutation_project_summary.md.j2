@@ -1,0 +1,18 @@
+# Mutation Testing: {{ protocol_name }}
+
+## Overview
+
+- **Rules tested**: {{ total_rules }}
+- **Rules fully robust** (all mutants killed): {{ rules_all_killed }}
+- **Rules with gaps** (some mutants survived): {{ rules_with_gaps }}
+- **Total mutants**: {{ total_mutants }}
+- **Total killed**: {{ total_killed }}
+- **Total survived**: {{ total_survived }}
+
+## Per-rule breakdown
+
+| Rule | Property | Mutants | Killed | Survived |
+|------|----------|---------|--------|----------|
+{% for r in rules -%}
+| `{{ r.rule_name }}` | {{ r.property_title }} | {{ r.total_mutants }} | {{ r.killed }} | {{ "**%d**"|format(r.survived) if r.survived > 0 else "0" }} |
+{% endfor %}

@@ -229,7 +229,7 @@ async def run_prover(
         res = await cex.analyze_cex(rule)
         if res is not None:
             await callbacks.on_analysis_complete(rule, res)
-        return (rule, analysis)
+        return (rule, res)
 
     jobs = [_analyze(res) for res in parsed.values()]
     results_with_analysis: list[tuple[RuleResult, str | None]] = await asyncio.gather(*jobs)

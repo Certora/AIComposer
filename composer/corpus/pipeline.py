@@ -194,21 +194,22 @@ async def process_single_pdf(
         await cache.save(state)
         return _assemble_result(state)
 
-    resolved_links = await resolve_cloud_links(prover_urls, llm_sem)
-
     # Stage 3: Extraction (with resolved link context)
-    if state.extraction is None:
-        async with llm_sem:
-            state.extraction = await extract_report(
-                pdf, triage, resolved_links, llm_extraction,
-            )
+    if state.extraction is None or state.report_links is None:
+        resolved_links = await resolve_cloud_links(prover_urls, llm_sem)
+        if state.extraction is None:
+            async with llm_sem:
+                state.extraction = await extract_report(
+                    pdf, triage, resolved_links, llm_extraction,
+                )
+        if state.report_links is None:
+            state.report_links = [ link.output_url for link in resolved_links ]
         await cache.save(state)
 
     extraction = state.extraction
 
     # Stage 4: Download sources — one directory per cloud run URL
-    cloud_urls = list({link.output_url for link in resolved_links})
-    pdf_work_dir = work_dir / pdf.content_hash
+    cloud_urls = list(set(state.report_links))
 
     download_jobs = [
         ensure_report(
@@ -255,7 +256,7 @@ async def process_single_pdf(
             async with llm_sem:
                 entries, unmatched = await analyze_source_tree(
                     rules_by_url[url],
-                    state.source_dirs[url],
+                    str(work_dir / state.source_dirs[url]),
                     protocol_desc,
                     llm_analysis,
                     extra_tools=extra_tools,

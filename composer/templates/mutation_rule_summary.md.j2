@@ -1,0 +1,19 @@
+# Rule: `{{ rule_name }}`
+
+**Property group**: {{ property_title }}
+**Property description**: {{ property_description }}
+**Rule description**: {{ rule_description }}
+
+## Results
+
+- **Total mutants**: {{ mutants | length }}
+- **Killed** (rule caught the violation): {{ killed }}
+- **Survived** (rule missed the violation): {{ survived }}
+
+## Mutant details
+
+| # | Description | Outcome |
+|---|-------------|---------|
+{% for m in mutants -%}
+| {{ loop.index }} | {{ m.desc }} | {{ "Killed" if m.killed else "**SURVIVED**" }} |
+{% endfor %}
