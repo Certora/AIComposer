@@ -9,7 +9,6 @@ from langgraph.graph import MessagesState
 from langchain_core.tools import BaseTool
 
 from graphcore.graph import FlowInput
-from graphcore.result_registry import result_type
 
 from composer.spec.context import (
     WorkflowContext, CVLJudge
@@ -24,7 +23,6 @@ from composer.spec.tool_env import BasicAgentTools
 from composer.spec.system_model import ContractComponentInstance
 from composer.spec.util import uniq_thread_id
 
-@result_type
 class PropertyFeedback(BaseModel):
     """
     The feedback on the properties

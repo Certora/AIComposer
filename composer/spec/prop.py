@@ -2,9 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from graphcore.result_registry import result_type
-
-@result_type
 class PropertyFormulation(BaseModel):
     """
     A property or invariant that must hold for the component

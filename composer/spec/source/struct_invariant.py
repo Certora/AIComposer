@@ -19,7 +19,6 @@ from langchain_core.messages import ToolMessage
 
 from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 from graphcore.graph import FlowInput
-from graphcore.result_registry import result_type
 
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.graph_builder import bind_standard, run_to_completion
@@ -39,7 +38,7 @@ class BaseInvariant(BaseModel):
     name: str = Field(description="A unique, descriptive name of the invariant. Must not contain spaces (use snake casing if necessary)")
     description: str = Field(description="A semi-formal, natural language description of the invariant to formalize.")
 
-@result_type
+
 class Invariants(BaseModel):
     """The structural invariants identified in the analysis."""
     inv: list[BaseInvariant] = Field(description="The invariants you identified")
@@ -53,7 +52,7 @@ type InvFeedbackSort = Literal[
     "NOT_FORMAL",
 ]
 
-@result_type
+
 class InvariantFeedback(BaseModel):
     """Feedback on a given invariant."""
     sort: InvFeedbackSort = Field(description="Your classification on the invariant")

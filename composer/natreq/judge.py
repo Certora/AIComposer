@@ -8,7 +8,6 @@ from graphcore.tools.memory import MemoryBackend, memory_tool
 from graphcore.graph import FlowInput, build_async_workflow, WithToolCallId
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.vfs import VFSState
-from graphcore.result_registry import result_type
 
 from langgraph.graph import MessagesState, StateGraph
 from langgraph.prebuilt import InjectedState
@@ -47,7 +46,6 @@ class RequirementAnalysis(BaseModel):
     commentary: str | None = Field(description="Any commentary or explanation for the classification of this requirement. In the case of" \
     "PARTIAL or VIOLATED classifications, do NOT suggest code changes: simply explain the deficiencies in the implementation.")
 
-@result_type
 class JudgeResult(BaseModel):
     judgement_result: list[RequirementAnalysis] = Field(description="A list of analysis results, with one element per original requirement.")
 

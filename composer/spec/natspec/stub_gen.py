@@ -11,7 +11,6 @@ from typing import NotRequired
 from pydantic import BaseModel, Field
 
 from graphcore.graph import FlowInput
-from graphcore.result_registry import result_type
 
 from langgraph.graph import MessagesState
 
@@ -24,7 +23,6 @@ from composer.spec.util import uniq_thread_id
 
 DESCRIPTION = "Stub generation"
 
-@result_type
 class StubDeclaration(BaseModel):
     """
     The generated stub
