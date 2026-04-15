@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from typing import NotRequired
 
 from graphcore.graph import FlowInput
+from graphcore.result_registry import result_type
 
 from langgraph.graph import MessagesState
 
@@ -35,6 +36,7 @@ class InterfaceDecl(BaseModel):
     def path(self) -> str:
         return f"{self.solidity_identifier}.sol"
 
+@result_type
 class InterfaceResult(BaseModel):
     """
     The result of your interface generation.

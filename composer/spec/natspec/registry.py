@@ -23,6 +23,7 @@ from langgraph.store.base import BaseStore
 
 from graphcore.graph import FlowInput
 from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.result_registry import result_type
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
@@ -49,6 +50,7 @@ class FieldMetadata(BaseModel):
 # Registry agent result
 # ---------------------------------------------------------------------------
 
+@result_type
 class RegistryResult(BaseModel):
     """Decision on a stub field request."""
     field_name: str = PydanticField(

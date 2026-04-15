@@ -22,6 +22,7 @@ from langgraph.runtime import get_runtime
 
 from graphcore.graph import FlowInput, tool_state_update, tool_return
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
+from graphcore.result_registry import result_type
 
 from composer.spec.context import (
     WorkflowContext, CacheKey, CVLGeneration, CVLJudge,
@@ -45,6 +46,7 @@ CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
 # Feedback types
 # ---------------------------------------------------------------------------
 
+@result_type
 class SkippedProperty(BaseModel):
     """A property the agent explicitly decided not to formalize."""
     property_index: int = Field(description="1-indexed property number from the batch listing")

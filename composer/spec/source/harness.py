@@ -25,6 +25,7 @@ import subprocess
 from pydantic import Field, BaseModel
 
 from langgraph.graph import MessagesState
+from graphcore.result_registry import result_type
 
 from graphcore.graph import FlowInput
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
@@ -87,6 +88,7 @@ class SystemDescriptionBase[T: ClosureContractBase](BaseModel):
     external_interfaces: list[ExternalInterface] = Field(description="A list of the external contract actors interacted with by the closure")
 
 
+@result_type
 class AgentSystemDescription(SystemDescriptionBase[ClosureContract]):
     """
     The result of your analysis
@@ -195,6 +197,7 @@ class GeneratedHarness(BaseModel):
 class GeneratedHarnessSource(GeneratedHarness):
     source: str
 
+@result_type
 class HarnessAgentResult(BaseModel):
     """
     The results of your harness generation
