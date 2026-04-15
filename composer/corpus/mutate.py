@@ -1,8 +1,8 @@
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import difflib
-from contextlib import asynccontextmanager
+from datetime import datetime
 
 import pathlib
 from typing import NotRequired, override, Callable, AsyncContextManager
@@ -34,7 +34,6 @@ from composer.spec.util import uniq_thread_id
 import hashlib
 
 from pathlib import Path
-
 
 def url_to_ns(u: str):
     return hashlib.sha256(u.encode()).hexdigest()
@@ -102,11 +101,22 @@ class ProverDeps:
     mat: VFSAccessor[MutationState]
     rule_name: str
     prover_sem: ProverSemaphore
+    agent_desc: str
 
 class NullCexHandler(CexHandler):
     @override
     async def analyze_cex(self, rule: RuleResult) -> str | None:
         return None
+    
+class ProverDebug(ProverCallbacks):
+    def __init__(self, desc: str):
+        self.desc = desc
+
+    async def on_prover_run(self, args: list[str]) -> None:
+        print(f"{self.desc} Prover start -> {args}")
+    
+    async def on_prover_result(self, results: dict[str, RuleResult]) -> None:
+        print(f"{self.desc} Prover done")
 
 class ProverRunner(WithAsyncDependencies[Command, ProverDeps], WithInjectedId, WithInjectedState):
     """
@@ -119,8 +129,8 @@ class ProverRunner(WithAsyncDependencies[Command, ProverDeps], WithInjectedId, W
             async with deps.prover_sem:
                 res = await run_prover(
                     pathlib.Path(where),
-                    ["./run.conf", "--rule", deps.rule_name], ProverOptions(cloud=CloudConfig()),
-                    ProverCallbacks(),
+                    ["./run.conf", "--rule", deps.rule_name, "--msg", deps.agent_desc], ProverOptions(cloud=CloudConfig()),
+                    ProverDebug(deps.agent_desc),
                     NullCexHandler()
                 )
                 if isinstance(res, str):
@@ -147,6 +157,38 @@ class PropAndMutants:
 class ProjectResult:
     protocol_name: str
     rules: list[PropAndMutants]
+
+
+def _run_id() -> str:
+    return f"run_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}"
+
+
+@dataclass
+class IncrementalProjectWriter:
+    project_dir: Path
+    protocol_name: str
+    _completed_rules: list[PropAndMutants] = field(default_factory=list, init=False)
+
+    def __post_init__(self):
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+
+    def write_mutant(self, rule_name: str, index: int, mutant: Mutant) -> None:
+        rule_dir = self.project_dir / _safe_dirname(rule_name)
+        mutant_dir = rule_dir / f"Mutant{index}"
+        _write_mutant_dir(mutant_dir, mutant)
+
+    def finish_rule(self, prop: PropAndMutants) -> None:
+        rule_dir = self.project_dir / _safe_dirname(prop.ent.rule_name)
+        rule_dir.mkdir(parents=True, exist_ok=True)
+        _write_rule_summary(rule_dir, prop)
+        self._completed_rules.append(prop)
+
+    def finish_project(self) -> None:
+        result = ProjectResult(
+            protocol_name=self.protocol_name,
+            rules=self._completed_rules,
+        )
+        _write_project_summary(self.project_dir, result)
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +234,8 @@ class Mutator():
 
         self.mat = mat
 
+        self.sanity_locks : dict[str, asyncio.Lock] = {}
+
         self.builder = base_builder.with_input(MutationInput).with_output_key(
             "mutant"
         ).with_state(MutationState).with_default_summarizer(max_messages=50).with_tools(
@@ -200,37 +244,43 @@ class Mutator():
             "corpus_mutation_system.j2"
         )
 
-    async def sanity_check(
+    async def _sanity_check(
         self, rule: str
     ) -> bool:
-        res = await self.rule_cache.get_validated(rule)
-        if res is not None:
-            return res
-        async with self.prover_sem:
-            r = await run_prover(
-                self.source_path, ["./run.conf", "--rule", rule], ProverOptions(CloudConfig()), ProverCallbacks(), NullCexHandler()
-            )
-        to_ret = isinstance(r, RawReport) and r.rule_status.get(rule, False)
-        await self.rule_cache.save_validated(rule, to_ret)
-        return to_ret
+        if rule not in self.sanity_locks:
+            self.sanity_locks[rule] = asyncio.Lock()
+        async with self.sanity_locks[rule]:
+            res = await self.rule_cache.get_validated(rule)
+            if res is not None:
+                return res
+            async with self.prover_sem:
+                r = await run_prover(
+                    self.source_path, ["./run.conf", "--rule", rule, "--msg", f"validation: {rule}"], ProverOptions(CloudConfig()), ProverCallbacks(), NullCexHandler()
+                )
+            to_ret = isinstance(r, RawReport) and r.rule_status.get(rule, False)
+            await self.rule_cache.save_validated(rule, to_ret)
+            return to_ret
 
     async def mutate(
         self, entry: CorpusEntry, ind: int
     ) -> Mutant | None:
+        agent_desc = f"Mutation Agent: {entry.rule_name} {ind}"
         runner = self.builder.with_initial_prompt_template(
             "corpus_mutation_prompt.j2",
             protocol_description=self.state.triage.protocol_description if self.state.triage else "(No description provided)",
             property_description=entry.extracted_property_description,
             rule_name=entry.rule_name
         ).with_tools(
-            [ProverRunner.bind(ProverDeps(mat=self.mat, rule_name=entry.rule_name, prover_sem=self.prover_sem)).as_tool("prover_runner")]
+            [ProverRunner.bind(ProverDeps(mat=self.mat, rule_name=entry.rule_name, prover_sem=self.prover_sem, agent_desc=agent_desc)).as_tool("prover_runner")]
         ).compile_async()
         async with self.llm_sem:
+            if not await self._sanity_check(entry.rule_name):
+                return None
             try:
                 r = await run_graph(
                     graph=runner, ctxt=None,
                     input=MutationInput(input=[], vfs={}),
-                    description=f"Mutation Agent: {entry.rule_name} {ind}",
+                    description=agent_desc,
                     within_tool=None,
                     run_conf={
                         "configurable": {
@@ -242,7 +292,6 @@ class Mutator():
             except GraphRecursionError:
                 return None
         assert "mutant" in r
-
         diff_str = []
 
         for (k,v) in r["vfs"].items():
@@ -281,20 +330,23 @@ def mutator_factory(
 
 async def generate_property_mutant(
     prop: CorpusEntry,
-    mut: Mutator
-) -> PropAndMutants | None:
-    if not await mut.sanity_check(prop.rule_name):
-        return None
-    to_res = await asyncio.gather(*[
-        mut.mutate(prop, ind)
-        for ind in range(0, 1)
-    ])
-    non_null = [ r for r in to_res if r ]
+    mut: Mutator,
+    writer: IncrementalProjectWriter,
+) -> PropAndMutants | None:    
+    non_null = []
+    # we do this sequentially because it's incredibly likely that each agent will ask similar
+    # questions of the code explorer; by staggering their runs, hopefully the later ones work better
+    for ind in range(0, 1):
+        result = await mut.mutate(prop, ind)
+        if result is not None:
+            writer.write_mutant(prop.rule_name, ind + 1, result)
+            non_null.append(result)
+
     if not non_null:
         return None
-    return PropAndMutants(
-        prop, non_null
-    )
+    pam = PropAndMutants(prop, non_null)
+    writer.finish_rule(pam)
+    return pam
 
 
 async def generate_tree_mutants(
@@ -304,6 +356,7 @@ async def generate_tree_mutants(
     props: list[CorpusEntry],
     report_sem: asyncio.Semaphore,
     gen: MutatorFactory,
+    writer: IncrementalProjectWriter,
 ) -> list[PropAndMutants] | None:
     report_path = await ensure_report(work_dir, state, url, report_sem)
     if report_path is None or not (report_path / "run.conf").exists():
@@ -311,10 +364,10 @@ async def generate_tree_mutants(
     mutator = gen(report_path, url, state)
     mutants = await asyncio.gather(*[
         generate_property_mutant(
-            mut=mutator, prop=prop
+            mut=mutator, prop=prop, writer=writer,
         ) for prop in props
     ])
-    return [ m for m in mutants if m is not None ]
+    return [m for m in mutants if m is not None]
 
 
 async def mutate_project(
@@ -322,21 +375,17 @@ async def mutate_project(
     state: PipelineState,
     mutator_fact: MutatorFactory,
     report_sem: asyncio.Semaphore,
-) -> list[PropAndMutants]:
-    all_results: list[PropAndMutants] = []
+    writer: IncrementalProjectWriter,
+) -> None:
     tree_jobs = []
     for (k, v) in state.analyzed_trees.items():
         tree_jobs.append(
             generate_tree_mutants(
                 work_dir=work_dir, props=v, url=k, gen=mutator_fact,
-                state=state, report_sem=report_sem,
+                state=state, report_sem=report_sem, writer=writer,
             )
         )
-    tree_results = await asyncio.gather(*tree_jobs)
-    for r in tree_results:
-        if r is not None:
-            all_results.extend(r)
-    return all_results
+    await asyncio.gather(*tree_jobs)
 
 
 # ---------------------------------------------------------------------------
@@ -411,25 +460,6 @@ def _write_project_summary(project_dir: Path, result: ProjectResult) -> None:
     (project_dir / "summary.json").write_text(json.dumps(summary_vars, indent=2))
 
 
-def write_project_output(output_dir: Path, result: ProjectResult) -> Path:
-    """Write the full output tree for a project. Returns the project directory."""
-    project_dir = output_dir / _safe_dirname(result.protocol_name)
-    project_dir.mkdir(parents=True, exist_ok=True)
-
-    for pm in result.rules:
-        rule_dir = project_dir / _safe_dirname(pm.ent.rule_name)
-        rule_dir.mkdir(parents=True, exist_ok=True)
-
-        _write_rule_summary(rule_dir, pm)
-
-        for i, mutant in enumerate(pm.mutants, 1):
-            mutant_dir = rule_dir / f"Mutant{i}"
-            _write_mutant_dir(mutant_dir, mutant)
-
-    _write_project_summary(project_dir, result)
-    return project_dir
-
-
 # ---------------------------------------------------------------------------
 # Top-level orchestration
 # ---------------------------------------------------------------------------
@@ -446,31 +476,37 @@ async def try_mutate(
     rule_cache: RuleValidationCache
 ) -> None:
     report_sem = asyncio.Semaphore(10)
-    prover_sem = asyncio.Semaphore(1)
+    prover_sem = asyncio.Semaphore(5)
     factory = mutator_factory(mutation_llm, sem, store_ns, ind_store, prover_sem, rule_cache=rule_cache)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    async def _process_pdf(pdf_path: Path) -> ProjectResult | None:
+    run_dir = output_dir / _run_id()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Run directory: {run_dir}")
+
+    async def _process_pdf(pdf_path: Path) -> None:
         key = pdf_key(pdf_path)
         st = await state_cache.load(key)
         if st is None:
-            return None
+            return
         if st.triage is None:
-            return None
+            return
         if not st.analyzed_trees:
-            return None
+            return
 
         protocol_name = st.triage.protocol_name
+        writer = IncrementalProjectWriter(
+            run_dir / _safe_dirname(protocol_name), protocol_name,
+        )
 
-        results = await mutate_project(
+        await mutate_project(
             work_dir=work_dir,
             state=st,
             mutator_fact=factory,
             report_sem=report_sem,
+            writer=writer,
         )
-        if not results:
-            return None
-        return ProjectResult(protocol_name=protocol_name, rules=results)
+        writer.finish_project()
+        print(f"  Project complete: {writer.project_dir}")
 
     pdfs = sorted(pdf_dir.glob("*.pdf"))
     if not pdfs:
@@ -485,12 +521,6 @@ async def try_mutate(
         print(f"[{i + 1}/{total}] Queuing {pdf_path.name}...")
         jobs.append(_process_pdf(pdf_path))
 
-    project_results = await asyncio.gather(*jobs)
+    await asyncio.gather(*jobs)
 
-    for result in project_results:
-        if result is None:
-            continue
-        project_dir = write_project_output(output_dir, result)
-        print(f"  Output written: {project_dir}")
-
-    print(f"\nDone. Results in {output_dir}")
+    print(f"\nDone. Results in {run_dir}")

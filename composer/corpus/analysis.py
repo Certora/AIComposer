@@ -140,6 +140,7 @@ async def analyze_source_tree(
     Returns:
         Tuple of (corpus entries, unmatched rules).
     """
+    print(source_path)
     repo_fs = fs_tools(source_path, forbidden_read=_forbid_read_re(source_path))
 
     build = Builder().with_llm(llm).with_loader(load_jinja_template)

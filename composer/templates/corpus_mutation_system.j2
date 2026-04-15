@@ -38,7 +38,9 @@ Your goal is to make a **targeted, semantically meaningful mutation** to the Sol
 
 ## Workflow
 
-1. Use the file system tools and code explorer tool to explore the source tree and understand the codebase
+1. Use the file system tools to explore the Solidity source tree and understand the codebase.
+   The code explorer tool can answer broad questions about how the Solidity contracts work — it has
+   the same view of the source tree as you (Solidity only, no spec or config files).
 2. Read the Solidity source code that the property targets
 3. Make your mutation using the VFS write tools
 4. Run the prover using the `prover_runner` tool to test whether your mutation is caught.

@@ -18,16 +18,17 @@ The path label is built lazily from the ``description`` values received in
 path is all descriptions joined with `` / ``.
 """
 
-from typing import Callable, override, cast
+from typing import override, cast
 import sys
 
 from composer.spec.source.prover import ProverEvents
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.io.event_handler import NullEventHandler
 from composer.ui.multi_job_app import TaskHandle, TaskInfo
+from composer.ui.simple_console_handler import SimpleConsoleHandler
 
 
-class AutoProveConsoleHandler(NullEventHandler):
+class AutoProveConsoleHandler(SimpleConsoleHandler, NullEventHandler):
     """``IOHandler[Never]`` + ``HandlerFactory`` for the auto-prove pipeline.
 
     One instance spans the whole pipeline run.  ``make_handler`` is passed as
@@ -36,56 +37,9 @@ class AutoProveConsoleHandler(NullEventHandler):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         self._descriptions: dict[str, str] = {}
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _label(self, path: list[str]) -> str:
-        return " / ".join(self._descriptions.get(tid, tid) for tid in path)
-
-    # ------------------------------------------------------------------
-    # IOHandler protocol
-    # ------------------------------------------------------------------
-
-    async def log_checkpoint_id(self, *, path: list[str], checkpoint_id: str) -> None:
-        pass  # checkpoint noise suppressed
-
-    async def log_start(
-        self, *, path: list[str], description: str, tool_id: str | None
-    ) -> None:
-        self._descriptions[path[-1]] = description
-        label = self._label(path)
-        suffix = f"  (via tool: {tool_id})" if tool_id else ""
-        print(f"[{label}] start{suffix}")
-
-    async def log_end(self, path: list[str]) -> None:
-        print(f"[{self._label(path)}] end")
-
-    async def log_state_update(self, path: list[str], st: dict) -> None:
-        label = self._label(path)
-        for node_name, update in st.items():
-            if not isinstance(update, dict):
-                continue
-            tool_names: list[str] = []
-            for msg in update.get("messages", []):
-                tc = getattr(msg, "tool_calls", None)
-                if tc:
-                    tool_names.extend(c["name"] for c in tc)
-            if tool_names:
-                names = ", ".join(tool_names)
-                print(f"[{label}] at node: {node_name}; tool calls: [{names}]")
-            else:
-                print(f"[{label}] at node: {node_name}")
-
-    async def human_interaction(
-        self, ty: None, debug_thunk: Callable[[], None]
-    ) -> str:
-        raise RuntimeError(
-            "Unexpected HITL interrupt in auto-prove console handler"
-        )
-    
     @override
     def handle_event(self, payload: dict, path: list[str], checkpoint_id: str):
         d = cast(ProverEvents, payload)
