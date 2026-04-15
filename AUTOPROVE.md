@@ -86,12 +86,14 @@ This inserts ~30 curated articles (summary misapplication, vacuity traps, ghost 
 
 ## Installation
 
+To install the scripts for execution simply run:
+
 ```bash
-uv sync --group ml --group prover
+uv tool install '.[ml,prover,pou]'
 ```
 
-The `ml` group includes `sentence-transformers` and `einops`, required for the embedding model (`nomic-embed-text-v1`) used by RAG and the indexed store. `prover` includes all of the dependencies
-for running the prover scripts (in local mode), and the certoraRun scripts themselves (cloud mode).
+The `ml` group includes `sentence-transformers` and `einops`, required for the embedding model (`nomic-embed-text-v1.5`) used by RAG and the indexed store. `prover` includes all of the dependencies
+for running the prover scripts (in local mode), and the certoraRun scripts themselves (cloud mode), and pou is required by the pre audit component.
 
 ## Usage
 
@@ -100,17 +102,20 @@ Auto-prove has two entry points: a Textual-based TUI and a headless console mode
 ### TUI Mode
 
 ```bash
-python tui_autoprove.py <project_root> <path/to/Contract.sol:ContractName> <design_doc>
+tui-autoprove <project_root> <path/to/Contract.sol:ContractName> <design_doc>
 ```
 
 ### Console Mode
 
 ```bash
-python console_autoprove.py <project_root> <path/to/Contract.sol:ContractName> <design_doc>
+console-autoprove <project_root> <path/to/Contract.sol:ContractName> <design_doc>
 ```
 
 Console mode prints the same pipeline output to stdout without the interactive TUI. Useful for CI or logging. NB if you need to do `print` debugging, the `console_autoprove.py` is your best
 bet. Debugging in the tui_autoprove.py workflow *mandates* the use of a python logger.
+
+### Dev Setup
+You will likely want to install the tool using the `--editable` flag. You'll also want to run `uv sync --group test` to pull in the testing utilities we use.
 
 ### Arguments
 
