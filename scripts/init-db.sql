@@ -28,8 +28,8 @@ GRANT ALL PRIVILEGES ON DATABASE langgraph_checkpoint_db TO langgraph_checkpoint
 GRANT ALL PRIVILEGES ON SCHEMA public TO langgraph_checkpoint_user;
 
 \c memory_tool_db
-GRANT ALL PRIVILEGES ON DATABASE memory_tool_db TO memory_tool_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO memory_tool_user;
+SET ROLE memory_tool_user;
 
 CREATE TABLE IF NOT EXISTS memories_fs(
     namespace TEXT NOT NULL,
@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS memories_fs(
 );
 
 CREATE INDEX IF NOT EXISTS memories_namespace_path ON memories_fs(namespace, full_path text_pattern_ops); -- text pattern ops lets us use the index for LIKE
+
+RESET ROLE;
 
 \c audit_db
 GRANT ALL PRIVILEGES ON DATABASE audit_db TO audit_db_user;
