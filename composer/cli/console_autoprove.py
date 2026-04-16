@@ -7,6 +7,12 @@ import composer.bind as _
 from composer.ui.autoprove_console import AutoProveConsoleHandler
 from composer.spec.source.autoprove_common import _entry_point, Executor
 
+import logging
+
+logging.getLogger("huggingface_hub.utils._http").addFilter(
+    lambda r: "You are sending unauthenticated requests to the HF Hub." not in r.getMessage()
+)
+
 
 # ---------------------------------------------------------------------------
 # Main

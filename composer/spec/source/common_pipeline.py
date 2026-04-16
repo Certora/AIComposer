@@ -145,10 +145,22 @@ async def run_generation_pipeline(
         )
         await batch_child.cache_put(res)
         return res
+    
+    async def _generate_and_write_batch(
+        i: int, batch: _ComponentBatch
+    ) -> GeneratedCVL:
+        res = await _generate_batch(batch_idx=i, batch=batch)
+        if res.commentary.startswith("GAVE_UP:"):
+            return res
+        certora_dir = pathlib.Path(source_input.project_root) / "certora"
+        certora_dir.mkdir(exist_ok=True, parents=True)
+        (certora_dir / f"autospec_{batch.feat.ind}.spec").write_text(res.cvl)
+        (certora_dir / f"autospec_{batch.feat.ind}.commentary.md").write_text(res.commentary)
+        return res  
 
     generation_results = await asyncio.gather(
         *[
-            _generate_batch(i, batch)
+            _generate_and_write_batch(i, batch)
             for i, batch in enumerate(component_batches)
         ],
         return_exceptions=True,
@@ -162,11 +174,6 @@ async def run_generation_pipeline(
             failures.append(f"{batch.feat.component.name}: {result}")
         elif isinstance(result, GeneratedCVL) and result.commentary.startswith("GAVE_UP:"):
             failures.append(f"{batch.feat.component.name}: {result.commentary}")
-        elif isinstance(result, GeneratedCVL):
-            certora_dir = pathlib.Path(source_input.project_root) / "certora"
-            certora_dir.mkdir(exist_ok=True, parents=True)
-            (certora_dir / f"autospec_{batch.feat.ind}.spec").write_text(result.cvl)
-            (certora_dir / f"autospec_{batch.feat.ind}.commentary.md").write_text(result.commentary)
 
     return AutoProveResult(
         n_components=len(component_batches),
