@@ -28,8 +28,6 @@ The pipeline will fail at import time if this is not set.
 
 **Local mode (default):** You need a full local prover build. From the prover repo root, run `./gradlew copy-assets` and set `CERTORA` to point to `CertoraProver/target`.
 
-NB: you still should specify the `--group prover` flag to `uv` as it forces the installation of the dependences of the certora prover python.
-
 ## (One Time) Database Setup
 
 ### 1. Start PostgreSQL

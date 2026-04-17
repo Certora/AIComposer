@@ -10,3 +10,9 @@ except ImportError:
             del sys.modules["graphcore"]
         sys.path.insert(0, str(graphcore_dir))
         importlib.invalidate_caches()
+
+import logging
+
+logging.getLogger("huggingface_hub.utils._http").addFilter(
+    lambda r: "You are sending unauthenticated requests to the HF Hub." not in r.getMessage()
+)

@@ -1,10 +1,9 @@
 # docker-compose.yml - Lightweight PostgreSQL + pgvector setup
-version: '3.8'
+name: composer_db
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: ai_composer_postgres
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
