@@ -7,7 +7,7 @@ name = "ai-composer"
 version = "0.1.0"
 description = "AIComposer — a tool for generating verified implementations from documentation and CVL specifications"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = "==3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Certora Ltd."}
@@ -28,7 +28,7 @@ dependencies = [
     "textual>=8.1",
     "websockets",
     "chromadb>=0.4.0",
-    "langgraph-prebuilt!=1.0.9"
+    "langgraph-prebuilt==1.0.8"
 ]
 
 [project.optional-dependencies]

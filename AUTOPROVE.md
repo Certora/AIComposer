@@ -77,7 +77,7 @@ The RAG database must be populated before running auto-prove. This is a two-step
 Run the knowledge base population script to load common CVL pitfall articles into the LangGraph store:
 
 ```bash
-python scripts/kb_populate.py
+uv run --extra ml -s scripts/kb_populate.py
 ```
 
 This inserts ~30 curated articles (summary misapplication, vacuity traps, ghost semantics, etc.) that agents consult during spec generation.
