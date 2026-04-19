@@ -19,7 +19,7 @@ from langchain_core.messages import AnyMessage, BaseMessage, AIMessage, HumanMes
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ToolStart, ThinkingStart
+from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ToolBatch, ThinkingStart
 from composer.io.protocol import IOHandler
 from composer.io.event_handler import NullEventHandler
 from composer.io.context import with_handler
@@ -72,13 +72,7 @@ async def refinement_loop[T](
         if len(res.tool_calls):
             if len(res.text) > 0:
                 client.progress_update(AIYapping(res.text))
-            for t in res.tool_calls:
-                tid = t["id"]
-                assert tid is not None
-                client.progress_update(ToolStart(
-                    tid=tid,
-                    tool_name=t["name"] # todo: pretty print
-                ))
+            client.progress_update(ToolBatch(calls=list(res.tool_calls)))
         return {
             "messages": [res]
         }

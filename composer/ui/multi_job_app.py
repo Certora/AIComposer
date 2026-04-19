@@ -28,11 +28,15 @@ from textual.widgets import Static, Input, Collapsible, ContentSwitcher
 from textual.binding import Binding
 
 from rich.syntax import Syntax
+from rich.spinner import Spinner
 from rich.text import Text
+
+from textual.timer import Timer
 
 from langchain_core.messages import AIMessage
 
-from composer.ui.message_renderer import MessageRenderer, TokenStats, dot, KNOWN_NODES
+from composer.ui.message_renderer import MessageRenderer, MountFn, TokenStats, dot, KNOWN_NODES
+from composer.ui.tool_call_renderer import ToolCallRenderer
 from composer.ui.tool_display import ToolDisplayConfig
 from composer.io.event_handler import EventHandler, NullEventHandler
 from composer.io.protocol import IOHandler
@@ -40,7 +44,7 @@ from composer.ui.ide_bridge import IDEBridge
 from composer.ui.ide_content import IDEContentMixin
 from composer.ui.log_screen import LogViewerMixin
 from composer.io.context import with_handler
-from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ThinkingStart, ToolStart, ProgressPayload
+from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ThinkingStart, ToolBatch, ProgressPayload
 from composer.io.stream import AsyncDataQueue
 
 
@@ -83,6 +87,219 @@ def _render_row(label: str, status: TaskStatus) -> Text:
     row.append(label)
     row.append(f"  ({status.value})", style="dim")
     return row
+
+
+# ---------------------------------------------------------------------------
+# Conversation rendering (refinement loop)
+# ---------------------------------------------------------------------------
+
+
+class _ThinkingSpinner(Static):
+    """Animated dots spinner shown while the agent is thinking."""
+
+    def __init__(self, message: str = "thinking\u2026"):
+        super().__init__("")
+        self._spinner = Spinner("dots", message)
+        self._timer: Timer | None = None
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(1 / 12, self._tick)
+
+    def _tick(self) -> None:
+        self.update(self._spinner)
+
+    def stop(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+
+@dataclass
+class _EndConversation:
+    """Internal sentinel pushed to the progress queue to stop the reader."""
+    pass
+
+
+@dataclass
+class _Checkpoint:
+    """Internal sentinel that signals an event when the reader reaches it.
+
+    Used to wait for the reader to drain all prior progress events
+    before mounting widgets inline (e.g. the human-input row).
+    """
+    done: asyncio.Event
+
+class _ConversationSession(ToolCallRenderer):
+    """Runs one refinement conversation inside a task panel.
+
+    Lifecycle:
+
+    - ``__aenter__`` mounts the opening banner and starts the progress
+      reader background task.
+    - ``progress_update(payload)`` is called (sync) by ``refinement_loop``
+      for each ``ProgressPayload``.  The reader drains and renders.
+    - ``human_turn(ai_response)`` renders the final AI turn text (if any),
+      resets tool grouping (dialogue boundary), mounts an ``Input``, and
+      returns the user's reply.
+    - ``__aexit__`` pushes a sentinel, waits for the reader to drain, then
+      mounts a closing banner.
+    """
+
+    def __init__(
+        self,
+        task_id: str,
+        panel: VerticalScroll,
+        host: "TaskHost",
+        tool_config: ToolDisplayConfig,
+        mount_to: MountFn,
+        set_status: Callable[[TaskStatus], None],
+        opening: str,
+    ):
+        super().__init__(tool_config)
+        self._task_id = task_id
+        self._panel = panel
+        self._host = host
+        self._mount = mount_to
+        self._set_status = set_status
+        self._opening = opening
+
+        self._queue: AsyncDataQueue[ProgressPayload | _EndConversation | _Checkpoint] = AsyncDataQueue(
+            _ready=asyncio.Event(), _event_stream=[]
+        )
+        self._render_task: asyncio.Task | None = None
+
+        self._spinner: _ThinkingSpinner | None = None
+
+    # ── Progress handling ───────────────────────────────────────
+
+    async def _progress_reader(self) -> None:
+        async for ev in self._queue.stream_events():
+            if isinstance(ev, _EndConversation):
+                return
+            if isinstance(ev, _Checkpoint):
+                ev.done.set()
+                continue
+            await self._handle_event(ev)
+
+    async def _drain(self) -> None:
+        """Wait for the reader to process every event queued so far."""
+        done = asyncio.Event()
+        self._queue.push(_Checkpoint(done))
+        await done.wait()
+    
+    def render_ai_yapping(self, text: str) -> Static:
+        return Static(dot("blue", Text.assemble(("AI: ", "bold blue"), text)))
+
+
+    async def _handle_event(self, ev: ProgressPayload) -> None:
+        match ev:
+            case ThinkingStart():
+                await self._mount_spinner()
+            case AIYapping(yap_content=text):
+                await self._remove_spinner()
+                self.reset_tool_collapsing()
+                await self._mount(self._panel, self.render_ai_yapping(text))
+            case ToolBatch(calls=calls):
+                await self._remove_spinner()
+                for call in calls:
+                    w = self.render_tool_call(
+                        name=call["name"],
+                        input_args=call.get("args") or {},
+                        tool_call_id=call.get("id"),
+                    )
+                    if w is not None:
+                        await self._mount(self._panel, w)
+            case ToolComplete(tid=_tid):
+                # Results are suppressed in refinement mode.  Anchor is
+                # available via renderer.get_tool_call_anchor(tid) if a
+                # future change wants to flip its styling.
+                pass
+
+    async def _mount_spinner(self) -> None:
+        if self._spinner is not None:
+            return
+        self._spinner = _ThinkingSpinner()
+        await self._mount(self._panel, self._spinner)
+
+    async def _remove_spinner(self) -> None:
+        if self._spinner is None:
+            return
+        self._spinner.stop()
+        await self._spinner.remove()
+        self._spinner = None
+
+    # ── ConversationClient protocol ─────────────────────────────
+
+    def progress_update(self, progress: ProgressPayload) -> None:
+        self._queue.push(progress)
+
+    async def human_turn(self, ai_response: str | None) -> str:
+        # Wait for the reader to render every progress event that was
+        # pushed before this call so that the input widget is mounted
+        # strictly below the agent's output.
+        await self._drain()
+
+        await self._remove_spinner()
+
+        self.reset_tool_collapsing()
+
+        if ai_response:
+            await self._mount(
+                self._panel,
+                Static(dot("blue", Text.assemble(("AI: ", "bold blue"), ai_response))),
+            )
+
+        self._set_status(TaskStatus.WAITING_HITL)
+        input_widget = Input(placeholder="Type here...", validate_on=["submitted"])
+        hint_widget = Static(
+            "Type your response and press Enter", classes="interaction-hint"
+        )
+        await self._mount(self._panel, input_widget)
+        await self._mount(self._panel, hint_widget)
+        input_widget.focus()
+
+        async with self._host.hitl_input(self._task_id, input_widget) as queue:
+            response = await queue.get()
+
+        await input_widget.remove()
+        await hint_widget.remove()
+        await self._mount(
+            self._panel,
+            Static(dot("green", Text.assemble(("You: ", "bold green"), response))),
+        )
+
+        self._set_status(TaskStatus.RUNNING)
+        return response
+
+    # ── Context manager ─────────────────────────────────────────
+
+    async def __aenter__(self) -> "_ConversationSession":
+        await self._mount(
+            self._panel,
+            Static(dot("cyan", Text(self._opening, style="bold cyan"))),
+        )
+        self._render_task = asyncio.create_task(self._progress_reader())
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._render_task is not None:
+            if exc is None:
+                # Drain any pending events, then stop cleanly.
+                self._queue.push(_EndConversation())
+                await self._render_task
+            else:
+                # Abort on exception — don't try to render further events.
+                self._render_task.cancel()
+                try:
+                    await self._render_task
+                except asyncio.CancelledError:
+                    pass
+
+        await self._remove_spinner()
+        await self._mount(
+            self._panel,
+            Static(dot("dim", Text("— end of refinement —", style="dim"))),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -223,43 +440,17 @@ class MultiJobTaskHandler[H]:
     async def start_conversation(
         self, opening: str
     ) -> AsyncIterator[ConversationClient]:
-        outer = self
-        class _Conversation:
-            def __init__(self):
-                self.ready_event = asyncio.Event()
-                self.queue = AsyncDataQueue[ProgressPayload](_ready=self.ready_event, _event_stream=[])
-
-            async def _progress_reader(
-                self
-            ):
-                async for ev in self.queue.stream_events():
-                    ...
-
-            async def __aenter__(self):
-                self.render_task = asyncio.create_task(
-                    self._progress_reader()
-                )
-
-            async def __aexit__(self, exc_type, exc, tb):
-                self.render_task.cancel()
-                try:
-                    await self.render_task
-                except asyncio.CancelledError:
-                    pass
-
-            def progress_update(
-                self, progress: ProgressPayload
-            ):
-                self.queue.push(progress)
-
-            async def human_turn(
-                self, ai_response: str | None
-            ) -> str:
-                ...
-
-        conv = _Conversation()
-        async with conv:
-            yield conv
+        session = _ConversationSession(
+            task_id=self._task_id,
+            panel=self._panel,
+            host=self._host,
+            tool_config=self._renderer.tool_config,
+            mount_to=self._mount_to,
+            set_status=self._set_status,
+            opening=opening,
+        )
+        async with session:
+            yield session
 
     # ── Mounting helpers ──────────────────────────────────────
 
