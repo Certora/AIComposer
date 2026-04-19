@@ -24,13 +24,14 @@ from composer.rag.db import ComposerRAGDB, rag_context
 from composer.rag.models import get_model
 from composer.workflow.services import checkpointer_context
 from composer.tools.search import cvl_manual_search
-from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
+from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
 from composer.natreq.automation import requirements_oracle
 from composer.human.types import HumanInteractionType
 from composer.io.protocol import IOHandler
 from composer.io.context import with_handler, run_graph
 from composer.io.event_handler import NullEventHandler
+from composer.ui.tool_display import tool_display
 
 
 @dataclass
@@ -67,6 +68,13 @@ class HumanClarificationArgs(BaseModel):
     context: str = Field(description="Context or explanation surrounding the question. Use this to explain your thinking, cite " \
     "specific portions of the spec/system doc, or any other salient information to help ground the question.")
 
+@tool_display(
+    lambda p: (
+        f"Asking for input: {p['question']}"
+        if p.get("question") else "Asking for input"
+    ),
+    None,
+)
 @tool(args_schema=HumanClarificationArgs)
 def human_in_the_loop(
     question: str,
@@ -143,7 +151,6 @@ async def get_requirements(
         results_tool,
         human_in_the_loop,
         cvl_manual_search(ExtractionContext),
-        explicit_thinking,
         *get_rough_draft_tools(ExtractionState),
     ]
     async with (

@@ -27,6 +27,7 @@ from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import HarnessedApplication
 from composer.spec.gen_types import TypedTemplate
 from composer.spec.util import uniq_thread_id
+from composer.ui.tool_display import tool_display
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +159,7 @@ async def get_invariant_formulation(
 
     sem = asyncio.Semaphore(3)
 
+    @tool_display("Getting feedback", "Invariant feedback")
     class InvariantFeedbackTool(WithInjectedId, WithAsyncImplementation[Command]):
         """
         Receive feedback on one of your invariants.

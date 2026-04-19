@@ -8,6 +8,7 @@ from langgraph.runtime import get_runtime
 from composer.diagnostics.stream import ManualSearchResult
 from composer.rag.db import ComposerRAGDB
 from dataclasses import Field as DField
+from composer.ui.tool_display import tool_display_of, CommonTools
 
 class RAGDBContext(Protocol):
     __dataclass_fields__: ClassVar[dict[str, DField[Any]]]
@@ -54,6 +55,7 @@ class CVLManualSearchSchema(WithToolCallId):
 def _cvl_manual_search_factory(
     db_provider: Callable[[], ComposerRAGDB]
 ) -> BaseTool:
+    @tool_display_of(CommonTools.cvl_manual)
     @tool("cvl_manual_search", args_schema=CVLManualSearchSchema)
     async def _cvl_manual_search(
         question: str,
@@ -115,6 +117,7 @@ class CVLGetSectionSchema(BaseModel):
 def _cvl_keyword_search_factory(
     db_provider: Callable[[], ComposerRAGDB]
 ) -> BaseTool:
+    @tool_display_of(CommonTools.cvl_keyword_search)
     @tool("cvl_keyword_search", args_schema=CVLKeywordSearchSchema)
     async def _cvl_keyword_search(
         query: str,
@@ -139,6 +142,7 @@ def _cvl_keyword_search_factory(
 def _cvl_get_section_factory(
     db_provider: Callable[[], ComposerRAGDB]
 ) -> BaseTool:
+    @tool_display_of(CommonTools.get_cvl_manual_section)
     @tool("get_cvl_manual_section", args_schema=CVLGetSectionSchema)
     async def _get_cvl_manual_section(
         headers: list[str],

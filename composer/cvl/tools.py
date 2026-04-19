@@ -20,7 +20,16 @@ from pydantic import BaseModel, Field, create_model
 
 from composer.cvl.schema import CVLFile
 from composer.cvl.pretty_print import pretty_print
+from composer.ui.tool_display import tool_display_of, CommonTools, ToolDisplay, suppress_ack
+
 from graphcore.graph import tool_state_update
+
+_put_cvl_display = ToolDisplay(
+    "Writing spec", suppress_ack("Spec write result")
+)
+_put_cvl_raw_display = _put_cvl_display
+
+_get_cvl_display = ToolDisplay("Reading spec", None)
 
 
 put_cvl_description = """
@@ -119,6 +128,7 @@ stderr:
     )
 
 
+@tool_display_of(_put_cvl_display)
 @tool(args_schema=PutCVLSchemaLG)
 def put_cvl(
     cvl_file: dict,
@@ -132,7 +142,7 @@ def put_cvl(
         return "Failed to pretty print the AST"
     return maybe_update_cvl(tool_call_id=tool_call_id, pp=pp, ast_json=cvl_file, reset_read=DEFAULT_READ_KEY, spec_key=DEFAULT_SPEC_KEY)
 
-
+@tool_display_of(_put_cvl_raw_display)
 @tool(args_schema=PutCVLRaw)
 def put_cvl_raw(
     tool_call_id: Annotated[str, InjectedToolCallId],
@@ -188,6 +198,7 @@ def get_cvl(
         state=(Annotated[ty, InjectedState], ...),
         **extra_fields,
     )
+    @tool_display_of(_get_cvl_display)
     @tool(args_schema=schema)
     def get_cvl(
         **args

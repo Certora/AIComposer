@@ -27,6 +27,7 @@ from graphcore.graph import LLM
 from composer.prover.core import (
     CloudConfig, ProverOptions, ProverCallbacks, run_prover, SummarizedReport, DefaultCexHandler
 )
+from composer.ui.tool_display import tool_display
 from composer.diagnostics.stream import (
     ProverOutputEvent, CloudPollingEvent, RuleAnalysisResult,
     CEXAnalysisStart, ProverRun, ProverResult
@@ -174,6 +175,7 @@ def get_prover_tool(
     sem = _prover_sem(cloud)
     stamper = make_validation_stamper(VALIDATION_KEY)
 
+    @tool_display("Running prover", None)
     @tool(args_schema=VerifySpecSchema)
     async def verify_spec(
         tool_call_id: Annotated[str, InjectedToolCallId],

@@ -15,23 +15,22 @@ from dataclasses import dataclass
 from composer.io.events import AllEvents
 import asyncio
 
-
 @dataclass
-class EventQueue:
+class AsyncDataQueue[T]:
     """Multi-producer, single-consumer async event buffer.
 
     Construct with ``EventQueue(asyncio.Event(), [])``.
     """
     _ready: asyncio.Event
-    _event_stream: list[AllEvents]
+    _event_stream: list[T]
     _cursor: int = 0
 
-    def push(self, event: AllEvents) -> None:
+    def push(self, event: T) -> None:
         """Append an event and signal the consumer.  Non-blocking."""
         self._event_stream.append(event)
         self._ready.set()
 
-    async def stream_events(self) -> AsyncIterator[AllEvents]:
+    async def stream_events(self) -> AsyncIterator[T]:
         """Yield events as they arrive.  Blocks when caught up."""
         while True:
             await self._ready.wait()
@@ -42,3 +41,6 @@ class EventQueue:
             assert self._cursor == len(self._event_stream)
             self._cursor = 0
             self._event_stream = []
+
+
+EventQueue = AsyncDataQueue[AllEvents]

@@ -37,6 +37,8 @@ _STATUS_STYLES: dict[StatusCodes, str] = {
     "SANITY_FAILED": "magenta",
 }
 
+import logging
+logger = logging.getLogger(__name__)
 
 class _ProverSpinner(Static):
     """Animated spinner for cloud polling status."""
@@ -121,7 +123,9 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         match upd["type"]:
             case "prover_run":
                 tool_call_id = upd["tool_call_id"]
+                logger.info("Prover run info")
                 anchor = self._renderer.get_tool_call_anchor(tool_call_id)
+                logger.info(f"Anchor is non-null? {anchor is not None}")
                 if anchor is not None:
                     inner = VerticalScroll()
                     coll = Collapsible(inner, title="Prover output", collapsed=False)

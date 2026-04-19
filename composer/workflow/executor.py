@@ -40,6 +40,8 @@ from composer.io.protocol import CodeGenIOHandler, WorkflowPurpose
 from composer.io.context import with_handler, run_graph
 from composer.ui.codegen_events import CodeGenEventHandler
 from composer.core.state import AIComposerInput, AIComposerExtra
+from composer.ui.tool_display import tool_context
+from composer.workflow.services import checkpointer_context, memory_backend_context, store_context, indexed_store_context
 
 
 _KB_NS = ("cvl",)

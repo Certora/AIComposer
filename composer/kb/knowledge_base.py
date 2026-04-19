@@ -11,6 +11,8 @@ from composer.workflow.services import Embeddings
 
 from composer.rag.models import get_model
 
+from composer.ui.tool_display import CommonTools, tool_display_of
+
 # tell the type checker we always import ST
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
@@ -46,6 +48,8 @@ class KnowledgeBaseArticle(TypedDict):
 
 def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[BaseTool]:
     kb = kb_ns + ("agent", "knowledge")
+
+    @tool_display_of(CommonTools.scan_knowledge_base)
     class KBScan(WithAsyncImplementation[str]):
         """
         Scan the knowledge base articles for help with a given problem
@@ -88,7 +92,8 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
                         f"Similarity: {it.score}"
                     ])
                 return "\n".join(to_ret)
-        
+
+    @tool_display_of(CommonTools.get_knowledge_base_article)
     class KBGet(WithAsyncImplementation[str]):
         """
         Retrieve the contents of a knowledge base article
@@ -108,7 +113,8 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
 
 {art['body']}
 """
-        
+    
+    @tool_display_of(CommonTools.knowledge_base_contribute)
     class KBPut(WithAsyncImplementation[str]):
         """
         Add a novel, non-trivial insight to the knowledge base.

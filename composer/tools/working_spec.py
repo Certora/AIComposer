@@ -71,6 +71,6 @@ class CommitWorkingSpec(WithImplementation[Command | str], WithInjectedId, WithI
                 tool_call_id=self.tool_call_id,
                 content="Accepted",
                 working_spec=None,
-                vfs={"rules.spec", work_spec}
+                vfs={"rules.spec": work_spec}
             )
         return response

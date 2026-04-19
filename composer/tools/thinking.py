@@ -11,50 +11,9 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 from pydantic import Field
+from composer.ui.tool_display import tool_display_of, CommonTools
 
 from graphcore.tools.schemas import WithImplementation, WithInjectedId, WithInjectedState
-
-
-class ExplicitThinking(
-    WithImplementation[Command],
-    WithInjectedId
-):
-    """Use this tool to record your reasoning. It will not execute any actions
-    or retrieve any information — it only logs your thought for future reference.
-
-    Use it when you need to:
-    - Synthesize findings after gathering source files or documentation
-    - Plan an implementation approach before writing or modifying code
-    - Analyze a prover violation before deciding on a fix
-    - Evaluate tradeoffs between multiple strategies
-    - Verify that your planned changes satisfy all requirements and constraints
-
-    Do NOT use it when:
-    - The next step is obvious (e.g., fetching a file, running a test)
-    - You are simply executing a known plan step by step
-    - You have not yet gathered the information needed to reason usefully
-
-    IMPORTANT: you may not call this tool in parallel with other tools.
-    """
-    thought: str = Field(
-        description=(
-            "Your structured reasoning. Include: "
-            "what you have learned so far, "
-            "what constraints or requirements apply, "
-            "what approach you are considering and why, "
-            "and any risks or edge cases to watch for."
-        )
-    )
-
-    @override
-    def run(self) -> Command:
-        return Command(update={"messages": [
-            ToolMessage(tool_call_id=self.tool_call_id, content="Thought recorded."),
-        ]})
-
-
-explicit_thinking = ExplicitThinking.as_tool("extended_reasoning")
-
 
 class RoughDraftState(TypedDict):
     memory: str | None
@@ -64,6 +23,7 @@ class RoughDraftState(TypedDict):
 def get_rough_draft_tools[ST: RoughDraftState](
     ty: type[ST],
 ) -> list[BaseTool]:
+    @tool_display_of(CommonTools.read_rough_draft)
     class GetMemory(WithInjectedState[ST], WithImplementation[Command | str], WithInjectedId):
         """
         Retrieve the rough draft of the feedback
@@ -78,6 +38,7 @@ def get_rough_draft_tools[ST: RoughDraftState](
                 "did_read": True
             })
 
+    @tool_display_of(CommonTools.write_rough_draft)
     class SetMemory(WithInjectedId, WithImplementation[Command]):
         """
         Write your rough draft for review

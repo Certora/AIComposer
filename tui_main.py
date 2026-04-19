@@ -1,4 +1,8 @@
-import composer.certora as _
+import composer.bind as _
+
+from composer.testing.ui_harness import install_vault_tape
+
+install_vault_tape()
 
 import asyncio
 
@@ -9,6 +13,7 @@ from composer.workflow.executor import execute_ai_composer_workflow
 from composer.ui.codegen_rich import CodeGenRichApp
 from composer.ui.ide_bridge import IDEBridge
 from composer.diagnostics.debug import setup_logging, dump_fs
+from composer.ui.tool_display import tool_context
 
 
 async def main() -> int:
@@ -43,7 +48,8 @@ async def main() -> int:
         )
 
     app.set_work(work)
-    await app.run_async()
+    with tool_context():
+        await app.run_async()
 
     if ide is not None:
         await ide.close()
