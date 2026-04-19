@@ -23,16 +23,8 @@ class AIYapping:
 type ProgressPayload = ToolComplete | ToolStart | ThinkingStart | AIYapping
 
 class ConversationClient(Protocol):
-    @property
-    def checkpointer(self) -> Checkpointer:
-        ...
-
-    @property
-    def llm(self) -> BaseChatModel:
-        ...
-
     async def human_turn(
-        self, ai_response: str | None = None
+        self, ai_response: str | None
     ) -> str:
         ...
 

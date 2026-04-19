@@ -17,14 +17,14 @@ from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
 
 @dataclass(frozen=True)
 class _BasicLLM:
-    _llm: BaseChatModel
+    llm: BaseChatModel
     has_source: bool
     _checkpointer: Checkpointer
 
     @property
     def builder(self) -> Builder[None, None, None]:
         return Builder[None, None, None]().with_llm(
-            self._llm
+            self.llm
         ).with_loader(
             load_jinja_template
         ).with_checkpointer(self._checkpointer)
@@ -33,6 +33,7 @@ class _BasicLLM:
 class _BaseTools:
     builder: Builder[None, None, None]
     has_source: bool
+    llm: BaseChatModel
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,8 @@ def build_rag_tools(
             builder=llm.builder,
             has_source=llm.has_source,
             base_rag_tools=s.base_rag_tools,
-            agent_index=ind
+            agent_index=ind,
+            llm=llm.llm
         ),
         CVL_RESEARCH_BASE_DOC
     )
@@ -97,9 +99,9 @@ def build_rag_tool_env(
     **params: Unpack[RAGInputs],
 ) -> RagToolEnv:
     llm = _BasicLLM(
-        _llm=params["llm"],
+        llm=params["llm"],
         has_source=False,
-        _checkpointer=params["checkpoint"]
+        _checkpointer=params["checkpoint"],
     )
     rag_tools = build_basic_rag_tools(
         db=params["db"],
@@ -122,7 +124,8 @@ def build_rag_tool_env(
         builder=llm.builder,
         has_source=llm.has_source,
         base_rag_tools=rag_tools.base_rag_tools,
-        rag_tools=full_rag_tools.rag_tools
+        rag_tools=full_rag_tools.rag_tools,
+        llm=llm.llm,
     )
 
 
@@ -134,6 +137,10 @@ def build_natspec_env(
     )
 
     class NatspecEnv:
+        @property
+        def llm(self) -> BaseChatModel:
+            return common_rag.llm
+
         @property
         def builder(self) -> Builder[None, None, None]:
             return common_rag.builder

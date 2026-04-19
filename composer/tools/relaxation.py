@@ -11,16 +11,9 @@ def _maybe_relax(s: AIComposerState, q: RequirementRelaxationType, resp: str) ->
     else:
         return {}
 
-requirements_relaxation = tool_display(
-    lambda p: (
-        f"Requesting requirement relaxation #{p.get('req_number', '?')}: {p.get('req_text', '')}"
-        if p.get("req_text")
-        else "Requesting requirement relaxation"
-    ),
-    None,
-)(human_interaction_tool(
+requirements_relaxation = human_interaction_tool(
     RequirementRelaxationType,
     AIComposerState,
     "requirement_relaxation_request",
     _maybe_relax
-))
+)

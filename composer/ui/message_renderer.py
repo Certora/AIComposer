@@ -141,11 +141,11 @@ class MessageRenderer:
                     if (stripped := text.strip()):
                         widgets.append(Static(dot("blue", stripped)))
                 case "tool_use":
+                    logger.info("tool call")
                     tool_call_id = c.get("id")
                     name = c["name"]
                     input_args = c.get("input", {})
                     grouped = tc.get_group(name)
-                    logger.info("Tool name %s", name)
 
                     if grouped is not None:
                         raw = grouped.extract_group_items(input_args)

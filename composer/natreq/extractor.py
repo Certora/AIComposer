@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from graphcore.graph import FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
-from graphcore.tools.memory import memory_tool, MemoryBackend
+from graphcore.tools.memory import async_memory_tool, AsyncMemoryBackend
 
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -18,7 +18,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 from composer.audit.types import InputFileLike
-from composer.audit.db import ResumeArtifact
+from composer.audit.store import ResumeArtifact
 from composer.input.types import RAGDBOptions
 from composer.rag.db import ComposerRAGDB, rag_context
 from composer.rag.models import get_model
@@ -142,12 +142,12 @@ async def get_requirements(
     llm: BaseChatModel,
     sys_doc: InputFileLike,
     spec_file: InputFileLike,
-    mem_backend: MemoryBackend,
+    mem_backend: AsyncMemoryBackend,
     resume_artifact: ResumeArtifact | None,
     oracle: list[str]
 ) -> ExtractionResult:
     tools = [
-        memory_tool(mem_backend),
+        async_memory_tool(mem_backend),
         results_tool,
         human_in_the_loop,
         cvl_manual_search(ExtractionContext),

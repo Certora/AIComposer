@@ -2,8 +2,12 @@ import difflib
 
 from rich.spinner import Spinner
 
+from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.widgets import Static, Input, Collapsible, DataTable
+from textual.screen import Screen
+from textual.widget import Widget
+from textual.widgets import Static, Input, Collapsible, DataTable, Header, Footer, Markdown
 from textual.widgets.data_table import RowKey, ColumnKey
 from textual.validation import Function, Validator
 from textual.timer import Timer
@@ -12,7 +16,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from composer.ui.ide_bridge import IDEBridge
-from composer.ui.tool_display import CodeGenToolDisplay
+from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay
 from composer.ui.rich_console import BaseRichConsoleApp
 from composer.io.protocol import WorkflowPurpose
 from composer.workflow.types import WorkflowResult, WorkflowSuccess
@@ -39,6 +43,42 @@ _STATUS_STYLES: dict[StatusCodes, str] = {
 
 import logging
 logger = logging.getLogger(__name__)
+
+class _ContentScreen(Screen):
+    """Full-screen fallback viewer: Header + title + scrollable body + Footer.
+
+    Used when no IDE bridge is attached — callers push an instance with
+    a title Text and a pre-built body widget (e.g. ``Static(Syntax(...))``
+    for file snapshots, ``Markdown(...)`` for prover CEX analyses).
+    Escape pops the screen.
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_screen", "Back", show=True),
+    ]
+
+    CSS = """
+    _ContentScreen { background: $surface; }
+    #content-body { height: 1fr; }
+    """
+
+    def __init__(self, title: Text, body: Widget):
+        super().__init__()
+        self._title = title
+        self._body = body
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield VerticalScroll(
+            Static(self._title),
+            self._body,
+            id="content-body",
+        )
+        yield Footer()
+
+    def action_dismiss_screen(self) -> None:
+        self.app.pop_screen()
+
 
 class _ProverSpinner(Static):
     """Animated spinner for cloud polling status."""
@@ -67,9 +107,41 @@ class _ProverSpinner(Static):
 class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
     """Textual TUI for the code generation workflow."""
 
+    DEFAULT_CSS = """
+.prover-scroll {
+   max-height: 15;
+}
+"""
+
     def __init__(self, show_checkpoints: bool = False, ide: IDEBridge | None = None):
         super().__init__(
-            tool_config=CodeGenToolDisplay(),
+            tool_config=ToolDisplayConfig(
+                tool_display={
+                    "requirement_relaxation_request": ToolDisplay(
+                        lambda p: (
+                            f"Requesting requirement relaxation #{p.get('req_number', '?')}: {p.get('req_text', '')}"
+                            if p.get("req_text")
+                            else "Requesting requirement relaxation"
+                        ),
+                        None,
+                    ),
+
+                    "propose_spec_change": ToolDisplay(
+                        lambda p: (
+                            f"Proposing spec change: {p['explanation']}"
+                            if p.get("explanation") else "Proposing spec change"
+                        ),
+                        None,
+                    ),
+                    "human_in_the_loop": ToolDisplay(
+                        lambda p: (
+                            f"Asking for input: {p['question']}"
+                            if p.get("question") else "Asking for input"
+                        ),
+                        None,
+                    ),
+                }
+            ),
             show_checkpoints=show_checkpoints,
             ide=ide,
         )
@@ -128,7 +200,7 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                 logger.info(f"Anchor is non-null? {anchor is not None}")
                 if anchor is not None:
                     inner = VerticalScroll()
-                    coll = Collapsible(inner, title="Prover output", collapsed=False)
+                    coll = Collapsible(inner, title="Prover output", collapsed=False, classes="prover-scroll")
                     parent = anchor.parent
                     assert isinstance(parent, VerticalScroll)
                     await parent.mount(coll, after=anchor)
@@ -204,6 +276,19 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
     # ── Overrides ─────────────────────────────────────────────
 
+    def _show_content_fallback(
+        self, snap_id: int, label: str, content: str, filename: str
+    ) -> None:
+        """No-IDE fallback: push a full-screen viewer for the snapshot."""
+        lang = self._guess_lang(filename)
+        # Syntax lexer expects a string name; fall back to "text" for unknown.
+        syntax = Syntax(
+            content, lang or "text", theme="monokai",
+            line_numbers=True, word_wrap=False,
+        )
+        title = Text.assemble((label, "bold "), ("  ", ""), (filename, "dim"))
+        self.push_screen(_ContentScreen(title, Static(syntax)))
+
     async def render_state_extras(self, target: VerticalScroll, node_name: str, node_data: dict) -> None:
         if "vfs" not in node_data:
             return
@@ -215,20 +300,12 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
             for k, val in node_data["vfs"].items()
         }
 
-        if self._ide is not None:
-            links = []
-            for name in names:
-                snap_id = self._store_snapshot(name, contents[name], name)
-                links.append(self._make_content_link_markup(snap_id, name))
-            markup = f"[cyan]{_DOT}[/cyan]Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
-            widget = Static(markup, classes="vfs-change")
-        else:
-            file_parts: list[tuple[str, str] | str] = [(_DOT, "cyan"), f"Wrote {count} file{'s' if count != 1 else ''}: "]
-            for i, name in enumerate(names):
-                if i > 0:
-                    file_parts.append(", ")
-                file_parts.append((name, "bold underline cyan"))
-            widget = Static(Text.assemble(*file_parts), classes="vfs-change")
+        links = []
+        for name in names:
+            snap_id = self._store_snapshot(name, contents[name], name)
+            links.append(self._make_content_link_markup(snap_id, name))
+        markup = f"[cyan]{_DOT}[/cyan]Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
+        widget = Static(markup, classes="vfs-change")
         await self._mount_to(target, widget)
 
     # ── DataTable cell click (analysis view) ──────────────────
@@ -243,7 +320,11 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                     if self._ide is not None:
                         self.run_worker(self._ide_show_analysis(rule_name, text), thread=False)
                     else:
-                        self.notify(text[:200] + "...", title=f"Analysis: {rule_name}", timeout=10)
+                        title = Text.assemble(
+                            ("Analysis: ", "bold "),
+                            (rule_name, "bold cyan"),
+                        )
+                        self.push_screen(_ContentScreen(title, Markdown(text)))
                 return
 
     async def _ide_show_analysis(self, rule_name: str, analysis: str) -> None:

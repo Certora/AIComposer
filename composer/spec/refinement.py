@@ -10,11 +10,13 @@ from langgraph.types import Command
 from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.types import interrupt
+from langgraph.checkpoint.memory import InMemorySaver
 
 
 from graphcore.utils import acached_invoke
 
 from langchain_core.messages import AnyMessage, BaseMessage, AIMessage, HumanMessage, ToolMessage
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ToolStart, ThinkingStart
@@ -43,6 +45,7 @@ class ConversationState[T](MessagesState):
     extra_data: T
 
 async def refinement_loop[T](
+    llm: BaseChatModel,
     client: ConversationClient,
     init_data: T,
     init_messages: list[AnyMessage],
@@ -55,7 +58,7 @@ async def refinement_loop[T](
         input_schema=None,
         output_schema=None
     )
-    bound_llm = client.llm.bind_tools(tools)
+    bound_llm = llm.bind_tools(tools)
     init_state : ConversationState[T] = {
         "messages": init_messages,
         "extra_data": init_data,
@@ -121,7 +124,7 @@ async def refinement_loop[T](
     graph.add_conditional_edges("llm_echo", conditional_decider)
 
     runner = graph.compile(
-        checkpointer=client.checkpointer
+        checkpointer=InMemorySaver()
     )
 
     tid = uniq_thread_id("refinement_conversation")

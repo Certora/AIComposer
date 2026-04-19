@@ -239,9 +239,20 @@ class ToolDisplayConfig:
 
     # -- tool call formatting ------------------------------------------------
 
+    def _find_formatter(self, name) -> ToolDisplay | GroupedTool | None:
+        if name in self.tool_display:
+            return self.tool_display[name]
+        if self.use_scope and (scope := _tool_context.get()) is not None and name in scope:
+            return scope[name]
+        if self.use_global and name in _ns_global_tools:
+            return _ns_global_tools[name]
+        if self.use_global and name in _graphcore_global_tools:
+            return _graphcore_global_tools[name]
+        return None
+
     def format_tool_call(self, name: str, input: dict) -> str:
         """Return a user-friendly label for a tool invocation."""
-        entry = self.tool_display.get(name)
+        entry = self._find_formatter(name)
         if entry is None or isinstance(entry, GroupedTool):
             return f"Tool: {name}"
         nm = entry.display_name
@@ -253,7 +264,7 @@ class ToolDisplayConfig:
 
     def get_group(self, name: str) -> GroupedTool | None:
         """Return the ``GroupedTool`` entry for *name*, or ``None``."""
-        entry = self.tool_display.get(name)
+        entry = self._find_formatter(name)
         return entry if isinstance(entry, GroupedTool) else None
 
     # -- result formatting ---------------------------------------------------
@@ -263,7 +274,7 @@ class ToolDisplayConfig:
 
         Returns ``(label, body)`` for the collapsible, or ``None`` to suppress.
         """
-        entry = self.tool_display.get(name)
+        entry = self._find_formatter(name)
         content = msg.text()
 
         if isinstance(entry, GroupedTool):
@@ -288,52 +299,6 @@ class ToolDisplayConfig:
 # ---------------------------------------------------------------------------
 # Concrete configs
 # ---------------------------------------------------------------------------
-
-class CodeGenToolDisplay(ToolDisplayConfig):
-    """Tool display configuration for the code generation workflow."""
-
-    def __init__(self):
-        super().__init__(tool_display={
-            "certora_prover": ToolDisplay(
-                lambda p: (
-                    "Running prover: " + p.get("target_contract", "")
-                    + (f" — rule {p['rule']}" if p.get("rule") else "")
-                ),
-                None,
-            ),
-            
-            "propose_spec_change": ToolDisplay(
-                lambda p: (
-                    f"Proposing spec change: {p['explanation']}"
-                    if p.get("explanation") else "Proposing spec change"
-                ),
-                None,
-            ),
-            "human_in_the_loop": ToolDisplay(
-                lambda p: (
-                    f"Asking for input: {p['question']}"
-                    if p.get("question") else "Asking for input"
-                ),
-                None,
-            ),
-            "code_result": ToolDisplay("Finalizing result", suppress_ack("Final result")),
-            "cvl_manual_search": CommonTools.cvl_manual,
-            "requirements_evaluation": ToolDisplay(
-                "Evaluating requirements", "Requirements evaluation",
-            ),
-            "requirement_relaxation_request": ToolDisplay(
-                lambda p: (
-                    f"Requesting requirement relaxation #{p.get('req_number', '?')}: {p.get('req_text', '')}"
-                    if p.get("req_text")
-                    else "Requesting requirement relaxation"
-                ),
-                None,
-            ),
-            "write_rough_draft": CommonTools.write_rough_draft,
-            "read_rough_draft": CommonTools.read_rough_draft,
-            "memory": CommonTools.memory,
-        })
-
 
 _graphcore_global_tools = {
     "get_file": CommonTools.get_file,
@@ -373,6 +338,7 @@ from typing import TypeVar
 
 from graphcore.tools.schemas import WithAsyncDependencies, WithAsyncImplementation, WithImplementation, ToolBuilder
 from langchain_core.tools import BaseTool
+from functools import wraps
 
 T_VAR_CTXT = TypeVar("T_VAR_CTXT", bound=type[WithAsyncDependencies] | type[WithAsyncImplementation] | type[WithImplementation])
 
@@ -385,10 +351,15 @@ def tool_display_of(
         x: T_VAR
     ) -> T_VAR:
         if isinstance(x, BaseTool):
-            _ns_global_tools[x.name] = display
-            return x
+            if _tool_context.get() is not None:
+                _register_tool_spec(x.name, display)
+                return x
+            else:
+                _ns_global_tools[x.name] = display
+                return x
         if issubclass(x, WithAsyncImplementation) or issubclass(x, WithImplementation):
             prev = x.as_tool
+            @wraps(prev)
             def new_tool_impl(
                 name: str
             ) -> BaseTool:
@@ -399,6 +370,7 @@ def tool_display_of(
             return x
 
         old_bind = x.bind
+        @wraps(old_bind)
         def new_bind(
             deps
         ) -> ToolBuilder:

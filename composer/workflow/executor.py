@@ -3,33 +3,31 @@ import logging
 import uuid
 from dataclasses import dataclass
 import pathlib
-import psycopg
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
 
-from langgraph.store.base import BaseStore
 from langgraph.graph.state import CompiledStateGraph
 from langgraph._internal._typing import StateLike
-from langgraph.types import Checkpointer
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.store.base import BaseStore
 
 from graphcore.graph import Builder
-from graphcore.tools.memory import memory_tool
+from graphcore.tools.memory import async_memory_tool
 from graphcore.tools.vfs import VFSState
 
 from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
-from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools
+from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools, DEFAULT_KB_NS
 from composer.workflow.factories import get_cryptostate_builder, get_vfs_tools, get_memory_ns
-from composer.workflow.services import get_checkpointer, get_store, get_memory, get_indexed_store
 from composer.workflow.types import PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
 from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.prover.core import CloudConfig
 from composer.core.validation import ValidationType, prover, reqs as req_type
-from composer.rag.db import PostgreSQLRAGDatabase
+from composer.rag.db import PostgreSQLRAGDatabase, rag_context, ComposerRAGDB
 from composer.rag.models import get_model as get_rag_model
-from composer.audit.db import AuditDB, AuditDBSink, ResumeArtifact, InputFileLike
+from composer.audit.store import AuditStore, AuditStoreSink, ResumeArtifact
+from composer.audit.types import InputFileLike
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, _build_research_tool
@@ -40,31 +38,10 @@ from composer.io.protocol import CodeGenIOHandler, WorkflowPurpose
 from composer.io.context import with_handler, run_graph
 from composer.ui.codegen_events import CodeGenEventHandler
 from composer.core.state import AIComposerInput, AIComposerExtra
-from composer.ui.tool_display import tool_context
-from composer.workflow.services import checkpointer_context, memory_backend_context, store_context, indexed_store_context
+from composer.workflow.services import checkpointer_context, store_context, indexed_store_context, memory_backend_context, MemoryBackendGenerator
 
 
-_KB_NS = ("cvl",)
-
-
-@dataclass
-class _CodegenResearchContext:
-    """Satisfies ResearchContext protocol for the CVL research sub-agent."""
-    _store: BaseStore
-    _kb_ns: tuple[str, ...]
-    _checkpointer: Checkpointer
-    _thread_prefix: str
-
-    def kb_tools(self, read_only: bool) -> list[BaseTool]:
-        return make_kb_tools(self._store, self._kb_ns, read_only)
-
-    @property
-    def checkpointer(self) -> Checkpointer:
-        return self._checkpointer
-
-    def uniq_thread_id(self) -> str:
-        return f"{self._thread_prefix}-{uuid.uuid4().hex[:16]}"
-
+_KB_NS = DEFAULT_KB_NS
 
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
     return load_jinja_template(
@@ -184,21 +161,21 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     return (AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()), NativeFS(intf_p), NativeFS(spec_p))
 
 
-async def execute_ai_composer_workflow(
+async def _execute_ai_composer_workflow(
     handler: CodeGenIOHandler,
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
     workflow_options: WorkflowOptions,
-    memory_namespace: str | None = None,
-    resume_work_key: str | None = None,
+    memory_namespace: str | None,
+    resume_work_key: str | None,
+
+    checkpointer: AsyncPostgresSaver,
+    store: BaseStore,
+    indexed_store: BaseStore,
+    rag: ComposerRAGDB,
+    mem: MemoryBackendGenerator
 ) -> WorkflowResult:
-    """Execute the AI Composer workflow with interrupt handling."""
     logger = logging.getLogger(__name__)
-
-    checkpointer = get_checkpointer()
-
-    audit_conn = psycopg.connect(workflow_options.audit_db)
-    audit_db = AuditDB(audit_conn)
 
     thread_id = workflow_options.thread_id
 
@@ -218,6 +195,8 @@ async def execute_ai_composer_workflow(
     spec_file: InputFileLike
     resume_art : None | ResumeArtifact = None
 
+    audit_store = AuditStore(store)
+
     match input:
         case InputData():
             prompt_params = PromptParams(is_resume=False)
@@ -229,7 +208,7 @@ async def execute_ai_composer_workflow(
         case ResumeIdData() | ResumeFSData():
             prompt_params = PromptParams(is_resume=True)
 
-            resume_art = audit_db.get_resume_artifact(thread_id=input.thread_id)
+            resume_art = await audit_store.get_resume_artifact(thread_id=input.thread_id)
             if input.new_system is None:
                 system_doc = resume_art.system_vfs_handle
             else:
@@ -243,28 +222,18 @@ async def execute_ai_composer_workflow(
                     flow_input = get_resume_id_input(input, resume_art, workflow_options)
                     spec_file = input.new_spec
 
-    store = get_store()
-
-    from_previous_ns : str | None = None
-    match input:
-        case ResumeFSData(thread_id=src_id) | ResumeIdData(thread_id=src_id):
-            from_previous_ns = get_memory_ns(memory_namespace or src_id, "natreq")
-        case InputData():
-            pass
-
-    req_memories = get_memory(
-        get_memory_ns(mem_root, "natreq"),
-        from_previous_ns
+    req_memories = mem(
+        get_memory_ns(mem_root, "natreq")
     )
 
-    extra_reqs = store.get((thread_id,), "requirements")
+    extra_reqs = await store.aget((thread_id,), "requirements")
     reqs_list : list[str] | None
     if extra_reqs is None:
         if workflow_options.skip_reqs:
             reqs_list = None
         elif workflow_options.set_reqs is not None:
             if workflow_options.set_reqs.startswith("@"):
-                other_reqs = store.get((workflow_options.set_reqs[1:],), "requirements")
+                other_reqs = await store.aget((workflow_options.set_reqs[1:],), "requirements")
                 assert other_reqs is not None
                 reqs_list = other_reqs.value["reqs"]
             else:
@@ -283,7 +252,7 @@ async def execute_ai_composer_workflow(
             )
             reqs_list = extraction.reqs
             await handler.log_workflow_thread(WorkflowPurpose.NATREQ, extraction.thread_id)
-        store.put((thread_id,), "requirements", {"reqs": reqs_list})
+        await store.aput((thread_id,), "requirements", {"reqs": reqs_list})
     else:
         print("Read requirements from store")
         reqs_list = extra_reqs.value["reqs"]
@@ -302,18 +271,16 @@ async def execute_ai_composer_workflow(
         extra_tools.append(requirements_relaxation)
 
     if "context-management-2025-06-27" in getattr(llm, "betas"):
-        memory = memory_tool(get_memory(get_memory_ns(mem_root, "composer"), "composer"))
+        memory = async_memory_tool(mem(get_memory_ns(mem_root, "composer")))
         extra_tools.append(memory)
 
     # CVL research sub-agent — KB needs indexed store for semantic search
-    rag_db = PostgreSQLRAGDatabase(workflow_options.rag_db, get_rag_model())
-    indexed_store = get_indexed_store(DefaultEmbedder())
     cvl_builder = Builder().with_llm(
         llm
     ).with_loader(
         load_jinja_template
     ).with_tools(
-        cvl_manual_tools(rag_db)
+        cvl_manual_tools(rag)
     ).with_checkpointer(
         checkpointer
     ).with_tools(
@@ -351,7 +318,7 @@ async def execute_ai_composer_workflow(
         "synthesis_prompt.j2", **prompt_params
     ).build_async()[0]
 
-    audit_db.register_run(
+    await audit_store.register_run(
         thread_id=thread_id,
         system_doc=system_doc,
         interface_file=interface_file,
@@ -368,7 +335,7 @@ async def execute_ai_composer_workflow(
     """)
 
     if resume_work_key is not None:
-        snapshot = store.get(("crash_recovery",), resume_work_key)
+        snapshot = await store.aget(("crash_recovery",), resume_work_key)
         if snapshot is not None:
             vfs_files = list(snapshot.value["vfs"].items())
             recovery_msg = load_jinja_template("crash_recovery_context.j2", vfs_files=vfs_files)
@@ -397,9 +364,9 @@ async def execute_ai_composer_workflow(
     if reqs_list is not None:
         required_validations.append(req_type)
 
-    work_context = AIComposerContext(llm=llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
+    work_context = AIComposerContext(llm=llm, rag_db=rag, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
 
-    audit_sink = AuditDBSink(audit_db, thread_id)
+    audit_sink = AuditStoreSink(audit_store, thread_id)
 
     try:
         async with with_handler(handler, CodeGenEventHandler(handler, audit_sink)):
@@ -410,7 +377,7 @@ async def execute_ai_composer_workflow(
             return WorkflowFailure()
 
         res_commentary = await create_resume_commentary(final_state, llm=llm)
-        audit_db.register_complete(
+        await audit_store.register_complete(
             thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
         )
 
@@ -421,13 +388,34 @@ async def execute_ai_composer_workflow(
         # Attempt to capture VFS from last checkpoint
         resume_key: str | None = None
         try:
-            ct = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+            ct = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
             if ct is not None:
                 channel_values = cast(VFSState, ct.checkpoint["channel_values"])
                 vfs_snapshot = {path: content.decode("utf-8") for path, content in materializer.iterate(channel_values)}
                 resume_key = f"crash_{thread_id}_{uuid.uuid4().hex[:8]}"
-                store.put(("crash_recovery",), resume_key, {"vfs": vfs_snapshot})
+                await store.aput(("crash_recovery",), resume_key, {"vfs": vfs_snapshot})
                 logger.info(f"Saved crash recovery snapshot: {resume_key}")
         except Exception as snapshot_exc:
             logger.warning(f"Failed to capture crash snapshot: {snapshot_exc}")
         return WorkflowCrash(resume_work_key=resume_key, error=exc)
+
+
+async def execute_ai_composer_workflow(
+    handler: CodeGenIOHandler,
+    llm: BaseChatModel,
+    input: InputData | ResumeFSData | ResumeIdData,
+    workflow_options: WorkflowOptions,
+    memory_namespace: str | None = None,
+    resume_work_key: str | None = None,
+) -> WorkflowResult:
+    """Execute the AI Composer workflow with interrupt handling."""
+    model = get_rag_model()
+    async with checkpointer_context() as checkpointer, \
+        store_context() as store, \
+        indexed_store_context(DefaultEmbedder(model)) as indexed_store, \
+        rag_context(workflow_options.rag_db, model) as rag_db, \
+        memory_backend_context() as mem:
+        return await _execute_ai_composer_workflow(
+            handler, llm, input, workflow_options, memory_namespace, resume_work_key, checkpointer,
+            store, indexed_store, rag_db, mem
+        )
