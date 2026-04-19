@@ -30,6 +30,7 @@ from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance
 from composer.core.state import merge_validation
 from composer.spec.graph_builder import run_to_completion
 from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl
+from composer.ui.tool_display import tool_display, suppress_ack
 
 class PropertyFeedbackProtocol(Protocol):
     @property
@@ -148,6 +149,7 @@ class FeedbackToolContext:
 
 FEEDBACK_VALIDATION_KEY = "feedback"
 
+@tool_display("Getting feedback", "Feedback")
 class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithAsyncImplementation[Command]):
     """
     Receive feedback on your CVL and any skip declarations.
@@ -172,6 +174,10 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
             )
         return tool_state_update(self.tool_call_id, msg)
 
+@tool_display(
+    lambda p: f"Skipping property #{p.get('property_index', '?')}",
+    suppress_ack("Skip result", ("Recorded skip",)),
+)
 class _RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithImplementation[Command]):
     """
     Declare that you are skipping a property from the batch.
@@ -209,6 +215,10 @@ class _RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, W
             skipped=[skip],
         )
 
+@tool_display(
+    lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
+    suppress_ack("Unskip result", ("Removed skip",)),
+)
 class _UnskipSchema(WithInjectedId, WithImplementation[Command]):
     """
     Remove a previously declared skip for a property.

@@ -20,11 +20,12 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import get_runtime
 
 from composer.templates.loader import load_jinja_template
-from composer.tools.thinking import explicit_thinking, RoughDraftState, get_rough_draft_tools
+from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.core.state import AIComposerState
 from composer.core.validation import reqs as req_key
 from composer.core.context import AIComposerContext, compute_state_digest
 from composer.io.context import run_graph
+from composer.ui.tool_display import tool_display
 
 class JudgeInput(FlowInput, RoughDraftState):
     vfs: dict[str, str]
@@ -77,7 +78,7 @@ BEFORE calling this tool.
         context_schema=None,
         state_class=JudgeState,
         unbound_llm=llm,
-        tools_list=[mem_tool, *vfs_tools, res, explicit_thinking, *get_rough_draft_tools(JudgeState)],
+        tools_list=[mem_tool, *vfs_tools, res, *get_rough_draft_tools(JudgeState)],
         sys_prompt=load_jinja_template("req_role_prompt.j2"),
         initial_prompt=load_jinja_template("req_judge_prompt.j2")
     )[0]
@@ -145,6 +146,7 @@ def get_judge_tool(
     workflow = _gen_workflow(vfs_tools, mem, unbound)
     compiled_graph = workflow.compile(checkpointer=MemorySaver())
     req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
+    @tool_display("Evaluating requirements", "Requirements evaluation")
     @tool(args_schema=RequirementEvaluationSchema)
     async def requirements_evaluation(
         state: AIComposerState,

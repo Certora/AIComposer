@@ -2,18 +2,20 @@ from langchain_core.messages import ToolMessage
 from dataclasses import dataclass, field
 from typing import Callable
 
+type DisplayLabelTy = Callable[[dict], str] | str
+type ResultOutputTy = str | Callable[[str, ToolMessage], str | None | tuple[str, str]] | None
 
 @dataclass
 class ToolDisplay:
     """Declarative display config for a single tool."""
 
-    display_name: Callable[[dict], str] | str
+    display_name: DisplayLabelTy
     """
     Label shown when the tool is called.  ``str`` for a static name, callable
     ``(input) -> str`` to vary based on the concrete arguments.
     """
 
-    result: str | Callable[[str, ToolMessage], str | None | tuple[str, str]] | None
+    result: ResultOutputTy
     """
     How to render the tool result.
 
@@ -48,12 +50,13 @@ class GroupedTool:
             return f"{self.group_display}: {', '.join(items)}"
         return self.group_display(items)
 
+type ToolUISpec = GroupedTool | ToolDisplay
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _suppress_ack(
+def suppress_ack(
     label: str,
     acks: tuple[str, ...] = ("Success", "Accepted"),
 ) -> Callable[[str, ToolMessage], str | None]:
@@ -114,7 +117,7 @@ class CommonTools:
         lambda p: f'{p.get("command", "?")} {p.get("path", "")}'.strip(),
         lambda items: f"Accessing memory x{len(items)}",
     )
-    result = ToolDisplay("Delivering result", _suppress_ack("Result"))
+    result = ToolDisplay("Delivering result", suppress_ack("Result"))
 
     code_explorer = ToolDisplay(lambda q: f"Code Exploration Request: {q["question"]}", "Code Explorer Answer")
 
@@ -135,7 +138,6 @@ class CommonTools:
     )
     write_rough_draft = ToolDisplay("Write rough draft", None)
     read_rough_draft = ToolDisplay("Read rough draft", "Rough Draft")
-    extended_reasoning = ToolDisplay("Reasoning", None)
     cvl_keyword_search = ToolDisplay(
         lambda p: f"CVL Manual Search: {p.get('query')}", "CVL Matching Sections",
     )
@@ -206,19 +208,19 @@ class CommonTools:
             "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
             "record_skip": ToolDisplay(
                 lambda p: f"Skipping property #{p.get('property_index', '?')}",
-                _suppress_ack("Skip result", ("Recorded skip",)),
+                suppress_ack("Skip result", ("Recorded skip",)),
             ),
             "unskip_property": ToolDisplay(
                 lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
-                _suppress_ack("Unskip result", ("Removed skip",)),
+                suppress_ack("Unskip result", ("Removed skip",)),
             ),
         }
     
     @staticmethod
     def cvl_manipulation() -> dict[str, ToolDisplay]:
         return {
-            "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-            "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+            "put_cvl": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
+            "put_cvl_raw": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
             "get_cvl": ToolDisplay("Reading spec", None),
         }
 
@@ -231,6 +233,8 @@ class CommonTools:
 class ToolDisplayConfig:
     """Declarative mapping from tool names to display rules."""
 
+    use_global: bool = field(default=True)
+    use_scope: bool = field(default=True)
     tool_display: dict[str, ToolDisplay | GroupedTool] = field(default_factory=dict)
 
     # -- tool call formatting ------------------------------------------------
@@ -298,10 +302,6 @@ class CodeGenToolDisplay(ToolDisplayConfig):
                 None,
             ),
             
-            "put_file": CommonTools.put_file,
-            "get_file": CommonTools.get_file,
-            "list_files": CommonTools.list_files,
-            "grep_files": CommonTools.grep_files,
             "propose_spec_change": ToolDisplay(
                 lambda p: (
                     f"Proposing spec change: {p['explanation']}"
@@ -316,7 +316,7 @@ class CodeGenToolDisplay(ToolDisplayConfig):
                 ),
                 None,
             ),
-            "code_result": ToolDisplay("Finalizing result", _suppress_ack("Final result")),
+            "code_result": ToolDisplay("Finalizing result", suppress_ack("Final result")),
             "cvl_manual_search": CommonTools.cvl_manual,
             "requirements_evaluation": ToolDisplay(
                 "Evaluating requirements", "Requirements evaluation",
@@ -331,32 +331,94 @@ class CodeGenToolDisplay(ToolDisplayConfig):
             ),
             "write_rough_draft": CommonTools.write_rough_draft,
             "read_rough_draft": CommonTools.read_rough_draft,
-            "extended_reasoning": CommonTools.extended_reasoning,
             "memory": CommonTools.memory,
         })
 
 
-class NatSpecToolDisplay(ToolDisplayConfig):
-    """Tool display configuration for the NatSpec generation workflow."""
+_graphcore_global_tools = {
+    "get_file": CommonTools.get_file,
+    "put_file": CommonTools.put_file,
+    "list_files": CommonTools.list_files,
+    "grep_files": CommonTools.grep_files,
+    "result": CommonTools.result,
+    "memory": CommonTools.memory
+}
 
-    def __init__(self):
-        super().__init__(tool_display={
-            "cvl_manual_search": CommonTools.cvl_manual,
-            "human_in_the_loop": ToolDisplay(
-                lambda p: (
-                    f"Asking for input: {p['question']}"
-                    if p.get("question") else "Asking for input"
-                ),
-                None,
-            ),
-            "result": CommonTools.result,
-            "put_interface": ToolDisplay("Writing interface", _suppress_ack("Interface write result")),
-            "get_document": ToolDisplay("Reading design doc", "Design document"),
-            "get_cvl": ToolDisplay("Reading spec", None),
-            "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-            "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-            "guidelines_judge": ToolDisplay("Running guidelines judge", "Guidelines feedback"),
-            "suggestion_oracle": ToolDisplay("Getting suggestions", "Suggestions"),
-            "typecheck_spec": ToolDisplay("Type-checking spec", "Type-check result"),
-            "memory": CommonTools.memory,
-        })
+_ns_global_tools = {}
+
+from contextvars import ContextVar
+from contextlib import contextmanager
+
+_tool_context = ContextVar[dict[str, ToolUISpec] | None]("_tool_context", default=None)
+
+@contextmanager
+def tool_context(inherit: bool = False):
+    to_set = prev_ctxt.copy() if inherit and (prev_ctxt := _tool_context.get()) is not None else {}
+    prev = _tool_context.set(to_set)
+    try:
+        yield
+    finally:
+        _tool_context.reset(prev)
+
+def _register_tool_spec(
+    nm: str,
+    display: ToolUISpec
+):
+    ctxt = _tool_context.get()
+    if ctxt is None or nm in ctxt:
+        return
+    ctxt[nm] = display
+
+from typing import TypeVar
+
+from graphcore.tools.schemas import WithAsyncDependencies, WithAsyncImplementation, WithImplementation, ToolBuilder
+from langchain_core.tools import BaseTool
+
+T_VAR_CTXT = TypeVar("T_VAR_CTXT", bound=type[WithAsyncDependencies] | type[WithAsyncImplementation] | type[WithImplementation])
+
+T_VAR = TypeVar("T_VAR", bound=type[WithAsyncDependencies] | type[WithAsyncImplementation] | type[WithImplementation] | BaseTool)
+
+def tool_display_of(
+    display: ToolUISpec,
+) -> Callable[[T_VAR], T_VAR]:
+    def to_wrap(
+        x: T_VAR
+    ) -> T_VAR:
+        if isinstance(x, BaseTool):
+            _ns_global_tools[x.name] = display
+            return x
+        if issubclass(x, WithAsyncImplementation) or issubclass(x, WithImplementation):
+            prev = x.as_tool
+            def new_tool_impl(
+                name: str
+            ) -> BaseTool:
+                to_ret = prev(name)
+                _register_tool_spec(name, display)
+                return to_ret
+            x.as_tool = new_tool_impl
+            return x
+
+        old_bind = x.bind
+        def new_bind(
+            deps
+        ) -> ToolBuilder:
+            to_ret = old_bind(x)
+            old_as_tool = to_ret.as_tool
+            def new_as_tool(
+                name: str
+            ) -> BaseTool:
+                to_ret = old_as_tool(name)
+                _register_tool_spec(name, display)
+                return to_ret
+            to_ret.as_tool = new_as_tool
+            return to_ret
+
+        x.bind = new_bind
+        return x
+    return to_wrap
+
+def tool_display(
+    label: DisplayLabelTy,
+    result: ResultOutputTy
+) -> Callable[[T_VAR], T_VAR]:
+    return tool_display_of(ToolDisplay(display_name=label, result=result))

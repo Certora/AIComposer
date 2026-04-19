@@ -14,7 +14,7 @@ from textual.widgets import Static, RichLog, Collapsible
 
 from rich.text import Text
 
-from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
+from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, suppress_ack
 from composer.io.event_handler import EventHandler, NullEventHandler
 from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo, TaskHost,
@@ -75,16 +75,10 @@ def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
             return ToolDisplayConfig(tool_display={
                 **CommonTools.source_displays(),
                 **CommonTools.cvl_research_displays(),
-                "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+                "put_cvl": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
+                "put_cvl_raw": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
                 "get_cvl": ToolDisplay("Reading spec", None),
                 "typechecker": ToolDisplay("Type checking", "Typecheck result"),
-                "plan_write": ToolDisplay("Writing plan", _suppress_ack("Plan accepted")),
-                "read_plan": ToolDisplay("Reading plan", None),
-                "erc20_guidance": ToolDisplay("ERC20 guidance", None),
-                "resolution_guidance": ToolDisplay("Resolution guidance", None),
-                "result": CommonTools.result,
-                "memory": CommonTools.memory,
             })
         case AutoProvePhase.INVARIANTS:
             return ToolDisplayConfig(tool_display={
@@ -111,18 +105,17 @@ def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
             return ToolDisplayConfig(tool_display={
                 **CommonTools.cvl_research_displays(),
                 **CommonTools.source_displays(),
-                "put_cvl": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
-                "put_cvl_raw": ToolDisplay("Writing spec", _suppress_ack("Spec write result")),
+                "put_cvl": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
+                "put_cvl_raw": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
                 "get_cvl": ToolDisplay("Reading spec", None),
                 "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
-                "extended_reasoning": CommonTools.extended_reasoning,
                 "record_skip": ToolDisplay(
                     lambda p: f"Skipping property #{p.get('property_index', '?')}",
-                    _suppress_ack("Skip result", ("Recorded skip",)),
+                    suppress_ack("Skip result", ("Recorded skip",)),
                 ),
                 "unskip_property": ToolDisplay(
                     lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
-                    _suppress_ack("Unskip result", ("Removed skip",)),
+                    suppress_ack("Unskip result", ("Removed skip",)),
                 ),
                 "explore_code": ToolDisplay("Exploring code", "Code exploration"),
                 "verify_spec": ToolDisplay("Running prover", None),

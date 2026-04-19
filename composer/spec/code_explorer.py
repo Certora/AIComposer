@@ -23,6 +23,7 @@ from composer.templates.loader import load_jinja_template
 from composer.spec.tool_env import BaseSourceTools, BasicAgentTools
 from composer.spec.util import uniq_thread_id
 from composer.spec.agent_index import AgentIndex, IndexedTool, WithAgentIndex
+from composer.ui.tool_display import tool_display_of, CommonTools
 
 
 CODE_EXPLORER_SYS_PROMPT = """\
@@ -96,6 +97,7 @@ def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
     """
     graph = _code_explorer_graph(env)
 
+    @tool_display_of(CommonTools.code_explorer)
     class ExploreCodeSchema(_ExploreCodeCommon, WithAsyncImplementation[str]):
         __doc__ = _ExploreCodeCommon.__doc__
 
@@ -137,6 +139,7 @@ and are established facts — do not re-derive or re-verify them.
         env, sys_prompt=extended_sys
     )
 
+    @tool_display_of(CommonTools.code_explorer)
     class CodeExplorerTool(_ExploreCodeCommon, IndexedTool[AgentIndex]):
         __doc__ = _ExploreCodeCommon.__doc__
 

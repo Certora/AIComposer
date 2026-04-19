@@ -19,6 +19,7 @@ from composer.spec.tool_env import BaseRAGTools, BasicAgentTools
 from composer.spec.util import uniq_thread_id
 from composer.spec.agent_index import AgentIndex, IndexedTool
 from composer.spec.gen_types import TypedTemplate
+from composer.ui.tool_display import tool_display_of, CommonTools
 
 DEFAULT_CVL_AGENT_INDEX_NS: tuple[str, ...] = ("cvl_research", "cached")
 
@@ -118,6 +119,7 @@ def _build_research_tool(
     """
     graph = _build_research_graph(builder, False)
 
+    @tool_display_of(CommonTools.cvl_research)
     class CVLResearchSchema(CVLResearchSchemaBase, WithAsyncImplementation[str]):
         __doc__ = doc
 
@@ -162,6 +164,7 @@ def indexed_cvl_research_tool(
         env.builder.with_tools(env.base_rag_tools),
         with_index=True
     )
+    @tool_display_of(CommonTools.cvl_research)
     class CVLResearcher(CVLResearchSchemaBase, IndexedTool[AgentIndex]):
         __doc__ = doc
         
@@ -185,3 +188,4 @@ def indexed_cvl_research_tool(
             return res["result"]
 
     return CVLResearcher.bind(env.agent_index).as_tool("cvl_research")
+

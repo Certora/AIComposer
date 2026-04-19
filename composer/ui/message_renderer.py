@@ -25,6 +25,9 @@ from graphcore.utils import get_token_usage
 
 KNOWN_NODES: set[str] = {INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE}
 
+import logging
+logger = logging.getLogger(__name__)
+
 _DOT = "\u25cf "  # ● filled circle
 
 from logging import getLogger
@@ -142,6 +145,7 @@ class MessageRenderer:
                     name = c["name"]
                     input_args = c.get("input", {})
                     grouped = tc.get_group(name)
+                    logger.info("Tool name %s", name)
 
                     if grouped is not None:
                         raw = grouped.extract_group_items(input_args)
