@@ -1,0 +1,20 @@
+# Counter System
+
+This system consists of a single smart contract, `Counter`, which maintains an
+integer state variable and exposes an API for incrementing it.
+
+## Counter Contract
+
+The `Counter` contract has a single component, "Increment", responsible for
+handling count updates.
+
+### Increment Component
+
+- External entry points: `increment()`
+- State variables: `count` of type `uint256`
+- Interactions: none (no interactions with other contracts or external actors).
+
+Requirements:
+
+- Each call to `increment()` must increase `count` by exactly 1.
+- `increment()` must not revert under normal operation.
