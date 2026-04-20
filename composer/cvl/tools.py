@@ -9,6 +9,7 @@ source_spec (source-based spec generation) workflows.
 import os
 import subprocess
 import tempfile
+from importlib.resources import files
 from typing import Annotated, Literal, overload
 from typing_extensions import TypedDict
 
@@ -78,8 +79,11 @@ def maybe_update_cvl(
         with tempfile.NamedTemporaryFile("w", suffix=".spec", delete=False) as f:
             f.write(pp)
             f.flush()
-            certora_dir = os.environ["CERTORA"]
-            emv_jar = os.path.join(certora_dir, "certora_jars", "Typechecker.jar")
+            if "CERTORA" in os.environ:
+                certora_dir = os.environ["CERTORA"]
+                emv_jar = os.path.join(certora_dir, "certora_jars", "Typechecker.jar")
+            else:
+                emv_jar = str(files("certora_jars") / "Typechecker.jar")
             res = subprocess.run(
                 ["java", "-classpath", emv_jar, "EntryPointKt", f.name],
                 text=True,

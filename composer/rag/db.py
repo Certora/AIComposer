@@ -739,7 +739,7 @@ async def get_rag_db(
     model: SentenceTransformer
 ) -> ComposerRAGDB:
     if rag_connection_str.startswith("postgresql://"):
-        conn = await AsyncConnection.connect(rag_connection_str)
+        conn = await AsyncConnection.connect(rag_connection_str, autocommit=True)
         db = PostgreSQLRAGDatabase(conn, model=model)
         await db.test_connection()
         return db
