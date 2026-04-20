@@ -57,7 +57,7 @@ console-autoprove = "composer.cli.console_autoprove:main"
 tui-autoprove = "composer.cli.tui_autoprove:main"
 
 [tool.setuptools.packages.find]
-include = ["composer*"]
+include = ["composer*", "sanity_analyzer", "analyzer"]
 
 [tool.setuptools.package-dir]
 "" = "."
