@@ -24,7 +24,7 @@ from composer.input.types import ModelOptions, LanggraphOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 
 from graphcore.tools.vfs import fs_tools
-from graphcore.graph import FlowInput, Builder
+from graphcore.graph import FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
 
 from analyzer.types import Ecosystem, AnalysisArgs
@@ -240,28 +240,33 @@ async def _analyze_core(
 
     tools = [result_tool, *v_tools]
 
-    to_run = Builder[None, None, None]().with_loader(
-        load_jinja_template
-    ).with_llm(
-        create_llm(args)
-    ).with_sys_prompt_template(
-        "analyzer_system_prompt.j2"
-    ).with_initial_prompt(
-        initial_prompt
-    ).with_checkpointer(
-        InMemorySaver()
-    ).with_tools(
-        tools
-    ).with_state(SimpleState).with_input(FlowInput).with_output_key("result")
-
     if args.ecosystem == "evm":
         #import here to lazily load sentencetransformers
         from composer.tools.search import cvl_manual_search
         from composer.rag.models import get_model
         from composer.rag.db import get_rag_db
-        to_run = to_run.with_tools([cvl_manual_search(await get_rag_db(args.rag_db, get_model()))])
+        tools.append(cvl_manual_search(await get_rag_db(args.rag_db, get_model())))
 
-    graph = to_run.compile_async()
+    llm = create_llm(args)
+
+    system_prompt = load_jinja_template("analyzer_system_prompt.j2")
+
+    # Wrap initial_prompt with cache_control for prompt caching
+    initial_prompt_with_cache = {
+        "type": "text",
+        "text": initial_prompt,
+        "cache_control": {"type": "ephemeral"}
+    }
+
+    graph = build_async_workflow(
+        input_type=FlowInput,
+        output_key="result",
+        tools_list=tools,
+        unbound_llm=llm,
+        sys_prompt=system_prompt,
+        initial_prompt=initial_prompt_with_cache,
+        state_class=SimpleState
+    )[0].compile(checkpointer=InMemorySaver())
 
     conf : RunnableConfig = {"configurable": {}}
     tid : str
