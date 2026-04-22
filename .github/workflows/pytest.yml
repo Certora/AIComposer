@@ -1,0 +1,30 @@
+name: pytest-check
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          cache-suffix: pytest
+      
+      - name: sync-deps
+        run: |
+          uv sync --group test
+
+      - name: Run pytest
+        run: |
+          uv run pytest tests/

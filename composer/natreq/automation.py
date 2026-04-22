@@ -60,6 +60,6 @@ IMPORTANT: phrase your answer as a specification of what a (not yet written) imp
 """))
         resp = cached_invoke(llm, cast(list[AnyMessage], messages))
         messages.append(resp)
-        return resp.text()
+        return resp.text
 
     return to_return

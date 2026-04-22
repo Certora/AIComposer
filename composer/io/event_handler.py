@@ -25,8 +25,13 @@ class EventHandler(Protocol):
     """
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None: ...
 
+    async def handle_progress_event(self, payload: dict) -> None: ...
+
 
 class NullEventHandler:
     """No-op handler — ignores all custom events."""
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
+        pass
+
+    async def handle_progress_event(self, payload: dict) -> None:
         pass

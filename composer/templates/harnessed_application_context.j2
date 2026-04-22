@@ -1,0 +1,10 @@
+{% from "application_context_macro.j2" import render_applicaton_context %}
+
+{% call(c) render_applicaton_context(context, False) %}
+{% if c.harnesses %}
+This contract component is modelled using the following concrete "harnesses":
+{% for h in c.harnesses %}
+* `{{ h.name}}` located at path `{{ h.path }}`
+{% endfor %}
+{% endif %}
+{% endcall %}

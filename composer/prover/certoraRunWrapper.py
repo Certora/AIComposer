@@ -14,8 +14,19 @@
 #      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
-import pickle
+import json
 import os
+
+from typing import Literal, TypedDict, Annotated
+
+class ProverSuccess(TypedDict):
+    sort: Literal["success"]
+    is_local_link: bool
+    link: str | None
+
+class ProverFailure(TypedDict):
+    sort: Literal["failure"]
+    exc_str: str
 
 """
 This is a wrapper script which sandboxes an invocation of run_certora.py
@@ -32,23 +43,39 @@ All other arguments past the first are passed through to `run_certora`.
 
 os.putenv("DONT_USE_VERIFICATION_RESULTS_FOR_EXITCODE", "1")
 
-certora_path = os.environ.get("CERTORA")
-if certora_path is None:
-    sys.exit(1)
+from typing import TYPE_CHECKING
 
-sys.path.append(certora_path)
+if TYPE_CHECKING:
+    from certoraRun import run_certora
+else:
+    if (certora_path := os.environ.get("CERTORA")) is None:
+        from certora_cli.certoraRun import run_certora
+    else:
+        sys.path.append(certora_path)
 
-from certoraRun import run_certora
+        from certoraRun import run_certora
 
 output = sys.argv[1]
 
-with open(output, 'wb') as out:
+with open(output, 'w') as out:
     try:
         r = run_certora(
             args=sys.argv[2:]
         )
-        pickle.dump(r, out)
+        if r is None:
+            json.dump(None, out)
+        else:
+            succ : ProverSuccess = {
+                "sort": "success",
+                "is_local_link": r.is_local_link,
+                "link": r.link
+            }
+            json.dump(succ, out)
     except Exception as e:
-        pickle.dump(e, out)
+        fail : ProverFailure = {
+            "sort": "failure",
+            "exc_str": str(e)
+        }
+        json.dump(fail, out)
 
 sys.exit(0)

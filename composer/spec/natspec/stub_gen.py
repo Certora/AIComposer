@@ -14,11 +14,12 @@ from graphcore.graph import FlowInput
 
 from langgraph.graph import MessagesState
 
-from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
+from composer.spec.context import WorkflowContext, PlainBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.context import CacheKey
 from composer.spec.util import string_hash
 from composer.spec.natspec.interface_gen import InterfaceResult
+from composer.spec.util import uniq_thread_id
 
 DESCRIPTION = "Stub generation"
 
@@ -39,7 +40,7 @@ async def generate_stub(
     ctx: WorkflowContext[None],
     interface: InterfaceResult,
     contract_name: str,
-    builder: PlainBuilder | CVLOnlyBuilder,
+    builder: PlainBuilder,
     solc_version: str,
 ) -> StubDeclaration:
     """Generate a minimal Solidity stub that imports the interface and compiles.
@@ -49,9 +50,9 @@ async def generate_stub(
 
     key = CacheKey[None, StubDeclaration](f"stub-for-{string_hash(interface.model_dump_json())}-{contract_name}")
 
-    child = ctx.child(key, {"intf": interface.model_dump(), "contract": contract_name})
+    child = await ctx.child(key, {"intf": interface.model_dump(), "contract": contract_name})
 
-    if (c := child.cache_get(StubDeclaration)) is not None:
+    if (c := await child.cache_get(StubDeclaration)) is not None:
         return c
 
     solc_name = f"solc{solc_version}"
@@ -113,19 +114,17 @@ async def generate_stub(
         interface_name=interface_name,
         the_interface=interface.name_to_interface[contract_name].content,
         solc_version=solc_version,
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
+    ).compile_async()
 
     input_parts : list[str | dict] = []
 
     res = await run_to_completion(
         workflow,
         FlowInput(input=input_parts),
-        thread_id=ctx.uniq_thread_id(),
+        thread_id=uniq_thread_id("stub-gen"),
         recursion_limit=20,
         description=f"{DESCRIPTION}: {contract_name}",
     )
     assert "result" in res
-    child.cache_put(res["result"])
+    await child.cache_put(res["result"])
     return res["result"]

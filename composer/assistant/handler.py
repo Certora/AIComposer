@@ -125,6 +125,7 @@ class OrchestratorHandler:
 
     def _start_thinking(self) -> None:
         self._thinking = self._console.status("Thinking...", spinner="dots")
+        assert self._thinking is not None
         self._thinking.start()
 
     async def on_interrupt(self, payload: Any, state: OrchestratorState) -> str:

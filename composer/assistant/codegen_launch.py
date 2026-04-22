@@ -48,7 +48,6 @@ class CodegenWorkflowArgs:
     interleaved_thinking: bool = False
 
 
-
 def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
     return CodegenWorkflowArgs(
         audit_db=AUDIT_DEFAULT,

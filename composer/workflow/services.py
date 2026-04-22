@@ -1,19 +1,26 @@
 import psycopg
-from typing import Any, TypeVar, Callable
+from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager
+from typing_extensions import TypeVar
 import inspect
 import os
-from psycopg.rows import dict_row, RowFactory, DictRow
+from dataclasses import dataclass
+from psycopg.rows import dict_row, RowFactory, DictRow, Row
+from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
 from langchain_anthropic import ChatAnthropic
 from langgraph.store.postgres import PostgresStore
+from langgraph.store.postgres.aio import AsyncPostgresStore
 
-from graphcore.tools.memory import PostgresMemoryBackend
+from psycopg.rows import AsyncRowFactory
+from psycopg_pool.pool_async import AsyncConnectionPool as PGAsyncPool
+from psycopg.connection_async import AsyncConnection
+from graphcore.tools.memory import PostgresMemoryBackend, AsyncPostgresBackend
 
 from composer.input.types import ModelOptions, ModelOptionsBase
-
 
 T = TypeVar("T")
 
@@ -111,6 +118,17 @@ def _adapt_async(obj: T, pairs: list[tuple[str, str]]) -> T:
         setattr(obj, async_name, new_async_method)
     return obj
 
+def _get_composer_connection_string(
+     *,
+    user: str,
+    password: str,
+    database: str,
+) -> str:
+    host = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
+    port = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
+    conn_string = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    return conn_string
+
 def _get_composer_connection(
     *,
     user: str,
@@ -131,18 +149,135 @@ def _get_composer_connection(
     Returns:
         psycopg.Connection: Configured database connection
     """
-    host = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
-    port = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
-    conn_string = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+    conn_string = _get_composer_connection_string(
+        user=user,
+        password=password,
+        database=database
+    )
     if row_factory is not None:
         return psycopg.connect(conn_string, autocommit=autocommit, row_factory=row_factory)
     return psycopg.connect(conn_string, autocommit=autocommit)
 
+async def _get_async_composer_pool(
+    *,
+    user: str,
+    password: str,
+    database: str,
+    autocommit : bool = False,
+    row_factory : AsyncRowFactory[Row] | None = None
+) -> PGAsyncPool[AsyncConnection[Row]]:
+    conn_string = _get_composer_connection_string(
+        user=user,
+        database=database,
+        password=password
+    )
+
+    kwargs : dict[str, Any] = {
+        "autocommit": autocommit
+    }
+    if row_factory is not None:
+        kwargs["row_factory"] = row_factory
+    
+
+    pool = PGAsyncPool(
+        conn_string,
+        connection_class=AsyncConnection[Row],
+        kwargs=kwargs
+    )
+    await pool.open()
+    return pool
+
+
+from typing import AsyncIterator
+
+class _ConnInfo(TypedDict):
+    user: str
+    password: str
+    database: str
+
+
+type LG_DBClass = Literal["store", "checkpoint"]
+type DBClass = LG_DBClass | Literal["memory"]
+
+_DATABASE_CONFIGS : dict[DBClass, _ConnInfo] = {
+    "checkpoint": {
+        "user": "langgraph_checkpoint_user",
+        "password": "langgraph_checkpoint_password",
+        "database": "langgraph_checkpoint_db"
+    },
+    "memory": {
+        "user": "memory_tool_user",
+        "password": "memory_tool_password",
+        "database": "memory_tool_db"
+    },
+    "store": {
+        "user": "langgraph_store_user",
+        "password": "langgraph_store_password",
+        "database": "langgraph_store_db"
+    }
+}
+
+@asynccontextmanager
+async def _async_lg_pool(
+    l: LG_DBClass
+) -> AsyncIterator[PGAsyncPool[AsyncConnection[DictRow]]]:
+    async with _async_pool_context_inner(
+        l, True, dict_row
+    ) as p:
+        yield p
+
+@asynccontextmanager
+async def _async_memory_pool(
+) -> AsyncIterator[PGAsyncPool[AsyncConnection]]:
+    async with _async_pool_context_inner(
+        "memory", False
+    ) as p:
+        yield p
+
+@asynccontextmanager
+async def _async_pool_context_inner(
+    l: DBClass,
+    autocommit: bool,
+    row_factory: AsyncRowFactory[Row] | None = None
+) -> AsyncIterator[PGAsyncPool[AsyncConnection[Row]]]:
+    config = _DATABASE_CONFIGS[l]
+    conn_string = _get_composer_connection_string(
+        **config
+    )
+    kwargs : dict[str, Any] = {
+        "autocommit": autocommit
+    }
+    if row_factory is not None:
+        kwargs["row_factory"] = row_factory
+    pool = PGAsyncPool(
+        conn_string,
+        connection_class=AsyncConnection[Row],
+        kwargs=kwargs
+    )
+    async with pool:
+        yield pool
+
+@asynccontextmanager
+async def checkpointer_context() -> AsyncIterator[AsyncPostgresSaver]:
+    async with _async_lg_pool("checkpoint") as p:
+        checkpointer = AsyncPostgresSaver(p)
+        await checkpointer.setup()
+        yield checkpointer
+
+@asynccontextmanager
+async def store_context() -> AsyncIterator[AsyncPostgresStore]:
+    async with _async_lg_pool("store") as p:
+        store = AsyncPostgresStore(p)
+        await store.setup()
+        async with store:
+            yield store
+
+from typing_extensions import deprecated
+
+@deprecated("Use async code")
 def get_checkpointer() -> PostgresSaver:
     conn = _get_composer_connection(
-        user="langgraph_checkpoint_user",
-        password="langgraph_checkpoint_password",
-        database="langgraph_checkpoint_db",
+        **_DATABASE_CONFIGS["checkpoint"],
         autocommit=True,
         row_factory=dict_row
     )
@@ -159,11 +294,20 @@ def get_checkpointer() -> PostgresSaver:
     checkpointer.setup()
     return checkpointer
 
+async def get_async_checkpointer() -> AsyncPostgresSaver:
+    conn =  await _get_async_composer_pool(
+        **_DATABASE_CONFIGS["checkpoint"],
+        autocommit=True,
+        row_factory=dict_row
+    )
+    checkpointer = AsyncPostgresSaver(conn)
+    await checkpointer.setup()
+    return checkpointer
+
+@deprecated("Use async code")
 def get_store() -> PostgresStore:
     conn = _get_composer_connection(
-        user="langgraph_store_user",
-        password="langgraph_store_password",
-        database="langgraph_store_db",
+        **_DATABASE_CONFIGS["store"],
         autocommit=True,
         row_factory=dict_row
     )
@@ -171,11 +315,22 @@ def get_store() -> PostgresStore:
     store.setup()
     return store
 
+async def get_async_store() -> AsyncPostgresStore:
+    conn = await _get_async_composer_pool(
+        **_DATABASE_CONFIGS["store"],
+        autocommit=True,
+        row_factory=dict_row
+    )
+    store = AsyncPostgresStore(
+        conn
+    )
+    await store.setup()
+    return store
+
+@deprecated("Use async code")
 def get_indexed_store(embedder: Embeddings) -> PostgresStore:
     conn = _get_composer_connection(
-        user="langgraph_store_user",
-        password="langgraph_store_password",
-        database="langgraph_store_db",
+        **_DATABASE_CONFIGS["store"],
         autocommit=True,
         row_factory=dict_row
     )
@@ -190,13 +345,60 @@ def get_indexed_store(embedder: Embeddings) -> PostgresStore:
     store.setup()
     return store
 
+@asynccontextmanager
+async def indexed_store_context(embedder: Embeddings, dims: int = 768) -> AsyncIterator[AsyncPostgresStore]:
+    async with _async_lg_pool("store") as p:
+        store = AsyncPostgresStore(
+            p,
+            index={
+                "embed": embedder,
+                "dims": dims,
+                "fields": None
+            }
+        )
+        await store.setup()
+        yield store
+
+
+async def get_async_indexed_store(embedder: Embeddings) -> AsyncPostgresStore:
+    conn = await _get_async_composer_pool(
+        **_DATABASE_CONFIGS["store"],
+        autocommit=True,
+        row_factory=dict_row
+    )
+    store = AsyncPostgresStore(
+        conn,
+        index={
+            "embed": embedder,
+            "dims": 768,
+            "fields": None
+        }
+    )
+    await store.setup()
+    return store
+
+
 def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
     conn = _get_composer_connection(
-        user="memory_tool_user",
-        password="memory_tool_password",
-        database="memory_tool_db"
+        **_DATABASE_CONFIGS["memory"]
     )
     return PostgresMemoryBackend(ns, conn, init_from)
+
+async def get_async_memory(ns : str, init_from : str | None = None) -> AsyncPostgresBackend:
+    conn = await _get_async_composer_pool(
+        **_DATABASE_CONFIGS["memory"]
+    )
+    to_ret = AsyncPostgresBackend(ns, conn)
+    if init_from is not None:
+        await to_ret.init_from(init_from)
+    return to_ret
+
+type MemoryBackendGenerator = Callable[[str], AsyncPostgresBackend]
+
+@asynccontextmanager
+async def memory_backend_context() -> AsyncIterator[MemoryBackendGenerator]:
+    async with _async_memory_pool() as p:
+        yield (lambda ns: AsyncPostgresBackend(ns, p))
 
 _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
 
@@ -233,3 +435,47 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
     """Create and configure the LLM. Backwards-compatible; thinking always enabled."""
     return create_llm_base(args)
 
+
+@dataclass
+class StandardConnections:
+    checkpointer: AsyncPostgresSaver
+    store: AsyncPostgresStore
+    memory: Callable[[str], AsyncPostgresBackend]
+
+@dataclass
+class IndexedConnections(StandardConnections):
+    indexed_store: AsyncPostgresStore
+
+
+@overload
+def standard_connections() -> AsyncContextManager[StandardConnections]:
+    ...
+
+@overload
+def standard_connections(*, embedder : Embeddings) -> AsyncContextManager[IndexedConnections]:
+    ...
+
+@asynccontextmanager
+async def standard_connections(
+    *,
+    embedder: Embeddings | None = None
+) -> AsyncIterator[StandardConnections | IndexedConnections]:
+    async with (
+        checkpointer_context() as check,
+        memory_backend_context() as mem,
+        store_context() as store
+    ):
+        if embedder is not None:
+            async with indexed_store_context(embedder) as ind:
+                yield IndexedConnections(
+                    checkpointer=check,
+                    indexed_store=ind,
+                    store=store,
+                    memory=mem
+                )
+                return
+        yield StandardConnections(
+            checkpointer=check,
+            store=store,
+            memory=mem
+        )

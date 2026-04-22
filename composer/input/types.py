@@ -78,7 +78,7 @@ class RAGDBOptions(Protocol):
         default=RAGDB_DEFAULT_CONNECTION
     )]
 
-class LangraphOptions(Protocol):
+class LanggraphOptions(Protocol):
     checkpoint_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     thread_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     recursion_limit: Annotated[int, Arg(
@@ -87,13 +87,14 @@ class LangraphOptions(Protocol):
     )]
 
 
-class WorkflowOptions(RAGDBOptions, LangraphOptions, Protocol):
+class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     prover_capture_output: bool
     prover_keep_folders: bool
     local_prover: bool
 
     debug_prompt_override: Optional[str]
 
+    recursion_limit: int
     audit_db: str
     summarization_threshold: Optional[int]
 

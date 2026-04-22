@@ -1,4 +1,4 @@
-from typing import cast
+from typing import cast, override
 
 from composer.io.event_handler import EventHandler
 from composer.io.protocol import CodeGenIOHandler
@@ -19,6 +19,7 @@ class CodeGenEventHandler(EventHandler):
         self._io = io
         self._audit = audit
 
+    @override
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         d = cast(PartialUpdates, payload)
         if d["type"] == "summarization_raw":
@@ -42,3 +43,7 @@ class CodeGenEventHandler(EventHandler):
                     )
         elif is_user_update(d):
             await self._io.progress_update(path, d)
+
+    @override
+    async def handle_progress_event(self, payload: dict) -> None:
+        pass

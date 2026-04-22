@@ -8,7 +8,7 @@ Parameterized by:
 
 import hashlib
 from dataclasses import dataclass
-from typing import Annotated, Callable, NotRequired, override, Awaitable
+from typing import Annotated, Callable, NotRequired, override, Awaitable, Any, Protocol
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
@@ -17,9 +17,10 @@ from langchain_core.tools import BaseTool
 
 from langgraph.types import Command
 from langgraph.graph import MessagesState
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import get_runtime
 
-from graphcore.graph import FlowInput, tool_state_update, tool_return, Builder
+from graphcore.graph import FlowInput, tool_state_update, tool_return
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId, WithAsyncImplementation
 
 from composer.spec.context import (
@@ -27,12 +28,15 @@ from composer.spec.context import (
 )
 from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance
 from composer.core.state import merge_validation
-from composer.spec.prop import PropertyFormulation
-from composer.spec.graph_builder import bind_standard, run_to_completion
+from composer.spec.graph_builder import run_to_completion
 from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl
-from composer.spec.cvl_research import cvl_research_tool, CVL_RESEARCH_BASE_DOC
-from composer.spec.feedback import property_feedback_judge, PropertyFeedback
-from composer.spec.gen_types import GenerationEnv
+
+class PropertyFeedbackProtocol(Protocol):
+    @property
+    def good(self) -> bool: ...
+
+    @property
+    def feedback(self) -> str: ...
 
 CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
 
@@ -123,9 +127,6 @@ def make_validation_stamper(key: str) -> Callable[[CVLGenerationExtra], dict[str
 class CVLGenerationInput(FlowInput, CVLGenerationExtra):
     pass
 
-type StateValidator = Callable[[CVLGenerationExtra], str | None]
-type ResultToolFactory = Callable[[StateValidator], tuple[BaseTool, ...]]
-
 
 class CVLGenerationState(MessagesState, CVLGenerationExtra):
     result: NotRequired[str]
@@ -138,11 +139,14 @@ LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 
 DESCRIPTION = "CVL generation"
 
+type FeedbackToolImpl = Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedbackProtocol]]
+
 @dataclass
-class _CVLGenerationContext:
-    feedback_thunk: Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedback]]
+class FeedbackToolContext:
+    feedback_thunk: FeedbackToolImpl
     num_props: int
 
+FEEDBACK_VALIDATION_KEY = "feedback"
 
 class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithAsyncImplementation[Command]):
     """
@@ -152,7 +156,7 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
     """
     @override
     async def run(self) -> Command:
-        feedback = get_runtime(_CVLGenerationContext).context.feedback_thunk
+        feedback = get_runtime(FeedbackToolContext).context.feedback_thunk
         st = self.state
         spec = st["curr_spec"]
         if spec is None:
@@ -164,7 +168,7 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
             digest = _compute_digest(spec, skipped)
             return tool_state_update(
                 self.tool_call_id, msg,
-                validations={"feedback": digest},
+                validations={FEEDBACK_VALIDATION_KEY: digest},
             )
         return tool_state_update(self.tool_call_id, msg)
 
@@ -184,7 +188,7 @@ class _RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, W
 
     @override
     def run(self) -> Command:
-        num_props = get_runtime(_CVLGenerationContext).context.num_props
+        num_props = get_runtime(FeedbackToolContext).context.num_props
         if not (1 <= self.property_index <= num_props):
             return tool_state_update(
                 self.tool_call_id,
@@ -216,7 +220,7 @@ class _UnskipSchema(WithInjectedId, WithImplementation[Command]):
 
     @override
     def run(self) -> Command:
-        num_props = get_runtime(_CVLGenerationContext).context.num_props
+        num_props = get_runtime(FeedbackToolContext).context.num_props
         if not (1 <= self.property_index <= num_props):
             return tool_state_update(
                 self.tool_call_id,
@@ -233,23 +237,8 @@ class _UnskipSchema(WithInjectedId, WithImplementation[Command]):
             skipped=[skip],
         )
 
-
-async def generate_batch_cvl(
-    ctx: WorkflowContext[CVLGeneration],
-    props: list[PropertyFormulation],
-    env: GenerationEnv,
-    with_memory: bool,
-    description: str,
-) -> GeneratedCVL:
-    required_validations = ["feedback"]
-
-    feedback = property_feedback_judge(
-        ctx.child(CVL_JUDGE_KEY), env, props, with_memory,
-    )
-
-    _cvl_research_doc = CVL_RESEARCH_BASE_DOC
-
-    tools: list[BaseTool] = [
+def static_tools() -> list[BaseTool]:
+    return [
         put_cvl, put_cvl_raw,
         _FeedbackSchema.as_tool("feedback_tool"),
         _RecordSkipSchema.as_tool("record_skip"),
@@ -259,96 +248,33 @@ async def generate_batch_cvl(
         UnresolvedCallGuidance.as_tool("unresolved_call_guidance"),
     ]
 
-    tools.extend(env.extra_tools)
 
-    extra_inputs: list[str | dict] = env.prompt.cvl_prompt_extras
-
-    for (validation, tool) in env.validation_tools:
-        required_validations.append(validation)
-        tools.append(tool)
-
-    tools.append(cvl_research_tool(ctx, env.cvl_research, _cvl_research_doc))
-
-    template_kwargs: dict = {
-        "properties": props,
-        "memory": with_memory,
-        **env.prompt.cvl_prompt.args
-    }
-
-    tools.extend(ctx.kb_tools(read_only=False))
-
-    if with_memory:
-        tools.append(ctx.get_memory_tool())
-
-    if with_memory:
-        last_attempt = ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
-        if last_attempt is not None:
-            extra_inputs.append("Your last working draft was:")
-            extra_inputs.append(last_attempt.cvl)
-
-    # Builder configuration: if result_tools provided, use manual config
-    to_build : Builder[CVLGenerationState, None, None]
-
-    if env.output_tools:
-        to_build = env.cvl_authorship.with_state(
-            CVLGenerationState
-        ).with_output_key(
-            "result"
-        ).with_default_summarizer(
-            max_messages=50
-        ).with_tools(
-            env.output_tools
-        )
-    else:
-        to_build = bind_standard(
-            env.cvl_authorship, CVLGenerationState, "A description of your generated CVL",
-            validator=lambda s, _r: check_completion(s),
-        )
-
-    d = to_build.with_input(
-        CVLGenerationInput
-    ).with_tools(
-        tools
-    ).with_sys_prompt_template(
-        "cvl_system_prompt.j2"
-    ).with_initial_prompt_template(
-        str(env.prompt.cvl_prompt.template),
-        **template_kwargs
-    ).with_context(
-        _CVLGenerationContext
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
-
+async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CVLGenerationInput](
+    ctx: WorkflowContext[CVLGeneration],
+    d: CompiledStateGraph[S, C, I, Any],
+    in_state: I,
+    ctxt: C,
+    description: str
+) -> S:
+    input_copy = in_state["input"].copy()
+    last_attempt = await ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
+    if last_attempt is not None:
+        input_copy.append("Your last working draft was (you will need to re-put this onto the VFS):")
+        input_copy.append(last_attempt.cvl)
+    in_state_copy = in_state.copy()
+    in_state_copy["input"] = input_copy
     try:
         r = await run_to_completion(
             d,
-            CVLGenerationInput(
-                input=extra_inputs,
-                curr_spec=None,
-                skipped=[],
-                validations={},
-                required_validations=required_validations
-            ),
+            in_state_copy,
             thread_id=ctx.thread_id,
-            context=_CVLGenerationContext(
-                feedback_thunk=feedback,
-                num_props=len(props)
-            ),
+            context=ctxt,
             description=description,
+            recursion_limit=200
         )
+        return r
     finally:
-        last_state = d.get_state({"configurable": {"thread_id": ctx.thread_id}}).values
+        last_state = (await d.aget_state({"configurable": {"thread_id": ctx.thread_id}})).values
         curr = last_state.get("curr_spec")
-        if curr is not None and with_memory:
-            ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=curr))
-
-    assert "result" in r
-
-    skipped = r["skipped"]
-
-    return GeneratedCVL(
-        commentary=r["result"],
-        cvl=r["curr_spec"] or "",
-        skipped=skipped,
-    )
+        if curr is not None:
+            await ctx.child(LAST_ATTEMPT_KEY).cache_put(_LastAttemptCache(cvl=curr))

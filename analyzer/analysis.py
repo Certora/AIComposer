@@ -1,5 +1,5 @@
 from typing import NotRequired, TypedDict, Iterator, Iterable, TypeVar, overload, Any, Generic
-from dataclasses import dataclass
+import asyncio
 import pathlib
 import os
 import tempfile
@@ -12,18 +12,19 @@ import uuid
 
 from langgraph.graph import MessagesState
 
-from langchain_anthropic import ChatAnthropic
+from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 
-from composer.rag.db import create_rag_db, ComposerRAGDB, DEFAULT_CONNECTION
+from composer.workflow.services import create_llm
 import composer.prover.results as R
 from composer.templates.loader import load_jinja_template
 
-from langgraph.checkpoint.memory import InMemorySaver
+from composer.input.types import ModelOptions, LanggraphOptions, RAGDBOptions
+from composer.input.parsing import add_protocol_args
 
-from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
-from graphcore.graph import build_workflow, FlowInput
+from graphcore.tools.vfs import fs_tools
+from graphcore.graph import FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
 
 from analyzer.types import Ecosystem, AnalysisArgs
@@ -41,7 +42,7 @@ class EcosystemConfig(TypedDict):
 T = TypeVar("T")
 
 
-class SimpleState(VFSState, MessagesState, Generic[T]):
+class SimpleState(MessagesState, Generic[T]):
     result: NotRequired[T]
 
 def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R.RulePath) -> R.RuleResult | None:
@@ -52,10 +53,6 @@ def find_tree_view_node(stat: R.TreeViewStatus, context: pathlib.Path, target: R
             if d.path == target:
                 return d
     return None
-
-@dataclass
-class ExplainerContext:
-    rag_db: ComposerRAGDB
 
 _analysis_doc = """REQUIRED: You MUST call this tool to submit your final analysis.
 Do NOT write your answer as plain text - the workflow cannot complete until you call this tool.
@@ -112,46 +109,12 @@ Examples:
         default="evm"
     )
 
-    parser.add_argument(
-        '--recursion-limit',
-        type=int,
-        default=30,
-        help="The recursion limit to use for the cex analysis"
-    )
-
-    parser.add_argument(
-        "--thread-id",
-        type=str,
-        help="The thread id (for resuming halted/crashed runs)"
-    )
-
-    parser.add_argument(
-        "--checkpoint-id",
-        type=str,
-        help="The checkpoint id (for resuming halted/crashed runs)"
-    )
-
-    parser.add_argument(
-        "--thinking-tokens",
-        type=int,
-        default=2048
-    )
-
-    parser.add_argument(
-        "--tokens",
-        type=int,
-        default=4096
-    )
-
-    parser.add_argument(
-        "--rag-db",
-        type=str,
-        default=DEFAULT_CONNECTION,
-        help="Database connection string for CVL manual search"
-    )
+    add_protocol_args(parser, ModelOptions)
+    add_protocol_args(parser, LanggraphOptions)
+    add_protocol_args(parser, RAGDBOptions)
 
     args = parser.parse_args()
-    return analyze(cast(AnalysisArgs, args))
+    return asyncio.run(analyze(cast(AnalysisArgs, args)))
 
 ecosystem_params: dict[Ecosystem, EcosystemConfig] = {
     "evm": {
@@ -197,15 +160,27 @@ def _looks_like_url(path: str) -> bool:
 @contextmanager
 def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
     """Download tar.gz from Certora URL and extract to temporary directory."""
-    zip_url = url.replace('/output/', '/zipOutput/')
+
+    res = urllib.parse.urlparse(
+        url
+    )
+
+    path_component = pathlib.PurePosixPath(res.path).parts
+    if not (len(path_component) == 4 and path_component[0] == "/" and path_component[1] == "output"):
+        raise ValueError(f"{url} does not appear to be an `/output` url")
+
+    job_id = path_component[3]
+
+    qs = urllib.parse.parse_qs(res.query)
+    if "anonymousKey" not in qs:
+        raise ValueError(f"No anonymous key found in url {url}")
     
-    certora_key = os.environ.get("CERTORAKEY")
-    if not certora_key:
-        raise ValueError("CERTORAKEY environment variable not set")
+    anon_key = qs["anonymousKey"][0]
+    
+    zip_url = f"{res.scheme}://{res.netloc}/v1/domain/jobs/{job_id}/f/outputs?anonymousKey={anon_key}"
     
     with tempfile.TemporaryDirectory(prefix="certora_report_") as temp_dir:
-        request = urllib.request.Request(zip_url)
-        request.add_header('Cookie', f'certoraKey={certora_key}')
+        request = urllib.request.Request(zip_url, headers={"User-Agent": "curl/8.0"})
         
         with urllib.request.urlopen(request) as response:
             tar_path = os.path.join(temp_dir, "report.tar.gz")
@@ -219,7 +194,7 @@ def _download_and_extract_report(url: str) -> Iterator[pathlib.Path]:
         
         yield pathlib.Path(temp_dir, "TarName")
 
-def _analyze_core(
+async def _analyze_core(
     input_messages: Iterable[str],
     initial_prompt: str,
     report_dir: pathlib.Path,
@@ -257,32 +232,22 @@ def _analyze_core(
         )
     else:
         raise ValueError(f"Invalid type parameter: {d}")
-
-    (v_tools, _) = vfs_tools(
-        ty=SimpleState[T],
-        conf=VFSToolConfig(
-            immutable=True,
-            forbidden_read=r"^\..*$",
-            fs_layer=str(report_dir / "inputs" / ".certora_sources")
-        )
+    
+    v_tools = fs_tools(
+        fs_layer=str(report_dir / "inputs" / ".certora_sources"),
+        forbidden_read=r"^\..*$"
     )
 
     tools = [result_tool, *v_tools]
+
     if args.ecosystem == "evm":
         #import here to lazily load sentencetransformers
         from composer.tools.search import cvl_manual_search
-        tools.append(cvl_manual_search(ExplainerContext))
+        from composer.rag.models import get_model
+        from composer.rag.db import get_rag_db
+        tools.append(cvl_manual_search(await get_rag_db(args.rag_db, get_model())))
 
-    llm = ChatAnthropic(
-        model_name="claude-sonnet-4-5-20250929",
-        max_tokens_to_sample=args.tokens,
-        temperature=1,
-        timeout=None,
-        max_retries=2,
-        stop=None,
-        thinking={"type": "enabled", "budget_tokens": args.thinking_tokens},
-        betas=["interleaved-thinking-2025-05-14", "context-management-2025-06-27"],
-    )
+    llm = create_llm(args)
 
     system_prompt = load_jinja_template("analyzer_system_prompt.j2")
 
@@ -293,9 +258,8 @@ def _analyze_core(
         "cache_control": {"type": "ephemeral"}
     }
 
-    graph = build_workflow(
+    graph = build_async_workflow(
         input_type=FlowInput,
-        context_schema=ExplainerContext,
         output_key="result",
         tools_list=tools,
         unbound_llm=llm,
@@ -318,12 +282,7 @@ def _analyze_core(
         conf["configurable"]["checkpoint_id"] = args.checkpoint_id
 
     conf["recursion_limit"] = args.recursion_limit
-
-    rag_db = create_rag_db(args.rag_db)
-
-    for (ty, d) in graph.stream(input=FlowInput(input=list(input_messages)), context=ExplainerContext(
-        rag_db=rag_db
-    ), config=conf, stream_mode=["checkpoints", "updates"]):
+    async for (ty, d) in graph.astream(input=FlowInput(input=list(input_messages)), config=conf, stream_mode=["checkpoints", "updates"]):
         if ty == "checkpoints":
             assert isinstance(d, dict)
             if not args.quiet:
@@ -332,9 +291,9 @@ def _analyze_core(
             if not args.quiet:
                 print(d)
 
-    return graph.get_state({"configurable": {"thread_id": tid}}).values["result"]
+    return (await graph.aget_state({"configurable": {"thread_id": tid}})).values["result"]
 
-def _analyze_from_report(
+async def _analyze_from_report(
     report_dir: pathlib.Path,
     args: AnalysisArgs
 ) -> int:
@@ -385,25 +344,25 @@ def _analyze_from_report(
         calltrace_xml
     ]
 
-    msg = _analyze_core(input_messages, initial_prompt, report_dir, args, _default_format)
+    msg = await _analyze_core(input_messages, initial_prompt, report_dir, args, _default_format)
     print(msg)
     return 0
 
-def analyze(
+async def analyze(
     args: AnalysisArgs
 ) -> int:
     """Analyze counterexamples, handling both local folders and URLs."""
     if _looks_like_url(args.folder):
         with _download_and_extract_report(args.folder) as report_dir:
-            return _analyze_from_report(report_dir, args)
+            return await _analyze_from_report(report_dir, args)
     else:
         report_dir = pathlib.Path(args.folder)
-        return _analyze_from_report(report_dir, args)
+        return await _analyze_from_report(report_dir, args)
 
 B = TypeVar("B", bound=BaseModel)
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs
@@ -411,7 +370,7 @@ def analyze_with_calltraces(
     ...
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -420,7 +379,7 @@ def analyze_with_calltraces(
     ...
 
 @overload
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -428,7 +387,7 @@ def analyze_with_calltraces(
 ) -> B:
     ...
 
-def analyze_with_calltraces(
+async def analyze_with_calltraces(
     input_messages: list[str],
     initial_prompt: str,
     args: AnalysisArgs,
@@ -479,4 +438,4 @@ def analyze_with_calltraces(
         "args.folder must be a local folder path, not a URL. Use analyze() to handle URLs."
 
     report_dir = pathlib.Path(args.folder)
-    return _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)
+    return await _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format)

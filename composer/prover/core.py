@@ -6,15 +6,18 @@ Both callers become thin wrappers that define callbacks and call run_prover().
 """
 
 import asyncio
-import pickle
 import sys
 import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, Protocol, overload
+from typing import AsyncIterator, cast
+from abc import ABC, abstractmethod
+import json
+import logging
 
-from langchain_core.messages import AnyMessage, ToolMessage, HumanMessage
+
+from langchain_core.messages import AnyMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import MessagesState
 
@@ -26,6 +29,9 @@ from composer.prover.cloud import cloud_results
 from composer.prover.ptypes import RuleResult
 from composer.prover.results import read_and_format_run_result
 from composer.templates.loader import load_jinja_template
+from composer.prover.prover_protocol import ProverResult
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,15 +44,19 @@ class CloudConfig:
 class ProverOptions:
     cloud: CloudConfig | None = None
 
+@dataclass
+class ProverReport:
+    rule_status: dict[str, bool]
 
 @dataclass
-class RawReport:
+class RawReport(ProverReport):
     report: str
-    all_verified: bool
-
+    @property
+    def all_verified(self) -> bool:
+        return all(self.rule_status.values())
 
 @dataclass
-class SummarizedReport:
+class SummarizedReport(ProverReport):
     report: str
     todo_list: str
 
@@ -61,10 +71,37 @@ class ProverCallbacks:
     async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None: pass
     async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None: pass
 
-class AnalysisCache(Protocol):
-    def get(self, rule: RuleResult) -> str | None: ...
-    def put(self, rule: RuleResult, analysis: str) -> None: ...
+class CexHandler(ABC):
+    @abstractmethod
+    async def analyze_cex(
+        self, rule: RuleResult, tid: str
+    ) -> str | None:
+        ...
 
+class SummarizingCexHandler(CexHandler):
+    def __init__(self, summarization_threshold: int):
+        super().__init__()
+        self.summarization_threshold = summarization_threshold
+
+    @abstractmethod
+    async def summarize(
+        self, report: str
+    ) -> str:
+        ...
+
+class DefaultCexHandler(SummarizingCexHandler):
+    def __init__(self, llm: LLM, state: MessagesState, summarization_threshold: int = 10):
+        super().__init__(summarization_threshold)
+        self.state = state
+        self.llm = llm
+
+    async def analyze_cex(self, rule: RuleResult, tid: str) -> str | None:
+        messages = self.state["messages"]
+        analysis = await analyze_cex_raw(self.llm, messages, rule, tid)
+        return analysis
+
+    async def summarize(self, report: str) -> str:
+        return await _report_to_todo_list(self.llm, report)
 
 @asynccontextmanager
 async def _local_results(path: Path) -> AsyncIterator[Path]:
@@ -98,47 +135,13 @@ PROVER REPORT:
     res = await acached_invoke(llm, fresh_messages)
     return res.text
 
-@overload
 async def run_prover(
-    state: MessagesState,
     folder: Path,
     args: list[str],
-    llm: LLM,
     tool_call_id: str,
     options: ProverOptions,
     callbacks: ProverCallbacks,
-    *,
-    analysis_cache: AnalysisCache | None = None
-) -> str | RawReport:
-    ...
-
-@overload
-async def run_prover(
-    state: MessagesState,
-    folder: Path,
-    args: list[str],
-    llm: LLM,
-    tool_call_id: str,
-    options: ProverOptions,
-    callbacks: ProverCallbacks,
-    *,
-    analysis_cache: AnalysisCache | None = None,
-    summarization_threshold: int
-) -> str | RawReport | SummarizedReport:
-    ...
-
-
-async def run_prover(
-    state: MessagesState,
-    folder: Path,
-    args: list[str],
-    llm: LLM,
-    tool_call_id: str,
-    options: ProverOptions,
-    callbacks: ProverCallbacks,
-    *,
-    analysis_cache: AnalysisCache | None = None,
-    summarization_threshold: int | None = None,
+    cex: CexHandler
 ) -> RawReport | SummarizedReport | str:
     """Execute the Certora prover and return structured results.
 
@@ -160,7 +163,7 @@ async def run_prover(
     # 3-5. Spawn async subprocess, stream stdout, collect stderr
     wrapper_script = Path(__file__).parent / "certoraRunWrapper.py"
 
-    with tempfile.NamedTemporaryFile("rb", suffix=".pkl") as output_file:
+    with tempfile.NamedTemporaryFile("rb", suffix=".json") as output_file:
         proc = await asyncio.subprocess.create_subprocess_exec(
             sys.executable,
             str(wrapper_script), str(output_file.name), *effective_args,
@@ -184,27 +187,29 @@ async def run_prover(
 
         stdout = "".join(stdout_lines)
         stderr = stderr_raw.decode()
+        if proc.returncode != 0:
+            _logger.error("Process failed %d\nstdout:%s\nstderr:%s", proc.returncode, stdout, stderr)
+            return f"Verification failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        
+        run_result = cast(ProverResult, json.load(output_file))
 
-        # 5. Unpickle result
-        run_result = pickle.load(output_file)
-
-    # 6. Error handling
-    if proc.returncode != 0:
-        return f"Verification failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
-
-    if isinstance(run_result, Exception):
-        return f"Certora prover raised exception: {run_result!s}\nstdout:\n{stdout}"
-
-    if run_result is None or run_result.link is None:
+    if run_result is None or (run_result["sort"] == "success" and run_result["link"] is None):
+        _logger.warning("Prover failed: %s", run_result)
         return f"Prover did not produce results.\nstdout:\n{stdout}"
+    
+    if run_result["sort"] == "failure":
+        _logger.info("Prover run failed: %s", run_result['exc_str'])
+        return f"Certora prover raised exception: {run_result['exc_str']}\nstdout:\n{stdout}"
+
+    assert run_result is not None and run_result["sort"] == "success" and run_result["link"] is not None
 
     # 7. Result retrieval: cloud vs local
     if options.cloud is not None:
-        results_cm = cloud_results(run_result.link, poll_callback=callbacks.on_cloud_poll)
+        results_cm = cloud_results(run_result["link"], poll_callback=callbacks.on_cloud_poll)
     else:
-        if not run_result.is_local_link:
+        if not run_result["is_local_link"]:
             return f"Prover did not produce local results.\nstdout:\n{stdout}"
-        results_cm = _local_results(Path(run_result.link))
+        results_cm = _local_results(Path(run_result["link"]))
 
     # 8. Parse results
     async with results_cm as emv_path:
@@ -216,23 +221,14 @@ async def run_prover(
     # 9. Notify prover_result callback
     await callbacks.on_prover_result(parsed)
 
-    # 10. Parallel CEX analysis
-    messages = state["messages"]
-
     async def _analyze(rule: RuleResult) -> tuple[RuleResult, str | None]:
         if rule.status != "VIOLATED":
             return (rule, None)
-        if analysis_cache is not None:
-            cached = analysis_cache.get(rule)
-            if cached is not None:
-                return (rule, cached)
         await callbacks.on_analysis_start(rule)
-        analysis = await analyze_cex_raw(llm, messages, rule, tool_call_id)
-        if analysis is not None and analysis_cache is not None:
-            analysis_cache.put(rule, analysis)
-        if analysis is not None:
-            await callbacks.on_analysis_complete(rule, analysis)
-        return (rule, analysis)
+        res = await cex.analyze_cex(rule, tool_call_id)
+        if res is not None:
+            await callbacks.on_analysis_complete(rule, res)
+        return (rule, res)
 
     jobs = [_analyze(res) for res in parsed.values()]
     results_with_analysis: list[tuple[RuleResult, str | None]] = await asyncio.gather(*jobs)
@@ -244,12 +240,19 @@ async def run_prover(
     # 12. Format results as markdown
     report = load_jinja_template("rule_feedback.j2", results=results_with_analysis)
 
-    # 13. Count failures, possibly summarize
-    failed_count = sum(1 for r, _ in results_with_analysis if r.status == "VIOLATED")
+    prover_report = {}
+    failed_count = 0
+    for i in parsed.values():
+        rule_name = i.path.rule
+        if i.status != "VERIFIED":
+            failed_count += 1
+        if rule_name in prover_report and not prover_report[rule_name]:
+            continue
+        prover_report[rule_name] = i.status == "VERIFIED"
 
-    if summarization_threshold is not None and failed_count > summarization_threshold:
-        todo_list = await _report_to_todo_list(llm, report)
-        return SummarizedReport(report=report, todo_list=todo_list)
+    if isinstance(cex, SummarizingCexHandler) and cex.summarization_threshold < failed_count:
+        todo_list = await cex.summarize(report)
+        return SummarizedReport(report=report, todo_list=todo_list, rule_status=prover_report)
 
     # 14. Normal return
-    return RawReport(report=report, all_verified=(failed_count == 0))
+    return RawReport(report=report, rule_status=prover_report)

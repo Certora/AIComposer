@@ -1,11 +1,11 @@
 from typing import Protocol, Literal
 from dataclasses import dataclass
 
-from composer.input.types import ModelOptions, LangraphOptions, RAGDBOptions
+from composer.input.types import ModelOptions, LanggraphOptions, RAGDBOptions
 
 Ecosystem = Literal["evm", "soroban", "move", "solana"]
 
-class AnalysisArgs(ModelOptions, LangraphOptions, RAGDBOptions, Protocol):
+class AnalysisArgs(ModelOptions, LanggraphOptions, RAGDBOptions, Protocol):
     folder: str
     rule: str
     method: str | None
@@ -24,6 +24,7 @@ class AnalysisArgsD():
     model: str
     rag_db: str
     model: str
+    interleaved_thinking: bool = True
     method: str | None = None
     thread_id: str | None = None
     checkpoint_id: str | None = None

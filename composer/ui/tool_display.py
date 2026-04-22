@@ -62,7 +62,7 @@ def _suppress_ack(
     *acks* lists the exact strings to treat as acknowledgements.
     """
     def _check(_name: str, msg: ToolMessage) -> str | None:
-        if msg.text().startswith(acks):
+        if msg.text.startswith(acks):
             return None
         return label
     return _check
@@ -115,6 +115,9 @@ class CommonTools:
         lambda items: f"Accessing memory x{len(items)}",
     )
     result = ToolDisplay("Delivering result", _suppress_ack("Result"))
+
+    code_explorer = ToolDisplay(lambda q: f"Code Exploration Request: {q["question"]}", "Code Explorer Answer")
+
     get_file = GroupedTool(
         "read",
         lambda p: p.get("path", "?"),
@@ -158,6 +161,7 @@ class CommonTools:
             "put_file": CommonTools.put_file,
             "list_files": CommonTools.list_files,
             "grep_files": CommonTools.grep_files,
+            "explore_code": CommonTools.code_explorer
         }
 
     @staticmethod

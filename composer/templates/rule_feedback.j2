@@ -8,4 +8,14 @@ Your analysis of the counterxample yielded the following:
 Analyzing the counterexample yielded no results
 {%endif%}
 {%endif%}
+{% if rule_res.status == "ERROR" or rule_res.status == "SKIPPED" %}
+{% if not rule_res.error_messages %}
+There were no error messages reported by the prover
+{% else %}
+The messages reported by the prover were:
+{% for err in rule_res.error_messages %}
+* {{ err }}
+{% endfor %}
+{% endif %}
+{% endif %}
 {% endfor %}

@@ -15,10 +15,10 @@ from graphcore.graph import FlowInput
 
 from langgraph.graph import MessagesState
 
-from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder, SystemDoc, CacheKey
+from composer.spec.context import WorkflowContext, PlainBuilder, CacheKey
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.system_model import Application
-from composer.spec.util import string_hash
+from composer.spec.util import string_hash, uniq_thread_id
 
 from logging import getLogger
 
@@ -57,8 +57,7 @@ class InterfaceResult(BaseModel):
 async def generate_interface(
     ctx: WorkflowContext[None],
     summary: Application,
-    input: SystemDoc,
-    builder: PlainBuilder | CVLOnlyBuilder,
+    builder: PlainBuilder,
     solc_version: str,
 ) -> InterfaceResult:
     """Generate a Solidity interface from component analysis and system document.
@@ -69,9 +68,9 @@ async def generate_interface(
         f"interface-{string_hash(summary.model_dump_json())}"
     )
 
-    child = ctx.child(cache_key, summary.model_dump())
+    child = await ctx.child(cache_key, summary.model_dump())
 
-    if (cached := child.cache_get(InterfaceResult)) is not None:
+    if (cached := await child.cache_get(InterfaceResult)) is not None:
         return cached
 
     solc_name = f"solc{solc_version}"
@@ -131,22 +130,15 @@ async def generate_interface(
         "interface_generation_prompt.j2",
         summary=summary,
         solc_version=solc_version,
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
-
-    input_parts: list[str | dict] = [
-        # "The system/design document is:",
-        # input.content,
-    ]
+    ).compile_async()
 
     res = await run_to_completion(
         workflow,
-        FlowInput(input=input_parts),
-        thread_id=ctx.uniq_thread_id(),
+        FlowInput(input=[]),
+        thread_id=uniq_thread_id("interface-gen"),
         recursion_limit=30,
         description=DESCRIPTION,
     )
     assert "result" in res
-    child.cache_put(res["result"])
+    await child.cache_put(res["result"])
     return res["result"]

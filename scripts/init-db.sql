@@ -1,7 +1,6 @@
 -- init-db.sql
 -- Create separate users for each application
 CREATE USER rag_user WITH PASSWORD 'rag_password';
-CREATE USER extended_rag_user WITH PASSWORD 'rag_password';
 CREATE USER langgraph_store_user WITH PASSWORD 'langgraph_store_password';
 CREATE USER langgraph_checkpoint_user WITH PASSWORD 'langgraph_checkpoint_password';
 CREATE USER audit_db_user WITH PASSWORD 'audit_db_password';
@@ -9,7 +8,6 @@ CREATE USER memory_tool_user WITH PASSWORD 'memory_tool_password';
 
 -- Create application-specific databases
 CREATE DATABASE rag_db OWNER rag_user;
-CREATE DATABASE extended_rag_db OWNER extended_rag_user;
 CREATE DATABASE langgraph_store_db OWNER langgraph_store_user;
 CREATE DATABASE langgraph_checkpoint_db OWNER langgraph_checkpoint_user;
 CREATE DATABASE audit_db OWNER audit_db_user;
@@ -19,11 +17,6 @@ CREATE DATABASE memory_tool_db OWNER memory_tool_user;
 CREATE EXTENSION IF NOT EXISTS vector;
 GRANT ALL PRIVILEGES ON DATABASE rag_db TO rag_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO rag_user;
-
-\c extended_rag_db
-CREATE EXTENSION IF NOT EXISTS vector;
-GRANT ALL PRIVILEGES ON DATABASE extended_rag_db TO extended_rag_user;
-GRANT ALL PRIVILEGES ON SCHEMA public TO extended_rag_user;
 
 \c langgraph_store_db
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -35,8 +28,27 @@ GRANT ALL PRIVILEGES ON DATABASE langgraph_checkpoint_db TO langgraph_checkpoint
 GRANT ALL PRIVILEGES ON SCHEMA public TO langgraph_checkpoint_user;
 
 \c memory_tool_db
-GRANT ALL PRIVILEGES ON DATABASE memory_tool_db TO memory_tool_user;
 GRANT ALL PRIVILEGES ON SCHEMA public TO memory_tool_user;
+SET ROLE memory_tool_user;
+
+CREATE TABLE IF NOT EXISTS memories_fs(
+    namespace TEXT NOT NULL,
+    entry_name TEXT NOT NULL,
+    full_path TEXT,
+    parent_path TEXT,
+    is_directory BOOL NOT NULL,
+    contents TEXT,
+    FOREIGN KEY(parent_path, namespace) REFERENCES memories_fs(full_path, namespace) ON DELETE CASCADE, -- good hierarchy
+    UNIQUE (namespace, full_path), -- unique paths within ns
+    UNIQUE (namespace, parent_path, entry_name), -- unique names within directories
+    CHECK (parent_path is NOT NULL OR (full_path = '/memories' AND is_directory AND entry_name = 'memories')),
+    CHECK (parent_path is NULL OR (full_path = concat(parent_path, '/', entry_name))), -- entry, path consistency
+    CHECK (contents IS NOT NULL != is_directory)
+);
+
+CREATE INDEX IF NOT EXISTS memories_namespace_path ON memories_fs(namespace, full_path text_pattern_ops); -- text pattern ops lets us use the index for LIKE
+
+RESET ROLE;
 
 \c audit_db
 GRANT ALL PRIVILEGES ON DATABASE audit_db TO audit_db_user;

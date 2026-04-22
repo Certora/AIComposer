@@ -16,7 +16,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import NotRequired, override
+from typing import NotRequired, override, Protocol
 
 from pydantic import Field
 
@@ -29,12 +29,17 @@ from graphcore.graph import FlowInput, tool_output, tool_return
 from graphcore.tools.schemas import WithInjectedState, WithInjectedId, WithAsyncImplementation
 
 from composer.spec.natspec.cas import SharedArtifact
-from composer.spec.pipeline_events import MasterSpecUpdate
+from composer.spec.natspec.pipeline_events import MasterSpecUpdate
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.cvl_generation import CVLGenerationExtra, check_completion
 from composer.spec.natspec.interface_gen import InterfaceResult
+from composer.spec.tool_env import BasicAgentTools, RAGTools
+from composer.spec.util import uniq_thread_id
 
+
+class PublishEnv(BasicAgentTools, RAGTools, Protocol):
+    pass
 
 # ---------------------------------------------------------------------------
 # Typecheck utility
@@ -100,8 +105,7 @@ class MergeResult:
 # ---------------------------------------------------------------------------
 
 async def run_merge_agent(
-    builder: PlainBuilder | CVLOnlyBuilder,
-    ctx: WorkflowContext,
+    env: PublishEnv,
     interface: InterfaceResult,
 
     *,
@@ -130,17 +134,17 @@ async def run_merge_agent(
         return None
 
     workflow = bind_standard(
-        builder, ST, "The complete merged CVL specification", validator=validate_merge,
+        env.builder, ST, "The complete merged CVL specification", validator=validate_merge,
     ).with_input(
         FlowInput
+    ).with_tools(
+        env.rag_tools
     ).with_sys_prompt(
         "You are a CVL specification merge assistant. Your job is to merge a new property's "
         "CVL rules into an existing master specification without breaking it."
     ).with_initial_prompt_template(
         "merge_prompt.j2",
-    ).compile_async(
-        checkpointer=ctx.checkpointer
-    )
+    ).compile_async()
 
     input_parts: list[str | dict] = [
         "The working copy (new property's CVL) is:",
@@ -155,7 +159,7 @@ async def run_merge_agent(
         res = await run_to_completion(
             workflow,
             FlowInput(input=input_parts),
-            thread_id=ctx.uniq_thread_id(),
+            thread_id=uniq_thread_id("spec_merge"),
             recursion_limit=30,
             description="Spec merge",
         )
@@ -219,8 +223,7 @@ def make_publish_tools(
     interface: InterfaceResult,
     contract_id: str,
     solc_version: str,
-    builder: PlainBuilder | CVLOnlyBuilder,
-    ctx: WorkflowContext,
+    env: PublishEnv
 ) -> tuple[BaseTool, BaseTool]:
     """Construct PublishSpec + GiveUp tools for a property agent.
 
@@ -264,8 +267,7 @@ def make_publish_tools(
                     interface=interface,
                     contract_identifier=contract_id,
                     solc_version=solc_version,
-                    builder=builder,
-                    ctx=ctx,
+                    env=env
                 )
 
                 if not merge_result.success:

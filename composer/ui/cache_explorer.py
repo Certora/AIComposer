@@ -8,9 +8,8 @@ tree builder and value formatter.
 See scripts/cache_explorer.py for the NatSpec pipeline entry point.
 """
 
-from typing import Callable
+from typing import Callable, Awaitable
 from dataclasses import dataclass, field
-from contextvars import ContextVar
 
 from langgraph.store.postgres import PostgresStore
 
@@ -39,17 +38,21 @@ class DummyServices:
 # Cache node model
 # ---------------------------------------------------------------------------
 
-@dataclass
-class OrgNode[V]:
-    label: str
-    children: list["CacheTreeNode[V]"] = field(default_factory=list)
+from typing import TypeVar, Generic
+
+CACHE_V = TypeVar("CACHE_V", covariant=True)
 
 @dataclass
-class CacheNode[V]:
+class OrgNode(Generic[CACHE_V]):
+    label: str
+    children: list["CacheTreeNode[CACHE_V]"] = field(default_factory=list)
+
+@dataclass
+class CacheNode(Generic[CACHE_V]):
     label: str
     ctx: WorkflowContext
-    value: V | None = None
-    children: list["CacheTreeNode[V]"] = field(default_factory=list)
+    value: CACHE_V | None = None
+    children: list["CacheTreeNode[CACHE_V]"] = field(default_factory=list)
 
 type CacheTreeNode[V] = CacheNode[V] | OrgNode[V]
 
@@ -161,7 +164,7 @@ class CacheExplorerApp[V](App):
 
     def __init__(
         self,
-        build_tree: Callable[[], CacheNode[V]],
+        build_tree: Callable[[], Awaitable[CacheNode[V]]],
         format_value: Callable[[V], list[str]],
         store: PostgresStore,
         status: str,
@@ -195,16 +198,16 @@ class CacheExplorerApp[V](App):
                         yield TextArea(id="memory-editor", classes="hidden")
         yield Footer()
 
-    def on_mount(self) -> None:
-        self._build_tree_widget()
+    async def on_mount(self) -> None:
+        await self._build_tree_widget()
         self.query_one("#status-line", Label).update(self._status)
 
-    def _build_tree_widget(self) -> None:
+    async def _build_tree_widget(self) -> None:
         tree : Tree[CacheTreeNode[V]] = self.query_one("#cache-tree", Tree)
         tree.clear()
-        tree.root.data = self._cache_root
-        tree.root.set_label(node_label(self._cache_root))
-        self._populate_children(tree.root, self._cache_root)
+        tree.root.data = (root_data := await self._cache_root)
+        tree.root.set_label(node_label(root_data))
+        self._populate_children(tree.root, root_data)
         tree.root.expand()
 
     def _populate_children(self, tree_node: TreeNode[CacheTreeNode[V]], cache_node: CacheTreeNode[V]) -> None:
@@ -222,10 +225,12 @@ class CacheExplorerApp[V](App):
         lines.append(f"Memory NS: {node.ctx.memory_namespace}")
         lines.append("")
 
-        val = node.value
+        val_raw = node.value
+        val = val_raw
         if val is None:
             lines.append("No cached value")
             return "\n".join(lines)
+        
 
         lines.append(f"Type: {type(val).__name__}")
         lines.extend(self._format_value(val))
@@ -291,7 +296,7 @@ class CacheExplorerApp[V](App):
         backend = _get_memory_backend(self._editing_ns) if self._editing_ns else None
         if backend is None:
             return
-        content = backend.read_file(entry.path) or "<empty>"
+        content = backend.view(entry.path, None)
         self.query_one("#memory-content", Static).update(
             f"--- {entry.path} ---\n\n{content}"
         )
@@ -342,10 +347,10 @@ class CacheExplorerApp[V](App):
                 return True
         return False
 
-    def action_refresh_tree(self) -> None:
+    async def action_refresh_tree(self) -> None:
         self._cache_root = self._build_tree()
         self._selected_node = None
-        self._build_tree_widget()
+        await self._build_tree_widget()
         self.query_one("#detail-content", Static).update("Tree refreshed. Select a node.")
         self.notify("Tree refreshed")
 
@@ -368,7 +373,7 @@ class CacheExplorerApp[V](App):
             return
 
         backend = _get_memory_backend(self._editing_ns)
-        content = backend.read_file(self._editing_file) or ""
+        content = backend.view(self._editing_file, None)
 
         self._editing = True
         self.query_one("#memory-content", Static).add_class("hidden")
@@ -385,7 +390,7 @@ class CacheExplorerApp[V](App):
         editor = self.query_one("#memory-editor", TextArea)
         content = editor.text
         backend = _get_memory_backend(self._editing_ns)
-        backend.write_file(self._editing_file, content)
+        backend.create(self._editing_file, content)
         self.notify(f"Saved: {self._editing_file}")
         self._cancel_edit_mode()
         if self._selected_node:

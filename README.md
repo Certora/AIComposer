@@ -9,7 +9,7 @@ AI Composer is a tool for generating verified implementations from documentation
 You will need at least Python 3.12, Docker (with compose), and a Claude API key, and the ability to build
 the documentation (see [here](https://github.com/Certora/Documentation/?tab=readme-ov-file#building-the-documentation)),
 and a working, local installation of the prover (see [here](https://github.com/certora/certoraprover)). The Claude API Key should be in your
-environment under `ANTHROPIC_API_KEY`.
+environment under `ANTHROPIC_API_KEY`. You will also need a suitably recent version of `uv`.
 
 ## One-time DB setup
 
@@ -44,9 +44,9 @@ variable is configured to point to the output of this build (`CertoraProver/targ
 
 ## AI Composer Requirements
 
-Install the requirements for AI Composer via `pip3 install -r ./requirements.txt`. You may do this in
+Install the requirements for AI Composer via `uv sync --group ml`. You may do this in
 a virtual environment, and in such case you also need to install the dependencies for the `certora-cli`:
-`pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
+`uv pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
 available system-wide. Also be sure to activate this new virtual environment each time you want to run AI Composer.
 
 ## Solidity Compilers

@@ -1,7 +1,7 @@
 import argparse
 from typing import TypeVar, Protocol, cast, Annotated, get_type_hints, get_origin, Any, get_args, Union
 from composer.audit.db import DEFAULT_CONNECTION as AUDITDB_DEFAULT_CONNECTION
-from composer.input.types import CommandLineArgs, ResumeArgs, Arg, OptionalArg, RAGDBOptions, ModelOptions, LangraphOptions
+from composer.input.types import CommandLineArgs, ResumeArgs, Arg, OptionalArg, RAGDBOptions, ModelOptions, LanggraphOptions
 
 ArgNS = TypeVar("ArgNS", covariant=True)
 
@@ -104,7 +104,7 @@ def _final_resume_option(parser: argparse.ArgumentParser) -> None:
 def _common_options(parser: argparse.ArgumentParser) -> None:
     add_protocol_args(parser, ModelOptions, feature_flags=set(["memory"]))
     add_protocol_args(parser, RAGDBOptions)
-    add_protocol_args(parser, LangraphOptions)
+    add_protocol_args(parser, LanggraphOptions)
 
     parser.add_argument("--debug", action="store_true",
                     help="Enable debug logging output")

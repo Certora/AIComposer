@@ -11,12 +11,17 @@ from composer.prover.ptypes import RuleResult, StatusCodes, RulePath
 T = TypeVar('T')
 R = TypeVar('R')
 
+class RuleNotificationMessages(BaseModel):
+    severity: str
+    message: str
+
 class RuleNodeModel(BaseModel):
     name: str = Field(description="The name of the node")
     output: list[str]
     children: list["RuleNodeModel"]
     status: Optional[str] = Field(description="The smt status")
     nodeType: str
+    errors: list[RuleNotificationMessages]
 
 
 class TreeViewStatus(BaseModel):
@@ -47,7 +52,7 @@ def _to_status_string(s: str | None) -> StatusCodes:
     if s is None:
         return "ERROR"
     match s:
-        case "VIOLATED" | "VERIFIED" | "TIMEOUT" | "SANITY_FAILED":
+        case "VIOLATED" | "VERIFIED" | "TIMEOUT" | "SANITY_FAILED" | "SKIPPED":
             return s
         case _:
             return "ERROR"
@@ -77,11 +82,27 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath, parent_ty
             effective_path = effective_path.copy(method=r.name)
 
     if stat == "ERROR":
+        err_message = [
+            i.message for i in r.errors if i.severity == "error"
+        ]
         return [RuleResult(
             path=effective_path,
             cex_dump=None,
-            status=stat
+            status=stat,
+            error_messages=err_message
         )]
+    elif stat == "SKIPPED":
+        warning_message = [
+            i.message for i in r.errors if i.severity == "error" or i.severity == "warning"
+        ]
+        return [
+            RuleResult(
+                path=effective_path,
+                cex_dump=None,
+                status=stat,
+                error_messages=warning_message
+            )
+        ]
     if stat == "VERIFIED":
         non_sanity_children = any([ c.nodeType != "SANITY" for c in r.children ])
         if non_sanity_children:

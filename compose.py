@@ -1,9 +1,9 @@
-import composer.certora as _
-
 import argparse
 import asyncio
 import uuid
 from pathlib import Path
+
+import composer.bind as _
 
 from rich.console import Console
 

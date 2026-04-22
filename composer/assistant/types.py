@@ -36,7 +36,6 @@ class OrchestratorModelConfig:
     interleaved_thinking: bool = False
 
 
-
 @dataclass
 class OrchestratorContext:
     workspace: Path
