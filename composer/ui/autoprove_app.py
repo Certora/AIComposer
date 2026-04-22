@@ -10,14 +10,15 @@ import enum
 from typing import cast, override
 
 from textual.containers import VerticalScroll
-from textual.widgets import Static, RichLog, Collapsible
+from textual.widgets import RichLog, Collapsible
 
 from rich.text import Text
 
-from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, suppress_ack
+from composer.ui.tool_display import ToolDisplayConfig
 from composer.io.event_handler import EventHandler, NullEventHandler
+from composer.io.multi_job import TaskInfo
 from composer.ui.multi_job_app import (
-    MultiJobApp, MultiJobTaskHandler, TaskInfo, TaskHost,
+    MultiJobApp, MultiJobTaskHandler, TaskHost,
 )
 from composer.spec.source.prover import ProverOutputEvent, CloudPollingEvent
 from composer.spec.source.preaudit_setup import PreAuditEvents
@@ -61,76 +62,9 @@ AUTOPROVE_SECTION_ORDER: list[str] = [
     "CVL Generation",
 ]
 
-
-def _tool_config_for_phase(phase: AutoProvePhase) -> ToolDisplayConfig:
-    match phase:
-        case AutoProvePhase.HARNESS:
-            return ToolDisplayConfig(tool_display={
-                **CommonTools.source_displays(),
-                "erc20_guidance": ToolDisplay("ERC20 guidance", None),
-                "result": CommonTools.result,
-                "memory": CommonTools.memory,
-            })
-        case AutoProvePhase.SUMMARIES:
-            return ToolDisplayConfig(tool_display={
-                **CommonTools.source_displays(),
-                **CommonTools.cvl_research_displays(),
-                "put_cvl": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
-                "put_cvl_raw": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
-                "get_cvl": ToolDisplay("Reading spec", None),
-                "typechecker": ToolDisplay("Type checking", "Typecheck result"),
-            })
-        case AutoProvePhase.INVARIANTS:
-            return ToolDisplayConfig(tool_display={
-                "invariant_feedback": ToolDisplay("Getting feedback", "Invariant feedback"),
-                "result": CommonTools.result,
-                "memory": CommonTools.memory,
-                **CommonTools.source_displays(),
-                **CommonTools.rough_draft_displays()
-            })
-        case AutoProvePhase.COMPONENT_ANALYSIS:
-            return ToolDisplayConfig(tool_display={
-                **CommonTools.source_displays(),
-                "result": CommonTools.result,
-                "memory": CommonTools.memory,
-                "explore_code": CommonTools.code_explorer
-            })
-        case AutoProvePhase.BUG_ANALYSIS:
-            return ToolDisplayConfig(tool_display={
-                **CommonTools.source_displays(),
-                **CommonTools.rough_draft_displays(),
-                "result": CommonTools.result,
-            })
-        case AutoProvePhase.CVL_GEN:
-            return ToolDisplayConfig(tool_display={
-                **CommonTools.cvl_research_displays(),
-                **CommonTools.source_displays(),
-                "put_cvl": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
-                "put_cvl_raw": ToolDisplay("Writing spec", suppress_ack("Spec write result")),
-                "get_cvl": ToolDisplay("Reading spec", None),
-                "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
-                "record_skip": ToolDisplay(
-                    lambda p: f"Skipping property #{p.get('property_index', '?')}",
-                    suppress_ack("Skip result", ("Recorded skip",)),
-                ),
-                "unskip_property": ToolDisplay(
-                    lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
-                    suppress_ack("Unskip result", ("Removed skip",)),
-                ),
-                "explore_code": ToolDisplay("Exploring code", "Code exploration"),
-                "verify_spec": ToolDisplay("Running prover", None),
-                "unresolved_call_guidance": ToolDisplay("Unresolved call guidance", "Guidance"),
-                "result": CommonTools.result,
-                "memory": CommonTools.memory,
-            })
-
-
 # ---------------------------------------------------------------------------
 # AutoProveTaskHandler
 # ---------------------------------------------------------------------------
-
-from logging import getLogger
-_logger = getLogger(__name__)
 
 class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
     """Per-task handler that doubles as its own ``EventHandler``.
@@ -182,7 +116,6 @@ class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
     @override
     async def handle_progress_event(self, payload: dict) -> None:
         evt = cast(PreAuditEvents, payload)
-        _logger.error(str(payload))
         match evt["type"]:
             case "pre_audit_complete":
                 log = await self._ensure_prover_log("_preaudit_setup", "PreAudit Agent")
@@ -214,8 +147,7 @@ class AutoProveApp(MultiJobApp[AutoProvePhase, AutoProveTaskHandler]):
     def create_task_handler(
         self, panel: VerticalScroll, info: TaskInfo[AutoProvePhase],
     ) -> AutoProveTaskHandler:
-        tc = _tool_config_for_phase(info.phase)
-        return AutoProveTaskHandler(info.task_id, info.label, panel, self, tc)
+        return AutoProveTaskHandler(info.task_id, info.label, panel, self, ToolDisplayConfig())
 
     def create_event_handler(
         self, handler: AutoProveTaskHandler, info: TaskInfo[AutoProvePhase],

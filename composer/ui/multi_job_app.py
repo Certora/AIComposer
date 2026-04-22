@@ -14,8 +14,7 @@ generic app infrastructure.
 
 import asyncio
 import enum
-import traceback
-from collections.abc import Callable, Coroutine, Awaitable
+from collections.abc import Callable, Coroutine
 from contextlib import asynccontextmanager, AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol, AsyncIterator
@@ -30,6 +29,7 @@ from textual.binding import Binding
 from rich.syntax import Syntax
 from rich.spinner import Spinner
 from rich.text import Text
+from rich.console import RenderableType
 
 from textual.timer import Timer
 
@@ -39,13 +39,15 @@ from composer.ui.message_renderer import MessageRenderer, MountFn, TokenStats, d
 from composer.ui.tool_call_renderer import ToolCallRenderer
 from composer.ui.tool_display import ToolDisplayConfig
 from composer.io.event_handler import EventHandler, NullEventHandler
-from composer.io.protocol import IOHandler
 from composer.ui.ide_bridge import IDEBridge
 from composer.ui.ide_content import IDEContentMixin
 from composer.ui.log_screen import LogViewerMixin
-from composer.io.context import with_handler
-from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ThinkingStart, ToolBatch, ProgressPayload
+from composer.io.conversation import (
+    ConversationClient, AIYapping, ToolComplete, ThinkingStart, ToolBatch, ProgressPayload,
+    StateUpdate
+)
 from composer.io.stream import AsyncDataQueue
+from composer.io.multi_job import TaskHandle, TaskInfo
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +155,7 @@ class _ConversationSession(ToolCallRenderer):
         tool_config: ToolDisplayConfig,
         mount_to: MountFn,
         set_status: Callable[[TaskStatus], None],
-        opening: str,
+        opening: RenderableType,
     ):
         super().__init__(tool_config)
         self._task_id = task_id
@@ -209,6 +211,9 @@ class _ConversationSession(ToolCallRenderer):
                     )
                     if w is not None:
                         await self._mount(self._panel, w)
+            case StateUpdate():
+                await self._remove_spinner()
+                await self._mount(self._panel, Static(ev.state_display))
             case ToolComplete(tid=_tid):
                 # Results are suppressed in refinement mode.  Anchor is
                 # available via renderer.get_tool_call_anchor(tid) if a
@@ -276,7 +281,7 @@ class _ConversationSession(ToolCallRenderer):
     async def __aenter__(self) -> "_ConversationSession":
         await self._mount(
             self._panel,
-            Static(dot("cyan", Text(self._opening, style="bold cyan"))),
+            Static(self._opening),
         )
         self._render_task = asyncio.create_task(self._progress_reader())
         return self
@@ -318,65 +323,6 @@ class TaskHost(Protocol):
     def update_tokens(self, msg: AIMessage) -> None: ...
     def make_content_link(self, label: str, content: str, filename: str) -> Static: ...
     def hitl_input(self, task_id: str, input: Input) -> AbstractAsyncContextManager[asyncio.Queue[str]]: ...
-
-
-# ---------------------------------------------------------------------------
-# Handler factory types
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class TaskInfo[P]:
-    task_id: str
-    label: str
-    phase: P
-
-
-@dataclass(frozen=True)
-class TaskHandle[H]:
-    """Bundles an IOHandler with lifecycle callbacks."""
-    handler: IOHandler[H]
-    event_handler: EventHandler
-    on_error: Callable[[Exception, str], Awaitable[None]]
-    on_start: Callable[[], None] = lambda: None
-    on_done: Callable[[], None] = lambda: None
-
-
-type HandlerFactory[P, H] = Callable[[TaskInfo[P]], Awaitable[TaskHandle[H]]]
-
-
-# ---------------------------------------------------------------------------
-# run_task helper
-# ---------------------------------------------------------------------------
-
-async def run_task[P, T, H](
-    factory: HandlerFactory[P, H],
-    info: TaskInfo[P],
-    fn: Callable[[], Awaitable[T]],
-    semaphore: asyncio.Semaphore | None = None,
-) -> T:
-    """Create a handler via *factory* and run *fn* in its ``with_handler`` scope.
-
-    Manages lifecycle callbacks (on_start/on_done/on_error).  If
-    *semaphore* is provided, the task waits for acquisition before
-    transitioning to RUNNING.
-    """
-    handle = await factory(info)
-    try:
-        if semaphore is not None:
-            async with semaphore:
-                handle.on_start()
-                async with with_handler(handle.handler, handle.event_handler):
-                    result = await fn()
-        else:
-            handle.on_start()
-            async with with_handler(handle.handler, handle.event_handler):
-                result = await fn()
-    except Exception as exc:
-        await handle.on_error(exc, traceback.format_exc())
-        raise
-    else:
-        handle.on_done()
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +384,7 @@ class MultiJobTaskHandler[H]:
 
     @asynccontextmanager
     async def start_conversation(
-        self, opening: str
+        self, opening: RenderableType
     ) -> AsyncIterator[ConversationClient]:
         session = _ConversationSession(
             task_id=self._task_id,
@@ -738,6 +684,7 @@ class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, Ap
             on_start=handler.mark_running,
             on_done=handler.mark_done,
             on_error=handler.mark_error,
+            conversation_provider=handler.start_conversation
         )
 
     # ── HITL routing ──────────────────────────────────────────

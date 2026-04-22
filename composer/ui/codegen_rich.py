@@ -1,4 +1,6 @@
 import difflib
+from contextlib import asynccontextmanager
+from typing import AsyncContextManager, AsyncIterator
 
 from rich.spinner import Spinner
 
@@ -15,7 +17,7 @@ from textual.timer import Timer
 from rich.syntax import Syntax
 from rich.text import Text
 
-from composer.ui.ide_bridge import IDEBridge
+from composer.ui.ide_bridge import IDEBridge, DiffHandle
 from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay
 from composer.ui.rich_console import BaseRichConsoleApp
 from composer.io.protocol import WorkflowPurpose
@@ -169,7 +171,9 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
     # ── Abstract method implementations ───────────────────────
 
-    def build_interaction(self, ty: HumanInteractionType) -> tuple[Text, str, list[Validator]]:
+    def build_interaction(
+        self, ty: HumanInteractionType
+    ) -> tuple[Text, str, list[Validator], AsyncContextManager[None] | None]:
         _PROPOSAL_VALIDATOR: list[Validator] = [Function(
             lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
             "Response must begin with ACCEPTED/REJECTED/REFINE",
@@ -181,15 +185,21 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
         match ty["type"]:
             case "proposal":
-                return self._build_proposal(ty), "Response must start with ACCEPTED, REJECTED, or REFINE", _PROPOSAL_VALIDATOR
+                side_effect = self._proposal_diff_cm(ty) if self._ide is not None else None
+                return (
+                    self._build_proposal(ty),
+                    "Response must start with ACCEPTED, REJECTED, or REFINE",
+                    _PROPOSAL_VALIDATOR,
+                    side_effect,
+                )
             case "question":
-                return self._build_question(ty), "Begin response with FOLLOWUP to request clarification", []
+                return self._build_question(ty), "Begin response with FOLLOWUP to request clarification", [], None
             case "extraction_question":
-                return self._build_extraction_question(ty), "Enter your response", []
+                return self._build_extraction_question(ty), "Enter your response", [], None
             case "req_relaxation":
-                return self._build_req_relaxation(ty), "Response must start with ACCEPTED or REJECTED", _REQ_VALIDATOR
+                return self._build_req_relaxation(ty), "Response must start with ACCEPTED or REJECTED", _REQ_VALIDATOR, None
             case _:
-                return Text("Unknown interaction type"), "", []
+                return Text("Unknown interaction type"), "", [], None
 
     async def render_progress(self, target: VerticalScroll, path: list[str], upd: ProgressUpdate) -> None:
         match upd["type"]:
@@ -345,7 +355,6 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         ]
 
         if self._ide is not None:
-            self.run_worker(self._show_proposal_diff(ty), thread=False)
             parts.append(("Diff opened in VS Code.\n", "dim italic"))
         else:
             current_lines = ty["current_spec"].splitlines(keepends=True)
@@ -373,12 +382,24 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
         return Text.assemble(*parts)
 
-    async def _show_proposal_diff(self, ty: ProposalType) -> None:
+    @asynccontextmanager
+    async def _proposal_diff_cm(self, ty: ProposalType) -> AsyncIterator[None]:
+        assert self._ide is not None
+        handle: DiffHandle | None = None
         try:
-            assert self._ide is not None
-            await self._ide.show_diff(ty["current_spec"], ty["proposed_spec"], "Spec Change Proposal")
+            handle = await self._ide.show_diff(
+                ty["current_spec"], ty["proposed_spec"], "Spec Change Proposal"
+            )
         except Exception:
             self.notify("Failed to open diff in VS Code", severity="warning")
+        try:
+            yield
+        finally:
+            if handle is not None:
+                try:
+                    await handle.close()
+                except Exception:
+                    self.notify("Failed to close diff in VS Code", severity="warning")
 
     @staticmethod
     def _build_question(ty: QuestionType) -> Text:

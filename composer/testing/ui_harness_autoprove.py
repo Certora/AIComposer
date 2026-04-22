@@ -39,49 +39,13 @@ Global call order across phases:
           └─ feedback-judge sub-agent ×1
 """
 
-from typing import Any, Callable, Sequence, override
+from typing import Any
 import uuid
 
-from langchain_core.language_models.fake_chat_models import (
-    FakeMessagesListChatModel,
-)
+from composer.testing.harness_tape import HarnessFakeLLM
+
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.messages.tool import ToolCall
-from langchain_core.tools import BaseTool
-
-
-# ---------------------------------------------------------------------------
-# Fake LLM plumbing
-# ---------------------------------------------------------------------------
-
-
-class _AutoProveFakeLLM(FakeMessagesListChatModel):
-    """``FakeMessagesListChatModel`` tolerant of attribute access the
-    auto-prove pipeline performs on the bound LLM.
-
-    Mirrors ``_CodegenFakeLLM`` / ``_NatspecFakeLLM``:
-
-    * ``thinking`` — declared as a field so ``llm.model_copy(update={"thinking": ...})``
-      (used by the CEX summarizer path, if ever triggered) is a well-formed
-      no-op.
-    * ``betas`` — empty so no ``context-management-2025-06-27`` beta branches
-      attach extra tools.
-    * ``bind_tools`` — no-op so Builders can attach tool schemas without the
-      fake raising ``NotImplementedError``.
-    """
-
-    thinking: Any = None
-    betas: list[str] = []
-
-    @override
-    def bind_tools(
-        self,
-        tools: Sequence[dict[str, Any] | type | Callable | BaseTool],
-        *,
-        tool_choice: str | None = None,
-        **kwargs: Any,
-    ):
-        return self
 
 
 def _tc(name: str, **args: Any) -> ToolCall:
@@ -135,34 +99,44 @@ invariant not_valid_cvl()
 # (easy-to-catch) semantic-error candidate — the feedback judge rejects this
 # on first pass without involving the prover at all.
 BAD_INV_CVL = """\
-invariant count_zero()
-    currentContract.count == 0;
+invariant increments_sum_is_count() currentContract.count == 0;
 """
 
 # Typechecks and declares the two ostensibly-correct invariant names, but the
-# body of ``count_nonneg`` is subtly wrong (``count > 0`` instead of ``>= 0``).
+# ``increments_sum_is_count`` is subtly wrong; without an init state axiom, the
+# prover can choose an initial value of incrementsSum that violates the base case.
 # The feedback judge approves by name-coverage; the prover catches it on the
 # base case (initial state has ``count == 0``, violating ``count > 0``).
 # This is the artifact that drives the verify_spec → analyze_cex_raw round-trip
 # in the tape — exactly one failing rule (``count_nonneg``), so exactly one
 # CEX LLM call is consumed.
 SUBTLE_INV_CVL = """\
-invariant count_nonneg()
-    currentContract.count > 0;
+ghost uint256 incrementsSum;
 
-invariant increments_nonneg(address a)
-    currentContract.increments[a] >= 0;
+hook Sstore currentContract.increments[KEY address who] uint256 newValue (uint256 oldValue) {
+	incrementsSum = require_uint256(incrementsSum + (newValue - oldValue));
+}
+
+invariant zero_address_is_zero() currentContract.increments[0] == 0;
+
+invariant increments_sum_is_count() currentContract.count == incrementsSum;
 """
 
 # Two trivially-true invariants over the Counter state. Both should verify
 # against Counter.sol on first try, so verify_spec stamps the prover digest
 # and the author can call `result` to terminate the invariant-CVL author graph.
 GOOD_INV_CVL = """\
-invariant count_nonneg()
-    currentContract.count >= 0;
+ghost uint256 incrementsSum {
+	init_state axiom incrementsSum == 0; 
+}
 
-invariant increments_nonneg(address a)
-    currentContract.increments[a] >= 0;
+hook Sstore currentContract.increments[KEY address who] uint256 newValue (uint256 oldValue) {
+	incrementsSum = require_uint256(incrementsSum + (newValue - oldValue));
+}
+
+invariant zero_address_is_zero() currentContract.increments[0] == 0;
+
+invariant increments_sum_is_count() currentContract.count == incrementsSum;
 """
 
 # Component-CVL spec: two rules, one per property from bug analysis. Both
@@ -532,9 +506,9 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc(
             "invariant_feedback",
             inv={
-                "name": "count_nonneg",
+                "name": "increments_sum_is_count",
                 "description": (
-                    "The global count is always non-negative."
+                    "`count` is the sum of all values in the `increments` map"
                 ),
             },
         ),
@@ -546,8 +520,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc(
             "write_rough_draft",
             rough_draft=(
-                "count is a uint256 — the type guarantees non-negativity. "
-                "Trivial but formal and inductive. Verdict: GOOD."
+                "Sums can be reasoned about in CVL. Formal and inductive. Verdict: GOOD."
             ),
         ),
     ),
@@ -557,13 +530,12 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     ),
     # F2.3 — GOOD verdict. Stamps state["invariant_data"]["count_nonneg"].
     _ai(
-        "Judge: GOOD verdict on count_nonneg.",
+        "Judge: GOOD verdict on increments_sum_is_count.",
         _tc(
             "result",
             sort="GOOD",
             explanation=(
-                "uint256 arithmetic guarantees the invariant holds "
-                "trivially and inductively at every reachable state."
+                "The invariant is inductive and formalizable."
             ),
         ),
     ),
@@ -574,10 +546,9 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc(
             "invariant_feedback",
             inv={
-                "name": "increments_nonneg",
+                "name": "zero_address_is_zero",
                 "description": (
-                    "For every address a, increments[a] is always "
-                    "non-negative."
+                    "The zero address' `increments` value is always 0."
                 ),
             },
         ),
@@ -585,13 +556,12 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
 
     # F3.1 — judge, third invocation.
     _ai(
-        "Judge: evaluating increments_nonneg.",
+        "Judge: evaluating zero_address_is_zero.",
         _tc(
             "write_rough_draft",
             rough_draft=(
-                "increments is mapping(address => uint256). uint256 is "
-                "non-negative by type. Same shape as count_nonneg — "
-                "trivial but formal and inductive. Verdict: GOOD."
+                "Trivially implied by the implementation, "
+                "but formal and inductive. Verdict: GOOD."
             ),
         ),
     ),
@@ -600,13 +570,12 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc("read_rough_draft"),
     ),
     _ai(
-        "Judge: GOOD verdict on increments_nonneg.",
+        "Judge: GOOD verdict on zero_address_is_zero.",
         _tc(
             "result",
             sort="GOOD",
             explanation=(
-                "uint256 mapping values are non-negative by type. The "
-                "invariant is trivially and inductively true."
+                "The invariant is trivially true"
             ),
         ),
     ),
@@ -619,16 +588,15 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
             "result",
             inv=[
                 {
-                    "name": "count_nonneg",
+                    "name": "increments_sum_is_count",
                     "description": (
-                        "The global count is always non-negative."
+                        "`count` is the sum of all values in the `increments` map"
                     ),
                 },
                 {
-                    "name": "increments_nonneg",
+                    "name": "zero_address_is_zero",
                     "description": (
-                        "For every address a, increments[a] is always "
-                        "non-negative."
+                        "The zero address' `increments` value is always 0."
                     ),
                 },
             ],
@@ -803,7 +771,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # record a rule_skips entry. `expect_rule_passage` then removes it with
     # the DELETE_SKIP sentinel, so state["rule_skips"] returns to {}.
     _ai(
-        "Marking a rule expected-to-fail then unmarking it.",
+        "Marking a rule expected-to-fail...",
         _tc(
             "expect_rule_failure",
             rule_name="count_zero",
@@ -812,6 +780,9 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
                 "expect_rule_passage tool."
             ),
         ),
+    ),
+    _ai(
+        "Actually, just kidding",
         _tc("expect_rule_passage", rule_name="count_zero"),
     ),
 
@@ -838,7 +809,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
                 "invariant, which directly contradicts the property that "
                 "increment() increases count by 1. Verdict: BAD — spec does "
                 "not faithfully express the two target invariants "
-                "(count_nonneg, increments_nonneg)."
+                "(increments_sum_is_count, zero_address_is_zero)."
             ),
         ),
     ),
@@ -858,7 +829,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
             feedback=(
                 "The submitted spec states `count == 0` as an invariant "
                 "but the properties to formalize are `count_nonneg` and "
-                "`increments_nonneg`. Please replace the spec with "
+                "`zero_address_is_zero`. Please replace the spec with "
                 "invariants that match the approved property list."
             ),
         ),
@@ -892,8 +863,8 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc(
             "write_rough_draft",
             rough_draft=(
-                "Second pass: the spec declares both count_nonneg and "
-                "increments_nonneg as separate invariants matching the "
+                "Second pass: the spec declares both increments_sum_is_count and "
+                "zero_address_is_zero as separate invariants matching the "
                 "approved property list. Coverage looks complete. "
                 "Verdict: GOOD."
             ),
@@ -939,13 +910,11 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # verify_spec is invoked twice without an intervening CEX, the tape
     # will drift.
     _ai(
-        "Counter-example analysis for rule ``count_nonneg``:\n\n"
-        "The prover found a violation at the base case. The invariant body "
-        "``currentContract.count > 0`` does not hold in the initial state "
-        "where ``count == 0``. Intent from the property list was "
-        "non-negativity (``>= 0``), not strict positivity (``> 0``) — a "
-        "one-character typo in the operator. Suggested fix: change the "
-        "body of ``count_nonneg`` to ``currentContract.count >= 0``."
+        "Counter-example analysis for rule ``increments_sum_is_count``:\n\n"
+        "The prover found a spurious starting state where incrementsSum is initialized to be"
+        " non-zero in the invariant base case (constructor) which causes a trivial failure.\n\n"
+        "Suggested fix: add an init_state axiom to constrain the value of the ghost in the base case."
+
     ),
 
     # Q14 — author responds to the CEX by replacing SUBTLE_INV_CVL with
@@ -970,9 +939,8 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc(
             "write_rough_draft",
             rough_draft=(
-                "Third pass: both invariants now use the ``>= 0`` operator, "
-                "which matches uint256 type semantics and makes them "
-                "trivially inductive. Verdict: GOOD."
+                "The init state axiom is well justified given that the sum of increments is 0 on creation."
+                 " Verdict: GOOD."
             ),
         ),
     ),
@@ -1004,11 +972,8 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc(
             "result",
             value=(
-                "Formalized the two structural invariants (count_nonneg, "
-                "increments_nonneg) as uint256 non-negativity assertions. "
-                "The first authoring attempt used a strict inequality for "
-                "count_nonneg which the prover CEXed at the base case; "
-                "fixed the operator to ``>=`` and both invariants verified."
+                "Formalized the two structural invariants (increments_sum_is_count, "
+                "zero_address_is_zero)."
             ),
         ),
     ),
@@ -1132,17 +1097,17 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
 # cursor, so any out-of-band entry would be consumed by the wrong LLM call.
 
 
-def get_autoprove_llm() -> _AutoProveFakeLLM:
+def get_autoprove_llm() -> HarnessFakeLLM:
     """Return a fresh fake LLM loaded with the autoprove counter tape.
 
     Each call returns an independent instance (the tape list is shared
     but ``FakeMessagesListChatModel``'s internal cursor is per-instance),
     so tests can run multiple scenarios without cross-contamination.
     """
-    return _AutoProveFakeLLM(responses=list(_AUTOPROVE_TAPE))
+    return HarnessFakeLLM(responses=list(_AUTOPROVE_TAPE))
 
 
-def install_autoprove_tape() -> _AutoProveFakeLLM:
+def install_autoprove_tape() -> HarnessFakeLLM:
     """Monkey-patch ``composer.workflow.services.create_llm`` and
     ``create_llm_base`` so the real autoprove pipeline receives the fake.
 
@@ -1157,6 +1122,9 @@ def install_autoprove_tape() -> _AutoProveFakeLLM:
     ``.responses`` for debugging.
     """
     fake = get_autoprove_llm()
+    import composer.spec.agent_index as a_ind
+    a_ind._UNSAFE_DISABLE_CACHE = True
+
     import composer.workflow.services as services
 
     services.create_llm = lambda args: fake  # type: ignore[assignment]

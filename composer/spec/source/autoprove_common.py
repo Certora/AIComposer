@@ -16,16 +16,17 @@ from composer.rag.models import get_model
 from composer.workflow.services import create_llm, standard_connections
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, get_system_doc,
+    WorkflowContext, SourceCode, get_document_input,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
 from composer.spec.source.prover import CloudConfig
 from composer.spec.source.source_env import build_source_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
+from composer.ui.tool_display import async_tool_context
 
 from composer.spec.util import FS_FORBIDDEN_READ
-from composer.ui.multi_job_app import HandlerFactory
+from composer.io.multi_job import HandlerFactory
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +41,8 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cache_ns: str | None
     memory_ns: str | None
     cloud: bool
+    interactive: bool
+    threat_model: str
 
 # ---------------------------------------------------------------------------
 # Cache
@@ -77,6 +80,8 @@ async def _entry_point(cb: ExecutorCB) -> int:
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
     parser.add_argument("--cloud", action="store_true", help="Run prover jobs in the cloud")
+    parser.add_argument("--interactive", action="store_true", help="Interactively refine the security properties after extraction")
+    parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'thread' model (text or pdf) with which to seed the property extraction process")
 
     args = cast(AutoProveArgs, parser.parse_args())
 
@@ -93,7 +98,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
 
     # Read input document
     sys_path = pathlib.Path(args.system_doc)
-    content = get_system_doc(sys_path)
+    content = get_document_input(sys_path)
     if content is None:
         print(f"Error: cannot read {sys_path}")
         return 1
@@ -122,11 +127,14 @@ async def _entry_point(cb: ExecutorCB) -> int:
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
 
+    threat_model = get_document_input(pathlib.Path(threat_path)) if (threat_path := args.threat_model) is not None else None
+
     async with (
         standard_connections(
             embedder=DefaultEmbedder(model)
         ) as conns,
-        PostgreSQLRAGDatabase.rag_context(model) as rag_db
+        PostgreSQLRAGDatabase.rag_context(model) as rag_db,
+        async_tool_context()
     ):
         source_env = build_source_env(
             llm=llm,
@@ -156,5 +164,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
                     handler_factory=handler,
                     cloud=CloudConfig() if args.cloud else None,
                     max_concurrent=args.max_concurrent,
+                    interactive=args.interactive,
+                    threat_model=threat_model
                 )
         return await cb(runner)

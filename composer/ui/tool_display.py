@@ -2,6 +2,10 @@ from langchain_core.messages import ToolMessage
 from dataclasses import dataclass, field
 from typing import Callable
 
+from contextvars import ContextVar
+from contextlib import contextmanager, asynccontextmanager
+
+
 type DisplayLabelTy = Callable[[dict], str] | str
 type ResultOutputTy = str | Callable[[str, ToolMessage], str | None | tuple[str, str]] | None
 
@@ -311,10 +315,12 @@ _graphcore_global_tools = {
 
 _ns_global_tools = {}
 
-from contextvars import ContextVar
-from contextlib import contextmanager
-
 _tool_context = ContextVar[dict[str, ToolUISpec] | None]("_tool_context", default=None)
+
+@asynccontextmanager
+async def async_tool_context(inherit: bool = False):
+    with tool_context(inherit):
+        yield
 
 @contextmanager
 def tool_context(inherit: bool = False):
@@ -374,7 +380,7 @@ def tool_display_of(
         def new_bind(
             deps
         ) -> ToolBuilder:
-            to_ret = old_bind(x)
+            to_ret = old_bind(deps)
             old_as_tool = to_ret.as_tool
             def new_as_tool(
                 name: str

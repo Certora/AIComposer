@@ -1,7 +1,10 @@
-from typing import Protocol
+from typing import Protocol, Callable, AsyncContextManager
 from dataclasses import dataclass, field
+from rich.console import RenderableType
 
 from langchain_core.messages.tool import ToolCall
+
+type ConversationContextProvider = Callable[[RenderableType], AsyncContextManager[ConversationClient]]
 
 
 @dataclass
@@ -29,8 +32,11 @@ class ToolComplete:
 class AIYapping:
     yap_content: str
 
+@dataclass
+class StateUpdate:
+    state_display: RenderableType
 
-type ProgressPayload = ToolComplete | ToolBatch | ThinkingStart | AIYapping
+type ProgressPayload = ToolComplete | ToolBatch | ThinkingStart | AIYapping | StateUpdate
 
 
 class ConversationClient(Protocol):

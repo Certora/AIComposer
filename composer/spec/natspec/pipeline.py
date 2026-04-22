@@ -24,7 +24,7 @@ from typing_extensions import TypedDict
 
 from langgraph.store.base import BaseStore
 
-from composer.ui.multi_job_app import (
+from composer.io.multi_job import (
     TaskInfo, HandlerFactory, run_task,
 )
 

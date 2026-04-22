@@ -1,8 +1,8 @@
 import asyncio
+import contextlib
 import traceback
 from abc import abstractmethod
-from collections.abc import Coroutine
-from typing import Callable
+from typing import AsyncContextManager, Callable, Coroutine
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -116,8 +116,15 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
     # ── Abstract / overridable methods ────────────────────────
 
     @abstractmethod
-    def build_interaction(self, ty: H) -> tuple[Text, str, list[Validator]]:
-        """Return (prompt_renderable, hint_text, validators) for the interaction type."""
+    def build_interaction(
+        self, ty: H
+    ) -> tuple[Text, str, list[Validator], AsyncContextManager[None] | None]:
+        """Return (prompt_renderable, hint_text, validators, side_effect).
+
+        ``side_effect`` is an optional async context manager whose scope
+        wraps the prompt/response lifecycle — e.g. open a diff tab on entry
+        and close it on exit. ``None`` means no side effect.
+        """
         ...
 
     @abstractmethod
@@ -181,28 +188,29 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
         target = self.query_one("#event-log", VerticalScroll)
 
         # Mount directly from worker — post_message races with state update mounts
-        prompt_content, hint_text, validators = self.build_interaction(ty)
+        prompt_content, hint_text, validators, side_effect = self.build_interaction(ty)
 
-        prompt_widget = Static(prompt_content)
-        hint_widget = Static(hint_text, classes="interaction-hint")
-        input_widget = Input(placeholder="Type here...", validate_on=["submitted"])
-        input_widget.validators = validators
+        async with side_effect if side_effect is not None else contextlib.nullcontext():
+            prompt_widget = Static(prompt_content)
+            hint_widget = Static(hint_text, classes="interaction-hint")
+            input_widget = Input(placeholder="Type here...", validate_on=["submitted"])
+            input_widget.validators = validators
 
-        await self._mount_to(target, prompt_widget, input_widget, hint_widget)
-        input_widget.focus()
+            await self._mount_to(target, prompt_widget, input_widget, hint_widget)
+            input_widget.focus()
 
-        response = await self._input_queue.get()
+            response = await self._input_queue.get()
 
-        # Replace interaction widgets with compact summary
-        await prompt_widget.remove()
-        await input_widget.remove()
-        await hint_widget.remove()
-        await self._mount_to(
-            target,
-            Static(dot("green", Text.assemble(("You: ", "bold green"), response)))
-        )
+            # Replace interaction widgets with compact summary
+            await prompt_widget.remove()
+            await input_widget.remove()
+            await hint_widget.remove()
+            await self._mount_to(
+                target,
+                Static(dot("green", Text.assemble(("You: ", "bold green"), response)))
+            )
 
-        return response
+            return response
 
     def on_input_submitted(self, event: Input.Submitted):
         value = event.value.strip()

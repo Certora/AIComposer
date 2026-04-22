@@ -7,6 +7,8 @@ from pydantic import Field
 
 import hashlib
 
+_UNSAFE_DISABLE_CACHE = False
+
 class AgentResult(TypedDict):
     question: str
     answer: str
@@ -71,7 +73,7 @@ class AgentIndex:
     ) -> list[IndexedAgentResult] | KeyedAgentResult:
         key = self._question_key(question)
         cached = await self.aget(key)
-        if cached is not None:
+        if cached is not None and not _UNSAFE_DISABLE_CACHE:
             return KeyedAgentResult(ref_string=key,  **cached)
         res = await self.store.asearch(
             self.cache_ns,

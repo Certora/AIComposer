@@ -6,6 +6,7 @@ contract Counter {
     mapping(address => uint256) public increments;
 
     function increment() external {
+        require(msg.sender != address(0));
         count += 1;
         increments[msg.sender] += 1;
     }

@@ -18,13 +18,116 @@ The path label is built lazily from the ``description`` values received in
 path is all descriptions joined with `` / ``.
 """
 
-from typing import Callable, override, cast
+from typing import Callable, override, cast, Any, AsyncIterator
 import sys
+import asyncio
+from contextlib import asynccontextmanager
 
 from composer.spec.source.prover import ProverEvents
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.io.event_handler import NullEventHandler
-from composer.ui.multi_job_app import TaskHandle, TaskInfo
+from composer.io.multi_job import TaskHandle, TaskInfo
+from composer.io.conversation import (
+    ConversationClient, ProgressPayload, AIYapping, ToolBatch, ToolComplete, ThinkingStart, StateUpdate
+)
+from composer.io.stream import managed_streamer, AsyncDataQueue, ManagedQueue, EndConversation, Checkpoint
+from rich.console import Console, RenderableType
+from rich.status import Status
+from rich.markdown import Markdown
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.formatted_text import HTML
+
+class _ConversationClient():
+    def __init__(
+        self, init_msg: RenderableType
+    ):
+        self.init_msg = init_msg
+        self.ev_queue : ManagedQueue[ProgressPayload] = AsyncDataQueue(asyncio.Event(), [])
+        self._thinking_item : Status | None = None
+        self._console = Console()
+        self.drain_task : asyncio.Task[None]
+
+    def _reset_thinking(self):
+        if self._thinking_item is not None:
+            self._thinking_item.stop()
+            self._thinking_item = None
+
+    async def _update(
+        self, r: ProgressPayload
+    ):
+        match r:
+            case ThinkingStart():
+                if self._thinking_item is None:
+                    self._thinking_item = self._console.status("Thinking...")
+                    self._thinking_item.start()
+            case ToolComplete():
+                pass
+            case AIYapping():
+                self._reset_thinking()
+                self._console.print(r.yap_content, markup=False, style="italic dim")
+            case ToolBatch():
+                print(f"AI called: {", ".join([ t['name'] for t in r.calls ])}")
+            case StateUpdate():
+                self._reset_thinking()
+                self._console.print(r.state_display, markup=False)
+
+    def progress_update(
+        self, progress: ProgressPayload
+    ):
+        self.ev_queue.push(progress)
+
+    async def human_turn(
+        self, ai_response: str | None
+    ) -> str:
+        self._reset_thinking()
+        ev = asyncio.Event()
+        self.ev_queue.push(Checkpoint(ev))
+        await ev.wait()
+        if ai_response is not None:
+            self._console.print(Markdown(ai_response))
+        multiline = False
+
+        @Condition
+        def is_multiline():
+            return multiline
+
+        kb = KeyBindings()
+
+        @kb.add("c-e")  # Ctrl+E to toggle
+        def _toggle(event):
+            nonlocal multiline
+            multiline = not multiline
+
+        session = PromptSession()
+        text = await session.prompt_async(
+            ">>> ",
+            multiline=is_multiline,
+            key_bindings=kb,
+            bottom_toolbar=lambda: HTML(
+                "<b>Ctrl+E</b> multiline: <b>{}</b>{}".format(
+                    "ON" if multiline else "OFF",
+                    "  |  <b>Alt+Enter</b> to submit" if multiline else "",
+                )
+            ),
+        )
+        return text
+
+    async def __aenter__(self):
+        self.drain_task = managed_streamer(
+            self.ev_queue, self._update
+        )
+        print("--- Entering refinment conversation (all other output suppressed) ---")
+        self._console.print(self.init_msg)
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.ev_queue.push(EndConversation())
+        try:
+            await self.drain_task
+        except:
+            print("Conversation cleanup failed")
 
 
 class AutoProveConsoleHandler(NullEventHandler):
@@ -37,6 +140,13 @@ class AutoProveConsoleHandler(NullEventHandler):
 
     def __init__(self) -> None:
         self._descriptions: dict[str, str] = {}
+        self._conversation_lock = asyncio.Semaphore()
+        self._suppress_output = False
+
+    def _output(self, to_print: Any):
+        if self._suppress_output:
+            return
+        print(to_print)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -58,10 +168,10 @@ class AutoProveConsoleHandler(NullEventHandler):
         self._descriptions[path[-1]] = description
         label = self._label(path)
         suffix = f"  (via tool: {tool_id})" if tool_id else ""
-        print(f"[{label}] start{suffix}")
+        self._output(f"[{label}] start{suffix}")
 
     async def log_end(self, path: list[str]) -> None:
-        print(f"[{self._label(path)}] end")
+        self._output(f"[{self._label(path)}] end")
 
     async def log_state_update(self, path: list[str], st: dict) -> None:
         label = self._label(path)
@@ -75,9 +185,9 @@ class AutoProveConsoleHandler(NullEventHandler):
                     tool_names.extend(c["name"] for c in tc)
             if tool_names:
                 names = ", ".join(tool_names)
-                print(f"[{label}] at node: {node_name}; tool calls: [{names}]")
+                self._output(f"[{label}] at node: {node_name}; tool calls: [{names}]")
             else:
-                print(f"[{label}] at node: {node_name}")
+                self._output(f"[{label}] at node: {node_name}")
 
     async def human_interaction(
         self, ty: None, debug_thunk: Callable[[], None]
@@ -85,7 +195,7 @@ class AutoProveConsoleHandler(NullEventHandler):
         raise RuntimeError(
             "Unexpected HITL interrupt in auto-prove console handler"
         )
-    
+
     @override
     def handle_event(self, payload: dict, path: list[str], checkpoint_id: str):
         d = cast(ProverEvents, payload)
@@ -95,14 +205,24 @@ class AutoProveConsoleHandler(NullEventHandler):
             case "cloud_polling":
                 pass
             case "prover_run":
-                print(f"[{self._label(path)}]: prover start")
+                self._output(f"[{self._label(path)}]: prover start")
             case "prover_result":
-                print(f"[{self._label(path)}]; prover complete")
+                self._output(f"[{self._label(path)}]; prover complete")
             case "rule_analysis":
-                print(f"[{self._label(path)}]: rule analysis complete -> {d['rule']}")
+                self._output(f"[{self._label(path)}]: rule analysis complete -> {d['rule']}")
             case "cex_analysis":
-                print(f"[{self._label(path)}]: rule analysis start -> {d['rule_name']}")
+                self._output(f"[{self._label(path)}]: rule analysis start -> {d['rule_name']}")
         return super().handle_event(payload, path, checkpoint_id)
+    
+    @asynccontextmanager
+    async def _start_conversation(self, initial: RenderableType) -> AsyncIterator[ConversationClient]:
+        async with self._conversation_lock:
+            prev = self._suppress_output
+            self._suppress_output = True
+            to_yield = _ConversationClient(initial)
+            async with to_yield:
+                yield to_yield
+            self._suppress_output = prev
 
     # ------------------------------------------------------------------
     # HandlerFactory
@@ -129,4 +249,5 @@ class AutoProveConsoleHandler(NullEventHandler):
             ),
             on_done=lambda: print(f"[{info.label}] ✓ done"),
             on_error=_on_error,
+            conversation_provider=self._start_conversation
         )

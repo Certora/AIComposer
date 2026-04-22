@@ -5,7 +5,7 @@ import pathlib
 
 from langchain_core.tools import BaseTool
 
-from composer.ui.multi_job_app import (
+from composer.io.multi_job import (
     TaskInfo, HandlerFactory, run_task,
 )
 from composer.ui.autoprove_app import AutoProvePhase
@@ -54,7 +54,9 @@ async def run_generation_pipeline(
     semaphore: asyncio.Semaphore,
     resources: list[CVLResource],
     prover_tool: BaseTool,
-    prover_config: dict
+    prover_config: dict,
+    interactive: bool,
+    threat_model: str | dict | None
 ) -> AutoProveResult:
     
     contract_instance : ContractInstance
@@ -94,7 +96,7 @@ async def run_generation_pipeline(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{component_idx}", name, AutoProvePhase.BUG_ANALYSIS),
-            lambda: run_bug_analysis(feat_ctx, env, feat),
+            lambda conv: run_bug_analysis(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model),
             semaphore,
         )
 
