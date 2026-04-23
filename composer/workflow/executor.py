@@ -168,6 +168,7 @@ async def _execute_ai_composer_workflow(
     workflow_options: WorkflowOptions,
     memory_namespace: str | None,
     resume_work_key: str | None,
+    prover_conf_overrides: dict | None,
 
     checkpointer: AsyncPostgresSaver,
     store: BaseStore,
@@ -204,6 +205,7 @@ async def _execute_ai_composer_workflow(
             system_doc = input.system_doc
             interface_file = input.intf
             spec_file = input.spec
+            fs_layer = input.source_root
 
         case ResumeIdData() | ResumeFSData():
             prompt_params = PromptParams(is_resume=True)
@@ -364,7 +366,11 @@ async def _execute_ai_composer_workflow(
     if reqs_list is not None:
         required_validations.append(req_type)
 
-    work_context = AIComposerContext(llm=llm, rag_db=rag, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
+    work_context = AIComposerContext(
+        llm=llm, rag_db=rag, prover_opts=prover_opts,
+        vfs_materializer=materializer, required_validations=required_validations,
+        prover_conf_overrides=prover_conf_overrides,
+    )
 
     audit_sink = AuditStoreSink(audit_store, thread_id)
 
@@ -407,8 +413,19 @@ async def execute_ai_composer_workflow(
     workflow_options: WorkflowOptions,
     memory_namespace: str | None = None,
     resume_work_key: str | None = None,
+    prover_conf_overrides: dict | None = None,
 ) -> WorkflowResult:
-    """Execute the AI Composer workflow with interrupt handling."""
+    """Execute the AI Composer workflow with interrupt handling.
+
+    ``prover_conf_overrides`` is an explicit dict for programmatic (agent-launch)
+    callers. CLI callers can instead leave it as ``None`` and supply
+    ``workflow_options.prover_conf`` as a path to a JSON file; the file is
+    loaded here so callers need not parse it themselves.
+    """
+    import json
+    if prover_conf_overrides is None and workflow_options.prover_conf is not None:
+        prover_conf_overrides = json.loads(pathlib.Path(workflow_options.prover_conf).read_text())
+
     model = get_rag_model()
     async with checkpointer_context() as checkpointer, \
         store_context() as store, \
@@ -416,6 +433,7 @@ async def execute_ai_composer_workflow(
         rag_context(workflow_options.rag_db, model) as rag_db, \
         memory_backend_context() as mem:
         return await _execute_ai_composer_workflow(
-            handler, llm, input, workflow_options, memory_namespace, resume_work_key, checkpointer,
+            handler, llm, input, workflow_options, memory_namespace, resume_work_key,
+            prover_conf_overrides, checkpointer,
             store, indexed_store, rag_db, mem
         )

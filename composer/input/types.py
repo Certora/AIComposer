@@ -101,6 +101,8 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     set_reqs: Optional[str]
     skip_reqs: bool
 
+    prover_conf: Optional[str]
+
 
 class ModelOptionsBase(Protocol):
     """Read-only view of model options. thinking_tokens may be None to disable thinking."""
@@ -144,6 +146,7 @@ class UploadPaths(Protocol):
     spec_file: str
     interface_file: str
     system_doc: str
+    source_root: Optional[str]
 
 
 class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, Protocol):
@@ -178,6 +181,7 @@ class InputData:
     spec: UploadedFile
     system_doc: UploadedFile
     intf: UploadedFile
+    source_root: Optional[str] = None
 
 
 class ResumeInput(Protocol):

@@ -37,4 +37,5 @@ def upload_input(i: UploadPaths) -> InputData:
         spec=spec_file,
         system_doc=system_doc_file,
         intf=interface_file,
+        source_root=getattr(i, "source_root", None),
     )

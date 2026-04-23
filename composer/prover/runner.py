@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List, Callable, override
 from pathlib import Path
 
@@ -22,6 +23,43 @@ from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
 
 type _ProverEvents = ProverOutputEvent | CloudPollingEvent | ProverRun | ProverResult | RuleAnalysisResult | CEXAnalysisStart | RuleAuditResult
+
+
+_COMPOSER_CONF_NAME = "_composer_run.conf"
+
+
+def _build_conf_args(
+    *,
+    temp_dir: Path,
+    overrides: dict,
+    source_files: List[str],
+    target_contract: str,
+    compiler_version: str,
+    loop_iter: int,
+    rule: Optional[str],
+) -> list[str]:
+    """Materialize the merged Certora conf to a tempfile and return the CLI args to invoke it.
+
+    Pipeline-authoritative keys (``files``, ``verify``, ``solc``, ``loop_iter``, ``rule``,
+    plus the fixed options ``optimistic_loop``, ``optimistic_hashing``, ``solc_via_ir``,
+    ``strict_solc_optimizer``, ``prover_args``) are written last so they win over
+    whatever the user supplied.
+    """
+    conf: dict = {**overrides}
+    conf["files"] = list(source_files)
+    conf["verify"] = f"{target_contract}:./rules.spec"
+    conf["solc"] = compiler_version
+    conf["optimistic_loop"] = True
+    conf["optimistic_hashing"] = True
+    conf["loop_iter"] = str(loop_iter)
+    conf["solc_via_ir"] = True
+    conf["strict_solc_optimizer"] = True
+    conf["prover_args"] = ["-timeoutCracker true"]
+    if rule is not None:
+        conf["rule"] = [rule]
+
+    (temp_dir / _COMPOSER_CONF_NAME).write_text(json.dumps(conf, indent=2))
+    return [_COMPOSER_CONF_NAME]
 
 class _AuditCallbacks(ProverCallbacks):
     def __init__(self, writer: Callable[[_ProverEvents], None], tool_call_id: str) -> None:
@@ -137,22 +175,33 @@ async def certora_prover(
             assert ws is not None
             (Path(temp_dir) / "rules.spec").write_text(ws)
         try:
-            args = source_files.copy()
-            args.extend([
-                "--verify",
-                f"{target_contract}:./rules.spec",
-                "--optimistic_loop",
-                "--optimistic_hashing",
-                "--loop_iter",
-                str(loop_iter),
-                "--solc", compiler_version,
-                "--solc_via_ir",
-                "--strict_solc_optimizer",
-                "--prover_args",
-                "-timeoutCracker true",
-            ])
-            if rule is not None:
-                args.extend(["--rule", rule])
+            if ctxt.prover_conf_overrides is not None:
+                args = _build_conf_args(
+                    temp_dir=Path(temp_dir),
+                    overrides=ctxt.prover_conf_overrides,
+                    source_files=source_files,
+                    target_contract=target_contract,
+                    compiler_version=compiler_version,
+                    loop_iter=loop_iter,
+                    rule=rule,
+                )
+            else:
+                args = source_files.copy()
+                args.extend([
+                    "--verify",
+                    f"{target_contract}:./rules.spec",
+                    "--optimistic_loop",
+                    "--optimistic_hashing",
+                    "--loop_iter",
+                    str(loop_iter),
+                    "--solc", compiler_version,
+                    "--solc_via_ir",
+                    "--strict_solc_optimizer",
+                    "--prover_args",
+                    "-timeoutCracker true",
+                ])
+                if rule is not None:
+                    args.extend(["--rule", rule])
 
             store = get_store()
 

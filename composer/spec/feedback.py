@@ -53,7 +53,7 @@ def property_feedback_judge(
     prompt: InjectedTemplate[Properties] | TemplateInstantiation,
     props: list[PropertyFormulation],
     *,
-    extra_inputs: list[str | dict] | Callable[[], list[str | dict]] | None = None,
+    extra_inputs: list[str | dict] | Callable[[], Awaitable[list[str | dict]] | list[str | dict]] | None = None,
     system_prompt: TemplateInstantiation = FeedbackSystemTemplate
 ) -> FeedbackToolContext:
 
@@ -100,7 +100,10 @@ def property_feedback_judge(
             if isinstance(extra_inputs, list):
                 input_parts.extend(extra_inputs)
             else:
-                input_parts.extend(extra_inputs())
+                produced = extra_inputs()
+                if inspect.isawaitable(produced):
+                    produced = await produced
+                input_parts.extend(produced)
 
         input_parts.append("The proposed CVL file is")
         input_parts.append(cvl)

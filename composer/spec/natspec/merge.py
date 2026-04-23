@@ -11,12 +11,10 @@ the master spec.
 """
 
 import pathlib
-import subprocess
+import asyncio
 import sys
-import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import NotRequired, override, Protocol
+from typing import NotRequired, Protocol, override
 
 from pydantic import Field
 
@@ -25,69 +23,85 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import MessagesState
 from langgraph.types import Command
 
-from graphcore.graph import FlowInput, tool_output, tool_return
+from graphcore.graph import FlowInput, tool_output, tool_return, tool_state_update
 from graphcore.tools.schemas import WithInjectedState, WithInjectedId, WithAsyncImplementation
 
 from composer.spec.natspec.cas import SharedArtifact
 from composer.spec.natspec.pipeline_events import MasterSpecUpdate
-from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
-from composer.spec.graph_builder import bind_standard, run_to_completion
+from composer.spec.graph_builder import run_to_completion
 from composer.spec.cvl_generation import CVLGenerationExtra, check_completion
-from composer.spec.natspec.interface_gen import InterfaceResult
-from composer.spec.tool_env import BasicAgentTools, RAGTools
+from composer.spec.tool_env import BasicAgentTools
 from composer.spec.util import uniq_thread_id
 from composer.ui.tool_display import tool_display, suppress_ack
+from composer.spec.natspec.task_description import Assembler, ConfigurationBuilder
+from composer.spec.natspec.registry import FileRegistry, StubRegistry
+from composer.spec.util import temp_certora_file
+from composer.spec.natspec.async_result import AsyncResultTool
 
 
-class PublishEnv(BasicAgentTools, RAGTools, Protocol):
-    pass
+class MergeEnv(BasicAgentTools, Protocol):
+    """Role-scoped env for the merge sub-agent: basic agent plumbing plus the
+    ``merge_tools`` tool set (RAG only in the no-source flow; source + RAG
+    when running against an existing codebase).
+    """
+    @property
+    def merge_tools(self) -> tuple[BaseTool, ...]:
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Typecheck utility
 # ---------------------------------------------------------------------------
 
-def typecheck_spec(
-    interface: InterfaceResult,
+
+async def typecheck_spec(
+    files: list[str],
     *,
     spec: str,
-    stub: str,
-    solidity_contract_identifier: str,
-    solc_version: str,
+    primary_contract: str,
+    assembler: Assembler,
+    config_builder: ConfigurationBuilder
 ) -> str | None:
-    """Run certoraTypeCheck.py on spec + stub. Returns None on success, error string on failure."""
-    solc_name = f"solc{solc_version}"
+    """Run certoraTypeCheck.py on spec + stubs. Returns None on success, error string on failure.
+
+    When ``source_root`` is set, the existing codebase is copied into the temp dir so stubs
+    that reference other contracts in the project can be resolved. Generated stubs are
+    laid down at ``new_contracts_subdir`` and interfaces at ``interfaces_subdir``.
+
+    ``conf_overrides`` is merged into the emitted certora.conf; dynamic keys (``files``,
+    ``verify``, ``solc``, ``compilation_steps_only``) always win.
+    """
 
     import logging
     logger = logging.getLogger(__name__)
-
-    with tempfile.TemporaryDirectory(delete=False) as tmpdir:
-        root = pathlib.Path(tmpdir)
-        interface.dump_to_path(root)
-        (root / "certora").mkdir(exist_ok=True)
-        (root / "certora" / "input.spec").write_text(spec)
-        (root / "contracts").mkdir(exist_ok=True)
-        (root / "contracts" / "Impl.sol").write_text(stub)
-
-        p = (pathlib.Path(__file__).parent.parent / "certoraTypeCheck.py").absolute()
-        result = subprocess.run(
-            [
-                sys.executable, str(p),
-                f"contracts/Impl.sol:{solidity_contract_identifier}",
-                "--verify", f"{solidity_contract_identifier}:./certora/input.spec",
-                "--solc", solc_name,
-                "--compilation_steps_only",
-            ],
-            text=True,
-            capture_output=True,
-            cwd=tmpdir
-        )
-        logger.debug(f"return code {result.returncode}")
-        logger.debug(p)
-        logger.debug(root)
-        logger.debug(solidity_contract_identifier)
-        if result.returncode == 0:
-            return None
-        return f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    async with assembler.project_directory() as tmpdir:
+        with (
+            temp_certora_file(
+                content=spec,
+                root=str(tmpdir),
+                ext="spec"
+            ) as spec_file,
+            (
+                config_builder
+                .with_files(files)
+                .with_verify(main_contract=primary_contract, spec_file=spec_file)
+                .build_to(tmpdir)
+            ) as config_file
+        ):
+            p = (pathlib.Path(__file__).parent.parent / "certoraTypeCheck.py").absolute()
+            proc = asyncio.subprocess.create_subprocess_exec(
+                sys.executable, *[str(p), config_file],
+                cwd=tmpdir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            result = await proc
+            if result.returncode == 0:
+                return None
+            assert result.stderr is not None and result.stdout is not None
+            stdout = (await result.stdout.read()).decode()
+            stderr = (await result.stderr.read()).decode()
+            return f"stdout:\n{stdout}\n\nstderr:\n{stderr}"
 
 
 # ---------------------------------------------------------------------------
@@ -106,15 +120,15 @@ class MergeResult:
 # ---------------------------------------------------------------------------
 
 async def run_merge_agent(
-    env: PublishEnv,
-    interface: InterfaceResult,
-
+    env: MergeEnv,
+    files_registry: FileRegistry,
+    stub_registry: StubRegistry,
     *,
     working_copy: str,
     master_content: str,
-    stub: str,
-    contract_identifier: str,
-    solc_version: str,
+    primary_contract: str,
+    assembler: Assembler,
+    config_builder: ConfigurationBuilder
 ) -> MergeResult:
     """Spawn a merge agent to merge working_copy into master_content.
 
@@ -126,34 +140,52 @@ async def run_merge_agent(
     class ST(MessagesState):
         result: NotRequired[str]
 
-    def validate_merge(_s: ST, res: str) -> str | None:
-        tc_result = typecheck_spec(
-            interface, solidity_contract_identifier=contract_identifier, solc_version=solc_version, spec=res, stub=stub
-        )
-        if tc_result is not None:
-            return f"Merged spec failed typecheck:\n{tc_result}\nPlease fix the merge and try again."
-        return None
+    class ResultTool(AsyncResultTool[str]):
+        """
+        Call this tool to deliver the complete, merged specification
+        """
+        async def validate(self, res: str) -> str | None:
+            r = await typecheck_spec(
+                files=await files_registry.read_all(primary_contract),
+                spec=res,
+                assembler=assembler,
+                config_builder=config_builder,
+                primary_contract=primary_contract
+            )
+            if r is not None:
+                return f"Merged spec failed typecheck:\n{r}\nPlease fix the merge and try again"
+            else:
+                return None
 
-    workflow = bind_standard(
-        env.builder, ST, "The complete merged CVL specification", validator=validate_merge,
-    ).with_input(
-        FlowInput
-    ).with_tools(
-        env.rag_tools
-    ).with_sys_prompt(
-        "You are a CVL specification merge assistant. Your job is to merge a new property's "
-        "CVL rules into an existing master specification without breaking it."
-    ).with_initial_prompt_template(
-        "merge_prompt.j2",
-    ).compile_async()
+    workflow = (
+        env.builder
+        .with_default_summarizer(max_messages=50)
+        .with_state(ST)
+        .with_tools(
+            [ResultTool.as_tool("result")]
+        ).with_input(
+            FlowInput
+        ).with_tools(
+            env.merge_tools
+        ).with_sys_prompt(
+            "You are a CVL specification merge assistant. Your job is to merge a new property's "
+            "CVL rules into an existing master specification without breaking it."
+        ).with_initial_prompt_template(
+            "merge_prompt.j2",
+        ).compile_async()
+    )
 
+    stubs = await stub_registry.read_all_stubs()
+    stub_listing = "\n\n".join(
+        f"--- {name} ({decl.path}) ---\n{decl.content}" for name, decl in stubs.items()
+    )
     input_parts: list[str | dict] = [
         "The working copy (new property's CVL) is:",
         working_copy,
         "The current master spec is:",
         master_content if master_content else "(empty — this is the first property)",
-        "The current stub is:",
-        stub,
+        f"The current stubs (primary contract: {primary_contract}):",
+        stub_listing,
     ]
 
     try:
@@ -185,10 +217,10 @@ async def run_merge_agent(
 # ---------------------------------------------------------------------------
 
 def make_advisory_typecheck_tool(
-    read_stub: Callable[[], str],
-    interface: InterfaceResult,
-    stub_identifier: str,
-    solc_version: str,
+    files: FileRegistry,
+    assembler: Assembler,
+    config_builder: ConfigurationBuilder,
+    primary_contract: str,
 ) -> BaseTool:
     """Create an advisory typecheck tool for property agents."""
 
@@ -204,9 +236,12 @@ def make_advisory_typecheck_tool(
             spec = self.state.get("curr_spec")
             if spec is None:
                 return "No spec written yet. Use put_cvl or put_cvl_raw first."
-            stub_content = read_stub()
-            result = typecheck_spec(
-                interface, solidity_contract_identifier=stub_identifier, solc_version=solc_version, stub=stub_content, spec=spec
+            result = await typecheck_spec(
+                files=await files.read_all(primary_contract),
+                assembler=assembler,
+                config_builder=config_builder,
+                spec=spec,
+                primary_contract=primary_contract,
             )
             if result is None:
                 return "Typecheck passed."
@@ -219,13 +254,18 @@ def make_advisory_typecheck_tool(
 # Publish + GiveUp tools
 # ---------------------------------------------------------------------------
 
+@dataclass
+class ContractArtifacts:
+    contract_name: str
+    master_spec: SharedArtifact
+    files_registry: FileRegistry
+    stub_registry: StubRegistry
+
 def make_publish_tools(
-    master_spec: SharedArtifact,
-    stub_read: Callable[[], str],
-    interface: InterfaceResult,
-    contract_id: str,
-    solc_version: str,
-    env: PublishEnv
+    contract: ContractArtifacts,
+    env: MergeEnv,
+    assembler: Assembler,
+    config_builder: ConfigurationBuilder
 ) -> tuple[BaseTool, BaseTool]:
     """Construct PublishSpec + GiveUp tools for a property agent.
 
@@ -236,8 +276,8 @@ def make_publish_tools(
     is rejected with that message.
     """
 
-    import logging
-    logging.getLogger(__name__).debug(contract_id)
+    master_spec = contract.master_spec
+    primary_contract = contract.contract_name
 
     @tool_display("Publishing to master spec", suppress_ack("Publish result"))
     class PublishSpec(WithInjectedState[CVLGenerationExtra], WithInjectedId, WithAsyncImplementation[Command]):
@@ -261,16 +301,15 @@ def make_publish_tools(
                 return tool_return(self.tool_call_id, content="No spec written yet. Use put_cvl first.")
 
             async with master_spec.locked() as (master_content, write_master):
-                stub_content = stub_read()
-
                 merge_result = await run_merge_agent(
                     working_copy=working_copy,
                     master_content=master_content or "",
-                    stub=stub_content,
-                    interface=interface,
-                    contract_identifier=contract_id,
-                    solc_version=solc_version,
-                    env=env
+                    assembler=assembler,
+                    config_builder=config_builder,
+                    primary_contract=primary_contract,
+                    env=env,
+                    files_registry=contract.files_registry,
+                    stub_registry=contract.stub_registry,
                 )
 
                 if not merge_result.success:
@@ -283,7 +322,7 @@ def make_publish_tools(
                 evt: MasterSpecUpdate = {
                     "type": "master_spec_update",
                     "spec": merge_result.merged_spec,
-                    "contract_id": contract_id
+                    "contract_id": primary_contract
                 }
                 get_stream_writer()(evt)
                 return tool_output(

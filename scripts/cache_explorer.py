@@ -22,9 +22,8 @@ from composer.spec.context import (
     Contract, CacheTypes, Marker, ComponentGroup, Properties
 )
 from composer.spec.system_model import Application, ExplicitContract, ContractComponent, ExternalActor
-from composer.spec.natspec.interface_gen import InterfaceResult
+from composer.spec.natspec.models import InterfaceResult, LocatedStubDeclaration
 from composer.spec.natspec.system_analysis import SOURCE_ANALYSIS_KEY
-from composer.spec.natspec.stub_gen import StubDeclaration
 from composer.spec.bug import _BugAnalysisCache, BUG_ANALYSIS_KEY
 from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, CVL_JUDGE_KEY, LAST_ATTEMPT_KEY
 from composer.spec.natspec.pipeline import PROPERTIES_KEY, _component_cache_key, _batch_cache_key
@@ -37,7 +36,7 @@ from composer.spec.util import string_hash
 # ---------------------------------------------------------------------------
 
 type NatSpecCachedValue = (
-    Application | InterfaceResult | StubDeclaration
+    Application | InterfaceResult | LocatedStubDeclaration
     | _BugAnalysisCache | GeneratedCVL | _LastAttemptCache
 )
 
@@ -135,11 +134,11 @@ async def build_tree_inner(root_ctx: WorkflowContext[None]):
         with section("Stubs"):
             cache_prefix = f"stub-for-{string_hash(cached_intf.model_dump_json())}-"
             for c in summary.contract_components:    
-                stub_key = CacheKey[None, StubDeclaration](
+                stub_key = CacheKey[None, LocatedStubDeclaration](
                     cache_prefix + c.name
                 )
                 yield leaf(
-                    root_ctx, stub_key, f"Stub: {c.name}", StubDeclaration
+                    root_ctx, stub_key, f"Stub: {c.name}", LocatedStubDeclaration
                 )
     for c in summary.contract_components:
         contract_key = CacheKey[None, Contract](string_hash(c.model_dump_json()))
@@ -204,7 +203,7 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
                 lines.append(f"--- Interface {nm}---")
                 lines.append(decl.content)
 
-        case StubDeclaration():
+        case LocatedStubDeclaration():
             lines.append("")
             lines.append(f"--- Stub {val.solidity_identifier} ---")
             lines.append(val.content)

@@ -22,6 +22,7 @@ class AIComposerContext:
     prover_opts: ProverOptions
     vfs_materializer: VFSAccessor[AIComposerState]
     required_validations: list[ValidationType] = field(default_factory=lambda: [prover])
+    prover_conf_overrides: dict | None = None
 
 def compute_state_digest(c: AIComposerContext, state: AIComposerState) -> str:
     # not interested in cryptographic bulletproofing, just need *some* digest

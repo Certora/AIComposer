@@ -105,8 +105,9 @@ class NatspecTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
                     "Master spec updated", evt["spec"], "input.spec",
                 )
             case "stub_update":
+                contract_id = evt.get("contract_id", "stub")
                 await self.render_content_link(
-                    "Stub updated", evt["stub"], "Impl.sol",
+                    f"Stub updated: {contract_id}", evt["stub"], f"{contract_id}.sol",
                 )
 
 

@@ -14,7 +14,7 @@ from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
 from composer.spec.system_model import (
     AnyApplication, Application, SourceApplication, HarnessedApplication,
-    ContractComponentInstance,
+    ContractComponentInstance, FromSourceApplication
 )
 from composer.spec.mnemonic import mnemonic_id
 
@@ -48,6 +48,8 @@ def _snapshot_app(app: AnyApplication) -> AppSnapshot:
             return _SourceApp(app=s)
         case Application() as a:
             return _BaseApp(app=a)
+        case _:
+            raise ValueError(f"Unexpected {type(app)} in source worflow")
 
 
 # ---------------------------------------------------------------------------

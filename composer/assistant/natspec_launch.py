@@ -1,3 +1,4 @@
+import pathlib
 import traceback
 import uuid
 
@@ -14,9 +15,11 @@ from composer.spec.context import (
     WorkflowContext, SystemDoc, get_document_input,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline, PipelineResult
-from composer.spec.util import string_hash
+from composer.spec.natspec.merge import DEFAULT_NEW_CONTRACTS_SUBDIR, DEFAULT_INTERFACES_SUBDIR
+from composer.spec.source.source_env import SourceOnlyParams
+from composer.spec.util import string_hash, FS_FORBIDDEN_READ
 from composer.workflow.services import create_llm, standard_connections, get_store
-from composer.spec.services import build_natspec_env
+from composer.spec.natspec.natspec_env import build_natspec_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 
 async def launch_natspec_workflow(
@@ -50,13 +53,35 @@ async def launch_natspec_workflow(
         )
 
 
+        source: SourceOnlyParams | None = None
+        source_root_path: pathlib.Path | None = None
+        if args.source_root:
+            source_root_path = (ctx.workspace / args.source_root).resolve()
+            source = SourceOnlyParams(
+                root=str(source_root_path),
+                forbidden_read=args.forbidden_read or FS_FORBIDDEN_READ,
+                source_question_ns=(
+                    "source_agent", "cache",
+                    args.cache_namespace or "default",
+                    string_hash(str(system_doc.content)),
+                ),
+            )
+
         env = build_natspec_env(
             llm=pipeline_llm,
             db=rag_db,
             checkpoint=conn.checkpointer,
             kb_ns=("cvl",),
             store=conn.store,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS
+            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
+            source=source,
+        )
+
+        new_contracts_subdir = (
+            pathlib.Path(args.new_contracts_root) if args.new_contracts_root else DEFAULT_NEW_CONTRACTS_SUBDIR
+        )
+        interfaces_subdir = (
+            pathlib.Path(args.interfaces_root) if args.interfaces_root else DEFAULT_INTERFACES_SUBDIR
         )
 
         app = PipelineApp(ide=ctx.ide)
@@ -73,6 +98,10 @@ async def launch_natspec_workflow(
                     ctx=wf_ctx,
                     store=get_store(), # stub stuff is all sync still, use sync store
                     handler_factory=app.make_handler,
+                    source_root=source_root_path,
+                    new_contracts_subdir=new_contracts_subdir,
+                    interfaces_subdir=interfaces_subdir,
+                    conf_overrides=args.prover_conf,
                 )
                 await app.on_pipeline_done(pipeline_result)
             except Exception as exc:

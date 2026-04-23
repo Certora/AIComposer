@@ -3,7 +3,7 @@ from composer.spec.cvl_generation import (static_tools, run_cvl_generator, CVLGe
 )
 
 from dataclasses import dataclass
-from typing import Callable, override, Protocol
+from typing import Awaitable, Callable, override, Protocol
 
 
 from langchain_core.tools import BaseTool
@@ -31,9 +31,8 @@ class SourceGenerationParams(Properties):
 NoSourceGen = TypedTemplate[SourceGenerationParams]("nosource_property_generation_prompt.j2")
 
 class _CVLConfig(SummaryConfig[CVLGenerationState]):
-    def __init__(self, reader: Callable[[], str], contract_name: str):
+    def __init__(self, contract_name: str):
         super().__init__(max_messages=50, enabled=True)
-        self.reader = reader
         self.contract_name = contract_name
 
     @override
@@ -62,10 +61,7 @@ If your current task itself began with a summary, include the salient parts of t
         return f"""
 You are resuming this task already in progress. The current version of your spec (if any) is available via the `get_cvl` tool.
 
-The current content of the type checking stub for {self.contract_name} is as follows:
-```solidity
-{self.reader()}
-```
+Read the current content of the type checking stub for {self.contract_name} using the `read_stub` tool.
 
 A summary of your work up until this point is as follows:
 
@@ -100,18 +96,21 @@ async def generate_cvl_batch(
     contract_name: str,
 
     injected_tools: list[BaseTool],
-    stub_reader: Callable[[], str]
+    stub_reader: Callable[[], Awaitable[str]]
 ) -> GenerationSuccess | GaveUp:
+    async def stub_feedback_extras() -> list[str | dict]:
+        return [
+            f"The current typechecking stub for the {contract_name} stub is",
+            await stub_reader(),
+            "For reference, the system document for the application is",
+            system_doc.content,
+        ]
+
     feedback_ctxt = property_feedback_judge(
         ctx=ctx.child(CVL_JUDGE_KEY), env=env, prompt=FeedbackTemplate.bind({
             "context": component,
             "has_source": False
-        }).depends(Properties), props=props, extra_inputs=lambda: [
-            f"The current typechecking stub for the {contract_name} stub is",
-            stub_reader(),
-            "For reference, the system document for the application is",
-            system_doc.content
-        ]
+        }).depends(Properties), props=props, extra_inputs=stub_feedback_extras
     )
 
     g = env.builder.with_tools(
@@ -135,14 +134,14 @@ async def generate_cvl_batch(
             "context": component,
             "properties": props
         }).render_to(b.with_initial_prompt_template)
-    ).with_summary_config(_CVLConfig(stub_reader, contract_name)).compile_async()
+    ).with_summary_config(_CVLConfig(contract_name)).compile_async()
 
     res = await run_cvl_generator(
         ctx, g, CVLGenerationInput(
             curr_spec=None,
             input=[
                 f"The current stub implementation of the {contract_name} is",
-                stub_reader()
+                await stub_reader()
             ],
             required_validations=["feedback"],
             skipped=[],

@@ -37,16 +37,20 @@ from composer.spec.context import (
 from composer.spec.util import string_hash
 from composer.spec.bug import run_bug_analysis
 from composer.spec.prop import PropertyFormulation
-from composer.spec.natspec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC, InterfaceResult, InterfaceDecl
-from composer.spec.natspec.stub_gen import generate_stub, StubDeclaration
-from composer.spec.natspec.registry import StubRegistry
-from composer.spec.natspec.merge import make_publish_tools, make_advisory_typecheck_tool
+from composer.spec.natspec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC
+from composer.spec.natspec.stub_gen import generate_stub
+from composer.spec.natspec.models import InterfaceDeclModel, InterfaceResult, StubDeclarationModel
+from composer.spec.natspec.registry import StubRegistry, FileRegistry
+from composer.spec.natspec.merge import (
+    make_publish_tools, make_advisory_typecheck_tool, ContractArtifacts,
+)
+from composer.spec.natspec.task_description import MentalModel
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationSuccess
 from composer.spec.gen_types import TypedTemplate
 from composer.spec.natspec.system_analysis import run_component_analysis, DESCRIPTION as SYSTEM_DESC
-from composer.spec.system_model import ContractInstance, ContractComponentInstance, ContractComponent, Application
-from composer.spec.tool_env import ToolEnvironment
+from composer.spec.system_model import ContractInstance, ContractComponentInstance, ContractComponent, NatspecApplication
+from composer.spec.natspec.natspec_env import NatspecEnvironment
 
 
 # ---------------------------------------------------------------------------
@@ -92,15 +96,15 @@ class PropertyFailure:
 
 @dataclass
 class ContractFormulation:
-    interface: InterfaceDecl
-    stub: StubDeclaration
+    interface: InterfaceDeclModel
+    stub: StubDeclarationModel
     name: str
     failures: list[PropertyFailure]
     spec: str
 
 @dataclass
 class PipelineResult:
-    app: Application
+    app: NatspecApplication
     contracts: list[ContractFormulation] = field(default_factory=list)
 
 
@@ -111,6 +115,7 @@ class PipelineResult:
 
 MASTER_SPEC_NS = ("natspec_pipeline", "master_spec")
 STUB_NS = ("natspec_pipeline", "stub")
+FILES_NS = ("natspec_pipeline", "spec_files")
 
 @dataclass
 class ContractResult:
@@ -122,7 +127,9 @@ class PipelineServices:
     sem: asyncio.Semaphore
     store: BaseStore
     factory: HandlerFactory[Phase, None]
-    env: ToolEnvironment
+    env: NatspecEnvironment
+    mental_model: MentalModel
+    file_registry: FileRegistry
 
 class NatspecGenerationParams(TypedDict):
     context: ContractComponentInstance
@@ -142,7 +149,7 @@ async def analyze_single_contract(
     intf: InterfaceResult,
     summary: ContractInstance,
     stub_registry: StubRegistry,
-    stub: StubDeclaration
+    stub: StubDeclarationModel
 ) -> ContractResult:
     
     contract_name = summary.contract.name
@@ -217,33 +224,32 @@ async def analyze_single_contract(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
         )
+        batch_assembler = services.mental_model.assembler_for_spec_check(
+            interface, await stub_registry.read_all_stubs()
+        )
+        batch_config_builder = services.mental_model.config_builder().with_solc(solc_version)
+
         stub_tools = registry.get_tools(contract_name)
+        file_tools = services.file_registry.get_tools(contract_name)
         typecheck_tool = make_advisory_typecheck_tool(
-            lambda: registry.read_stub(contract_name), interface, stub.solidity_identifier, solc_version,
+            files=services.file_registry,
+            assembler=batch_assembler,
+            config_builder=batch_config_builder,
+            primary_contract=stub.solidity_identifier,
         )
 
-        publish = make_publish_tools(
+        contract_artifacts = ContractArtifacts(
+            contract_name=stub.solidity_identifier,
             master_spec=master_spec,
-            stub_read=lambda: registry.read_stub(contract_name),
-            interface=interface,
-            contract_id=stub.solidity_identifier,
-            solc_version=solc_version,
-            env=services.env
+            files_registry=services.file_registry,
+            stub_registry=stub_registry,
         )
-
-        prompt_extras = [
-            f"The current stub implementation of the {contract_name} is",
-            stub_registry.read_stub(contract_name)
-        ]
-
-        prompt_extras.append("The interface of the contract containing this component is")
-        prompt_extras.append(interface.name_to_interface[contract_name].content)
-
-        for sib in batch.feat.ommer_contract:
-            prompt_extras.extend([
-                f"The interface of the {sib.name} contract is:",
-                interface.name_to_interface[sib.name].content
-            ])
+        publish = make_publish_tools(
+            contract=contract_artifacts,
+            env=services.env,
+            assembler=batch_assembler,
+            config_builder=batch_config_builder,
+        )
 
         label = f"{contract_name} {batch.feat.component.name} ({len(batch.props)} properties)"
         return await run_task(
@@ -256,7 +262,7 @@ async def analyze_single_contract(
                 ctx=batch_ctx,
                 env=services.env,
                 props=batch.props,
-                injected_tools=[*stub_tools, typecheck_tool, *publish],
+                injected_tools=[*stub_tools, *file_tools, typecheck_tool, *publish],
                 system_doc=system_doc
             ),
             semaphore,
@@ -295,10 +301,11 @@ async def analyze_single_contract(
 async def run_natspec_pipeline(
     system_doc: SystemDoc,
     solc_version: str,
-    tool_env: ToolEnvironment,
+    tool_env: NatspecEnvironment,
     ctx: WorkflowContext[None],
     store: BaseStore,
     handler_factory: HandlerFactory[Phase, None],
+    mental_model: MentalModel,
     *,
     max_concurrent: int = 4,
 ) -> PipelineResult:
@@ -348,7 +355,11 @@ async def run_natspec_pipeline(
     interface = await run_task(
         handler_factory,
         TaskInfo("interface-gen", INTERFACE_GEN_DESC, "interface_gen"),
-        lambda: generate_interface(ctx, summary, tool_env.builder, solc_version),
+        lambda: generate_interface(
+            ctx, summary, tool_env.builder, solc_version,
+            assembler_for_candidate=mental_model.assembler_for_interface_gen,
+            description=mental_model.interface_desc,
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -356,11 +367,17 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
     async def gen_one_stub(
         contract_name: str
-    ) -> tuple[str, StubDeclaration]:
+    ) -> tuple[str, StubDeclarationModel]:
         res = await run_task(
             handler_factory,
             TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", "stub_gen"),
-            lambda: generate_stub(ctx, interface, contract_name, tool_env.builder, solc_version),
+            lambda: generate_stub(
+                ctx, interface, contract_name, tool_env.builder, solc_version,
+                assembler_for_candidate=lambda cand: mental_model.assembler_for_stub_gen(
+                    interface, cand
+                ),
+                description=mental_model.stub_desc,
+            ),
         )
         return (contract_name, res)
 
@@ -372,17 +389,22 @@ async def run_natspec_pipeline(
     # Shared artifacts for Phase 5
     # ------------------------------------------------------------------
 
-    registry = StubRegistry.create(
-        store, STUB_NS + (string_hash(str(system_doc.content)),), tool_env.builder, ctx, interface, {
-            k: c.content for (k, c) in generated_stubs
-        }, solc_version,
+    doc_digest = string_hash(str(system_doc.content))
+
+    registry = await StubRegistry.acreate(
+        store, STUB_NS + (doc_digest,), tool_env.builder, ctx, interface,
+        dict(generated_stubs), solc_version,
     )
+
+    file_registry = await FileRegistry.acreate(store, FILES_NS + (doc_digest,))
 
     serv = PipelineServices(
         sem=semaphore,
         env=tool_env,
         factory=handler_factory,
-        store=store
+        store=store,
+        mental_model=mental_model,
+        file_registry=file_registry,
     )
 
     tasks : list[Awaitable[ContractResult]] = []

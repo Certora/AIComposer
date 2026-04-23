@@ -125,6 +125,11 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     "this option starts with '@', taken to be the thread id of another run whose requirements should be copied.")
     parser.add_argument("--skip-reqs", action="store_true", help="If provided, no natural language requirements are added, and requirement judgment is skipped.")
 
+    parser.add_argument("--prover-conf", default=None,
+                        help="Path to a Certora config JSON file whose keys (packages, link, solc_args, "
+                             "optimistic_loop, rule_sanity, etc.) are merged into every prover/typecheck "
+                             "invocation. Dynamic keys (files, verify, solc) are always set by the pipeline.")
+
 
 def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     """Configure command line argument parser."""
@@ -132,6 +137,9 @@ def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
     parser.add_argument("spec_file", help="Specification file for the smart contract")
     parser.add_argument("interface_file", help="The interface file for the smart contract")
     parser.add_argument("system_doc", help="A text document describing the system")
+    parser.add_argument("--source-root", default=None,
+                        help="Path to an existing codebase to use as the VFS underlay. "
+                             "When set, agents see existing files read-only and can layer new files on top.")
     _common_options(parser)
 
     return cast(TypedArgumentParser[CommandLineArgs], parser)

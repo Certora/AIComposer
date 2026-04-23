@@ -22,6 +22,7 @@ class _CodegenUploadPaths:
     spec_file: str
     interface_file: str
     system_doc: str
+    source_root: Optional[str] = None
 
 
 @dataclass
@@ -44,6 +45,7 @@ class CodegenWorkflowArgs:
     thinking_tokens: int = 2048
     memory_tool: bool = True
     interleaved_thinking: bool = False
+    prover_conf: Optional[str] = None
 
 
 def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
@@ -54,7 +56,7 @@ def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflo
         thinking_tokens=ctx.config.thinking_tokens,
         memory_tool=ctx.config.memory_tool,
         recursion_limit=200,
-        debug_prompt_override=cg.prompt_addition
+        debug_prompt_override=cg.prompt_addition,
     )
 
 
@@ -96,6 +98,7 @@ async def launch_codegen_workflow(
         spec_file=str(ctx.workspace / args.spec_file),
         interface_file=str(ctx.workspace / args.interface_file),
         system_doc=str(ctx.workspace / args.system_doc),
+        source_root=str(ctx.workspace / args.source_root) if args.source_root else None,
     )
     input_data = upload_input(paths)
 
@@ -110,6 +113,7 @@ async def launch_codegen_workflow(
             workflow_options=wf_args,
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,
+            prover_conf_overrides=args.prover_conf,
         )
 
     app.set_work(work)
@@ -147,6 +151,7 @@ async def launch_resume_workflow(
             workflow_options=wf_args,
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,
+            prover_conf_overrides=args.prover_conf,
         )
 
     app.set_work(work)
