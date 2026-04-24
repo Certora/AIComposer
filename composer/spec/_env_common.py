@@ -22,7 +22,6 @@ from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
 @dataclass(frozen=True)
 class _BasicLLM:
     llm: BaseChatModel
-    has_source: bool
     _checkpointer: Checkpointer
 
     @property
@@ -37,7 +36,6 @@ class _BasicLLM:
 @dataclass(frozen=True)
 class _BaseTools:
     builder: Builder[None, None, None]
-    has_source: bool
     llm: BaseChatModel
 
 
@@ -67,7 +65,6 @@ def build_rag_tools(
     cvl_researcher = indexed_cvl_research_tool(
         _CVLResearchEnv(
             builder=llm.builder,
-            has_source=llm.has_source,
             base_rag_tools=s.base_rag_tools,
             agent_index=ind,
             llm=llm.llm
@@ -110,7 +107,6 @@ def build_rag_tool_env(
 ) -> RagToolEnv:
     llm = _BasicLLM(
         llm=params["llm"],
-        has_source=False,
         _checkpointer=params["checkpoint"],
     )
     rag_tools = build_basic_rag_tools(
@@ -132,7 +128,6 @@ def build_rag_tool_env(
 
     return ToRet(
         builder=llm.builder,
-        has_source=llm.has_source,
         base_rag_tools=rag_tools.base_rag_tools,
         rag_tools=full_rag_tools.rag_tools,
         llm=llm.llm,

@@ -39,41 +39,46 @@ you should also use the cvl_research tool for help when you are struggling with 
 
 You are writing a CVL file without any implementation for the contract being verified.
 
-Every other contract, interface, and generated stub in the application is visible through your
-source tools. Use `list_files` to enumerate what's available, `get_file` to read, and `grep_files`
-to search. Generated stubs for {% if tagged_contracts %}`new` contracts{% else %}the other contracts{% endif %}
-and generated interfaces appear alongside any existing source.
-{% if tagged_contracts %}
+Every {%if sort != "greenfield"%}other contract, {%endif%}interface, and generated stub in
+the application is visible through your source tools. Use `list_files` to enumerate what's
+available, `get_file` to read, and `grep_files`
+to search. {% if sort == "update" %}Generated stubs for `new` contracts
+and generated interfaces appear alongside any existing source.{%endif%}
+{% if sort == "update" %}
 The other contracts mentioned as being interacted with fall into two categories, which you should
 handle differently:
 
 - Contracts tagged `unchanged` or `edited`: real implementations live in the source tree and are
   assumed correct for the purposes of this verification task. You are free to use them directly —
   call their functions (including state-helper functions) and read their state as if they were any
-  other contract under verification. To make an existing contract's source part of the
-  verification's compilation unit, register it with the `register_verification_file` tool.
+  other contract under verification. Use the `register_verification_file` tool for this purpose (see below).
   You do NOT need to write summaries or ghost state for these contracts; their real implementation
   is what the Prover uses.
 
 - Contracts tagged `new`: no real implementation. A minimal stub exists (visible via your source
   tools) and grows by field requests. When your spec needs to reason about the state or behavior of
-  a `new` ommer, *prefer* requesting a stub field on that ommer's stub via `request_stub_field`
-  (which takes the target contract's name) over introducing CVL ghost state — a stub field is real
-  Solidity storage your spec can reference directly (e.g., `theOther.fieldName`), and the Prover
-  tracks its mutations automatically. Fall back to CVL summaries or ghost state only when stub
-  fields cannot model what you need — for example, when expressing the effect of a specific
+  a `new` contract — the one under verification or any other — *prefer* requesting a stub field on
+  **that contract's own stub** via `request_stub_field` (which takes the target contract's name)
+  over introducing CVL ghost state. Each `new` contract has its own stub; do *NOT* model the state
+  of one contract by requesting fields on the stub of a different contract. A stub field is a real
+  Solidity storage variable your spec can reference directly (e.g. `theOther.fieldName`), and the
+  Prover tracks its mutations automatically. Fall back to CVL summaries or ghost state only when
+  stub fields cannot model what you need — for example, when expressing the effect of a specific
   function invocation purely at the CVL level, or when reasoning about state spread across multiple
   instances of a `dynamic`/`multiple` sort contract.
 {% else %}
-None of the other contracts in the application have real implementations either. Their interfaces
-and minimal stubs are visible via your source tools. When your spec needs to reason about the state
-or behavior of one of these contracts, *prefer* requesting a stub field on the relevant contract's
-stub via `request_stub_field` (which takes the target contract's name) over introducing CVL ghost
-state — a stub field is real Solidity storage your spec can reference directly (e.g.,
-`theOther.fieldName`), and the Prover tracks its mutations automatically. Fall back to CVL
-summaries or ghost state only when stub fields cannot model what you need — for example, when
-expressing the effect of a specific function invocation purely at the CVL level, or when reasoning
-about state spread across multiple instances of a `dynamic`/`multiple` sort contract.
+None of the contracts in the application have real implementations; the Solidity files
+available via your source tools are nonfunctional, minimal stubs. When your spec needs to
+reason about the state or behavior of any contract — the one under verification or any
+other — *prefer* requesting a stub field on **that contract's own stub** via
+`request_stub_field` (which takes the target contract's name) over introducing CVL ghost
+state. Each contract has its own stub; do *NOT* model the state of one contract by
+requesting fields on the stub of a different contract. A stub field is a real Solidity
+storage variable your spec can reference directly (e.g. `theOtherContract.fieldName`), and
+the Prover tracks its mutations automatically. Fall back to CVL summaries or ghost state
+only when stub fields cannot model what you need — for example, when expressing the effect
+of a specific function invocation purely at the CVL level, or when reasoning about state
+spread across multiple instances of a `dynamic`/`multiple` sort contract.
 {% endif %}
 When you do need summaries or ghost state, carefully consider whether the application will have multiple
 instances of the implementation of the interface (`dynamic` or `multiple` sorts) or a single instance.
@@ -90,13 +95,10 @@ use the following decision procedure:
    described above. However, as there is no explicit interface provided for these external actor contracts you will
    need to make reasonable decisions about the summary signature to use.
 
-To model the state/storage of the contract containing the component under verification
-{%- if tagged_contracts %} — or of any other `new` contract in the application{% endif %} —
-use `request_stub_field` to add a storage variable to the relevant contract's stub. Each contract
-has its own stub; do *NOT* try to simulate or otherwise model the behavior/state of another
-contract by requesting fields on the stub of the contract you are verifying. If you need state on a
-dependency, request a field on *that* dependency's stub
-{%- if tagged_contracts %} (or, for `unchanged`/`edited` dependencies, use its real source directly via the `register_verification_file` tool){% endif %}.
+To reference another contract's state variables within your specification or call its functions,
+you must explicitly register that contract's source as an input to the Prover. Use the `register_verification_file` tool to register
+a file for inclusion. **NOTE**: The stub for the contract containing the component under verification
+is automatically registered in the prover inputs.
 
 {% include "natspec_stub_tools_guidance.j2" %}
 
@@ -118,7 +120,14 @@ and may suggest how the property can in fact be formalized.
 
 ## Step 4
 
-{% include "publish_spec_fragment.j2" %}
+Publish your CVL specification using the `publish_spec` tool with a description of the properties
+you formalized, along with the suggested name for your spec file. Do *not* include the `.spec` stem. Your suggestion
+should be a filename that is usable in automated tools; avoid spaces, dashes, or other special characters.
+
+If the publish fails, i.e., a typecheck error or you haven't received a positive result from the feedback
+judge, you will receive the reason for the rejection. Address the issues and try publishing again.
+
+If you cannot resolve the issues after multiple attempts, use the `give_up` tool with an explanation.
 
 IMPORTANT: Do not try to reason yourself about whether any property is true or possible — focus solely on authoring CVL which will *demonstrate* the desired properties.
 
@@ -131,8 +140,25 @@ You must attempt to formalize ALL properties before considering any skips.
 </skipping>
 
 <state>
-Use the available memory tools to track your progress through this algorithm, any important lessons about CVL you may have learned,
-or any other significant, relevant information to this task. Be sure to update your memory *before* calling the result tool, as that will end the workflow.
+Maintain these memory files. Make the writes you intend to make before invoking the
+result tool, which ends the task.
+
+- `/memories/status.md` — your live state for this run. Records which step of the above
+  algorithm you are currently on, the property you are currently working, and the
+  approach you are trying, plus a per-property section (one entry per property by number,
+  each one of `NOT_STARTED`, `IN_PROGRESS(<approach>)`, `FORMALIZED`, `SKIPPED(<reason>)`).
+  Rewrite the relevant section when the underlying state changes — when you move to a
+  new property, transition a property's status, or switch algorithmic step.
+- `/memories/cvl_facts.md` — facts you have established about CVL syntax and semantics
+  (from the CVL manual, from `cvl_research` results, from typecheck errors). Write each
+  fact the moment it is established. On resume, entries here MAY be treated as valid;
+  do NOT re-research them.
+- `/memories/feedback_received.md` — each round of feedback the feedback tool has given
+  you, along with a note on how you addressed each item. Write after each feedback round
+  so future rounds (after compaction or re-entry) retain continuity.
+
+On resume, read all of the above first and continue from where you left off. Facts
+recorded in memory do NOT need to be re-verified.
 </state>
 
 </task>

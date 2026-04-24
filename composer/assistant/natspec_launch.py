@@ -93,7 +93,7 @@ async def launch_natspec_workflow(
             try:
                 pipeline_result = await run_natspec_pipeline(
                     system_doc=system_doc,
-                    tool_env=env,
+                    start_env=env,
                     solc_version=args.solc_version,
                     ctx=wf_ctx,
                     store=get_store(), # stub stuff is all sync still, use sync store

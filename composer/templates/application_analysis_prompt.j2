@@ -1,26 +1,26 @@
 # Background
 
-{% if not has_source %}
+{% if sort == "greenfield" %}
 You have been provided a system/design document which summarizes the design of some on-chain application.
 
 No implementation of this application exists yet; and the system document may be written with different levels
 of technical rigor.
-{% elif tagged_contracts %}
+{% elif sort == "update" %}
 You have been provided a system/design document of some on-chain application. In addition,
 you have access to a *partial* implementation of this design in the source tree: some contracts that
 the application requires already exist in the source, some may need to be introduced, and some
 may already exist but require modifications to fit the design.
-{% else %}
+{% else %}{# sort == "existing" #}
 You have been provided a system/design document of some on-chain application. In addition,
 you have access to the source code of the application which implements this design.
 {% endif %}
 
 # Task
 
-Your role is to analyze this system/design document {%if has_source %} and implementation{%endif%} and then extract a holistic,
+Your role is to analyze this system/design document {%if sort != "greenfield" %} and implementation{%endif%} and then extract a holistic,
 structured description of the application.
-In particular, your analysis will produce descriptions of the Smart Contracts {% if not has_source %}that need to
-written to implement the application{% elif tagged_contracts %}that comprise the application — including those already
+In particular, your analysis will produce descriptions of the Smart Contracts {% if sort == "greenfield" %}that need to
+written to implement the application{% elif sort == "update" %}that comprise the application — including those already
 present in the source tree and those that must be introduced or modified to fulfill the design{% else %}present in the implementation{%endif%},
 along with any external actors the application may interact with.
 At this point, you should focus on extracting natural language descriptions of the various components of the application
@@ -42,7 +42,7 @@ Each component in the system is either an "External Actor" or an "Explicit Contr
 corresponds to some contract code that will be written as part of implementing the system. An "external actor"
 is any actor that is not part of the "core" application, but with whom the explicit contracts will interact.
 
-For example, a Liquidity Provider will likely have require implementing a "Pool" contract. This pool may rely on an
+For example, a Liquidity Provider will likely require implementing a "Pool" contract. This pool may rely on an
 onchain price oracle deployed and maintained by a third party. The "Pool" contract would be an "Explicit Contract", but
 the price oracle is likely an external actor (unless otherwise mentioned in the system document).
 
@@ -56,7 +56,7 @@ When describing an `ExternalActor` provide a short, descriptive name (if the ext
 of an interface, use the name of that interface). Produce a description of the external actor, including
 its role within the larger application.
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 If application/possible, provide the relative path to the Solidity file which contains the definition of the interface
 describing this external actor.
 {% endif %}
@@ -69,11 +69,11 @@ In contrast, an "explicit contract" describes some smart contract that will be d
 of this application. Each "explicit contract" roughly corresponds to some concrete
 Solidity `contract` type or `library`. Each such explicit contract should be given a name and a brief description
 of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier
-{%- if tagged_contracts %} used in the existing implementation for contracts tagged `unchanged` or `edited`; for
+{%- if sort == "update" %} used in the existing implementation for contracts tagged `unchanged` or `edited`; for
 contracts tagged `new`, choose a suitably descriptive Solidity identifier (preferring one mentioned in the system
 document if available).
-{%- elif has_source %} used in the implementation.
-{%- else %} mentioned in the system document if possible, otherwise a suitably descriptive Solidity identifier
+{%- elif sort == "existing" %} used in the implementation.
+{%- else %}{# greenfield #} mentioned in the system document if possible, otherwise a suitably descriptive Solidity identifier
 should be chosen instead.
 {%- endif %}
 
@@ -93,7 +93,7 @@ independently and then calls a `registerNewMarket(WrappedMarketToken a)`) then t
 If the protocol itself creates an instance of `WrappedMarketToken` (e.g., as part of an implementation
 of `registerNewMarket(address marketProxy)`) then the classification should be `dynamic`.
 
-{% if tagged_contracts %}
+{% if sort == "update" %}
 **Contract Tags**: In this workflow, each explicit contract must also be assigned a "tag" that describes its status
 relative to the existing source tree. The possible tags are:
 - `unchanged`: The contract is present in the existing source tree and the design document does NOT require any
@@ -107,11 +107,11 @@ implemented. If the current implementation already satisfies the design, tag it 
 calls for behaviors, entry points, or requirements that the current implementation does not support, tag it `edited`.
 {% endif %}
 
-{% if tagged_contracts %}
+{% if sort == "update" %}
 For contracts tagged `unchanged` or `edited`, provide the relative path to the Solidity file that contains the
 contract's definition in the existing source tree. For contracts tagged `new`, do NOT provide a path — the file
 location of a new contract will be chosen later in the pipeline.
-{% elif has_source %}
+{% elif sort == "existing" %}
 As part of your extraction, provide the relative path to the Solidity file which contains the definition of the
 contract you are describing.
 {% endif %}
@@ -133,7 +133,7 @@ interface (like ERC20), then you should use your knowledge of these interfaces t
 Further, extract any requirements or assumptions on the components behavior. These requirements should be stated
 as implementation requirements (e.g, "The implementation must ...")
 
-Finally, extract a description of the interactions this component, either with components of external contracts
+Finally, extract a description of the interactions this component has, either with components of external contracts
 (including the contract in which *this* component resides) or external actors. Each interaction description
 should identify the contract+component/external actor by name, and provide a description of the interaction.
 
@@ -145,9 +145,9 @@ and that contract itself interacts with an external actor B, a description of bo
 in your system description.
 
 **CLARIFICATION**: Your transitive exploration should "halt" at the boundaries of external actors. Do *NOT*
-hypothesize, speculate, or infer what other actors the external actors may themselves interact with. In other words,
+hypothesize, speculate, or infer what other actors the external actors may themselves interact with.
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 **CLARIFICATION**: In modern applications, it is quite common to write components which interact with each other
 via interfaces. However, despite this implementation/design abstraction, there is often a single, known implementation of
 these interfaces.
@@ -155,8 +155,8 @@ these interfaces.
 When some contract A interacts with another contract via an interface type I, use the following heuristics to determine
 whether this other contract should be an external actor or not:
 * Is there a single implementation of the interface I in the code base? If so, take that implementation to be a contract component
-{% if tagged_contracts %}
-* Is an implementation of I described as one of the "new" contracts? If so, take the "new" contract to the contract component interacted with
+{% if sort == "update" %}
+* Is an implementation of I described as one of the "new" contracts? If so, take the "new" contract to be the contract component interacted with
 {% endif %}
 * If the interface corresponds to a well-known standard (ERC20, ERC4626, ERC721, etc.) AND the system design *explicitly* works with
    any implementation of these standards, then that contract should be an external actor
@@ -168,7 +168,16 @@ whether this other contract should be an external actor or not:
 
 # Memory
 
-You have access to a memory tool which may include your prior progress on this task.
-You should assume that the documentation or source code you are analyzing has NOT changed
-since the memories were written. You do *NOT* need to reverify or validate any claims or information
-in your memory. You may immediately proceed with that information as if you derived it yourself.
+Maintain these memory files as you work — commit each piece the moment it is finalized, do
+NOT save everything for the end of the task:
+
+- `/memories/application_model.md` — the structured model you are building toward. Grow it
+  incrementally as you reach each conclusion: the application type and short description,
+  each explicit contract (with its sort, and — where applicable — tag and path), each
+  contract's components (description, requirements, state variables, entry points), each
+  external actor, each interaction.
+
+Your prior memory may already contain partial progress on this task. You do NOT need to
+re-verify facts recorded there; the design document {% if sort != "greenfield" %}and source code {% endif %}
+have not changed since those memories were written. Read memory on resume and pick up
+from where you left off.

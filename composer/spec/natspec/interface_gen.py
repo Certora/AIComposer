@@ -11,6 +11,7 @@ from logging import getLogger
 from typing import NotRequired, Protocol, cast, override
 
 from graphcore.graph import FlowInput
+from graphcore.tools.vfs import Materializer
 
 from langchain_core.tools import BaseTool
 from langgraph.graph import MessagesState
@@ -31,6 +32,7 @@ from composer.spec.natspec.task_description import (
 from composer.spec.system_model import NatspecApplication
 from composer.spec.tool_env import BasicAgentTools
 from composer.spec.util import string_hash, uniq_thread_id
+from composer.spec.service_host import ServiceHost
 
 _logger = getLogger(__name__)
 
@@ -52,9 +54,9 @@ class InterfaceGenEnv(BasicAgentTools, Protocol):
 async def generate_interface[I: InterfaceDeclModel](
     ctx: WorkflowContext[None],
     summary: NatspecApplication,
-    env: InterfaceGenEnv,
+    env: ServiceHost,
     solc_version: str,
-    assembler_for_candidate: Callable[[InterfaceResult[I]], Assembler],
+    materializer: Assembler,
     description: AgentDescription[InterfaceResult[I], InterfaceGenCallParams],
     *,
     target_names: set[str] | None = None,
@@ -73,12 +75,6 @@ async def generate_interface[I: InterfaceDeclModel](
     already have their interfaces in the source tree.
     """
     result_ty = description.output_ty
-    import logging
-    logging.getLogger(__name__).info(str(result_ty))
-    logging.getLogger(__name__).info(AsyncResultTool[result_ty].model_fields["value"])
-
-    logger = logging.getLogger(__name__)
-    logger.info(str(target_names))
 
     cache_key = CacheKey[None, InterfaceResult](
         f"interface-{string_hash(summary.model_dump_json())}-{result_ty.__name__}"
@@ -109,12 +105,8 @@ async def generate_interface[I: InterfaceDeclModel](
 
         @override
         async def validate(self, res: InterfaceResult[I]) -> str | None:
-            logger.info(str(res))
-            logger.info(type(res))
             seen: set[str] = set()
             for nm, i in res.name_to_interface.items():
-                logger.info(nm)
-                logger.info(type(i))
                 if nm not in external_contracts:
                     return f"Invalid entry found; no external contract with name {nm} appears in input"
                 if not i.path.endswith(".sol"):
@@ -124,9 +116,12 @@ async def generate_interface[I: InterfaceDeclModel](
                 return f"Missing results for contract(s): {external_contracts - seen}"
 
             compile_inputs = [i.path for i in res.name_to_interface.values()]
-            assembler = assembler_for_candidate(res)
             try:
-                async with assembler.project_directory() as tmpdir:
+                async with materializer.project_directory() as tmpdir:
+                    for (_, v) in res.name_to_interface.items():
+                        if (tmpdir / v.path).exists():
+                            return f"Path {v.path} already exists; pick another one"
+                        (tmpdir / v.path).write_text(v.content)
                     _logger.info(f"Compiling interfaces in {tmpdir}: {compile_inputs}")
                     proc = await asyncio.create_subprocess_exec(
                         solc_name, *compile_inputs,
@@ -164,7 +159,7 @@ async def generate_interface[I: InterfaceDeclModel](
     workflow = (
         env.builder
         .with_state(ST)
-        .with_tools([ResultTool.as_tool("result"), *env.interface_gen_tools])
+        .with_tools([ResultTool.as_tool("result"), *(env.source_tools if env.sort != "env" else [])])
         .with_output_key("result")
         .with_default_summarizer(max_messages=50)
         .with_input(FlowInput)

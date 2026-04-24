@@ -42,7 +42,6 @@ def build_source_tools(
 
     explorer_tool = indexed_code_explorer_tool(_ExplorerEnv(
         builder=llm.builder,
-        has_source=llm.has_source,
         base_source_tools=s.base_source_tools,
         index=ind,
         llm=llm.llm
@@ -101,7 +100,6 @@ def build_source_env(
 
     return ToRet(
         builder=rag_env.builder,
-        has_source=True,
         rag_tools=rag_env.rag_tools,
         source_tools=full_source.source_tools,
         llm=rag_env.llm

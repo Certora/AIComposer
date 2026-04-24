@@ -7,13 +7,9 @@ class BasicAgentTools(Protocol):
     @property
     def llm(self) -> BaseChatModel:
         ...
-    
-    @property
-    def builder(self) -> Builder[None, None, None]:
-        ...
 
     @property
-    def has_source(self) -> bool:
+    def builder(self) -> Builder[None, None, None]:
         ...
 
 class BaseRAGTools(Protocol):

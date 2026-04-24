@@ -18,17 +18,20 @@ individual task event streams.
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Literal, Awaitable
+from pathlib import Path
+from typing import AsyncContextManager, Literal, Awaitable, Callable, override, AsyncIterator, Iterable
+from contextlib import asynccontextmanager
+import tempfile
 
-from typing_extensions import TypedDict
+from langchain_core.tools import BaseTool
 
 from langgraph.store.base import BaseStore
+from graphcore.tools.vfs import FSBackend, Materializer
 
 from composer.io.multi_job import (
     TaskInfo, HandlerFactory, run_task,
 )
 
-from composer.spec.natspec.cas import SharedArtifact
 from composer.spec.context import (
     WorkflowContext,
     SystemDoc, CacheKey, Properties, ComponentGroup, CVLGeneration,
@@ -41,19 +44,17 @@ from composer.spec.natspec.interface_gen import generate_interface, DESCRIPTION 
 from composer.spec.natspec.stub_gen import generate_stub
 from composer.spec.natspec.models import InterfaceDeclModel, InterfaceResult, StubDeclarationModel
 from composer.spec.natspec.registry import StubRegistry, FileRegistry
-from composer.spec.natspec.merge import (
-    make_publish_tools, make_advisory_typecheck_tool, ContractArtifacts,
-)
-from composer.spec.natspec.task_description import MentalModel
+from composer.spec.natspec.typecheck import make_typechecker
+from composer.spec.natspec.task_description import MentalModel, Assembler
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationSuccess
-from composer.spec.gen_types import TypedTemplate
 from composer.spec.natspec.system_analysis import run_component_analysis, DESCRIPTION as SYSTEM_DESC
 from composer.spec.system_model import (
     ContractInstance, ContractComponentInstance, ContractComponent,
     ExplicitContract, NatspecApplication, FromSourceApplication, ExistingFromSource,
 )
 from composer.spec.natspec.natspec_env import NatspecEnvironment
+from composer.spec.service_host import ServiceHost, PureServiceHost
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +118,7 @@ class ContractFormulation:
     interface: InterfaceDeclModel
     stub: StubDeclarationModel
     name: str
-    failures: list[PropertyFailure]
-    spec: str
+    spec_results: "ContractResult"
 
 @dataclass
 class PipelineResult:
@@ -136,56 +136,52 @@ STUB_NS = ("natspec_pipeline", "stub")
 FILES_NS = ("natspec_pipeline", "spec_files")
 
 @dataclass
-class ContractResult:
+class ComponentGenerationSuccess():
     spec: str
-    failures: list[PropertyFailure] = field(default_factory=list)
+    commentary: str
+    suggested_path: str
+    successful_properties: list[PropertyFormulation]
+    component: ContractComponentInstance
+    skipped_properties: list[PropertyFailure]
+
+@dataclass
+class ComponentGenerationFailure:
+    component: ContractComponentInstance
+    failed_properties: list[PropertyFormulation]
+    reason: str
+
+@dataclass
+class ContractResult:
+    specs: list[ComponentGenerationSuccess]
+    failures: list[ComponentGenerationFailure] = field(default_factory=list)
 
 @dataclass
 class PipelineServices:
     sem: asyncio.Semaphore
-    store: BaseStore
     factory: HandlerFactory[Phase, None]
-    env: NatspecEnvironment
+    env: ServiceHost
     mental_model: MentalModel
     file_registry: FileRegistry
-
-class NatspecGenerationParams(TypedDict):
-    context: ContractComponentInstance
-    tagged_contracts: bool
-
-class FeedbackPromptParams(TypedDict):
-    context: ContractComponentInstance
-    has_source: bool
-    tagged_contracts: bool
-
-NoSourceGenerationPrompt = TypedTemplate[NatspecGenerationParams]("nosource_property_generation_prompt.j2")
-FeedbackPrompt = TypedTemplate[FeedbackPromptParams]("property_judge_prompt.j2")
 
 async def analyze_single_contract(
     system_doc: SystemDoc,
     ctx: WorkflowContext[Contract],
     services: PipelineServices,
     solc_version: str,
-    intf: InterfaceResult,
     summary: ContractInstance,
     stub_registry: StubRegistry,
-    stub: StubDeclarationModel
+    stub: StubDeclarationModel,
+    assembler: Assembler
 ) -> ContractResult:
     
     contract_name = summary.contract.name
     handler_factory = services.factory
-    store = services.store
     semaphore = services.sem
-    interface = intf
 
-    doc_digest = string_hash(str(system_doc.content))
     
     # ------------------------------------------------------------------
     # Shared artifacts for Phase 5
     # ------------------------------------------------------------------
-    master_spec = SharedArtifact.create(
-        store, MASTER_SPEC_NS + (doc_digest,), summary.contract.name, initial_content="",
-    )
     registry = stub_registry
 
     # ------------------------------------------------------------------
@@ -194,7 +190,6 @@ async def analyze_single_contract(
 
     prop_context = ctx.child(PROPERTIES_KEY)
 
-    results: list[GeneratedCVL] = []
     failures: list[PropertyFailure] = []
 
     # Phase 2: per-component property extraction
@@ -244,33 +239,16 @@ async def analyze_single_contract(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
         )
-        batch_assembler = services.mental_model.assembler_for_spec_check(
-            interface, await stub_registry.read_all_stubs()
-        )
         batch_config_builder = services.mental_model.config_builder().with_solc(solc_version)
 
         stub_tools = registry.get_tools(contract_name)
-        is_from_source = services.mental_model.from_existing
-        file_tools = services.file_registry.get_tools(contract_name) if is_from_source else []
+        file_tools = services.file_registry.get_tools(contract_name)
 
-        typecheck_tool = make_advisory_typecheck_tool(
+        typechecker = make_typechecker(
             files=services.file_registry,
-            assembler=batch_assembler,
+            assembler=assembler,
             config_builder=batch_config_builder,
             primary_contract=stub.solidity_identifier,
-        )
-
-        contract_artifacts = ContractArtifacts(
-            contract_name=stub.solidity_identifier,
-            master_spec=master_spec,
-            files_registry=services.file_registry,
-            stub_registry=stub_registry,
-        )
-        publish = make_publish_tools(
-            contract=contract_artifacts,
-            env=services.env,
-            assembler=batch_assembler,
-            config_builder=batch_config_builder,
         )
 
         label = f"{contract_name} {batch.feat.component.name} ({len(batch.props)} properties)"
@@ -284,9 +262,10 @@ async def analyze_single_contract(
                 ctx=batch_ctx,
                 env=services.env,
                 props=batch.props,
-                injected_tools=[*stub_tools, *file_tools, typecheck_tool, *publish],
+                injected_tools=[*stub_tools, *file_tools],
+                typechecker=typechecker,
                 system_doc=system_doc,
-                tagged_contracts=is_from_source,
+                stub_path=stub.path
             ),
             semaphore,
         )
@@ -299,36 +278,92 @@ async def analyze_single_contract(
         return_exceptions=True,
     )
 
+    succ : list[ComponentGenerationSuccess] = []
+    fail : list[ComponentGenerationFailure] = []
+
     for batch, result in zip(component_batches, generation_results):
         match result:
             case BaseException():
-                for prop in batch.props:
-                    failures.append(PropertyFailure(prop=prop, reason=str(result)))
+                fail.append(
+                    ComponentGenerationFailure(
+                        component=batch.feat,
+                        failed_properties=batch.props,
+                        reason=str(result)
+                    )
+                )
             case GaveUp(reason=reason):
-                for prop in batch.props:
-                    failures.append(PropertyFailure(prop=prop, reason=reason))
-                failures.append(PropertyFailure(prop=prop, reason=reason))
+                fail.append(
+                    ComponentGenerationFailure(
+                        component=batch.feat,
+                        failed_properties=batch.props,
+                        reason=reason
+                    )
+                )
             case GenerationSuccess():
+                skipped = set()
+                failures : list[PropertyFailure] = []
                 for skip in result.skipped:
                     if skip.property_index in range(1, len(batch.props) + 1):
                         failures.append(PropertyFailure(
                             prop=batch.props[skip.property_index - 1],
                             reason=f"Skipped: {skip.reason}",
                         ))
+                    skipped.add(skip)
+                succ_props = [
+                    l for (i, l) in enumerate(batch.props, start=1) if i not in skipped
+                ]
+                succ.append(ComponentGenerationSuccess(
+                    commentary=result.commentary,
+                    component=batch.feat,
+                    skipped_properties=failures,
+                    spec=result.spec,
+                    successful_properties=succ_props,
+                    suggested_path=result.suggested_path
+                ))
 
     return ContractResult(
-        spec=master_spec.read_unsync() or "",
-        failures=failures
+        specs=succ,
+        failures=fail
     )
 
-async def run_natspec_pipeline(
+type ToolGenerator = Callable[[list[FSBackend]], tuple[list[BaseTool], Materializer]]
+
+class MaterializerAssembler(Assembler):
+    def __init__(self, mat: Materializer):
+        self.mat = mat
+
+    @asynccontextmanager
+    async def project_directory(self) -> AsyncIterator[Path]:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            await self.mat.dump_to(Path(tmp))
+            yield Path(tmp)
+
+class InMemoryBackend:
+    def __init__(self, vfs: dict[str, str]):
+        self._vfs = vfs
+
+    def list(self) -> Iterable[str]:
+        to_ret = []
+        for i in self._vfs.keys():
+            to_ret.append(i)
+        return to_ret
+    
+    def get(self, path: str) -> str | None:
+        return self._vfs.get(path, None)
+    
+    async def dump_to(self, target: Path):
+        for (k, v) in self._vfs.items():
+            (target / k).write_text(v)
+
+async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: StubDeclarationModel](
     system_doc: SystemDoc,
     solc_version: str,
-    tool_env: NatspecEnvironment,
+    start_env: PureServiceHost,
     ctx: WorkflowContext[None],
     store: BaseStore,
     handler_factory: HandlerFactory[Phase, None],
-    mental_model: MentalModel,
+    mental_model: MentalModel[A, I, S],
+    source_factory: ToolGenerator,
     *,
     max_concurrent: int = 4,
 ) -> PipelineResult:
@@ -361,20 +396,22 @@ async def run_natspec_pipeline(
     """
     semaphore = asyncio.Semaphore(max_concurrent)
 
+    init_tools, mat_ = source_factory([])
+
+    mat = MaterializerAssembler(mat_)
+
+    curr_env = start_env.bind_source_tools(init_tools)
+
     # ------------------------------------------------------------------
     # Phase 1: Component analysis
     # ------------------------------------------------------------------
     summary = await run_task(
         handler_factory,
         TaskInfo("component-analysis", SYSTEM_DESC, "component_analysis"),
-        lambda: run_component_analysis(ctx, system_doc, tool_env, mental_model),
+        lambda: run_component_analysis(ctx, system_doc, curr_env, mental_model),
     )
     if summary is None:
         raise ValueError("Component analysis produced no result — is the system doc empty?")
-    import logging
-    logger = logging.getLogger(__name__)
-    for c in summary.contract_components:
-        logger.info(type(c))
 
     new_contracts = [c for c in summary.contract_components if _is_new(c)]
     new_names = {c.name for c in new_contracts}
@@ -386,12 +423,23 @@ async def run_natspec_pipeline(
         handler_factory,
         TaskInfo("interface-gen", INTERFACE_GEN_DESC, "interface_gen"),
         lambda: generate_interface(
-            ctx, summary, tool_env, solc_version,
-            assembler_for_candidate=mental_model.assembler_for_interface_gen,
+            ctx, summary, curr_env, solc_version,
             description=mental_model.interface_desc,
-            target_names=new_names,
+            target_names=new_names, materializer=mat
         ),
     )
+
+    intf_backend = InMemoryBackend(
+        {
+            v.path: v.content for (_, v) in interface.name_to_interface.items()
+        }
+    )
+
+    with_intf_tools, mat_ = source_factory([intf_backend])
+
+    curr_env = curr_env.bind_source_tools(with_intf_tools)
+
+    mat = MaterializerAssembler(mat_)
 
     # ------------------------------------------------------------------
     # Phase 4: Initial stub generation (new contracts only)
@@ -403,10 +451,8 @@ async def run_natspec_pipeline(
             handler_factory,
             TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", "stub_gen"),
             lambda: generate_stub(
-                ctx, interface, contract_name, tool_env.builder, solc_version,
-                assembler_for_candidate=lambda cand: mental_model.assembler_for_stub_gen(
-                    interface, cand
-                ),
+                ctx, interface, curr_env, contract_name, solc_version,
+                materializer=mat,
                 description=mental_model.stub_desc,
             ),
         )
@@ -423,17 +469,24 @@ async def run_natspec_pipeline(
     doc_digest = string_hash(str(system_doc.content))
 
     registry = await StubRegistry.acreate(
-        store, STUB_NS + (doc_digest,), tool_env.builder, ctx, interface,
-        dict(generated_stubs), solc_version,
+        store, STUB_NS + (doc_digest,), start_env.builder, interface,
+        mat, dict(generated_stubs), solc_version,
     )
 
     file_registry = await FileRegistry.acreate(store, FILES_NS + (doc_digest,))
 
+    with_stub_and_intf, mat_ = source_factory([
+        registry, intf_backend
+    ])
+
+    curr_env = curr_env.bind_source_tools(with_stub_and_intf)
+
+    mat = MaterializerAssembler(mat_)
+
     serv = PipelineServices(
         sem=semaphore,
-        env=tool_env,
+        env=curr_env,
         factory=handler_factory,
-        store=store,
         mental_model=mental_model,
         file_registry=file_registry,
     )
@@ -441,9 +494,6 @@ async def run_natspec_pipeline(
     tasks : list[Awaitable[ContractResult]] = []
 
     name_to_stub = { nm: stub for (nm, stub) in generated_stubs }
-    import logging
-    logging.getLogger(__name__).debug(name_to_stub)
-
 
     new_contracts_with_ind = [
         (ind, c) for ind, c in enumerate(summary.contract_components) if _is_new(c)
@@ -456,10 +506,10 @@ async def run_natspec_pipeline(
             ctx=contract_ctx,
             services=serv,
             solc_version=solc_version,
-            intf=interface,
             stub_registry=registry,
             summary=ContractInstance(ind=ind, app=summary),
-            stub=name_to_stub[contract.name]
+            stub=name_to_stub[contract.name],
+            assembler=mat
         )
 
         tasks.append(cont)
@@ -468,11 +518,10 @@ async def run_natspec_pipeline(
     to_ret : list[ContractFormulation] = []
     for ((_, c), res) in zip(new_contracts_with_ind, results):
         to_ret.append(ContractFormulation(
-            spec=res.spec,
-            failures=res.failures,
             interface=interface.name_to_interface[c.name],
             stub=name_to_stub[c.name],
-            name=c.name
+            name=c.name,
+            spec_results=res
         ))
     return PipelineResult(
         app=summary,

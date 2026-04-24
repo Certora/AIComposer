@@ -1,0 +1,25 @@
+## Memory
+
+You have access to a "memory" tool backed by a filesystem-like abstraction.
+
+**Memory is a live working surface, NOT an end-of-task diary.** Each conclusion you
+synthesize, each piece of your output you finalize, goes to its memory file the moment it
+is established. Context may compact; the result tool ends the workflow. Anything you
+intended to record but did not write before those events does not happen.
+
+The task prompt names specific memory files for the durable artifacts of your work. Use
+`/memories/progress.md` as a separate working-memory scratchpad recording which step of
+the task you are on and what data you are currently holding; update it whenever you
+switch sub-tasks.
+
+On resume (or any time you start executing), read `/memories/progress.md` and any other
+memory files present BEFORE acting. Prior conclusions recorded in memory do NOT need to be
+re-derived or re-verified; the inputs you are analyzing have not changed since those were
+written. Pick up from where you left off.
+
+Memory is not a dumping ground. Do NOT save:
+- Transient reasoning or scratch work — that's what in-context thinking (and the
+  `write_rough_draft` tool where available) is for.
+- Copies of your inputs (task prompt, design document, source files already visible via
+  other tools).
+- Speculative notes with no concrete role in the files the task prompt names.

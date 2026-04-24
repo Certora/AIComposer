@@ -22,12 +22,12 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.prop import PropertyFormulation
 from composer.spec.system_model import ContractComponentInstance
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
-from composer.spec.tool_env import BasicAgentTools
 from composer.io.conversation import ConversationContextProvider
 from composer.spec.refinement import refinement_loop, EndConversation, SyncStateUpdateTool
 from composer.templates.loader import load_jinja_template
 from composer.ui.tool_display import tool_display
 from composer.spec.util import string_hash
+from composer.spec.service_host import ServiceHost
 
 from rich.markdown import Markdown
 from rich.console import Group
@@ -50,26 +50,17 @@ AGENT_RESULT_KEY = CacheKey[_BugAnalysisCache, _AgentHistory]("agent_bug_analysi
 
 DESCRIPTION = "Property extraction"
 
-class BugEnvironment(BasicAgentTools, Protocol):
-    @property
-    def bug_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
-
-    @property
-    def has_source(self) -> bool:
-        ...
-
 class RefinementState(MessagesState):
     properties: list[PropertyFormulation]
 
 def _get_initial_prompt(
     context: ContractComponentInstance,
-    has_source: bool
+    sort: Literal["greenfield", "update", "existing"],
 ) -> str:
     return load_jinja_template(
         "property_analysis_prompt.j2",
         context=context,
-        has_source=has_source
+        sort=sort,
     )
 
 @tool_display("Ending conversation...", None)
@@ -180,7 +171,7 @@ def diff_states(state_a: list[str], state_b: list[str]) -> Group:
 
 async def _run_bug_analysis_inner(
     agent_component_analysis: WorkflowContext[_AgentHistory],
-    env: BugEnvironment,
+    env: ServiceHost,
     component: ContractComponentInstance,
     threat_model: str | dict | None
 ) -> _AgentHistory:
@@ -200,11 +191,11 @@ async def _run_bug_analysis_inner(
     ).with_input(
         BugAnalysisInput
     ).with_initial_prompt(
-        _get_initial_prompt(component, env.has_source)
+        _get_initial_prompt(component, env.sort)
     ).with_tools(
         get_rough_draft_tools(ST)
     ).with_tools(
-        env.bug_analysis_tools
+        env.source_tools
     ).with_sys_prompt(
         "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
     ).compile_async()
@@ -238,7 +229,7 @@ async def _run_bug_analysis_inner(
 
 async def run_bug_analysis(
     ctx: WorkflowContext[ComponentGroup],
-    env: BugEnvironment,
+    env: ServiceHost,
     component: ContractComponentInstance,
     threat_model: str | dict | None = None,
     refinement: ConversationContextProvider | None = None
@@ -315,7 +306,7 @@ async def run_bug_analysis(
             client=client,
             init_messages=edited_history,
             init_data=agent_attempt.items,
-            tools=[*env.bug_analysis_tools, Exit.as_tool("finalize_properties"), SetRequirements.as_tool("update_requirements")],
+            tools=[*env.source_tools, Exit.as_tool("finalize_properties"), SetRequirements.as_tool("update_requirements")],
             state_renderer=render_properties_as_md,
             diff_renderer=lambda a, b: \
                 Group(

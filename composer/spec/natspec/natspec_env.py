@@ -51,7 +51,6 @@ class _NatspecEnvImpl:
     """
     llm: BaseChatModel
     builder: Builder[None, None, None]
-    has_source: bool
     rag_tools: tuple[BaseTool, ...]
     cvl_authorship_tools: tuple[BaseTool, ...]
     feedback_tools: tuple[BaseTool, ...]
@@ -79,7 +78,6 @@ def build_natspec_env(
         return _NatspecEnvImpl(
             llm=src.llm,
             builder=src.builder,
-            has_source=True,
             rag_tools=src.rag_tools,
             cvl_authorship_tools=src.cvl_authorship_tools,
             feedback_tools=src.feedback_tools,
@@ -93,7 +91,6 @@ def build_natspec_env(
     return _NatspecEnvImpl(
         llm=rag.llm,
         builder=rag.builder,
-        has_source=False,
         rag_tools=rag.rag_tools,
         cvl_authorship_tools=rag.rag_tools,
         feedback_tools=rag.rag_tools,

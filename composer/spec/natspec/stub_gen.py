@@ -30,6 +30,7 @@ from composer.spec.natspec.task_description import (
     resolve_extra_input,
 )
 from composer.spec.util import uniq_thread_id
+from composer.spec.service_host import ServiceHost
 
 DESCRIPTION = "Stub generation"
 
@@ -37,10 +38,10 @@ DESCRIPTION = "Stub generation"
 async def generate_stub[S: StubDeclarationModel](
     ctx: WorkflowContext[None],
     interface: InterfaceResult,
+    env: ServiceHost,
     contract_name: str,
-    builder: PlainBuilder,
     solc_version: str,
-    assembler_for_candidate: Callable[[S], Assembler],
+    materializer: Assembler,
     description: AgentDescription[S, StubGenCallParams],
 ) -> S:
     """Generate a minimal Solidity stub that imports the interface and compiles.
@@ -85,9 +86,11 @@ async def generate_stub[S: StubDeclarationModel](
             if res.solidity_identifier not in res.content:
                 return f"Stub must declare a contract named {res.solidity_identifier}."
 
-            assembler = assembler_for_candidate(res)
             try:
-                async with assembler.project_directory() as tmpdir:
+                async with materializer.project_directory() as tmpdir:
+                    if (tmpdir / res.path).exists():
+                        return f"Path {res.path} already exists, pick a different name"
+                    (tmpdir / res.path).write_text(res.content)
                     proc = await asyncio.create_subprocess_exec(
                         solc_name, res.path,
                         cwd=str(tmpdir),
@@ -116,9 +119,9 @@ async def generate_stub[S: StubDeclarationModel](
     )
 
     workflow = (
-        builder
+        env.builder
         .with_state(ST)
-        .with_tools([ResultTool.as_tool("result")])
+        .with_tools([ResultTool.as_tool("result"), *env.source_tools])
         .with_output_key("result")
         .with_default_summarizer(max_messages=50)
         .with_input(FlowInput)

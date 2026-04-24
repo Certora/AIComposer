@@ -23,7 +23,7 @@ from composer.spec.util import temp_certora_file
 #
 # Each generator has a fixed shape of per-call params it injects into the
 # description's prompt via ``InjectedTemplate.inject(...)``. Workflow-constant
-# params (e.g. ``has_source``) are pre-bound in the description itself via
+# params (e.g. ``sort``) are pre-bound in the description itself via
 # ``TypedTemplate.bind(...).depends(<CallParams>)``.
 # ---------------------------------------------------------------------------
 
@@ -71,7 +71,7 @@ class AgentDescription[T, X: Mapping[str, Any]]:
 
     ``output_ty`` is the concrete pydantic model the agent produces (drives
     structured output). ``prompt`` is a template bound with workflow-generic
-    params (e.g. ``has_source``) and still expecting per-call injection of
+    params (e.g. ``sort``) and still expecting per-call injection of
     shape ``X`` (e.g. ``summary``, ``contract_name``). ``extra_input`` is
     a list of literal items and/or (possibly-async) producers — each producer
     yields a single ``dict | str`` that gets appended to the agent's initial

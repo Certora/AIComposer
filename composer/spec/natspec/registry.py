@@ -12,7 +12,8 @@ import asyncio
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from typing import NotRequired, override
+from typing import NotRequired, override, Iterable
+import pathlib
 
 from pydantic import BaseModel, Field as PydanticField
 
@@ -34,6 +35,7 @@ from composer.spec.natspec.models import (
 )
 from composer.spec.util import uniq_thread_id
 from composer.ui.tool_display import tool_display
+from composer.spec.natspec.task_description import Assembler
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +125,7 @@ async def run_registry_agent(
     interface: InterfaceResult,
     solc_version: str,
     builder: PlainBuilder,
-    ctx: WorkflowContext,
+    assembler: Assembler
 ) -> RegistryResult:
     """Spawn a fresh registry agent to handle a single field request.
 
@@ -214,9 +216,11 @@ class StubRegistry:
     """
     _store: BaseStore
     _builder: PlainBuilder | CVLOnlyBuilder
-    _ctx: WorkflowContext
     _interface: InterfaceResult
     _solc_version: str
+    _assembler: Assembler
+    _mirror_by_path: dict[str, str]
+    _mirror_by_name: dict[str, str]
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _namespace: tuple[str, ...] = ()
 
@@ -225,8 +229,8 @@ class StubRegistry:
         store: BaseStore,
         namespace: tuple[str, ...],
         builder: PlainBuilder | CVLOnlyBuilder,
-        ctx: WorkflowContext[None],
         interface: InterfaceResult,
+        interface_only_mat: Assembler,
         initial_stubs: dict[str, StubDeclarationModel],
         solc_version: str,
     ) -> "StubRegistry":
@@ -238,7 +242,8 @@ class StubRegistry:
         serialized as ``{"path", "content", "solidity_identifier"}``. Paths
         are fixed at initialization; only content changes during field updates.
         """
-        if await store.aget(namespace, STUB_STORE_KEY) is None:
+        curr_res = await store.aget(namespace, STUB_STORE_KEY)
+        if curr_res is None:
             await store.aput(namespace, STUB_STORE_KEY, {
                 nm: {
                     "path": decl.path,
@@ -247,34 +252,47 @@ class StubRegistry:
                 }
                 for nm, decl in initial_stubs.items()
             })
+            curr_content_path = {
+                decl.path: decl.content for decl in initial_stubs.values()
+            }
+            curr_content_name = {
+                nm: decl.content for (nm, decl) in initial_stubs.items()
+            }
+        else:
+            curr_content_path = {
+                t["path"]: t["content"] for t in curr_res.value.values()
+            }
+            curr_content_name = {
+                nm: t["content"] for (nm, t) in curr_res.value.items()
+            }
         if await store.aget(namespace, FIELDS_STORE_KEY) is None:
             await store.aput(namespace, FIELDS_STORE_KEY, {k: [] for k in initial_stubs.keys()})
         return StubRegistry(
             _store=store,
             _builder=builder,
-            _ctx=ctx,
             _interface=interface,
             _solc_version=solc_version,
+            _assembler=interface_only_mat,
             _namespace=namespace,
+            _mirror_by_path=curr_content_path,
+            _mirror_by_name=curr_content_name
         )
+    
+    # FS backend stuff
 
-    async def read_stub(self, nm: str) -> str:
+    def get(self, path: str) -> str | None:
+        return self._mirror_by_path.get(path, None)
+    
+    def list(self) -> Iterable[str]:
+        return self._mirror_by_path.keys()
+    
+    async def dump_to(self, target: pathlib.Path):
+        for (k, v) in self._mirror_by_path.items():
+            (target / k).write_text(v)
+
+    def read_stub(self, nm: str) -> str:
         """Read current stub content (no lock needed)."""
-        item = await self._store.aget(self._namespace, STUB_STORE_KEY)
-        if item is None:
-            return ""
-        return item.value[nm]["content"]
-
-    async def read_stub_decl(self, nm: str) -> LocatedStubDeclaration:
-        """Read the full stub declaration (path + content)."""
-        item = await self._store.aget(self._namespace, STUB_STORE_KEY)
-        assert item is not None, f"Stub registry not initialized for {nm}"
-        entry = item.value[nm]
-        return LocatedStubDeclaration(
-            path=entry["path"],
-            content=entry["content"],
-            solidity_identifier=entry["solidity_identifier"],
-        )
+        return self._mirror_by_name[nm]
 
     async def read_all_stubs(self) -> dict[str, LocatedStubDeclaration]:
         """Read every stub as full declarations. Empty dict if registry isn't initialized."""
@@ -305,6 +323,8 @@ class StubRegistry:
         assert it is not None
         to_put = {k: dict(v) for k, v in it.value.items()}
         to_put[nm]["content"] = content
+        self._mirror_by_name[nm] = content
+        self._mirror_by_path[to_put[nm]["path"]] = content
         await self._store.aput(self._namespace, STUB_STORE_KEY, to_put)
 
     async def request_field(self, nm: str, purpose: str) -> str:
@@ -315,7 +335,7 @@ class StubRegistry:
         Returns a description of the field to use, or a rejection message.
         """
         async with self._lock:
-            stub_content = await self.read_stub(nm)
+            stub_content = self.read_stub(nm)
             field_metadata = await self._read_field_metadata()
 
             result = await run_registry_agent(
@@ -326,7 +346,7 @@ class StubRegistry:
                 interface=self._interface,
                 solc_version=self._solc_version,
                 builder=self._builder,
-                ctx=self._ctx,
+                assembler=self._assembler
             )
 
             if result.rejected:
@@ -351,7 +371,7 @@ class StubRegistry:
 
             return f"Use field {result.field_name}"
 
-    def get_tools(self, contract_name: str) -> list[BaseTool]:
+    def get_tools(self, contract_name: str) -> "list[BaseTool]":
         """Return tools for injection into the property agent authoring the spec
         for ``contract_name``. The agent is primarily responsible for its own
         contract, but may read and request fields in any other contract's stub
@@ -361,30 +381,6 @@ class StubRegistry:
         """
         registry = self
         home_contract = contract_name
-
-        @tool_display(
-            lambda d: f"Reading verifi  cation stub: {d['contract_name']}",
-            None,
-        )
-        class ReadStubTool(WithAsyncImplementation[str]):
-            """Read the current verification stub source code for a contract.
-
-            Pass your own contract name to read your own stub; pass another
-            contract's name to consult its stub when writing cross-contract rules.
-            Use ``list_stubs`` first if you're not sure which contracts are available.
-            """
-            contract_name: str = PydanticField(
-                description=(
-                    f"The contract whose stub you want to read. You are authoring "
-                    f"the spec for '{home_contract}' — pass that name for your own "
-                    f"stub, or another registered contract's name for cross-contract "
-                    f"reads."
-                )
-            )
-
-            @override
-            async def run(self) -> str:
-                return await registry.read_stub(self.contract_name)
 
         @tool_display(
             lambda d: f"Requesting stub field in {d['contract_name']}: {d['purpose']}",
@@ -420,27 +416,8 @@ class StubRegistry:
             async def run(self) -> str:
                 return await registry.request_field(self.contract_name, self.purpose)
 
-        @tool_display("Listing registered stubs", None)
-        class ListStubsTool(WithAsyncImplementation[str]):
-            """List every contract whose stub is registered, with the path each
-            stub is laid out at. Use this before ``read_stub`` or
-            ``request_stub_field`` if you're unsure which contracts exist in the
-            shared stub fleet.
-            """
-
-            @override
-            async def run(self) -> str:
-                stubs = await registry.read_all_stubs()
-                if not stubs:
-                    return "No stubs registered."
-                return "\n".join(
-                    f"- {name} ({decl.path})" for name, decl in stubs.items()
-                )
-
         return [
-            ReadStubTool.as_tool("read_stub"),
             RequestStubField.as_tool("request_stub_field"),
-            ListStubsTool.as_tool("list_stubs"),
         ]
 
 

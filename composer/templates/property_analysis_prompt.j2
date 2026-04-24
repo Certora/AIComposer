@@ -8,7 +8,7 @@ audit effort.
 </inputs>
 
 <task>
-{% if has_source %}
+{% if sort == "existing" %}
 Input: The implementation of the application, and a description of a specific component of that application
 {% else %}
 Input: A design document describing the application, and a description of a specific component of that application
@@ -19,7 +19,7 @@ Follow these steps exactly:
 
 ## Step 1
 
-{% if has_source %}
+{% if sort == "existing" %}
 Analyze the provided implementation and component description and formulate a set of security properties that are PLAUSIBLE
 for this component. Each security property description must be precise and concise.
 {% else %}
@@ -38,7 +38,7 @@ Security properties fall into one of three categories:
     Good example: "A user should not be able to change anyone's balance but their own"
     Bad example: "A user should not be able to hack the protocol" (overly broad)
 3. Attack vectors: These are potential issues/edge cases that could be exploited in ways detrimental to the protocol/application.
-   IMPORTANT: you do *NOT* need to find evidence that these issues actually exists, simply that they are PLAUSIBLE given the {% if has_source %}current implementation{% else %}design{% endif %}.
+   IMPORTANT: you do *NOT* need to find evidence that these issues actually exists, simply that they are PLAUSIBLE given the {% if sort == "existing" %}current implementation{% else %}design{% endif %}.
    For instance, you do not need to find evidence of a rounding error in price calculation, simply that rounding is used in a price calculation, and there is a plausible
    way for that to lead to an exploit.
     Good example: "A malicious actor could manipulate a price oracle to unbalance the pool, allowing free minting"
@@ -65,17 +65,31 @@ reasonable formalized in a symbolic tool.
 
 ## Step 2
 Write a rough draft list of your properties using the provided "write_rough_draft" tool.
+In parallel, record each property into `/memories/property_draft.md` the moment it clears
+the "plausible + formalizable" bar — do not save the whole list for the end.
 
 ## Step 3
 Review your rough draft. For each property/invariant in your rough draft, make sure it meets the guidelines and definitions described in step 1. Pay particular
 attention for properties/invariants explicitly described as being uninteresting or impossible to verify using the Certora Prover.
 
 ## Step 4
-Output the results of your analysis using the result tool.
+Output the results of your analysis using the result tool. Before calling result, ensure
+`/memories/property_draft.md` contains every property in your final list — the result tool
+ends the workflow, so any memory write you have not yet made at that point will not happen.
+
+<state>
+- `/memories/progress.md` — working-memory scratchpad. Which step of the above algorithm
+  you are currently on; which dimension of the component you are currently analyzing.
+  Update on every sub-task transition.
+- `/memories/property_draft.md` — the durable property list. Grow it as you go per Step 2.
+
+On resume, read both files first and continue from where you left off. Properties
+already recorded in memory do NOT need to be re-derived.
+</state>
 </task>
 
 <guidance>
-  {% if has_source %}
+  {% if sort == "existing" %}
   <hard_requirement>
      Derive your invariants and safety properties from first principles, relying as little as possible on the actual implementation.
      A safety property/invariant should state what the code SHOULD do, not what it CURRENTLY does.
@@ -86,7 +100,7 @@ Output the results of your analysis using the result tool.
     implementation.
   </hard_requirement>
   <reminder>
-     You do not need to find evidence that the attack vectors/issues actually exist in the {% if has_source %}implementation{% else %}design{% endif %},
-     simply that these bugs/attacks/etc. are *plausible* given the feature and its {% if has_source %}implementation{% else %}design{% endif %}.
+     You do not need to find evidence that the attack vectors/issues actually exist in the {% if sort == "existing" %}implementation{% else %}design{% endif %},
+     simply that these bugs/attacks/etc. are *plausible* given the feature and its {% if sort == "existing" %}implementation{% else %}design{% endif %}.
   </reminder>
 </guidance>
