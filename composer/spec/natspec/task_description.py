@@ -14,7 +14,7 @@ from composer.spec.natspec.models import (
     InterfaceResult,
     StubDeclarationModel,
 )
-from composer.spec.system_model import NatspecApplication
+from composer.spec.system_model import ExplicitContract, NatspecApplication
 from composer.spec.util import temp_certora_file
 
 
@@ -30,12 +30,15 @@ from composer.spec.util import temp_certora_file
 
 class InterfaceGenCallParams(TypedDict):
     summary: NatspecApplication
+    target_contracts: list[ExplicitContract]
+    existing_contracts: list[ExplicitContract]
     solc_version: str
 
 
 class StubGenCallParams(TypedDict):
     contract_name: str
     interface_name: str
+    interface_path: str
     the_interface: str
     solc_version: str
 
@@ -253,6 +256,10 @@ class MentalModel[A: NatspecApplication, I: InterfaceDeclModel, S: StubDeclarati
     stub_desc: AgentDescription[S, StubGenCallParams]
     source_root: pathlib.Path | None = None
     config_init: dict | None = None
+
+    @property
+    def from_existing(self) -> bool:
+        return self.source_root is not None
 
     def config_builder(self) -> ConfigurationBuilder:
         """Fresh ``ConfigurationBuilder`` seeded with the user's ``prover_conf``."""

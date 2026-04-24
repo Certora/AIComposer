@@ -218,7 +218,7 @@ class WorkflowContext[K: CacheTypes]:
     async def cache_put(self, value: K) -> None:
         """Put a typed value in the cache. No-op if caching disabled."""
         if not isinstance(value, BaseModel):
-            raise ValueError("Caching not allowed for non-basemodel keys")
+            raise ValueError(f"Caching not allowed for non-basemodel keys {type(value)}")
         if self.cache_namespace is None:
             return
         if len(self.cache_namespace) < 1:

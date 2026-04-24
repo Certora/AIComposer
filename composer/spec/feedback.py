@@ -42,10 +42,13 @@ class Properties(TypedDict):
 class FeedbackInherentParams(TypedDict):
     context: ContractComponentInstance | None
     has_source: bool
+    tagged_contracts: bool
 
 FeedbackTemplate = TypedTemplate[FeedbackInherentParams]("property_judge_prompt.j2")
 
 FeedbackSystemTemplate = TypedTemplate[dict[str, Any]]("cvl_system_prompt.j2").bind({})
+
+type ExtraInput = list[str | dict]
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
@@ -53,7 +56,7 @@ def property_feedback_judge(
     prompt: InjectedTemplate[Properties] | TemplateInstantiation,
     props: list[PropertyFormulation],
     *,
-    extra_inputs: list[str | dict] | Callable[[], Awaitable[list[str | dict]] | list[str | dict]] | None = None,
+    extra_inputs: ExtraInput | Callable[[], Awaitable[ExtraInput] | ExtraInput] | None = None,
     system_prompt: TemplateInstantiation = FeedbackSystemTemplate
 ) -> FeedbackToolContext:
 

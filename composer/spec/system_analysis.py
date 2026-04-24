@@ -9,9 +9,13 @@ from composer.spec.context import (
     WorkflowContext, CacheKey, SystemDoc
 )
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.system_model import BaseApplication, ExplicitContract, ExternalActor, ExternalDependency
+from composer.spec.system_model import (
+    BaseApplication, ExplicitContract, ExternalActor, ExternalDependency,
+    FromSourceApplication,
+)
 from composer.spec.tool_env import BasicAgentTools
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
+from composer.spec.service_host import ServiceHost
 
 DESCRIPTION = "Component analysis"
 
@@ -61,7 +65,8 @@ async def run_component_analysis[T: BaseApplication](
     child_ctxt: WorkflowContext[T],
     input: SystemDoc,
     env: AnalysisEnv,
-    extra_input: list[str | dict]
+    extra_input: list[str | dict],
+    tagged_contracts: bool = False
 ) -> T | None:
     """Analyze application components from a system doc and optionally source code."""
     if (cached := await child_ctxt.cache_get(ty)) is not None:
@@ -81,12 +86,14 @@ async def run_component_analysis[T: BaseApplication](
         FlowInput
     ).with_sys_prompt_template(
         "application_analysis_system.j2",
-        has_source=env.has_source
+        has_source=env.has_source,
+        tagged_contracts=tagged_contracts,
     ).with_tools(
         [memory, *get_rough_draft_tools(AnalysisState), *env.system_analysis_tools]
     ).with_initial_prompt_template(
         "application_analysis_prompt.j2",
-        has_source=env.has_source
+        has_source=env.has_source,
+        tagged_contracts=tagged_contracts,
     )
 
     graph = b.compile_async()

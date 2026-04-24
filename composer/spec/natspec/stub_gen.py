@@ -71,7 +71,7 @@ async def generate_stub[S: StubDeclarationModel](
         "__annotations__": {"result": NotRequired[stub_ty]}
     })
 
-    class ResultTool(AsyncResultTool[S]):
+    class ResultTool(AsyncResultTool[stub_ty]):
         """Submit your completed stub declaration. Triggers a solc compile
         against the assembled project tree; a compile failure is reported
         back to you for a retry.
@@ -109,7 +109,8 @@ async def generate_stub[S: StubDeclarationModel](
         StubGenCallParams(
             contract_name=contract_name,
             interface_name=interface_name,
-            the_interface=interface.name_to_interface[contract_name].content,
+            interface_path=interface_to_implement.path,
+            the_interface=interface_to_implement.content,
             solc_version=solc_version,
         )
     )

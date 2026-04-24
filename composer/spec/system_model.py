@@ -148,7 +148,7 @@ class FreshFromSource(FromSourceContract):
     ))
 
 
-class FromSourceApplication(BaseApplication[FromSourceContract | SourceExternalActor]):
+class FromSourceApplication(BaseApplication[ExistingFromSource | FreshFromSource | SourceExternalActor]):
     """Application variant for the ``from-current-source`` workflow — each
     explicit contract is tagged ``edited`` / ``unchanged`` / ``new`` via the
     ``FromSourceContract`` subtype split.

@@ -133,7 +133,6 @@ class MessageRenderer(ToolCallRenderer):
                     if (stripped := text.strip()):
                         widgets.append(Static(dot("blue", stripped)))
                 case "tool_use":
-                    logger.info("tool call")
                     w = self.render_tool_call(
                         name=c["name"],
                         input_args=c.get("input", {}),

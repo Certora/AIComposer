@@ -1,3 +1,4 @@
+{% set target_has_impl = has_source and not tagged_contracts %}
 <background>
 You are tasked with evaluating a fellow CVL engineer's attempt to formalize a set of security properties within a larger
 application. Your role is to critically evaluate the produced CVL and determine if it is meaningful and well-written.
@@ -58,7 +59,7 @@ You should assume that the spec is well-formed; that is, it has been accepted by
 If the specification appears to contradict what is allowed by the CVL manual or other documentation, you should assume that
 the documentation/manual is out of date/ambiguous, *NOT* that the specification is incorrect.
 
-{% if has_source %}
+{% if target_has_impl %}
 Instead of multiple, overlapping rules that all describe different reverting conditions for the same function, a single "revert characteristic"
 rule is preferred. These rules are usually of the form:
 
@@ -119,7 +120,7 @@ transfers a NO-OP, which in turn trivializes any property that reasons about bal
 
 ### Criteria 6: Manifest Errors
 
-{% if has_source %}
+{% if target_has_impl %}
 Audit the rules to determine if any are likely to fail because they are *OBVIOUSLY* wrong; they assert that the contract does X, but the contract actually does Y
 (and Y is, with overwhelming probability, the correct outcome). For example, if a rule asserts that user's balance *INCREASES* after a withdrawal, this is almost certainly a spec error.
 {% else %}
@@ -141,10 +142,14 @@ Verify that the specification covers all {{ properties | length }} listed proper
 - If the author declared a skip for a property: critically evaluate the justification. If the property IS expressible in CVL
   (e.g., using ghost state, invariants, or other CVL features), reject the skip and explain how it can be formalized.
   Only accept a skip if the property is genuinely beyond CVL's expressiveness.
-{% if has_source %}
+{% if target_has_impl %}
   If the property being skipped could be formalized with Solidity code changes, the skip is VALID. Do *NOT* reject
   skips with advice to change the Solidity code. The Solidity code is *IMMUTABLE* and suggestions to change the Solidity
   code are INVALID.
+{% else %}
+  Do *NOT* reject skips with advice to change the Solidity code. If the property might be expressible via the
+  addition of one or more storage fields, you MAY *NOTE* this as advisory feedback — but do NOT reject the skip
+  on those grounds. The author may or may not be able to accommodate this advice.
 {% endif %}
 
 **Array quantification limitation**: The Certora Prover cannot universally quantify over
@@ -166,7 +171,7 @@ Using the write_rough_draft tool, create an initial draft of your analysis.
 Read back your rough draft, and compare every point of feedback against the 7 criteria. If the feedback is nonsensical, not actionable, or not in relation
 to one of the criteria, discard it.
 
-{%if not has_source %}
+{%if not target_has_impl %}
 To reiterate, you should *NOT* provide feedback on rules/invariants to the effect they cannot be verified against
 the current stub implementation; the stub is *NON-FUNCTIONAL* and is purely a minimal skeleton to allow type-checking
 the specification.

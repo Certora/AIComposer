@@ -5,6 +5,11 @@ You have been provided a system/design document which summarizes the design of s
 
 No implementation of this application exists yet; and the system document may be written with different levels
 of technical rigor.
+{% elif tagged_contracts %}
+You have been provided a system/design document of some on-chain application. In addition,
+you have access to a *partial* implementation of this design in the source tree: some contracts that
+the application requires already exist in the source, some may need to be introduced, and some
+may already exist but require modifications to fit the design.
 {% else %}
 You have been provided a system/design document of some on-chain application. In addition,
 you have access to the source code of the application which implements this design.
@@ -15,7 +20,8 @@ you have access to the source code of the application which implements this desi
 Your role is to analyze this system/design document {%if has_source %} and implementation{%endif%} and then extract a holistic,
 structured description of the application.
 In particular, your analysis will produce descriptions of the Smart Contracts {% if not has_source %}that need to
-written to implement the application{% else %}present in the implementation{%endif%},
+written to implement the application{% elif tagged_contracts %}that comprise the application — including those already
+present in the source tree and those that must be introduced or modified to fulfill the design{% else %}present in the implementation{%endif%},
 along with any external actors the application may interact with.
 At this point, you should focus on extracting natural language descriptions of the various components of the application
 and their interactions; do *NOT* provide pseudo-code or partial Solidity implementations.
@@ -62,9 +68,14 @@ Finally, for each such external actor, extract the assumptions/requirements abou
 In contrast, an "explicit contract" describes some smart contract that will be developed and deployed as part
 of this application. Each "explicit contract" roughly corresponds to some concrete
 Solidity `contract` type or `library`. Each such explicit contract should be given a name and a brief description
-of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier {%if not has_source %}mentioned
-in the system document if possible, otherwise a suitably descriptive Solidity identifier should be chosen instead.{%else%}
-used in the implementation.{%endif%}
+of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier
+{%- if tagged_contracts %} used in the existing implementation for contracts tagged `unchanged` or `edited`; for
+contracts tagged `new`, choose a suitably descriptive Solidity identifier (preferring one mentioned in the system
+document if available).
+{%- elif has_source %} used in the implementation.
+{%- else %} mentioned in the system document if possible, otherwise a suitably descriptive Solidity identifier
+should be chosen instead.
+{%- endif %}
 
 **Contract Sorts**: Each explicit contract in the application document should be given a specific "sort".
 The possible sorts are as follows:
@@ -82,7 +93,25 @@ independently and then calls a `registerNewMarket(WrappedMarketToken a)`) then t
 If the protocol itself creates an instance of `WrappedMarketToken` (e.g., as part of an implementation
 of `registerNewMarket(address marketProxy)`) then the classification should be `dynamic`.
 
-{% if has_source %}
+{% if tagged_contracts %}
+**Contract Tags**: In this workflow, each explicit contract must also be assigned a "tag" that describes its status
+relative to the existing source tree. The possible tags are:
+- `unchanged`: The contract is present in the existing source tree and the design document does NOT require any
+   modifications to it.
+- `edited`: The contract is present in the existing source tree, but the design document calls for modifications
+   to its behavior (i.e., the existing implementation does not yet fulfill the design).
+- `new`: The contract does not exist in the existing source tree and will be introduced as part of fulfilling the design.
+
+When choosing between `unchanged` and `edited`, compare the design document's requirements against what is actually
+implemented. If the current implementation already satisfies the design, tag it `unchanged`. If the design document
+calls for behaviors, entry points, or requirements that the current implementation does not support, tag it `edited`.
+{% endif %}
+
+{% if tagged_contracts %}
+For contracts tagged `unchanged` or `edited`, provide the relative path to the Solidity file that contains the
+contract's definition in the existing source tree. For contracts tagged `new`, do NOT provide a path — the file
+location of a new contract will be chosen later in the pipeline.
+{% elif has_source %}
 As part of your extraction, provide the relative path to the Solidity file which contains the definition of the
 contract you are describing.
 {% endif %}
@@ -126,6 +155,9 @@ these interfaces.
 When some contract A interacts with another contract via an interface type I, use the following heuristics to determine
 whether this other contract should be an external actor or not:
 * Is there a single implementation of the interface I in the code base? If so, take that implementation to be a contract component
+{% if tagged_contracts %}
+* Is an implementation of I described as one of the "new" contracts? If so, take the "new" contract to the contract component interacted with
+{% endif %}
 * If the interface corresponds to a well-known standard (ERC20, ERC4626, ERC721, etc.) AND the system design *explicitly* works with
    any implementation of these standards, then that contract should be an external actor
 * If the interface defines an application/domain specific *extension* to one of these standards, *AND* one or more implementations

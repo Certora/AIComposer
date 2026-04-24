@@ -1,13 +1,13 @@
 """Entry point for the NatSpec multi-agent pipeline TUI."""
 
-import composer.certora as _
+import composer.bind as _
 
 import argparse
 import asyncio
 import json
 import pathlib
 import uuid
-from typing import cast, Protocol
+from typing import Any, cast, Protocol
 
 
 from graphcore.tools.memory import async_memory_tool
@@ -16,16 +16,25 @@ from composer.input.types import ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.workflow.services import create_llm, get_checkpointer, get_store, standard_connections
+from composer.workflow.services import create_llm, standard_connections
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.spec.natspec.natspec_env import build_natspec_env
 from composer.spec.source.source_env import SourceOnlyParams
+from composer.spec.gen_types import TypedTemplate
+from composer.spec.system_model import Application, FromSourceApplication
+from composer.spec.natspec.models import (
+    InterfaceResult,
+    LocatedInterfaceDecl, AutoInterfaceDecl,
+    LocatedStubDeclaration, AutoStubDeclaration,
+)
+from composer.spec.natspec.task_description import (
+    MentalModel, AgentDescription, InterfaceGenCallParams, StubGenCallParams,
+)
 
 from composer.spec.context import (
-    WorkflowContext, SystemDoc, get_system_doc,
+    WorkflowContext, SystemDoc, get_document_input,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline
-from composer.spec.natspec.merge import DEFAULT_NEW_CONTRACTS_SUBDIR, DEFAULT_INTERFACES_SUBDIR
 from composer.spec.util import string_hash, FS_FORBIDDEN_READ
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 
@@ -45,9 +54,52 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
     memory_ns: str | None
     source_root: str | None
     forbidden_read: str | None
-    new_contracts_root: str | None
-    interfaces_root: str | None
     prover_conf: str | None
+
+
+# ---------------------------------------------------------------------------
+# MentalModel construction
+# ---------------------------------------------------------------------------
+
+_InterfaceTemplate = TypedTemplate[dict[str, Any]]("interface_generation_prompt.j2")
+_StubTemplate = TypedTemplate[dict[str, Any]]("stub_generation_prompt.j2")
+
+
+def _build_mental_model(
+    *,
+    source_root: pathlib.Path | None,
+    config_init: dict | None,
+) -> MentalModel:
+    interface_prompt = _InterfaceTemplate.bind({}).depends(InterfaceGenCallParams)
+    stub_prompt = _StubTemplate.bind({}).depends(StubGenCallParams)
+
+    if source_root is not None:
+        return MentalModel(
+            model_ty=FromSourceApplication,
+            interface_desc=AgentDescription(
+                output_ty=InterfaceResult[LocatedInterfaceDecl],
+                prompt=interface_prompt,
+            ),
+            stub_desc=AgentDescription(
+            output_ty=LocatedStubDeclaration,
+                prompt=stub_prompt,
+            ),
+            source_root=source_root,
+            config_init=config_init,
+        )
+    return MentalModel(
+        model_ty=Application,
+        interface_desc=AgentDescription(
+            output_ty=InterfaceResult[AutoInterfaceDecl],
+            prompt=interface_prompt,
+        ),
+        stub_desc=AgentDescription(
+            output_ty=AutoStubDeclaration,
+            prompt=stub_prompt,
+        ),
+        source_root=None,
+        config_init=config_init,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -66,15 +118,11 @@ async def main() -> int:
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
     parser.add_argument("--source-root", default=None,
-                        help="Path to an existing codebase root. When set, natspec runs in source-aware mode.")
+                        help="Path to an existing codebase root. When set, natspec runs in from-source mode: "
+                             "contracts are tagged unchanged/edited/new, and specs are generated only for the "
+                             "new contracts.")
     parser.add_argument("--forbidden-read", default=None,
                         help="Regex of paths source tools may not read. Defaults to FS_FORBIDDEN_READ when source-root is set.")
-    parser.add_argument("--new-contracts-root", default=None,
-                        help="Subdirectory (under source-root) where generated stubs are overlaid during typecheck. "
-                             "Defaults to 'certora-generated/contracts'.")
-    parser.add_argument("--interfaces-root", default=None,
-                        help="Subdirectory (under source-root) where generated interfaces are overlaid during typecheck. "
-                             "Defaults to 'certora-generated/interfaces'.")
     parser.add_argument("--prover-conf", default=None,
                         help="Path to a Certora config JSON file whose keys (packages, link, solc_args, etc.) are "
                              "merged into every typecheck invocation. Dynamic keys (files, verify, solc, "
@@ -84,7 +132,7 @@ async def main() -> int:
 
     # Read input document (handles both text and PDF)
     input_path = pathlib.Path(args.input_file)
-    content = get_system_doc(input_path)
+    content = get_document_input(input_path)
     if content is None:
         print(f"Error: cannot read {input_path}")
         return 1
@@ -92,8 +140,6 @@ async def main() -> int:
 
     # Set up services
     llm = create_llm(args)
-    store = get_store()
-
     model = get_model()
 
     async with (
@@ -124,15 +170,14 @@ async def main() -> int:
             source=source,
         )
 
-        new_contracts_subdir = (
-            pathlib.Path(args.new_contracts_root) if args.new_contracts_root else DEFAULT_NEW_CONTRACTS_SUBDIR
-        )
-        interfaces_subdir = (
-            pathlib.Path(args.interfaces_root) if args.interfaces_root else DEFAULT_INTERFACES_SUBDIR
-        )
-        conf_overrides: dict | None = None
+        config_init: dict | None = None
         if args.prover_conf:
-            conf_overrides = json.loads(pathlib.Path(args.prover_conf).read_text())
+            config_init = json.loads(pathlib.Path(args.prover_conf).read_text())
+
+        mental_model = _build_mental_model(
+            source_root=source_root_path,
+            config_init=config_init,
+        )
 
         cache_root = (args.cache_ns, string_hash(str(system_doc.content))) if args.cache_ns else None
 
@@ -140,7 +185,7 @@ async def main() -> int:
         ctx = WorkflowContext.create(
             services=lambda ns: async_memory_tool(conn.memory(ns)),
             thread_id=thread_id,
-            store=store,
+            store=conn.store,
             cache_namespace=cache_root,
             memory_namespace=args.memory_ns,
         )
@@ -155,13 +200,10 @@ async def main() -> int:
                     solc_version=args.solc_version,
                     tool_env=env,
                     ctx=ctx,
-                    store=store,
+                    store=conn.store,
                     handler_factory=app.make_handler,
+                    mental_model=mental_model,
                     max_concurrent=args.max_concurrent,
-                    source_root=source_root_path,
-                    new_contracts_subdir=new_contracts_subdir,
-                    interfaces_subdir=interfaces_subdir,
-                    conf_overrides=conf_overrides,
                 )
                 await app.on_pipeline_done(result)
             except Exception as exc:

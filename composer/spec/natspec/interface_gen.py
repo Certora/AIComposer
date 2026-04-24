@@ -8,13 +8,14 @@ covers all external entry points, and validates it with the Solidity compiler.
 import asyncio
 from collections.abc import Callable
 from logging import getLogger
-from typing import NotRequired, cast, override
+from typing import NotRequired, Protocol, cast, override
 
 from graphcore.graph import FlowInput
 
+from langchain_core.tools import BaseTool
 from langgraph.graph import MessagesState
 
-from composer.spec.context import WorkflowContext, PlainBuilder, CacheKey
+from composer.spec.context import WorkflowContext, CacheKey
 from composer.spec.graph_builder import run_to_completion
 from composer.spec.natspec.async_result import AsyncResultTool
 from composer.spec.natspec.models import (
@@ -28,6 +29,7 @@ from composer.spec.natspec.task_description import (
     resolve_extra_input,
 )
 from composer.spec.system_model import NatspecApplication
+from composer.spec.tool_env import BasicAgentTools
 from composer.spec.util import string_hash, uniq_thread_id
 
 _logger = getLogger(__name__)
@@ -35,13 +37,27 @@ _logger = getLogger(__name__)
 DESCRIPTION = "Interface generation"
 
 
+class InterfaceGenEnv(BasicAgentTools, Protocol):
+    """Role-scoped env for the interface-generation agent: basic agent plumbing
+    plus ``interface_gen_tools`` (source tools when source is available, empty
+    otherwise — the agent uses them to explore the existing project layout
+    when deciding where to place generated interfaces).
+    """
+
+    @property
+    def interface_gen_tools(self) -> tuple[BaseTool, ...]:
+        ...
+
+
 async def generate_interface[I: InterfaceDeclModel](
     ctx: WorkflowContext[None],
     summary: NatspecApplication,
-    builder: PlainBuilder,
+    env: InterfaceGenEnv,
     solc_version: str,
     assembler_for_candidate: Callable[[InterfaceResult[I]], Assembler],
     description: AgentDescription[InterfaceResult[I], InterfaceGenCallParams],
+    *,
+    target_names: set[str] | None = None,
 ) -> InterfaceResult[I]:
     """Generate a Solidity interface from component analysis and system document.
 
@@ -49,8 +65,20 @@ async def generate_interface[I: InterfaceDeclModel](
     caller-supplied ``assembler_for_candidate`` factory, then invoking solc
     inside the assembled project. ``description`` fixes the concrete decl
     subtype and the prompt (with any workflow-constant params pre-bound).
+
+    ``target_names`` restricts which contracts the agent is expected to
+    produce interfaces for. Defaults to every contract in ``summary`` (the
+    greenfield case). In from-source mode the caller passes the subset of
+    contract names tagged ``new`` — contracts tagged ``unchanged``/``edited``
+    already have their interfaces in the source tree.
     """
     result_ty = description.output_ty
+    import logging
+    logging.getLogger(__name__).info(str(result_ty))
+    logging.getLogger(__name__).info(AsyncResultTool[result_ty].model_fields["value"])
+
+    logger = logging.getLogger(__name__)
+    logger.info(str(target_names))
 
     cache_key = CacheKey[None, InterfaceResult](
         f"interface-{string_hash(summary.model_dump_json())}-{result_ty.__name__}"
@@ -63,10 +91,14 @@ async def generate_interface[I: InterfaceDeclModel](
 
     solc_name = f"solc{solc_version}"
 
-    external_contracts = {c.name for c in summary.contract_components}
+    external_contracts = (
+        target_names
+        if target_names is not None
+        else {c.name for c in summary.contract_components}
+    )
 
     ST = type("ST", (MessagesState,), {
-        "__annotations__": {"result": NotRequired[result_ty]}
+        "__annotations__": {"result": NotRequired[InterfaceResult[I]]}
     })
 
     class ResultTool(AsyncResultTool[result_ty]):
@@ -76,9 +108,13 @@ async def generate_interface[I: InterfaceDeclModel](
         """
 
         @override
-        async def validate(self, res: InterfaceResult) -> str | None:
+        async def validate(self, res: InterfaceResult[I]) -> str | None:
+            logger.info(str(res))
+            logger.info(type(res))
             seen: set[str] = set()
             for nm, i in res.name_to_interface.items():
+                logger.info(nm)
+                logger.info(type(i))
                 if nm not in external_contracts:
                     return f"Invalid entry found; no external contract with name {nm} appears in input"
                 if not i.path.endswith(".sol"):
@@ -109,14 +145,26 @@ async def generate_interface[I: InterfaceDeclModel](
                 )
             return None
 
+    target_contracts = [
+        c for c in summary.contract_components if c.name in external_contracts
+    ]
+    existing_contracts = [
+        c for c in summary.contract_components if c.name not in external_contracts
+    ]
+
     final_prompt = description.prompt.inject(
-        InterfaceGenCallParams(summary=summary, solc_version=solc_version)
+        InterfaceGenCallParams(
+            summary=summary,
+            target_contracts=target_contracts,
+            existing_contracts=existing_contracts,
+            solc_version=solc_version,
+        )
     )
 
     workflow = (
-        builder
+        env.builder
         .with_state(ST)
-        .with_tools([ResultTool.as_tool("result")])
+        .with_tools([ResultTool.as_tool("result"), *env.interface_gen_tools])
         .with_output_key("result")
         .with_default_summarizer(max_messages=50)
         .with_input(FlowInput)
@@ -136,6 +184,10 @@ async def generate_interface[I: InterfaceDeclModel](
         description=DESCRIPTION,
     )
     assert "result" in res
-    res_value = cast(InterfaceResult[I], res['result'])
+    res_raw = res["result"]
+    if isinstance(res_raw, dict):
+        res_value = result_ty.model_validate(res_raw)
+    else:
+        res_value = cast(InterfaceResult[I], res_raw)
     await child.cache_put(res_value)
     return res_value

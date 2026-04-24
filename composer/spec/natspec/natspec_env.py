@@ -35,25 +35,12 @@ class NatspecEnvironment(ToolEnvironment, Protocol):
     """
 
     @property
-    def cvl_authorship_tools(self) -> tuple[BaseTool, ...]:
-        ...
-
-    @property
-    def feedback_tools(self) -> tuple[BaseTool, ...]:
-        ...
-
-    @property
     def merge_tools(self) -> tuple[BaseTool, ...]:
         ...
 
     @property
-    def bug_analysis_tools(self) -> tuple[BaseTool, ...]:
+    def interface_gen_tools(self) -> tuple[BaseTool, ...]:
         ...
-
-    @property
-    def system_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
-
 
 @dataclass(frozen=True)
 class _NatspecEnvImpl:
@@ -69,6 +56,7 @@ class _NatspecEnvImpl:
     cvl_authorship_tools: tuple[BaseTool, ...]
     feedback_tools: tuple[BaseTool, ...]
     merge_tools: tuple[BaseTool, ...]
+    interface_gen_tools: tuple[BaseTool, ...]
     bug_analysis_tools: tuple[BaseTool, ...]
     system_analysis_tools: tuple[BaseTool, ...]
 
@@ -96,6 +84,7 @@ def build_natspec_env(
             cvl_authorship_tools=src.cvl_authorship_tools,
             feedback_tools=src.feedback_tools,
             merge_tools=src.source_tools + src.rag_tools,
+            interface_gen_tools=src.source_tools,
             bug_analysis_tools=src.bug_analysis_tools,
             system_analysis_tools=src.system_analysis_tools,
         )
@@ -109,6 +98,7 @@ def build_natspec_env(
         cvl_authorship_tools=rag.rag_tools,
         feedback_tools=rag.rag_tools,
         merge_tools=rag.rag_tools,
+        interface_gen_tools=(),
         bug_analysis_tools=(),
         system_analysis_tools=(),
     )

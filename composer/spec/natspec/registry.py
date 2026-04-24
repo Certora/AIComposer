@@ -363,7 +363,7 @@ class StubRegistry:
         home_contract = contract_name
 
         @tool_display(
-            lambda d: f"Reading verification stub: {d['contract_name']}",
+            lambda d: f"Reading verifi  cation stub: {d['contract_name']}",
             None,
         )
         class ReadStubTool(WithAsyncImplementation[str]):
@@ -506,9 +506,9 @@ class FileRegistry:
         )
         class RegisterSpecFile(WithAsyncImplementation[str]):
             """Register a Solidity source file that must be pulled into the
-            compilation unit for the spec you're authoring. Use this for any
-            contract source the spec references (the main contract under
-            verification, helpers, libraries the stubs don't cover, etc.).
+            verification task for the spec you're authoring. Use this for any
+            contract source the spec references, e.g.,
+            other stubs, extant code the stubs don't cover (if applicable)
 
             The path must be project-relative and point to a ``.sol`` file
             already present in the source tree (inspect the tree with the
@@ -536,6 +536,6 @@ class FileRegistry:
                 return "\n".join(f"- {p}" for p in files)
 
         return [
-            RegisterSpecFile.as_tool("register_spec_file"),
-            ListSpecFiles.as_tool("list_spec_files"),
+            RegisterSpecFile.as_tool("register_verification_file"),
+            ListSpecFiles.as_tool("list_verification_files"),
         ]

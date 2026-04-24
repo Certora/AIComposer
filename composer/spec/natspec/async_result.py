@@ -1,5 +1,6 @@
 from pydantic import Field
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 from langgraph.types import Command
 
@@ -9,7 +10,7 @@ from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 class AsyncResultTool[T](WithAsyncImplementation[str | Command], WithInjectedId, ABC):
     value: T = Field(description="The result of your task")
 
-    RESULT_KEY = "result"
+    RESULT_KEY: ClassVar[str] = "result"
 
     @abstractmethod
     async def validate(self, res: T) -> str | None:

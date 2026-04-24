@@ -37,14 +37,47 @@ When you need to understand CVL syntax, patterns, or language features — espec
 non-obvious constructs or features — delegate to the cvl_research tool rather than searching the manual yourself.
 you should also use the cvl_research tool for help when you are struggling with a persistent problem.
 
-You are writing a CVL file without any implementation, neither for the contract being verified or 
-the other contracts mentioned as being interacted with.
-However, you have been provided with the Solidity *interface* of these other contracts. If necessary,
-you can write summaries in your specification file to capture the behavior of these other contracts' entry points.
-If modeling the internal state of these other actors/contracts is necessary, use ghost state variables.
-When setting up these summaries/ghosts, carefully consider whether the application will have multiple instances
-of the implementation of the interface (`dynamic` or `multiple` sorts) or a single instance. In the former case,
-your ghost state will need to account for the receiver contract.
+You are writing a CVL file without any implementation for the contract being verified.
+
+Every other contract, interface, and generated stub in the application is visible through your
+source tools. Use `list_files` to enumerate what's available, `get_file` to read, and `grep_files`
+to search. Generated stubs for {% if tagged_contracts %}`new` contracts{% else %}the other contracts{% endif %}
+and generated interfaces appear alongside any existing source.
+{% if tagged_contracts %}
+The other contracts mentioned as being interacted with fall into two categories, which you should
+handle differently:
+
+- Contracts tagged `unchanged` or `edited`: real implementations live in the source tree and are
+  assumed correct for the purposes of this verification task. You are free to use them directly —
+  call their functions (including state-helper functions) and read their state as if they were any
+  other contract under verification. To make an existing contract's source part of the
+  verification's compilation unit, register it with the `register_verification_file` tool.
+  You do NOT need to write summaries or ghost state for these contracts; their real implementation
+  is what the Prover uses.
+
+- Contracts tagged `new`: no real implementation. A minimal stub exists (visible via your source
+  tools) and grows by field requests. When your spec needs to reason about the state or behavior of
+  a `new` ommer, *prefer* requesting a stub field on that ommer's stub via `request_stub_field`
+  (which takes the target contract's name) over introducing CVL ghost state — a stub field is real
+  Solidity storage your spec can reference directly (e.g., `theOther.fieldName`), and the Prover
+  tracks its mutations automatically. Fall back to CVL summaries or ghost state only when stub
+  fields cannot model what you need — for example, when expressing the effect of a specific
+  function invocation purely at the CVL level, or when reasoning about state spread across multiple
+  instances of a `dynamic`/`multiple` sort contract.
+{% else %}
+None of the other contracts in the application have real implementations either. Their interfaces
+and minimal stubs are visible via your source tools. When your spec needs to reason about the state
+or behavior of one of these contracts, *prefer* requesting a stub field on the relevant contract's
+stub via `request_stub_field` (which takes the target contract's name) over introducing CVL ghost
+state — a stub field is real Solidity storage your spec can reference directly (e.g.,
+`theOther.fieldName`), and the Prover tracks its mutations automatically. Fall back to CVL
+summaries or ghost state only when stub fields cannot model what you need — for example, when
+expressing the effect of a specific function invocation purely at the CVL level, or when reasoning
+about state spread across multiple instances of a `dynamic`/`multiple` sort contract.
+{% endif %}
+When you do need summaries or ghost state, carefully consider whether the application will have multiple
+instances of the implementation of the interface (`dynamic` or `multiple` sorts) or a single instance.
+In the former case, your ghost state will need to account for the receiver contract.
 
 If you need to model the state/behavior of an external actor (*not* one of the other explicit contracts in the system)
 use the following decision procedure:
@@ -57,9 +90,13 @@ use the following decision procedure:
    described above. However, as there is no explicit interface provided for these external actor contracts you will
    need to make reasonable decisions about the summary signature to use.
 
-To model the state/storage of the contract containing the component under verification,
-you may use the stub tools described below. Do *NOT* try to simulate or otherwise model the
-behavior/state of other contracts with state/functions in the contract you are verifying.
+To model the state/storage of the contract containing the component under verification
+{%- if tagged_contracts %} — or of any other `new` contract in the application{% endif %} —
+use `request_stub_field` to add a storage variable to the relevant contract's stub. Each contract
+has its own stub; do *NOT* try to simulate or otherwise model the behavior/state of another
+contract by requesting fields on the stub of the contract you are verifying. If you need state on a
+dependency, request a field on *that* dependency's stub
+{%- if tagged_contracts %} (or, for `unchanged`/`edited` dependencies, use its real source directly via the `register_verification_file` tool){% endif %}.
 
 {% include "natspec_stub_tools_guidance.j2" %}
 

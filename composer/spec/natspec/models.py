@@ -9,6 +9,7 @@ both import without a cycle.
 
 import pathlib
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -25,11 +26,11 @@ class InterfaceDeclModel(BaseModel, ABC):
         "interface describing the external entry points of the described contract(s)"
     )
     solidity_identifier: str = Field(description="The solidity identifier of the interface")
-
-    @property
-    @abstractmethod
-    def path(self) -> str:
-        ...
+    if TYPE_CHECKING:
+        @property
+        @abstractmethod
+        def path(self) -> str:
+            ...
 
 
 class LocatedInterfaceDecl(InterfaceDeclModel):
@@ -87,11 +88,11 @@ class StubDeclarationModel(BaseModel, ABC):
         description="The complete Solidity file which declares the stub implementation"
     )
 
-    @property
-    @abstractmethod
-    def path(self) -> str:
-        ...
-
+    if TYPE_CHECKING:
+        @property
+        @abstractmethod
+        def path(self) -> str:
+            ...
 
 class LocatedStubDeclaration(StubDeclarationModel):
     __doc__ = StubDeclarationModel.__doc__

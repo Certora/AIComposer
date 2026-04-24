@@ -5,11 +5,14 @@ contract that implements the interface and compiles.
 </background>
 
 <interface>
-The interface to implement is:
+The interface to implement is `{{ interface_name }}`, laid out in the project at `{{ interface_path }}`.
+Its source is:
 
 ```solidity
 {{ the_interface }}
 ```
+
+You may also read it directly via your source tools (`get_file("{{ interface_path }}")`) if needed.
 </interface>
 
 <task>
@@ -17,11 +20,16 @@ Given the interface file, generate a minimal stub implementation.
 
 Requirements:
 - Use pragma solidity ^0.{{ solc_version }};
-- Do *NOT* inline the interface, import it from "interfaces/{{interface_name}}.sol"
+- Do *NOT* inline the interface, import it from `"{{ interface_path }}"` (use that exact path in
+  your import statement, resolved relative to the stub's own location as Solidity requires).
 - Declare a suitably named contract that implements the interface
 - Implement all interface functions with empty bodies (return default values as needed)
 - Use parameter names in all function signatures, even if unused
 - Do NOT add any storage variables — those will be added later by the verification pipeline
+
+You have source tools available (`list_files`, `get_file`, `grep_files`) that let you inspect the
+existing project layout — use them when choosing where to place the stub file so the path fits
+whatever convention the codebase already uses.
 
 ## Deliver
 

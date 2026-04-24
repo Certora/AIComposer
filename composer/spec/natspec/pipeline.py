@@ -49,8 +49,26 @@ from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationSuccess
 from composer.spec.gen_types import TypedTemplate
 from composer.spec.natspec.system_analysis import run_component_analysis, DESCRIPTION as SYSTEM_DESC
-from composer.spec.system_model import ContractInstance, ContractComponentInstance, ContractComponent, NatspecApplication
+from composer.spec.system_model import (
+    ContractInstance, ContractComponentInstance, ContractComponent,
+    ExplicitContract, NatspecApplication, FromSourceApplication, ExistingFromSource,
+)
 from composer.spec.natspec.natspec_env import NatspecEnvironment
+
+
+# ---------------------------------------------------------------------------
+# Generation gating
+# ---------------------------------------------------------------------------
+
+def _is_new(c: ExplicitContract) -> bool:
+    """Whether this contract requires interface/stub/CVL generation.
+
+    In greenfield, every contract is generated (plain ``ExplicitContract``).
+    In from-source, only ``FreshFromSource`` contracts are generated;
+    ``ExistingFromSource`` contracts (``unchanged``/``edited``) already have
+    their source in the tree and are assumed correct for this task.
+    """
+    return not isinstance(c, ExistingFromSource)
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +151,12 @@ class PipelineServices:
 
 class NatspecGenerationParams(TypedDict):
     context: ContractComponentInstance
+    tagged_contracts: bool
 
 class FeedbackPromptParams(TypedDict):
     context: ContractComponentInstance
     has_source: bool
+    tagged_contracts: bool
 
 NoSourceGenerationPrompt = TypedTemplate[NatspecGenerationParams]("nosource_property_generation_prompt.j2")
 FeedbackPrompt = TypedTemplate[FeedbackPromptParams]("property_judge_prompt.j2")
@@ -230,7 +250,9 @@ async def analyze_single_contract(
         batch_config_builder = services.mental_model.config_builder().with_solc(solc_version)
 
         stub_tools = registry.get_tools(contract_name)
-        file_tools = services.file_registry.get_tools(contract_name)
+        is_from_source = services.mental_model.from_existing
+        file_tools = services.file_registry.get_tools(contract_name) if is_from_source else []
+
         typecheck_tool = make_advisory_typecheck_tool(
             files=services.file_registry,
             assembler=batch_assembler,
@@ -263,7 +285,8 @@ async def analyze_single_contract(
                 env=services.env,
                 props=batch.props,
                 injected_tools=[*stub_tools, *file_tools, typecheck_tool, *publish],
-                system_doc=system_doc
+                system_doc=system_doc,
+                tagged_contracts=is_from_source,
             ),
             semaphore,
         )
@@ -344,26 +367,34 @@ async def run_natspec_pipeline(
     summary = await run_task(
         handler_factory,
         TaskInfo("component-analysis", SYSTEM_DESC, "component_analysis"),
-        lambda: run_component_analysis(ctx, system_doc, tool_env),
+        lambda: run_component_analysis(ctx, system_doc, tool_env, mental_model),
     )
     if summary is None:
         raise ValueError("Component analysis produced no result — is the system doc empty?")
+    import logging
+    logger = logging.getLogger(__name__)
+    for c in summary.contract_components:
+        logger.info(type(c))
+
+    new_contracts = [c for c in summary.contract_components if _is_new(c)]
+    new_names = {c.name for c in new_contracts}
 
     # ------------------------------------------------------------------
-    # Phase 3: Interface generation
+    # Phase 3: Interface generation (new contracts only)
     # ------------------------------------------------------------------
     interface = await run_task(
         handler_factory,
         TaskInfo("interface-gen", INTERFACE_GEN_DESC, "interface_gen"),
         lambda: generate_interface(
-            ctx, summary, tool_env.builder, solc_version,
+            ctx, summary, tool_env, solc_version,
             assembler_for_candidate=mental_model.assembler_for_interface_gen,
             description=mental_model.interface_desc,
+            target_names=new_names,
         ),
     )
 
     # ------------------------------------------------------------------
-    # Phase 4: Initial stub generation
+    # Phase 4: Initial stub generation (new contracts only)
     # ------------------------------------------------------------------
     async def gen_one_stub(
         contract_name: str
@@ -382,7 +413,7 @@ async def run_natspec_pipeline(
         return (contract_name, res)
 
     generated_stubs = await asyncio.gather(*[
-        gen_one_stub(c.name) for c in summary.contract_components
+        gen_one_stub(c.name) for c in new_contracts
     ])
 
     # ------------------------------------------------------------------
@@ -414,7 +445,10 @@ async def run_natspec_pipeline(
     logging.getLogger(__name__).debug(name_to_stub)
 
 
-    for (ind, contract) in enumerate(summary.contract_components):
+    new_contracts_with_ind = [
+        (ind, c) for ind, c in enumerate(summary.contract_components) if _is_new(c)
+    ]
+    for (ind, contract) in new_contracts_with_ind:
         contract_key = CacheKey[None, Contract](string_hash(contract.model_dump_json()))
         contract_ctx = await ctx.child(contract_key, contract.model_dump())
         cont = analyze_single_contract(
@@ -427,13 +461,12 @@ async def run_natspec_pipeline(
             summary=ContractInstance(ind=ind, app=summary),
             stub=name_to_stub[contract.name]
         )
-        
+
         tasks.append(cont)
     results = await asyncio.gather(*tasks)
 
-     
     to_ret : list[ContractFormulation] = []
-    for (c, res) in zip(summary.contract_components, results):
+    for ((_, c), res) in zip(new_contracts_with_ind, results):
         to_ret.append(ContractFormulation(
             spec=res.spec,
             failures=res.failures,

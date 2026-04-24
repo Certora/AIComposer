@@ -262,6 +262,7 @@ _PropertyGenTemplate = TypedTemplate[PropertyGenParams]("property_generation_pro
 
 class _HasSourceParams(TypedDict):
     has_source: bool
+    tagged_contracts: bool
 
 _PropertyJudgeSystemTemplate = TypedTemplate[_HasSourceParams]("property_judge_system_prompt.j2")
 
@@ -322,9 +323,11 @@ async def batch_cvl_generation(
     feedback_env = property_feedback_judge(
         ctx.child(CVL_JUDGE_KEY), env, FeedbackTemplate.bind({
             "has_source": True,
+            "tagged_contracts": False,
             "context": component
         }), props, system_prompt=_PropertyJudgeSystemTemplate.bind({
-            "has_source": True
+            "has_source": True,
+            "tagged_contracts": False,
         })
     )
 

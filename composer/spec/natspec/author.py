@@ -27,6 +27,7 @@ class GenerationEnv(FeedbackEnv, Protocol):
 
 class SourceGenerationParams(Properties):
     context: ContractComponentInstance
+    tagged_contracts: bool
 
 NoSourceGen = TypedTemplate[SourceGenerationParams]("nosource_property_generation_prompt.j2")
 
@@ -96,7 +97,9 @@ async def generate_cvl_batch(
     contract_name: str,
 
     injected_tools: list[BaseTool],
-    stub_reader: Callable[[], Awaitable[str]]
+    stub_reader: Callable[[], Awaitable[str]],
+    *,
+    tagged_contracts: bool,
 ) -> GenerationSuccess | GaveUp:
     async def stub_feedback_extras() -> list[str | dict]:
         return [
@@ -109,7 +112,8 @@ async def generate_cvl_batch(
     feedback_ctxt = property_feedback_judge(
         ctx=ctx.child(CVL_JUDGE_KEY), env=env, prompt=FeedbackTemplate.bind({
             "context": component,
-            "has_source": False
+            "has_source": env.has_source,
+            "tagged_contracts": tagged_contracts,
         }).depends(Properties), props=props, extra_inputs=stub_feedback_extras
     )
 
@@ -132,7 +136,8 @@ async def generate_cvl_batch(
     ).inject(
         lambda b: NoSourceGen.bind({
             "context": component,
-            "properties": props
+            "properties": props,
+            "tagged_contracts": tagged_contracts,
         }).render_to(b.with_initial_prompt_template)
     ).with_summary_config(_CVLConfig(contract_name)).compile_async()
 
