@@ -16,7 +16,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
 from textual import on
-from textual.screen import Screen
+from textual.screen import ModalScreen
 from textual.widgets import RichLog
 
 from rich.text import Text
@@ -93,7 +93,7 @@ def _format_record(record: logging.LogRecord) -> Text:
 # Log screen
 # ---------------------------------------------------------------------------
 
-class LogScreen(Screen):
+class LogScreen(ModalScreen):
     """Full-screen scrollable log viewer."""
 
     BINDINGS = [

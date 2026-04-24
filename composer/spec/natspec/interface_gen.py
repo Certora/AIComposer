@@ -121,6 +121,7 @@ async def generate_interface[I: InterfaceDeclModel](
                     for (_, v) in res.name_to_interface.items():
                         if (tmpdir / v.path).exists():
                             return f"Path {v.path} already exists; pick another one"
+                        (tmpdir / v.path).parent.mkdir(parents=True, exist_ok=True)
                         (tmpdir / v.path).write_text(v.content)
                     _logger.info(f"Compiling interfaces in {tmpdir}: {compile_inputs}")
                     proc = await asyncio.create_subprocess_exec(
@@ -131,6 +132,7 @@ async def generate_interface[I: InterfaceDeclModel](
                     )
                     stdout_b, stderr_b = await proc.communicate()
             except FileNotFoundError:
+                _logger.exception("Execution failed!")
                 return f"Solidity compiler {solc_name} not found on this system"
             if proc.returncode != 0:
                 return (

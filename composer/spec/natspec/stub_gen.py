@@ -90,6 +90,7 @@ async def generate_stub[S: StubDeclarationModel](
                 async with materializer.project_directory() as tmpdir:
                     if (tmpdir / res.path).exists():
                         return f"Path {res.path} already exists, pick a different name"
+                    (tmpdir / res.path).parent.mkdir(exist_ok=True, parents=True)
                     (tmpdir / res.path).write_text(res.content)
                     proc = await asyncio.create_subprocess_exec(
                         solc_name, res.path,
@@ -99,6 +100,8 @@ async def generate_stub[S: StubDeclarationModel](
                     )
                     stdout_b, stderr_b = await proc.communicate()
             except FileNotFoundError:
+                import logging
+                logging.getLogger(__name__).exception("Stub compilation failed")
                 return f"Solidity compiler {solc_name} not found on this system"
             if proc.returncode != 0:
                 return (

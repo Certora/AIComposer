@@ -35,16 +35,11 @@ class InterfaceDeclModel(BaseModel, ABC):
 
 class LocatedInterfaceDecl(InterfaceDeclModel):
     __doc__ = InterfaceDeclModel.__doc__
-    path: str = Field(description=
-        "The project-relative path where this interface should be placed (e.g. "
-        "'contracts/interfaces/IFoo.sol' or 'src/interfaces/IFoo.sol'). Choose a path "
-        "that fits the project: when an existing codebase is provided, use the source "
-        "tools to inspect the layout and follow whatever convention the project already "
-        "uses for interfaces (e.g. an existing 'interfaces/', 'src/interfaces/' or "
-        "'contracts/interfaces/' directory). When generating from scratch with no "
-        "source code, default to 'contracts/interfaces/<IdentifierName>.sol'. The path "
-        "must end in '.sol' and the basename should match the solidity_identifier."
-    )
+    path: str = Field(description=(
+        "The project-relative path where this interface file lives. Must end in "
+        "'.sol'; the basename should match ``{solidity_identifier}.sol``. The task "
+        "prompt governs how to choose this path."
+    ))
 
 
 class AutoInterfaceDecl(InterfaceDeclModel):
@@ -96,16 +91,11 @@ class StubDeclarationModel(BaseModel, ABC):
 
 class LocatedStubDeclaration(StubDeclarationModel):
     __doc__ = StubDeclarationModel.__doc__
-    path: str = Field(
-        description=(
-            "The project-relative path where this stub should be placed (e.g. "
-            "'src/contracts/Foo.sol' or 'contracts/impl/Foo.sol'). Inspect the "
-            "existing source tree with the source tools and follow whatever "
-            "convention the project already uses for contract implementations. "
-            "The path must end in '.sol' and the basename should match "
-            "``{solidity_identifier}.sol``."
-        )
-    )
+    path: str = Field(description=(
+        "The project-relative path where this stub file lives. Must end in '.sol'; "
+        "the basename should match ``{solidity_identifier}.sol``. The task prompt "
+        "governs how to choose this path."
+    ))
 
 
 class AutoStubDeclaration(StubDeclarationModel):

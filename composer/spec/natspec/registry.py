@@ -89,22 +89,33 @@ class RegistryResult(BaseModel):
 # Stub compilation check
 # ---------------------------------------------------------------------------
 
-def _compile_stub(stub: str, interfaces: InterfaceResult, solc_version: str) -> str | None:
-    """Compile stub against interface with solc. Returns None on success, error string on failure."""
+def _compile_stub(
+    stub: str,
+    interfaces: InterfaceResult,
+    solc_version: str,
+    stub_path: str,
+) -> str | None:
+    """Compile the stub against the interfaces with solc.
+
+    The stub is written at its real ``stub_path`` (project-relative) inside
+    the tmpdir so relative ``import`` statements in the stub resolve the
+    same way they will in the real project tree. Returns ``None`` on
+    success, an error string on failure.
+    """
     solc_name = f"solc{solc_version}"
-    import pathlib
     with tempfile.TemporaryDirectory() as tmpdir:
         root = pathlib.Path(tmpdir)
         interfaces.dump_to_path(root)
-        (root / "contracts").mkdir(exist_ok=True)
-        (root / "contracts" / "Impl.sol").write_text(stub)
+        stub_abs = root / stub_path
+        stub_abs.parent.mkdir(parents=True, exist_ok=True)
+        stub_abs.write_text(stub)
         try:
             proc = subprocess.run(
-                [solc_name, "contracts/Impl.sol"],
+                [solc_name, stub_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=tmpdir
+                cwd=tmpdir,
             )
         except FileNotFoundError:
             return f"Solidity compiler {solc_name} not found"
@@ -121,11 +132,12 @@ async def run_registry_agent(
     contract_name: str,
     request: str,
     stub_content: str,
+    stub_path: str,
     field_metadata: FieldMetadata,
     interface: InterfaceResult,
     solc_version: str,
     builder: PlainBuilder,
-    assembler: Assembler
+    assembler: Assembler,
 ) -> RegistryResult:
     """Spawn a fresh registry agent to handle a single field request.
 
@@ -145,7 +157,7 @@ async def run_registry_agent(
                 return "When proposing a new field, you must provide field_description."
             if not res.updated_stub:
                 return "When proposing a new field, you must provide updated_stub (the complete source code)."
-            compile_err = _compile_stub(res.updated_stub, interface, solc_version)
+            compile_err = _compile_stub(res.updated_stub, interface, solc_version, stub_path)
             if compile_err is not None:
                 return (
                     f"The updated stub does not compile. Fix the issue and try again.\n"
@@ -221,6 +233,7 @@ class StubRegistry:
     _assembler: Assembler
     _mirror_by_path: dict[str, str]
     _mirror_by_name: dict[str, str]
+    _path_by_name: dict[str, str]
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _namespace: tuple[str, ...] = ()
 
@@ -258,12 +271,18 @@ class StubRegistry:
             curr_content_name = {
                 nm: decl.content for (nm, decl) in initial_stubs.items()
             }
+            curr_path_by_name = {
+                nm: decl.path for (nm, decl) in initial_stubs.items()
+            }
         else:
             curr_content_path = {
                 t["path"]: t["content"] for t in curr_res.value.values()
             }
             curr_content_name = {
                 nm: t["content"] for (nm, t) in curr_res.value.items()
+            }
+            curr_path_by_name = {
+                nm: t["path"] for (nm, t) in curr_res.value.items()
             }
         if await store.aget(namespace, FIELDS_STORE_KEY) is None:
             await store.aput(namespace, FIELDS_STORE_KEY, {k: [] for k in initial_stubs.keys()})
@@ -275,7 +294,8 @@ class StubRegistry:
             _assembler=interface_only_mat,
             _namespace=namespace,
             _mirror_by_path=curr_content_path,
-            _mirror_by_name=curr_content_name
+            _mirror_by_name=curr_content_name,
+            _path_by_name=curr_path_by_name,
         )
     
     # FS backend stuff
@@ -314,6 +334,16 @@ class StubRegistry:
             return FieldMetadata()
         return FieldMetadata.model_validate(item.value)
 
+    async def read_fields(self) -> dict[str, "list[FieldSpec]"]:
+        """Snapshot the per-contract stub fields requested during this pipeline run.
+
+        Returns ``{contract_name: [FieldSpec, ...]}``. Empty for contracts that never
+        received a field request. Safe to call at any point after ``acreate``; intended
+        for end-of-pipeline export so the codegen driver knows what storage layout
+        each contract's implementation must carry.
+        """
+        return (await self._read_field_metadata()).stub_fields
+
     async def _write_field_metadata(self, metadata: FieldMetadata) -> None:
         await self._store.aput(self._namespace, FIELDS_STORE_KEY, metadata.model_dump())
 
@@ -336,17 +366,19 @@ class StubRegistry:
         """
         async with self._lock:
             stub_content = self.read_stub(nm)
+            stub_path = self._path_by_name[nm]
             field_metadata = await self._read_field_metadata()
 
             result = await run_registry_agent(
                 contract_name=nm,
                 request=purpose,
                 stub_content=stub_content,
+                stub_path=stub_path,
                 field_metadata=field_metadata,
                 interface=self._interface,
                 solc_version=self._solc_version,
                 builder=self._builder,
-                assembler=self._assembler
+                assembler=self._assembler,
             )
 
             if result.rejected:

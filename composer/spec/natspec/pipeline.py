@@ -19,7 +19,7 @@ individual task event streams.
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncContextManager, Literal, Awaitable, Callable, override, AsyncIterator, Iterable
+from typing import Literal, Awaitable, Callable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 import tempfile
 
@@ -42,18 +42,16 @@ from composer.spec.bug import run_bug_analysis
 from composer.spec.prop import PropertyFormulation
 from composer.spec.natspec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC
 from composer.spec.natspec.stub_gen import generate_stub
-from composer.spec.natspec.models import InterfaceDeclModel, InterfaceResult, StubDeclarationModel
-from composer.spec.natspec.registry import StubRegistry, FileRegistry
+from composer.spec.natspec.models import InterfaceDeclModel, StubDeclarationModel
+from composer.spec.natspec.registry import StubRegistry, FileRegistry, FieldSpec
 from composer.spec.natspec.typecheck import make_typechecker
 from composer.spec.natspec.task_description import MentalModel, Assembler
-from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationSuccess
+from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationSuccess, AuthorResult
 from composer.spec.natspec.system_analysis import run_component_analysis, DESCRIPTION as SYSTEM_DESC
 from composer.spec.system_model import (
     ContractInstance, ContractComponentInstance, ContractComponent,
-    ExplicitContract, NatspecApplication, FromSourceApplication, ExistingFromSource,
+    ExplicitContract, NatspecApplication, ExistingFromSource,
 )
-from composer.spec.natspec.natspec_env import NatspecEnvironment
 from composer.spec.service_host import ServiceHost, PureServiceHost
 
 
@@ -99,7 +97,7 @@ def _component_cache_key(
     return CacheKey(string_hash(combined))
 
 
-def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGroup, CVLGeneration]:
+def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGroup, AuthorResult]:
     combined = "|".join(p.model_dump_json() for p in props)
     return CacheKey(string_hash(combined))
 
@@ -124,6 +122,12 @@ class ContractFormulation:
 class PipelineResult:
     app: NatspecApplication
     contracts: list[ContractFormulation] = field(default_factory=list)
+    # Per-contract snapshot of stub fields requested during generation. Keyed by
+    # contract name (matching ``ContractFormulation.name``); absent contracts
+    # received no field requests. Captured once at pipeline end so downstream
+    # consumers (codegen export, implementation plan) don't need live registry
+    # access.
+    stub_fields: dict[str, list[FieldSpec]] = field(default_factory=dict)
 
 
 
@@ -259,7 +263,7 @@ async def analyze_single_contract(
                 stub_reader=lambda: stub_registry.read_stub(contract_name),
                 contract_name=contract_name,
                 component=batch.feat,
-                ctx=batch_ctx,
+                root_ctx=batch_ctx,
                 env=services.env,
                 props=batch.props,
                 injected_tools=[*stub_tools, *file_tools],
@@ -353,7 +357,9 @@ class InMemoryBackend:
     
     async def dump_to(self, target: Path):
         for (k, v) in self._vfs.items():
-            (target / k).write_text(v)
+            tgt = (target / k)
+            tgt.parent.mkdir(exist_ok=True, parents=True)
+            tgt.write_text(v)
 
 async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: StubDeclarationModel](
     system_doc: SystemDoc,
@@ -475,6 +481,18 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
 
     file_registry = await FileRegistry.acreate(store, FILES_NS + (doc_digest,))
 
+
+    name_to_stub = { nm: stub for (nm, stub) in generated_stubs }
+
+    for c in summary.contract_components:
+        if not _is_new(c):
+            continue
+        assert c.name in name_to_stub
+        await file_registry.register(
+            contract_name=c.name,
+            path=name_to_stub[c.name].path
+        )
+
     with_stub_and_intf, mat_ = source_factory([
         registry, intf_backend
     ])
@@ -492,9 +510,6 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     )
 
     tasks : list[Awaitable[ContractResult]] = []
-
-    name_to_stub = { nm: stub for (nm, stub) in generated_stubs }
-
     new_contracts_with_ind = [
         (ind, c) for ind, c in enumerate(summary.contract_components) if _is_new(c)
     ]
@@ -523,7 +538,11 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
             name=c.name,
             spec_results=res
         ))
+
+    stub_fields_snapshot = await registry.read_fields()
+
     return PipelineResult(
         app=summary,
-        contracts=to_ret
+        contracts=to_ret,
+        stub_fields=stub_fields_snapshot,
     )

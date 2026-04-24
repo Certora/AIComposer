@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from typing import Callable, Literal, override
-from pydantic import Field
+from typing import Callable, Literal, override, Annotated, Literal
+from pydantic import Field, BaseModel, Discriminator
 
 from typing_extensions import TypedDict
 
@@ -93,16 +93,19 @@ class NatspecGenerationState(CVLGenerationState, NatspecGenerationExtra):
 class NatspecGenerationInput(CVLGenerationInput, NatspecGenerationExtra):
     pass
 
-@dataclass
-class GenerationSuccess:
+class GenerationSuccess(BaseModel):
     commentary: str
     skipped: list[SkippedProperty]
     spec: str
     suggested_path: str
+    ty: Literal["success"]
 
-@dataclass
-class GaveUp:
+class GaveUp(BaseModel):
     reason: str
+    ty: Literal["fail"]
+
+class AuthorResult(BaseModel):
+    result_wrapped: Annotated[GaveUp | GenerationSuccess, Discriminator("ty")]
 
 @tool_display(
     label=lambda p: f"Giving up on property generation: {p['reason']}", result=None
@@ -188,7 +191,7 @@ class AdvisoryTypecheck(WithAsyncDependencies[str, TypeChecker], WithInjectedSta
 
 
 async def generate_cvl_batch(
-    ctx: WorkflowContext[CVLGeneration],
+    root_ctx: WorkflowContext[AuthorResult],
     env: ServiceHost,
     system_doc: SystemDoc,
 
@@ -202,6 +205,9 @@ async def generate_cvl_batch(
     stub_reader: Callable[[], str],
     stub_path: str,
 ) -> GenerationSuccess | GaveUp:
+    if (cached := await root_ctx.cache_get(AuthorResult)) is not None:
+        return cached.result_wrapped
+
     def stub_feedback_extras() -> list[str | dict]:
         return [
             f"The current typechecking stub for the {contract_name} stub is",
@@ -222,6 +228,8 @@ async def generate_cvl_batch(
         @property
         def builder(self):
             return env.builder
+    
+    ctx = root_ctx.abstract(CVLGeneration)
 
     feedback_ctxt = property_feedback_judge(
         ctx=ctx.child(CVL_JUDGE_KEY), env=FeedbackEnv(), prompt=FeedbackTemplate.bind({
@@ -274,12 +282,15 @@ async def generate_cvl_batch(
     assert res["failed"] is not None
     # I hate this, but, well, I give up
     if res["failed"]:
-        return GaveUp(reason=res["result"])
+        to_ret = GaveUp(reason=res["result"], ty="fail")
     else:
         assert res["curr_spec"] is not None and res["suggested_spec_path"] is not None
-        return GenerationSuccess(
+        to_ret = GenerationSuccess(
             commentary=res["result"],
             skipped=res["skipped"],
             spec=res["curr_spec"],
-            suggested_path=res["suggested_spec_path"]
+            suggested_path=res["suggested_spec_path"],
+            ty="success"
         )
+    await root_ctx.cache_put(AuthorResult(result_wrapped=to_ret))
+    return to_ret

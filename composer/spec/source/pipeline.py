@@ -39,6 +39,7 @@ from composer.spec.source.prover import get_prover_tool
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation
 from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
+from composer.spec.service_host import ServiceHost
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,9 @@ async def run_autoprove_pipeline(
     s = await run_task(
         handler_factory,
         TaskInfo("system-analysis", "System Analysis", AutoProvePhase.COMPONENT_ANALYSIS),
-        lambda: run_component_analysis(ctx, source_input, env=env)
+        lambda: run_component_analysis(ctx, source_input, env=ServiceHost.from_protocol(
+            env, lambda p: p.source_tools, lambda p: p.rag_tools, "update"
+        ))
     )
 
     if s is None:

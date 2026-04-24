@@ -23,6 +23,7 @@ from composer.spec.system_model import (
 )
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.author import batch_cvl_generation
+from composer.spec.service_host import ServiceHost
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -96,7 +97,12 @@ async def run_generation_pipeline(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{component_idx}", name, AutoProvePhase.BUG_ANALYSIS),
-            lambda conv: run_bug_analysis(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model),
+            lambda conv: run_bug_analysis(feat_ctx, ServiceHost.from_protocol(
+                env,
+                lambda p: p.source_tools,
+                lambda p: p.rag_tools,
+                "update"
+            ), feat, refinement=conv if interactive else None, threat_model=threat_model),
             semaphore,
         )
 

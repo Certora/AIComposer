@@ -65,27 +65,15 @@ reasonable formalized in a symbolic tool.
 
 ## Step 2
 Write a rough draft list of your properties using the provided "write_rough_draft" tool.
-In parallel, record each property into `/memories/property_draft.md` the moment it clears
-the "plausible + formalizable" bar — do not save the whole list for the end.
+The rough-draft tool IS where your property content lives during this task — write the
+actual property text to it. Do not route content through memory.
 
 ## Step 3
 Review your rough draft. For each property/invariant in your rough draft, make sure it meets the guidelines and definitions described in step 1. Pay particular
 attention for properties/invariants explicitly described as being uninteresting or impossible to verify using the Certora Prover.
 
 ## Step 4
-Output the results of your analysis using the result tool. Before calling result, ensure
-`/memories/property_draft.md` contains every property in your final list — the result tool
-ends the workflow, so any memory write you have not yet made at that point will not happen.
-
-<state>
-- `/memories/progress.md` — working-memory scratchpad. Which step of the above algorithm
-  you are currently on; which dimension of the component you are currently analyzing.
-  Update on every sub-task transition.
-- `/memories/property_draft.md` — the durable property list. Grow it as you go per Step 2.
-
-On resume, read both files first and continue from where you left off. Properties
-already recorded in memory do NOT need to be re-derived.
-</state>
+Output the results of your analysis using the result tool.
 </task>
 
 <guidance>

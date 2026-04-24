@@ -150,14 +150,15 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         files: dict[str, str] = {}
 
         for c in result.contracts:
-            n_fail = len(c.failures)
+            n_fail = len(c.spec_results.failures)
             banner_text.append(f"Contract: {c.name}\n")
             banner_text.append(f"  Interface: {c.interface.path}")
             banner_text.append(f"  Failures: {n_fail}\n" if n_fail else "All properties succeeded\n")
             if n_fail:
-                for f in c.failures:
-                    banner_text.append(f"    \u2717 {f.prop.description}: {f.reason}\n", style="red")
-            files[f"certora/{c.stub.solidity_identifier}.spec"] = c.spec
+                for f_group in c.spec_results.failures:
+                    for f in f_group.failed_properties:
+                        banner_text.append(f"    \u2717 {f.description}: {f_group.reason}\n", style="red")
+            # files[f"certora/{c.stub.solidity_identifier}.spec"] = c.spec
             files[f"interfaces/{c.interface.path}"] = c.interface.content
             files[f"stubs/{c.stub.path}"] = c.stub.content
 

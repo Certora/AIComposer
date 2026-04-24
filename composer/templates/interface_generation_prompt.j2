@@ -106,12 +106,20 @@ If an interface you are generating must reference an **existing contract** (from
 above), use that contract's real name and import it directly from its source path — do not invent an `I<Name>`
 interface for it.
 
-{% if existing_contracts %}
-You have source tools available (`list_files`, `get_file`, `grep_files`). Before committing to
-interface paths, use them to inspect the existing project layout — follow whatever convention the
-codebase already uses for interface files (e.g. an existing `interfaces/`, `src/interfaces/`, or
-`contracts/interfaces/` directory). The interface paths you produce must live sensibly within that
-layout.
+### Choosing the file path for each interface
+
+{% if agent_chooses_path %}
+You must choose a project-relative path for each generated interface file. Before committing to
+paths, use your source tools (`list_files`, `get_file`, `grep_files`) to inspect the existing
+project layout and follow whatever convention the codebase already uses for interface files —
+for example an existing `interfaces/`, `src/interfaces/`, or `contracts/interfaces/` directory.
+Each path must end in `.sol`, and the basename should match the interface's solidity identifier
+(e.g. `IFoo.sol` for identifier `IFoo`). If the project has no existing convention, place
+interfaces under `contracts/interfaces/`.
+{% else %}
+File locations for your interfaces are assigned automatically — you do not need to choose paths.
+Focus on the interface content; the path field on each result will be populated from the solidity
+identifier you choose.
 {% endif %}
 
 ## Step 3
