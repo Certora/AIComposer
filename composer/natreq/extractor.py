@@ -141,7 +141,7 @@ async def get_requirements(
     options: RAGDBOptions,
     llm: BaseChatModel,
     sys_doc: InputFileLike,
-    spec_file: InputFileLike,
+    specs: list[tuple[str, InputFileLike]],
     mem_backend: AsyncMemoryBackend,
     resume_artifact: ResumeArtifact | None,
     oracle: list[str]
@@ -176,22 +176,35 @@ async def get_requirements(
         input_text : list[str | dict] = [
             "The system document is as follows:",
             sys_doc.string_contents,
-            "The spec file is as follows:",
-            spec_file.string_contents
         ]
+        if len(specs) == 1:
+            input_text.append("The spec file is as follows:")
+            input_text.append(specs[0][1].string_contents)
+        else:
+            input_text.append(
+                f"The contract has {len(specs)} spec files describing its behavior. "
+                f"Consider them collectively as the formal specification; requirements "
+                f"you extract should cover the contract as a whole."
+            )
+            for (vfs_path, f) in specs:
+                input_text.append(f"Spec file at `{vfs_path}`:")
+                input_text.append(f.string_contents)
 
         if resume_artifact is not None:
             input_text.append("""
-    You have previously performed this analysis on a prior version of the spec file. You have access to the
+    You have previously performed this analysis on a prior version of the spec file(s). You have access to the
     memories you generated during that prior analysis. Be sure to consult those memories to inform your analysis
-    of the system document. In addition, be sure to analyze the difference between the two specification files,
-    being sure to determine which natural language requirements are no longer needed (as they are now covered by the
-    spec).
+    of the system document. In addition, be sure to analyze the difference between the old and new versions of
+    each spec file, being sure to determine which natural language requirements are no longer needed (as they
+    are now covered by the spec).
     """)
-            input_text.append("The OLD spec file is as follows:")
-            input_text.append(
-                resume_artifact.spec_file
-            )
+            if len(resume_artifact.specs) == 1:
+                input_text.append("The OLD spec file is as follows:")
+                input_text.append(resume_artifact.specs[0].string_contents)
+            else:
+                for entry in resume_artifact.specs:
+                    input_text.append(f"OLD spec file at `{entry.vfs_path}`:")
+                    input_text.append(entry.string_contents)
 
         req_oracle : Callable[[tuple[str, str]], str] | None = None
         if oracle is not None and len(oracle):

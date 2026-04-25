@@ -4,7 +4,7 @@ class InputFileLike(Protocol):
     @property
     def basename(self) -> str:
         ...
-    
+
     @property
     def bytes_contents(self) -> bytes:
         ...
@@ -24,8 +24,19 @@ class ManualResult(TypedDict):
     header: str
     similarity: float
 
+class SpecRunEntry(TypedDict):
+    """A single spec file as surfaced to ``RunInput`` callers.
+
+    ``vfs_path`` is the path at which this spec is materialized in the
+    workflow's VFS (greenfield: ``certora/<basename>``; from-source:
+    path relative to the workspace root).
+    """
+    vfs_path: str
+    basename: str
+    contents: str
+
 class RunInput(TypedDict):
-    spec: InputFileLike
+    specs: list[SpecRunEntry]
     interface: InputFileLike
     system: InputFileLike
     reqs: list[str] | None

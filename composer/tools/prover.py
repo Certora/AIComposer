@@ -80,16 +80,38 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
               "should be avoided whenever possible.")
 
     rule: Optional[str] = \
-        Field(description="The specific rule to check from the `spec_file`. If unspecified,"
+        Field(description="The specific rule to check from the target spec file. If unspecified,"
               "all rules are run. Before delivering the finished code to the user, ensure that all rules pass on the most"
               "up to date version of the code. However, when iteratively developing code, it may be useful to focus on a"
               "single, 'problematic' rule.")
-    
-    use_working_spec : bool = Field(description="Use the working copy of the spec instead of the master copy.")
+
+    target_spec: Optional[str] = Field(description=(
+        "The VFS path of the committed spec file to verify against. Required "
+        "when ``use_working_spec`` is false; the prover reads this spec from "
+        "the VFS and records a stamp at ``validation[\"prover:<target_spec>\"]`` "
+        "on success. Ignored when ``use_working_spec`` is true (the transient "
+        "working draft has no target until committed; runs against it do not "
+        "produce a stamp)."
+    ))
+
+    use_working_spec : bool = Field(description=(
+        "If true, verify against the current working spec draft instead of a "
+        "committed spec file. The draft is transient and has no VFS path, so "
+        "``target_spec`` is ignored in this mode and no prover stamp is "
+        "produced. Use this mode to iterate on a draft before committing it."
+    ))
 
     state: Annotated[AIComposerState, InjectedState]
 
     async def run(self) -> Command:
+        if not self.use_working_spec and not self.target_spec:
+            return tool_return(
+                tool_call_id=self.tool_call_id,
+                content=(
+                    "target_spec is required when use_working_spec is false. "
+                    "Pass the VFS path of one of the registered spec files."
+                ),
+            )
         result = await prover_impl(
             self.source_files,
             self.target_contract,
@@ -98,13 +120,21 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
             self.rule,
             self.state,
             self.tool_call_id,
-            self.use_working_spec
+            self.use_working_spec,
+            self.target_spec,
         )
         match result:
             case str():
                 return tool_return(tool_call_id=self.tool_call_id, content=result)
             case RawReport():
-                if result.all_verified and not self.use_working_spec and not self.rule:
+                # Stamp only on: a full (non-ruled) run against a committed
+                # spec that verified. Working-spec runs never stamp.
+                if (
+                    result.all_verified
+                    and not self.use_working_spec
+                    and not self.rule
+                    and self.target_spec is not None
+                ):
                     ctxt = get_runtime(AIComposerContext).context
                     state_digest = compute_state_digest(c=ctxt, state=self.state)
                     return Command(
@@ -116,7 +146,10 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
                                 )
                             ],
                             "validation": {
-                                prover_key: state_digest
+                                # One stamp per spec — the overall task is
+                                # complete when every registered spec has its
+                                # own stamped entry.
+                                f"{prover_key}:{self.target_spec}": state_digest
                             }
                         }
                     )

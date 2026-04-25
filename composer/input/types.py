@@ -143,13 +143,25 @@ class ModelOptions(Protocol):
     )]
 
 class UploadPaths(Protocol):
-    spec_file: str
-    interface_file: str
-    system_doc: str
+    """Legacy CLI triad (optional, single-spec): one spec, one interface, one
+    system doc. All fields may be ``None`` when ``--input-json`` is supplied
+    via ``InputJSONPath``.
+    """
+    spec_file: Optional[str]
+    interface_file: Optional[str]
+    system_doc: Optional[str]
     source_root: Optional[str]
+    contract_name: Optional[str]
+    implementation_path: Optional[str]
 
 
-class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, Protocol):
+class InputJSONPath(Protocol):
+    """Alternative CLI shape: a single JSON file describing the contract task.
+    Mutually exclusive with the legacy triad."""
+    input_json: Optional[str]
+
+
+class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, InputJSONPath, Protocol):
     debug_fs: str
 
     debug: bool
@@ -166,22 +178,47 @@ class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
     commentary: Optional[str]
     updated_system: Optional[str]
 
-    # resume-id
-    new_spec: str
+    # resume-id: list of new spec entries. Bare path → mapped to the prior
+    # run's single registered spec (error if the prior run had multiple).
+    # ``<vfs_path>=<local_file>`` → explicitly targets a specific spec.
+    new_spec: list[str]
 
     # resume-fs
     working_dir: str
 
 
 @dataclass
+class SpecInput:
+    """A single spec file paired with the VFS path at which it should be
+    materialized inside the workflow's virtual filesystem."""
+    file: UploadedFile
+    vfs_path: str
+
+
+@dataclass
 class InputData:
+    """Normalized codegen workflow input for a single contract task.
+
+    Carries one or more specs (all describing the same contract), the contract's
+    interface, the surrounding system document, and optional metadata (contract
+    name, expected implementation path, per-task prover config). The VFS path
+    for each spec is resolved at ``upload_input`` time so downstream code
+    (executor, prover tool, propose_spec_change) can key off a stable location.
+
+    Greenfield inputs land at ``certora/<basename>``; inputs given with a
+    ``source_root`` land at their workspace-relative path.
     """
-    Represents all of the file inputs provided by the user after uploading
-    """
-    spec: UploadedFile
+    specs: list[SpecInput]
     system_doc: UploadedFile
     intf: UploadedFile
     source_root: Optional[str] = None
+    contract_name: Optional[str] = None
+    implementation_path: Optional[str] = None
+    prover_conf: Optional[dict] = None
+
+    @property
+    def spec_vfs_paths(self) -> list[str]:
+        return [s.vfs_path for s in self.specs]
 
 
 class ResumeInput(Protocol):
@@ -200,7 +237,10 @@ class ResumeInput(Protocol):
 @dataclass
 class ResumeIdData:
     thread_id: str
-    new_spec: NativeFS
+    # Mapping from VFS path → new spec content. Only paths present here are
+    # updated on resume; other specs keep their prior state. For single-spec
+    # resumes from legacy CLI callers, this dict carries one entry.
+    new_specs: dict[str, NativeFS]
     comments: Optional[str]
     new_system: Optional[NativeFS]
 

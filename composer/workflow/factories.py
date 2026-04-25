@@ -29,15 +29,19 @@ def get_vfs_tools(
         return vfs_tools(VFSToolConfig(
             fs_layer=fs_layer,
             immutable=False,
-            forbidden_write="^rules.spec$",
+            # Block writes to ANY spec file. Spec mutations must go through
+            # propose_spec_change (for committed edits) or write_working_spec
+            # + commit_working_spec (for iterative drafts).
+            forbidden_write=r"^.+\.spec$",
             put_doc_extra= \
     """
     By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library definitions.
-    Further, the name of the contract/interface/library defined in that file should name the name of the solidity source file sans extension.
-    For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`"
+    Further, the name of the contract/interface/library defined in that file should match the name of the solidity source file sans extension.
+    For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`.
 
-    IMPORTANT: You may not use this tool to update the specification, nor should you attempt to
-    add new specification files.
+    IMPORTANT: You may not use this tool to update, create, or delete any spec file (any path ending in `.spec`).
+    All spec mutations must go through the propose_spec_change tool (for committed edits) or the
+    write_working_spec / commit_working_spec flow (for iterative drafts).
     """
         ), AIComposerState)
 

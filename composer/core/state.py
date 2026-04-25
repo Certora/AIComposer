@@ -25,6 +25,10 @@ def merge_skips(left: set[int], right: set[int]) -> set[int]:
 class AIComposerExtra(TypedDict):
     validation: Annotated[dict[str, str], merge_validation]
     skipped_reqs: Annotated[set[int], merge_skips]
+    # Single temporary spec draft. Conceptually a scratch file the agent is
+    # iterating on; it has no "name" in the VFS until committed. Commit is
+    # essentially `mv <working_spec> <target_path>` and is the only point at
+    # which the draft gets bound to a concrete spec file.
     working_spec: str | None
 
 class AIComposerInput(VFSInput, AIComposerExtra):

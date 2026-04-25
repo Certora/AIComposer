@@ -23,7 +23,7 @@ from composer.workflow.types import PromptParams, WorkflowSuccess, WorkflowFailu
 from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.prover.core import CloudConfig
-from composer.core.validation import ValidationType, prover, reqs as req_type
+from composer.core.validation import prover, reqs as req_type
 from composer.rag.db import PostgreSQLRAGDatabase, rag_context, ComposerRAGDB
 from composer.rag.models import get_model as get_rag_model
 from composer.audit.store import AuditStore, AuditStoreSink, ResumeArtifact
@@ -46,9 +46,14 @@ _KB_NS = DEFAULT_KB_NS
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
     return load_jinja_template(
         "workflow_info.j2",
-        spec_filename=input_data.spec.basename,
+        spec_entries=[
+            {"vfs_path": s.vfs_path, "basename": s.file.basename}
+            for s in input_data.specs
+        ],
         interface_filename=input_data.intf.basename,
         system_doc_filename=input_data.system_doc.basename,
+        contract_name=input_data.contract_name,
+        implementation_path=input_data.implementation_path,
         debug_prompt=debug_prompt)
 
 def _get_empty_extra() -> AIComposerExtra:
@@ -58,15 +63,19 @@ def _get_empty_extra() -> AIComposerExtra:
 
 
 def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> AIComposerInput:
-    return AIComposerInput(input=[
-                input.intf.to_document_dict(),
-                input.spec.to_document_dict(),
-                input.system_doc.to_document_dict(),
-                {
-                    "type": "text",
-                    "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
-                }
-            ], vfs={"rules.spec": input.spec.read()}, **_get_empty_extra())
+    vfs: dict[str, str] = {}
+    for s in input.specs:
+        vfs[s.vfs_path] = s.file.read()
+
+    messages: list[str | dict] = [input.intf.to_document_dict()]
+    for s in input.specs:
+        messages.append(s.file.to_document_dict())
+    messages.append(input.system_doc.to_document_dict())
+    messages.append({
+        "type": "text",
+        "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
+    })
+    return AIComposerInput(input=messages, vfs=vfs, **_get_empty_extra())
 
 @dataclass
 class InputChangeDesc:
@@ -78,10 +87,17 @@ class InputChangeDesc:
 
     vfs_note: Optional[str]
 
+@dataclass
+class SpecDelta:
+    """Per-spec before/after pair for resume prompt rendering."""
+    vfs_path: str
+    orig_text: str
+    updated_text: str
+
 def get_resume_prompt_common(
         art: ResumeArtifact,
         res: ResumeInput,
-        updated_spec: str,
+        spec_deltas: list[SpecDelta],
         other_changes: list[InputChangeDesc] | None = None
         ) -> list[str | dict]:
     changes = []
@@ -101,37 +117,73 @@ def get_resume_prompt_common(
         "resume_prompt.j2",
         commentary=art.commentary,
         spec_change_commentary=res.comments,
-        orig_spec=art.spec_file,
-        new_spec=updated_spec,
+        spec_deltas=[
+            {
+                "vfs_path": d.vfs_path,
+                "orig_text": d.orig_text,
+                "updated_text": d.updated_text,
+            }
+            for d in spec_deltas
+        ],
         other_changes=changes
     )]
 
 def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> AIComposerInput:
+    spec_deltas: list[SpecDelta] = []
+    for vfs_path, new_file in input.new_specs.items():
+        orig = resume_art.spec_at(vfs_path)
+        spec_deltas.append(SpecDelta(
+            vfs_path=vfs_path,
+            orig_text=orig,
+            updated_text=new_file.string_contents,
+        ))
 
     input_messages : list[str | dict] = get_resume_prompt_common(
         art=resume_art,
         res=input,
-        updated_spec=input.new_spec.string_contents
+        spec_deltas=spec_deltas,
     )
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
 
     vfs_materialize = resume_art.vfs.to_dict()
     new_vfs = { k: v.decode("utf-8") for (k, v) in vfs_materialize.items() }
-    new_vfs["rules.spec"] = input.new_spec.string_contents
+    for vfs_path, new_file in input.new_specs.items():
+        new_vfs[vfs_path] = new_file.string_contents
     return AIComposerInput(
         input=input_messages,
         vfs=new_vfs,
         **_get_empty_extra()
     )
 
-def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[AIComposerInput, InputFileLike, InputFileLike]:
+def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[AIComposerInput, InputFileLike, list[tuple[str, InputFileLike]]]:
+    """Resume from a file-system directory that mirrors the last run's VFS.
+
+    Every spec VFS path registered with the run at its original start is
+    expected to exist at ``<input.file_path>/<vfs_path>``. Specs whose
+    contents have changed relative to the resume artifact are recorded as
+    deltas for the resume prompt. Returns the flow input plus handles to
+    the interface and all specs (for re-registration in the audit store).
+    """
     path = pathlib.Path(input.file_path)
 
-    spec_p = path / "rules.spec"
-    if not spec_p.is_file():
-        raise RuntimeError("Specification file is apparently missing")
-    new_spec = spec_p.read_text()
+    spec_deltas: list[SpecDelta] = []
+    spec_handles: list[tuple[str, InputFileLike]] = []
+    for vfs_path in resume_art.spec_vfs_paths:
+        spec_p = path / vfs_path
+        if not spec_p.is_file():
+            raise RuntimeError(
+                f"Spec file missing on resume: expected {spec_p} to exist"
+            )
+        new_spec_content = spec_p.read_text()
+        orig = resume_art.spec_at(vfs_path)
+        if new_spec_content != orig:
+            spec_deltas.append(SpecDelta(
+                vfs_path=vfs_path,
+                orig_text=orig,
+                updated_text=new_spec_content,
+            ))
+        spec_handles.append((vfs_path, NativeFS(spec_p)))
 
     intf_p = path / resume_art.interface_path
     if not intf_p.is_file():
@@ -149,7 +201,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
         art=resume_art,
         res=input,
         other_changes=changes,
-        updated_spec=new_spec
+        spec_deltas=spec_deltas,
     )
     input_messages.append("In addition to the explicit changes mentioned above, the contents of the VFS may have been arbitrarily changed since your last work. " \
     "Some of these changes may cause the current implementation to no longer compile. Thus, analyze the current implementation and consider what changes are necessary to " \
@@ -158,7 +210,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
 
-    return (AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()), NativeFS(intf_p), NativeFS(spec_p))
+    return (AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()), NativeFS(intf_p), spec_handles)
 
 
 async def _execute_ai_composer_workflow(
@@ -194,8 +246,12 @@ async def _execute_ai_composer_workflow(
 
     system_doc: InputFileLike
     interface_file: InputFileLike
-    spec_file: InputFileLike
+    # (vfs_path, file) pairs — always at least one entry.
+    specs_for_audit: list[tuple[str, InputFileLike]]
     resume_art : None | ResumeArtifact = None
+    # Per-task prover conf override sourced from the input (InputData.prover_conf
+    # for fresh runs; from the resume artifact's prior run for resumes — TODO).
+    task_prover_conf: dict | None = None
 
     audit_store = AuditStore(store)
 
@@ -207,8 +263,9 @@ async def _execute_ai_composer_workflow(
             flow_input = get_fresh_input(input, workflow_options)
             system_doc = input.system_doc
             interface_file = input.intf
-            spec_file = input.spec
+            specs_for_audit = [(s.vfs_path, s.file) for s in input.specs]
             fs_layer = input.source_root
+            task_prover_conf = input.prover_conf
 
         case ResumeIdData() | ResumeFSData():
             prompt_params = PromptParams(is_resume=True, has_kickstart=has_kickstart)
@@ -220,12 +277,25 @@ async def _execute_ai_composer_workflow(
                 system_doc = input.new_system
             match input:
                 case ResumeFSData():
-                    (flow_input, interface_file, spec_file) = get_resume_fs_input(input, resume_art, workflow_options)
+                    (flow_input, interface_file, specs_for_audit) = get_resume_fs_input(input, resume_art, workflow_options)
                     fs_layer = input.file_path
                 case ResumeIdData():
                     interface_file = resume_art.intf_vfs_handle
                     flow_input = get_resume_id_input(input, resume_art, workflow_options)
-                    spec_file = input.new_spec
+                    # Re-register every spec. Any updates from input.new_specs
+                    # have already been overlaid into flow_input.vfs; for the
+                    # audit store we want the content that will be in play.
+                    specs_for_audit = []
+                    for vfs_path in resume_art.spec_vfs_paths:
+                        if vfs_path in input.new_specs:
+                            specs_for_audit.append((vfs_path, input.new_specs[vfs_path]))
+                        else:
+                            # Unchanged spec: reuse the stored entry as a
+                            # lightweight InputFileLike via the resume artifact.
+                            for entry in resume_art.specs:
+                                if entry.vfs_path == vfs_path:
+                                    specs_for_audit.append((vfs_path, entry))
+                                    break
 
     req_memories = mem(
         get_memory_ns(mem_root, "natreq")
@@ -250,7 +320,7 @@ async def _execute_ai_composer_workflow(
                 workflow_options,
                 llm,
                 system_doc,
-                spec_file,
+                specs_for_audit,
                 req_memories,
                 resume_art,
                 workflow_options.requirements_oracle
@@ -327,7 +397,7 @@ async def _execute_ai_composer_workflow(
         thread_id=thread_id,
         system_doc=system_doc,
         interface_file=interface_file,
-        spec_file=spec_file,
+        specs=specs_for_audit,
         vfs_init=materializer.iterate(flow_input),
         reqs=reqs_list
     )
@@ -377,14 +447,25 @@ async def _execute_ai_composer_workflow(
         cloud=None if workflow_options.local_prover else CloudConfig(),
     )
 
-    required_validations : list[ValidationType] = [prover]
+    # One prover stamp per registered spec — the task isn't done until every
+    # spec has been verified on its own. The prover tool writes
+    # ``validation["prover:<spec_vfs_path>"] = digest``; completion check
+    # iterates this same list.
+    required_validations : list[str] = [
+        f"{prover}:{vfs_path}" for (vfs_path, _) in specs_for_audit
+    ]
     if reqs_list is not None:
         required_validations.append(req_type)
+
+    # Prover conf resolution order: InputData-carried (per-task, primary) →
+    # programmatic override (legacy) → None. The CLI's --prover-conf is loaded
+    # into InputData.prover_conf at upload time for the legacy triad path.
+    effective_prover_conf = task_prover_conf if task_prover_conf is not None else prover_conf_overrides
 
     work_context = AIComposerContext(
         llm=llm, rag_db=rag, prover_opts=prover_opts,
         vfs_materializer=materializer, required_validations=required_validations,
-        prover_conf_overrides=prover_conf_overrides,
+        prover_conf_overrides=effective_prover_conf,
     )
 
     audit_sink = AuditStoreSink(audit_store, thread_id)

@@ -3,7 +3,7 @@ import asyncio
 import composer.certora as _
 
 from composer.input.parsing import resume_workflow_parser
-from composer.workflow.services import create_llm, store_context
+from composer.workflow.services import create_llm, store_context, checkpointer_context
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
 from composer.ui.console import ConsoleHandler
@@ -55,9 +55,32 @@ async def main() -> int:
                 )
             else:
                 assert args.command == "resume-id"
+                # The CLI accepts a single --new-spec file path; map it onto
+                # the resume artifact's registered spec paths. If the prior
+                # run had exactly one spec, the mapping is unambiguous;
+                # otherwise the user must supply the VFS path explicitly via
+                # ``<vfs_path>=<local_file>`` syntax (repeatable).
+                new_specs: dict[str, NativeFS] = {}
+                async with store_context() as store:
+                    audit = AuditStore(store)
+                    art = await audit.get_resume_artifact(args.src_thread_id)
+                raw_entries = args.new_spec if isinstance(args.new_spec, list) else [args.new_spec]
+                for entry in raw_entries:
+                    if "=" in entry:
+                        vfs_path, local_path = entry.split("=", 1)
+                        new_specs[vfs_path] = NativeFS(pathlib.Path(local_path))
+                    else:
+                        if len(art.spec_vfs_paths) != 1:
+                            print(
+                                f"Prior run has {len(art.spec_vfs_paths)} registered spec files "
+                                f"({art.spec_vfs_paths}); --new-spec must be given as "
+                                f"`<vfs_path>=<local_file>` to disambiguate which one to update."
+                            )
+                            return 1
+                        new_specs[art.spec_vfs_paths[0]] = NativeFS(pathlib.Path(entry))
                 input_data = ResumeIdData(
                     thread_id=args.src_thread_id,
-                    new_spec=NativeFS(pathlib.Path(args.new_spec)),
+                    new_specs=new_specs,
                     comments=commentary,
                     new_system=new_system
                 )

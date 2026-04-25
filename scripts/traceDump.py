@@ -202,12 +202,17 @@ async def main() -> None:
             )
 
         def handle_propose_spec_change(step: dict, message_queue: MessageQueue) -> ProposalStep:
-            """Handle propose_spec_change tool case."""
+            """Handle propose_spec_change tool case.
+
+            The target spec VFS path is now a tool argument (``target_path``);
+            old single-spec traces without it fall back to ``rules.spec``.
+            """
             question_input = step["input"]
             explanation = question_input["explanation"]
             proposed_spec = question_input["proposed_spec"]
-            curr_version = vfs.curr_data["rules.spec"]
-            diff = compute_diff("rules.spec", curr_version, proposed_spec)
+            target_path = question_input.get("target_path", "rules.spec")
+            curr_version = vfs.curr_data.get(target_path, "")
+            diff = compute_diff(target_path, curr_version, proposed_spec)
             resp = extract_human_response(message_queue)
             result = ProposalStep(
                 type="proposal",
@@ -217,7 +222,7 @@ async def main() -> None:
                 proposed_diff=diff
             )
             if resp.startswith("ACCEPTED"):
-                vfs.push_update({"rules.spec": proposed_spec})
+                vfs.push_update({target_path: proposed_spec})
             return result
 
         def handle_code_result(step: dict) -> ResultStep:

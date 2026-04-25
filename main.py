@@ -1,4 +1,4 @@
-import composer.certora as _
+import composer.bind as _
 
 import asyncio
 
@@ -26,7 +26,7 @@ async def main() -> int:
 
     print("Reading input files...")
 
-    input_data = upload_input(args)
+    input_data = upload_input(args, prover_conf_path=args.prover_conf)
 
     print("Starting AI Composer workflow...")
     result = await execute_ai_composer_workflow(

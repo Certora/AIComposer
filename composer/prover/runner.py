@@ -26,6 +26,7 @@ type _ProverEvents = ProverOutputEvent | CloudPollingEvent | ProverRun | ProverR
 
 
 _COMPOSER_CONF_NAME = "_composer_run.conf"
+_WORKING_SPEC_SCRATCH = "_composer_working.spec"
 
 
 def _build_conf_args(
@@ -34,6 +35,7 @@ def _build_conf_args(
     overrides: dict,
     source_files: List[str],
     target_contract: str,
+    target_spec: str,
     compiler_version: str,
     loop_iter: int,
     rule: Optional[str],
@@ -47,7 +49,7 @@ def _build_conf_args(
     """
     conf: dict = {**overrides}
     conf["files"] = list(source_files)
-    conf["verify"] = f"{target_contract}:./rules.spec"
+    conf["verify"] = f"{target_contract}:./{target_spec}"
     conf["solc"] = compiler_version
     conf["optimistic_loop"] = True
     conf["optimistic_hashing"] = True
@@ -161,10 +163,24 @@ async def certora_prover(
     rule: Optional[str],
     state: AIComposerState,
     tool_call_id: str,
-    use_working_spec: bool
+    use_working_spec: bool,
+    target_spec: Optional[str],
 ) -> SummarizedReport | RawReport | str:
-    if use_working_spec and not state["working_spec"]:
-        return "No working spec written."
+    if use_working_spec:
+        ws = state["working_spec"]
+        if not ws:
+            return "No working spec written."
+        # The working draft has no VFS path; write it to a scratch location
+        # inside the materialized tmpdir and verify against that. The caller
+        # should not have passed target_spec; if they did, it's ignored.
+        effective_spec = _WORKING_SPEC_SCRATCH
+    else:
+        if target_spec is None:
+            return (
+                "target_spec is required when use_working_spec is false. "
+                "Pass the VFS path of one of the registered spec files."
+            )
+        effective_spec = target_spec
     runtime = get_runtime(AIComposerContext)
     ctxt = runtime.context
     writer = get_stream_writer()
@@ -173,7 +189,7 @@ async def certora_prover(
         if use_working_spec:
             ws = state["working_spec"]
             assert ws is not None
-            (Path(temp_dir) / "rules.spec").write_text(ws)
+            (Path(temp_dir) / _WORKING_SPEC_SCRATCH).write_text(ws)
         try:
             if ctxt.prover_conf_overrides is not None:
                 args = _build_conf_args(
@@ -181,6 +197,7 @@ async def certora_prover(
                     overrides=ctxt.prover_conf_overrides,
                     source_files=source_files,
                     target_contract=target_contract,
+                    target_spec=effective_spec,
                     compiler_version=compiler_version,
                     loop_iter=loop_iter,
                     rule=rule,
@@ -189,7 +206,7 @@ async def certora_prover(
                 args = source_files.copy()
                 args.extend([
                     "--verify",
-                    f"{target_contract}:./rules.spec",
+                    f"{target_contract}:./{effective_spec}",
                     "--optimistic_loop",
                     "--optimistic_hashing",
                     "--loop_iter",

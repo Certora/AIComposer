@@ -132,14 +132,42 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
 
 def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
-    """Configure command line argument parser."""
+    """Configure command line argument parser.
+
+    Two input modes:
+      1. Legacy triad (single spec): positional ``spec_file`` ``interface_file``
+         ``system_doc``. Good for one-off single-spec runs.
+      2. JSON input (``--input-json path.json``): describes a contract task
+         with multiple specs, optional contract name, implementation path,
+         source root, and per-task prover config. Positional args are not
+         required (and ignored) when ``--input-json`` is supplied.
+    """
     parser = argparse.ArgumentParser(description="Certora AI Composer for Smart Contract Generation")
-    parser.add_argument("spec_file", help="Specification file for the smart contract")
-    parser.add_argument("interface_file", help="The interface file for the smart contract")
-    parser.add_argument("system_doc", help="A text document describing the system")
+    # Positionals are optional so that ``--input-json`` can supply them instead.
+    # Post-parse validation enforces that exactly one of the two modes is used.
+    parser.add_argument("spec_file", nargs='?', default=None,
+                        help="Specification file for the smart contract (legacy single-spec mode)")
+    parser.add_argument("interface_file", nargs='?', default=None,
+                        help="The interface file for the smart contract (legacy single-spec mode)")
+    parser.add_argument("system_doc", nargs='?', default=None,
+                        help="A text document describing the system (legacy single-spec mode)")
+    parser.add_argument("--input-json", default=None,
+                        help="Path to a JSON file describing the contract task (multi-spec mode). "
+                             "Mutually exclusive with the positional spec/interface/system-doc triad. "
+                             "Schema: {name?, interface, implementation_path?, specs[], system_doc, "
+                             "source_root?, prover_conf?}. Relative paths resolve against the JSON "
+                             "file's directory.")
     parser.add_argument("--source-root", default=None,
                         help="Path to an existing codebase to use as the VFS underlay. "
-                             "When set, agents see existing files read-only and can layer new files on top.")
+                             "When set, agents see existing files read-only and can layer new files on top. "
+                             "In JSON mode, this is taken from the JSON's source_root field instead.")
+    parser.add_argument("--contract-name", default=None,
+                        help="Solidity identifier of the contract being implemented. Informational; "
+                             "agents may still choose their own target_contract per prover run. "
+                             "In JSON mode, taken from the JSON's name field instead.")
+    parser.add_argument("--implementation-path", default=None,
+                        help="Suggested VFS path for the generated Solidity implementation. "
+                             "In JSON mode, taken from the JSON's implementation_path field instead.")
     _common_options(parser)
 
     return cast(TypedArgumentParser[CommandLineArgs], parser)
@@ -160,7 +188,17 @@ def resume_workflow_parser() -> TypedArgumentParser[ResumeArgs]:
 
     resume_id_args = sub_parse.add_parser("resume-id")
     _common_resume_args(resume_id_args)
-    resume_id_args.add_argument("new_spec", help="The path to the new spec file.")
+    resume_id_args.add_argument(
+        "new_spec",
+        nargs='+',
+        help=(
+            "Path(s) to the new spec file(s) to apply on resume. If the prior "
+            "run had exactly one spec, a bare file path works (it's mapped to "
+            "that single spec's VFS path). If the prior run had multiple specs, "
+            "each argument must use the form ``<vfs_path>=<local_file>`` to "
+            "disambiguate. Multiple arguments allowed."
+        ),
+    )
     _final_resume_option(resume_id_args)
 
     resume_fs_args = sub_parse.add_parser("resume-dir")

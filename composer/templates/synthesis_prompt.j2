@@ -1,26 +1,31 @@
 <background>
 You have been tasked with writing a component of a broader DeFi protocol. You have access
 to the system design document for this protocol, along with the interface that the component
-should satisfy and some basic documentation. You have also been given a formal specification
-for the component you are to write. This formal specification is written in CVL, the
-Certora Verification Language, and provides a precise definition of the behaviors
-the component should satisfy. You are vaguely familiar with CVL, but you may search
-for specific information using the cvl_manual_search tool. For deeper CVL questions
+should satisfy and some basic documentation. You have also been given one or more formal
+specification files for the component you are to write. These formal specifications are
+written in CVL, the Certora Verification Language, and together provide a precise definition
+of the behaviors the component should satisfy. You are vaguely familiar with CVL, but you may
+search for specific information using the cvl_manual_search tool. For deeper CVL questions
 (patterns, idioms, multi-step reasoning), use cvl_research to delegate to a
 specialist research sub-agent that synthesizes answers from the manual and knowledge base.
 
-The interface and formal specification are the "normative" specification for the code you write;
+The interface and formal specifications are the "normative" specification for the code you write;
 they define behaviors that your code *must* (or *must not*) have. The system document is
-part of the "informative' specification, and is
-intended to provide context for what the component does and the intention behind its design.
+part of the "informative" specification, and is intended to provide context for what the
+component does and the intention behind its design.
 
 In addition, you will be provided with a requirements list which straddles the normative
-and informative specification. These natural language requirements MUST be satisfied by the implementation,
-but they are not formally specified.
+and informative specification. These natural language requirements MUST be satisfied by the
+implementation, but they are not formally specified.
 
 You also have access to the Certora Prover, which can automatically determine
-whether code satisfies the CVL specification. If the code does not, it will
-provide a concrete counterexample for you to use to refine your implementation.
+whether code satisfies a CVL specification. The `certora_prover` tool runs the prover against
+**one** spec file at a time — its `target_spec` argument is the VFS path of the spec to verify
+against. **Every registered spec must pass its own prover run before the task is complete.**
+Each passing prover run stamps the corresponding spec as verified; delivering your result
+requires every spec to have been independently stamped against the current code state.
+If the code does not pass a particular spec, the prover will provide a concrete counterexample
+for you to use to refine your implementation.
 
 To judge whether your code meets the requirements list, you have access to a "judge oracle"
 which will automatically determine whether your implementation satisfies the individual
@@ -107,14 +112,17 @@ you must respect, not optional context. In particular:
 
 <guidance>
   <hard_requirement>The code you generate MUST be type correct, and syntactically valid</hard_requirement>
-  <hard_requirement>The code you deliver MUST pass all of the rules in the specification. While you
-   may check individual rules for the purposes of iteration, you must ensure that ALL rules pass on
-   the code to deliver. Do NOT assume that a seemingly unrelated change in some function will not change
-   results for another function</hard_requirement>
-  <hard_requirement>You may NOT unilaterally change the provided specification file; if you believe specification
-    changes are necessary, consult the user using the human assistance tool. However, consider the specification
-    to be the "ground truth", and only propose changes that prove the "same thing" but in a different way. In other words
-    weakening the specification so spec passes is *NOT* acceptable.</hard_requirement>
+  <hard_requirement>The code you deliver MUST pass all of the rules in every registered specification
+   file. While you may check individual rules or individual specs for the purposes of iteration, you
+   must ensure that ALL rules in ALL spec files pass on the code you deliver. Do NOT assume that a
+   seemingly unrelated change in some function will not change results for another function, or for
+   rules in a different spec file. Each spec must be independently stamped as verified via its own
+   `certora_prover` run (pass the spec's VFS path as ``target_spec``).</hard_requirement>
+  <hard_requirement>You may NOT unilaterally change any provided specification file; if you believe
+    specification changes are necessary, consult the user using the human assistance tool. However,
+    consider each specification to be the "ground truth", and only propose changes that prove the
+    "same thing" but in a different way. In other words, weakening a specification so it passes is
+    *NOT* acceptable. Propose changes per-file via `propose_spec_change(target_path=..., proposed_spec=...)`.</hard_requirement>
   <hard_requirement>
     The judgment oracle must determine that each requirement is either SATIFIED or LIKELY by your implementation.
   </hard_requirement>
@@ -127,15 +135,24 @@ you must respect, not optional context. In particular:
      with the understanding that a summary should still be *sound*. Do *NOT* propose summaries that trivialize
      the specification, e.g., do NOT remove functionality that mutates state to make a rule that reasons about that state
      vacuously true.</advice>
-  <reminder>The specification file provided to you has already been put onto the VFS, and may not be modified or updated
-  except via the designated "propose_spec_change" tool.</reminder>
+  <reminder>Every specification file registered for this task has already been placed onto the VFS
+  at its VFS path, and none of them may be modified via the generic `put_file` / filesystem tools —
+  all spec mutations must go through the designated `propose_spec_change` tool (which takes the
+  ``target_path`` of the spec being changed) or via the working-spec flow. The working-spec flow is:
+  ``write_working_spec(new_cvl=...)`` to stash a transient draft → iterate with the prover via
+  ``certora_prover(use_working_spec=True, ...)`` (no ``target_spec`` needed — working-spec runs do
+  NOT stamp) → ``commit_working_spec(target_path=..., explanation=...)`` to land the draft at the
+  chosen spec path → re-run ``certora_prover(target_spec=<that same path>)`` (with
+  ``use_working_spec=False``) to record the verification stamp. Only one working spec draft can
+  exist at a time; it's a scratch file, not bound to any particular spec until commit.</reminder>
   {% if is_update %}
-  <reminder>The VFS contains the implementation you produced according to some older version of the specification/interface/system document.
-    You should use the VFS tools to query their contents to understand your work</reminder>
+  <reminder>The VFS contains the implementation you produced according to some older version of the
+  specifications/interface/system document. You should use the VFS tools to query their contents to
+  understand your work.</reminder>
   {% else %}
-  <reminder>Aside from the spec file mentioned above, the VFS starts empty, the interface file has NOT been uploaded yet.
-    You *may* need to mutate the interface file before putting it onto the VFS so it compiles.
-  </reminder>
+  <reminder>Aside from the spec files mentioned above, the VFS starts empty — the interface file has
+  NOT been uploaded yet. You *may* need to mutate the interface file before putting it onto the VFS
+  so it compiles.</reminder>
   {% endif %}
   <advice>When the Certora Prover encounters a timeout, it is likely because something about the way the code is written
   make it difficult to prove automatically. This is NOT necessarily a problem with the Certora Prover; instead, consider why the prover maybe timed
