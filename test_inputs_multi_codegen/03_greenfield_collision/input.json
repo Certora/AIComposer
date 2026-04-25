@@ -1,0 +1,10 @@
+{
+  "_description": "EXPECTED FAILURE at upload time. Two specs with the same basename (foo.spec) in different subdirectories. Greenfield VFS layout would send both to certora/foo.spec; collision detection should raise before any agent runs. Error message should mention both source paths.",
+  "name": "Counter",
+  "interface": "ICounter.sol",
+  "specs": [
+    "subdir_a/foo.spec",
+    "subdir_b/foo.spec"
+  ],
+  "system_doc": "design.md"
+}

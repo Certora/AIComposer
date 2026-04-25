@@ -1,0 +1,13 @@
+{
+  "_description": "Greenfield, single spec, with a prover_conf section in the JSON. The executor should use this as the prover conf overrides (AIComposerContext.prover_conf_overrides), NOT whatever workflow_options.prover_conf might point at. Verify by checking the prover invocation logs: --prover_args should include -smt_timeout 300, and the conf should include a 'packages' entry.",
+  "name": "Counter",
+  "interface": "ICounter.sol",
+  "implementation_path": "Counter.sol",
+  "specs": ["Counter.spec"],
+  "system_doc": "design.md",
+  "prover_conf": {
+    "packages": ["example=./packages/example"],
+    "smt_timeout": "300",
+    "solc_args": ["--via-ir"]
+  }
+}

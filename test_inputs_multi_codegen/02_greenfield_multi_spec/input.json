@@ -1,0 +1,11 @@
+{
+  "_description": "Two specs for one contract, greenfield. Both land in the VFS at certora/<basename>.spec. Two prover stamps required: prover:certora/counter_behavior.spec AND prover:certora/counter_invariants.spec. The agent must verify each independently via separate certora_prover calls with different target_spec values.",
+  "name": "Counter",
+  "interface": "ICounter.sol",
+  "implementation_path": "Counter.sol",
+  "specs": [
+    "counter_behavior.spec",
+    "counter_invariants.spec"
+  ],
+  "system_doc": "design.md"
+}

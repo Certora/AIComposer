@@ -1,0 +1,10 @@
+{
+  "_description": "EXPECTED FAILURE at upload time. source_root points to ./workspace, but the listed spec is at ./stray.spec (a sibling of workspace, NOT inside it). From-source mode requires every spec to resolve to a descendant of source_root; the upload step should raise a clear error naming the offending path and the source_root.",
+  "name": "Counter",
+  "interface": "workspace/contracts/ICounter.sol",
+  "specs": [
+    "stray.spec"
+  ],
+  "system_doc": "design.md",
+  "source_root": "workspace"
+}
