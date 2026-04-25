@@ -39,6 +39,28 @@ you should also use the cvl_research tool for help when you are struggling with 
 
 You are writing a CVL file without any implementation for the contract being verified.
 
+**The stub is NOT the implementation under verification.** It is a non-functional skeleton
+whose only purpose is to give the CVL typechecker something to bind against. Its
+constructor does nothing, its function bodies are empty, and its storage starts at whatever
+defaults Solidity gives it. These are not the contract's real semantics — they are artifacts
+of the stub's purpose as a typechecking target.
+
+Therefore:
+
+- Do **NOT** reason about the stub's initial state, constructor behavior, or default field
+  values as if they were the contract's true semantics. The real implementation does not
+  exist yet; your spec describes what that implementation must satisfy.
+- Do **NOT** skip a property on the grounds that "it fails against the stub", "the stub's
+  constructor doesn't initialize X", "the invariant's base case fails post-construction",
+  or similar. Those are stub-fidelity concerns, not property-expressibility concerns, and
+  they are **INVALID** skip grounds.
+- Do **NOT** add `require` preconditions whose purpose is to hide the stub's trivial
+  behavior. Write the spec as it should hold for a correctly-implemented contract; the
+  Prover will judge the real implementation once it exists.
+
+Valid skip grounds remain what they have always been: the property is genuinely beyond
+CVL's expressiveness (see the skipping guidance below).
+
 Every {%if sort != "greenfield"%}other contract, {%endif%}interface, and generated stub in
 the application is visible through your source tools. Use `list_files` to enumerate what's
 available, `get_file` to read, and `grep_files`

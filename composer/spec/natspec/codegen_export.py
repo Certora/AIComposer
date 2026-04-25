@@ -431,6 +431,104 @@ def plan_to_json(plan: ImplementationPlan) -> dict:
     }
 
 
+def plan_preview_files(plan: ImplementationPlan) -> dict[str, str]:
+    """Flatten a plan's contracts into a ``{relative_path: content}`` map
+    suitable for ``IDEBridge.preview_results``.
+
+    For each contract, includes its interface source, stub source, and every
+    spec entry at the paths the plan declares. Collisions across contracts
+    (shouldn't happen in a well-formed plan, but who knows) are resolved by
+    later contracts overwriting earlier ones — call sites should treat a
+    duplicate path as a plan bug.
+    """
+    files: dict[str, str] = {}
+    for c in plan.contracts:
+        files[c.interface_path] = c.interface_source
+        files[c.stub_path] = c.stub_source
+        for spec in c.specs:
+            files[spec.filename] = spec.content
+    return files
+
+
+def plan_as_markdown(plan: ImplementationPlan) -> str:
+    """Render a plan as a human-readable Markdown summary.
+
+    Suitable for ``IDEBridge.show_webview`` (VS Code renders it via its own
+    Markdown pipeline). Intended as a review aid, not a machine handoff —
+    the authoritative format is the JSON produced by ``plan_to_json``.
+    """
+    lines: list[str] = []
+    lines.append(f"# {plan.application_type}")
+    lines.append("")
+    lines.append(plan.application_description)
+    lines.append("")
+
+    if plan.source_root:
+        lines.append(f"**Source root:** `{plan.source_root}`")
+    else:
+        lines.append("**Mode:** greenfield (no source root)")
+    lines.append(f"**System doc:** `{plan.system_doc_path}`")
+    if plan.prover_conf:
+        lines.append(f"**Prover conf:** {len(plan.prover_conf)} key(s) supplied")
+    lines.append("")
+
+    if plan.cycles:
+        lines.append("## ⚠ Dependency cycles")
+        lines.append("")
+        lines.append(
+            "The interaction graph is not a DAG. The following cycles must be "
+            "broken before these contracts can be codegen'd:"
+        )
+        lines.append("")
+        for cyc in plan.cycles:
+            lines.append(f"- {' → '.join(cyc)} → {cyc[0]}")
+        lines.append("")
+
+    lines.append(f"## Contracts ({len(plan.contracts)})")
+    lines.append("")
+    lines.append("Listed in dependency order — leaves first.")
+    lines.append("")
+    for i, c in enumerate(plan.contracts, 1):
+        lines.append(f"### {i}. `{c.name}`")
+        if c.tag:
+            lines.append(f"*Tag:* `{c.tag}`")
+        lines.append("")
+        lines.append(f"- **Interface:** `{c.interface_path}`")
+        lines.append(f"- **Stub:** `{c.stub_path}`")
+        lines.append(f"- **Specs:** {len(c.specs)}")
+        if c.specs:
+            for spec in c.specs:
+                lines.append(f"  - `{spec.filename}`")
+        if c.depends_on:
+            lines.append(f"- **Depends on:** {', '.join(f'`{d}`' for d in c.depends_on)}")
+        else:
+            lines.append("- **Depends on:** *(none — leaf)*")
+        if c.required_stub_fields:
+            lines.append(f"- **Required stub fields ({len(c.required_stub_fields)}):**")
+            lines.append("")
+            lines.append("  | Name | Type | Purpose |")
+            lines.append("  |------|------|---------|")
+            for fs in c.required_stub_fields:
+                lines.append(f"  | `{fs.name}` | `{fs.type}` | {fs.description} |")
+        else:
+            lines.append("- **Required stub fields:** *(none)*")
+        lines.append("")
+
+    if plan.external_actors:
+        lines.append(f"## External actors ({len(plan.external_actors)})")
+        lines.append("")
+        for a in plan.external_actors:
+            head = f"- **{a.name}**"
+            if a.path:
+                head += f" (`{a.path}`)"
+            lines.append(head)
+            if a.description:
+                lines.append(f"  - {a.description}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def export_implementation_plan(
     result: "PipelineResult",
     *,

@@ -156,6 +156,10 @@ class OrchestratorHandler:
                     table.add_row("Cache NS", cache)
                 if mem:
                     table.add_row("Memory NS", mem)
+                if payload.source_root:
+                    table.add_row("Load from existing path", payload.source_root)
+                if payload.forbidden_read:
+                    table.add_row("Forbid reads", payload.forbidden_read)
             case LaunchCodegenArgs(spec_file=s, interface_file=i, system_doc=d,
                                    memory_namespace=mem, prompt_addition=prompt):
                 title = "Code Generation"
@@ -198,6 +202,8 @@ class OrchestratorHandler:
             case "no":
                 return "no"
             case "feedback":
-                return await self._prompt("Feedback: ")
+                to_ret = await self._prompt("Feedback: ")
+                self._start_thinking()
+                return to_ret
             case _:
                 return "no"

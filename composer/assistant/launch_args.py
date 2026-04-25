@@ -53,18 +53,4 @@ class LaunchNatSpecArgs(BaseModel):
             "pattern when source_root is set."
         ),
     )
-    new_contracts_root: str | None = Field(
-        default=None,
-        description=(
-            "Subdirectory (under source_root) where generated stubs are overlaid during typecheck. "
-            "Defaults to 'certora-generated/contracts' so it does not collide with existing trees."
-        ),
-    )
-    interfaces_root: str | None = Field(
-        default=None,
-        description=(
-            "Subdirectory (under source_root) where generated interfaces are overlaid during "
-            "typecheck. Defaults to 'certora-generated/interfaces'."
-        ),
-    )
     prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)

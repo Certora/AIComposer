@@ -72,7 +72,10 @@ class LaunchNatSpecTool(LaunchNatSpecArgs, WithAsyncImplementation[str]):
             input_file=self.input_file,
             solc_version=self.solc_version,
             cache_namespace=self.cache_namespace,
-            memory_namespace=self.memory_namespace
+            memory_namespace=self.memory_namespace,
+            forbidden_read=self.forbidden_read,
+            prover_conf=self.prover_conf,
+            source_root=self.source_root
         ))
         if (r := _check_confirmation(response)) is not None:
             return r

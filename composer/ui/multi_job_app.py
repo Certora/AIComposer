@@ -48,6 +48,7 @@ from composer.io.conversation import (
 )
 from composer.io.stream import AsyncDataQueue, ManagedQueue, managed_streamer, EndConversation, Checkpoint
 from composer.io.multi_job import TaskHandle, TaskInfo
+from rich.traceback import Traceback
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +577,12 @@ class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, Ap
             self._hitl_inputs.pop(task_id, None)
 
     # ── Key bindings ──────────────────────────────────────────
+
+    async def mount_error(self, exc: Exception):
+        summary_pane = self.query_one("#summary", VerticalScroll)
+        summary_pane.mount(
+            Static(Traceback())
+        )
 
     def action_go_back(self) -> None:
         switcher = self.query_one("#switcher", ContentSwitcher)

@@ -165,7 +165,7 @@ class PublishTool(WithAsyncDependencies[Command | str, TypeChecker], WithInjecte
             self.tool_call_id, "Accepted",
             result=self.commentary,
             failed=False,
-            suggested_spec_name=f"{self.suggested_spec_name}.spec"
+            suggested_spec_path=f"{self.suggested_spec_name}.spec"
         )
 
 @tool_display("Type-checking spec", "Type-check result")

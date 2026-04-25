@@ -14,10 +14,18 @@ Synthesizes a Solidity implementation from a CVL specification, a Solidity inter
 - **`resume_work_key`**: Optional. If a previous codegen run crashed and returned a resume work key, pass it here to recover in-progress files. The key is included in the crash error message.
 
 ### 2. NatSpec Generation (natspec)
-Generates CVL specifications and Solidity interfaces from a natural language system/design document.
-- **Inputs**: `.md`/`.txt`/`.pdf` file (system/design document describing the contract), Solidity compiler version
-- **When to use**: The project has a design document but no CVL spec or interface yet
-- **Tool**: `launch_natspec(input_file, solc_version, cache_namespace="", memory_namespace="")` — `input_file` relative to the workspace root, `solc_version` like `"8.21"`
+Produces an **implementation plan** from a natural-language design document: generated interfaces, minimal stubs, and CVL specifications for each contract the design calls for, plus a structured handoff artifact for downstream codegen.
+- **Inputs**: `.md`/`.txt`/`.pdf` file (system/design document), Solidity compiler version.
+- **Outputs (per run)**:
+  - A generated Solidity interface per new contract.
+  - A minimal Solidity stub per new contract (non-functional; codegen will flesh it out later).
+  - One or more CVL `.spec` files per new contract (security properties extracted from the design and formalized).
+  - `implementation_plan.json` — the authoritative natspec → codegen handoff. Bundles all of the above in dependency (topological) order, with per-contract stub-field requirements, dependency lists, and any `prover_conf` / `source_root` context.
+  - When the VS Code extension is connected, generated files surface in the editor's "Proposed Changes" tree for review; the user accepts or rejects through the TUI. Without the extension, the user must pass `--output-root` on the CLI to persist.
+- **When to use**: The project has a design document but no CVL spec/interface/implementation yet (greenfield), OR the design calls for new contracts to be added to an existing codebase (update — pass `source_root`).
+- **Tool**: `launch_natspec(input_file, solc_version, cache_namespace="", memory_namespace="", source_root=null, prover_conf=null)` — `input_file` relative to the workspace root, `solc_version` like `"8.21"`.
+- **`source_root`**: Optional. Workspace-relative path to an existing codebase root. When set, natspec runs in **update** mode: contracts are tagged `unchanged` / `edited` / `new`, specs are generated only for `new` contracts, and agents choose file paths that fit the existing project layout. Omit for greenfield mode (new project, no pre-existing source).
+- **`prover_conf`**: Optional. A Certora config object (the JSON shape of `certora.conf`) whose keys (`packages`, `link`, `solc_args`, `optimistic_loop`, etc.) are merged into every typecheck invocation. Dynamic keys (`files`, `verify`, `solc`) are always set by the pipeline and override whatever is in this object. Derive it from any existing `certora.conf` in the workspace; pass inline as a dict.
 - **`cache_namespace`**: Optional. Enables cross-run caching so agent work is reused on re-runs with the same input. Use a descriptive name like the contract name.
 - **`memory_namespace`**: Optional. Namespace for persistent agent memory. Defaults to the auto-generated thread ID if empty.
 
@@ -44,14 +52,18 @@ Use these heuristics when scanning the project:
 - `.sol` files containing `interface` keyword → Solidity interface
 - `.sol` files containing `contract` keyword → Solidity implementation
 - `.md`/`.pdf`/`.txt` files → system/design documents
+- `certora.conf` (or similarly named) → an existing prover-config baseline; read and pass its contents to `launch_natspec`'s / `launch_codegen`'s `prover_conf` param unless the user wants a fresh config
+- A design document that describes contracts absent from an otherwise-populated workspace → candidate for `launch_natspec` in **update** mode (pass `source_root`)
+- `implementation_plan.json` under a natspec output dir → a prior natspec run; its `contracts` list is the feeder for per-contract codegen invocations in dependency order
 - In your memories: `/memories/last_run.json` → prior run metadata (thread_id, workflow_type, timestamp, description)
 
 ## Workflow Selection Logic
 
-1. Check `/memories/last_run.json` for prior runs — if present, AND an implementation exists, `resume` is likely appropriate
-2. If no spec or interface exists → suggest `natspec` with the design document
-3. If spec + interface + system doc all exist → suggest `codegen`
-4. If ambiguous, ask the user for clarification
+1. Check `/memories/last_run.json` for prior runs — if present, AND an implementation exists, `resume` is likely appropriate.
+2. If no spec or interface exists → suggest `natspec` with the design document (greenfield).
+3. If the workspace has existing contracts but the design document references new contracts not present in the source tree → suggest `natspec` in **update** mode, passing `source_root` (and `prover_conf` derived from any existing `certora.conf`).
+4. If spec + interface + system doc all exist → suggest `codegen`.
+5. If ambiguous, ask the user for clarification.
 
 ## Failed Run Recovery
 

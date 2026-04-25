@@ -308,7 +308,9 @@ class StubRegistry:
     
     async def dump_to(self, target: pathlib.Path):
         for (k, v) in self._mirror_by_path.items():
-            (target / k).write_text(v)
+            full_path = target / k
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(v)
 
     def read_stub(self, nm: str) -> str:
         """Read current stub content (no lock needed)."""

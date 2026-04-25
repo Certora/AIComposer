@@ -4048,20 +4048,47 @@ function registerWorkspaceHandlers(virtualDoc) {
 
 // src/handlers/editor.ts
 var vscode4 = __toESM(require("vscode"));
+var TITLE_MARKER_PREFIX = "[composer:";
+var TITLE_MARKER_SUFFIX = "]";
+function titleMarker(diffId) {
+  return `${TITLE_MARKER_PREFIX}${diffId}${TITLE_MARKER_SUFFIX}`;
+}
 var counter = 0;
 function registerEditorHandlers(provider) {
   registerMethod("editor/showDiff", async (params) => {
     const originalContent = params.originalContent;
     const modifiedContent = params.modifiedContent;
-    const title = params.title ?? "Diff";
+    const baseTitle = params.title ?? "Diff";
     if (originalContent === void 0 || modifiedContent === void 0) {
       throw new Error("Missing required params: originalContent, modifiedContent");
     }
-    const id = counter++;
-    const originalUri = provider.set(`/diff/${id}/original`, originalContent);
-    const modifiedUri = provider.set(`/diff/${id}/modified`, modifiedContent);
+    const diffId = String(counter++);
+    const originalUri = provider.set(`/diff/${diffId}/original`, originalContent);
+    const modifiedUri = provider.set(`/diff/${diffId}/modified`, modifiedContent);
+    const title = `${baseTitle} ${titleMarker(diffId)}`;
     await vscode4.commands.executeCommand("vscode.diff", originalUri, modifiedUri, title);
-    return { success: true };
+    return { diffId };
+  });
+  registerMethod("editor/closeDiff", async (params) => {
+    const diffId = params.diffId;
+    if (diffId === void 0) {
+      throw new Error("Missing required param: diffId");
+    }
+    const marker = titleMarker(diffId);
+    const tabsToClose = [];
+    for (const group of vscode4.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode4.TabInputTextDiff && tab.label.endsWith(marker)) {
+          tabsToClose.push(tab);
+        }
+      }
+    }
+    if (tabsToClose.length > 0) {
+      await vscode4.window.tabGroups.close(tabsToClose);
+    }
+    provider.delete(`/diff/${diffId}/original`);
+    provider.delete(`/diff/${diffId}/modified`);
+    return { closed: tabsToClose.length > 0 };
   });
 }
 

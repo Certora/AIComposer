@@ -11,12 +11,10 @@ import asyncio
 import json
 import pathlib
 import uuid
-from typing import Any, cast, Protocol
+from typing import cast, Protocol
 
-from langchain_core.tools import BaseTool
 
 from graphcore.tools.memory import async_memory_tool
-from graphcore.tools.vfs import DirBackend, FSBackend, Materializer, fs_tools_layered
 
 from composer.input.types import ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
@@ -26,16 +24,6 @@ from composer.workflow.services import create_llm, standard_connections
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.spec._env_common import build_rag_tool_env
 from composer.spec.service_host import PureServiceHost
-from composer.spec.gen_types import TypedTemplate
-from composer.spec.system_model import Application, FromSourceApplication
-from composer.spec.natspec.models import (
-    InterfaceResult,
-    LocatedInterfaceDecl, AutoInterfaceDecl,
-    LocatedStubDeclaration, AutoStubDeclaration,
-)
-from composer.spec.natspec.task_description import (
-    MentalModel, AgentDescription, InterfaceGenCallParams, StubGenCallParams,
-)
 
 from composer.spec.context import (
     WorkflowContext, SystemDoc, get_document_input,
@@ -46,6 +34,7 @@ from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.tool_display import async_tool_context
 
 from composer.ui.pipeline_app import NatspecPipelineApp
+from composer.cli.natspec_startup import build_mental_model, make_source_factory
 
 
 # ---------------------------------------------------------------------------
@@ -62,90 +51,12 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
     source_root: str | None
     forbidden_read: str | None
     prover_conf: str | None
+    output_root: str | None
 
 
 # ---------------------------------------------------------------------------
 # MentalModel construction
 # ---------------------------------------------------------------------------
-
-_InterfaceTemplate = TypedTemplate[dict[str, Any]]("interface_generation_prompt.j2")
-_StubTemplate = TypedTemplate[dict[str, Any]]("stub_generation_prompt.j2")
-
-
-def _build_mental_model(
-    *,
-    source_root: pathlib.Path | None,
-    config_init: dict | None,
-) -> MentalModel:
-    # In from-source (update) mode the agent picks file locations to fit the
-    # existing project layout. In greenfield there is no layout to conform to,
-    # so paths are derived automatically from the solidity identifier.
-    agent_chooses_path = source_root is not None
-    interface_prompt = _InterfaceTemplate.bind(
-        {"agent_chooses_path": agent_chooses_path}
-    ).depends(InterfaceGenCallParams)
-    stub_prompt = _StubTemplate.bind(
-        {"agent_chooses_path": agent_chooses_path}
-    ).depends(StubGenCallParams)
-
-    if source_root is not None:
-        return MentalModel(
-            model_ty=FromSourceApplication,
-            interface_desc=AgentDescription(
-                output_ty=InterfaceResult[LocatedInterfaceDecl],
-                prompt=interface_prompt,
-            ),
-            stub_desc=AgentDescription(
-                output_ty=LocatedStubDeclaration,
-                prompt=stub_prompt,
-            ),
-            source_root=source_root,
-            config_init=config_init,
-        )
-    return MentalModel(
-        model_ty=Application,
-        interface_desc=AgentDescription(
-            output_ty=InterfaceResult[AutoInterfaceDecl],
-            prompt=interface_prompt,
-        ),
-        stub_desc=AgentDescription(
-            output_ty=AutoStubDeclaration,
-            prompt=stub_prompt,
-        ),
-        source_root=None,
-        config_init=config_init,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Source-tool factory (phase-dispatched)
-# ---------------------------------------------------------------------------
-
-
-def _make_source_factory(
-    source_root: pathlib.Path | None,
-    forbidden_read: str | None,
-):
-    """Build the ``source_factory`` closure the pipeline calls at each phase.
-
-    The factory layers any extra backends the pipeline supplies (generated
-    interfaces, the stub registry, etc.) over the on-disk source root, with
-    the extras winning on collision. In greenfield mode there is no source
-    root, so the factory just wires the extras.
-    """
-    base_layer: list[FSBackend] = []
-    if source_root is not None:
-        base_layer.append(DirBackend(source_root))
-
-    def factory(extra_backends: list[FSBackend]) -> tuple[list[BaseTool], Materializer]:
-        # Extras first — first-hit reads and reverse-order dumps mean the
-        # extras' content wins over the source tree on collision.
-        return fs_tools_layered(
-            [*extra_backends, *base_layer],
-            forbidden_read=forbidden_read,
-        )
-
-    return factory
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +90,14 @@ async def _main() -> int:
         help="Path to a Certora config JSON file whose keys (packages, link, solc_args, etc.) "
              "are merged into every typecheck invocation. Dynamic keys (files, verify, solc, "
              "compilation_steps_only) are always set by the pipeline.",
+    )
+    parser.add_argument(
+        "--output-root", default=None,
+        help="Directory to persist pipeline artifacts under. When the VS Code extension is "
+             "connected, writes `implementation_plan.json` here; generated files flow through "
+             "the extension's preview/accept flow instead. Without the extension, this is "
+             "where generated interfaces / stubs / specs are written (required to persist "
+             "anything in that mode).",
     )
 
     args = cast(PipelineArgs, parser.parse_args())
@@ -225,13 +144,13 @@ async def _main() -> int:
             sort=sort,
         )
 
-        source_factory = _make_source_factory(source_root_path, forbidden_read)
+        source_factory = make_source_factory(source_root_path, forbidden_read)
 
         config_init: dict | None = None
         if args.prover_conf:
             config_init = json.loads(pathlib.Path(args.prover_conf).read_text())
 
-        mental_model = _build_mental_model(
+        mental_model = build_mental_model(
             source_root=source_root_path,
             config_init=config_init,
         )
@@ -247,8 +166,17 @@ async def _main() -> int:
             memory_namespace=args.memory_ns,
         )
 
+        output_root_path: pathlib.Path | None = None
+        if args.output_root:
+            output_root_path = pathlib.Path(args.output_root).resolve()
+
         # Set up TUI
-        app = NatspecPipelineApp()
+        app = NatspecPipelineApp(
+            system_doc_path=input_path.resolve(),
+            source_root=source_root_path,
+            prover_conf=config_init,
+            output_root=output_root_path,
+        )
 
         async def work():
             try:
@@ -266,6 +194,7 @@ async def _main() -> int:
                 await app.on_pipeline_done(result)
             except Exception as exc:
                 app.notify(f"Pipeline failed: {exc}", severity="error")
+                await app.mount_error(exc)
                 app._pipeline_done = True
 
         app.set_work(work)

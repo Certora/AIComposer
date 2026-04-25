@@ -239,10 +239,13 @@ async def analyze_single_contract(
         batch_idx: int,
         batch: _ComponentBatch,
     ) -> GenerationSuccess | GaveUp:
+        import logging
+        logging.getLogger(__name__).info(f"parent key: {batch.feat_ctx.cache_namespace}")
         batch_ctx = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
         )
+        logging.getLogger(__name__).info(f"child key: {batch_ctx.cache_namespace}")
         batch_config_builder = services.mental_model.config_builder().with_solc(solc_version)
 
         stub_tools = registry.get_tools(contract_name)
@@ -312,7 +315,7 @@ async def analyze_single_contract(
                             prop=batch.props[skip.property_index - 1],
                             reason=f"Skipped: {skip.reason}",
                         ))
-                    skipped.add(skip)
+                    skipped.add(skip.property_index)
                 succ_props = [
                     l for (i, l) in enumerate(batch.props, start=1) if i not in skipped
                 ]
