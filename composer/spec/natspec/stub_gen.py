@@ -85,6 +85,8 @@ async def generate_stub[S: StubDeclarationModel](
                 return f"Stub must import the interface file ({interface_basename})."
             if res.solidity_identifier not in res.content:
                 return f"Stub must declare a contract named {res.solidity_identifier}."
+            if pathlib.PurePosixPath(res.path).stem != res.solidity_identifier:
+                return f"Stub filename must match the declare solidity identifier: `{res.solidity_identifier}.sol`"
 
             try:
                 async with materializer.project_directory() as tmpdir:

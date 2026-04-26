@@ -9,11 +9,14 @@ which is validated against the Solidity compiler before acceptance.
 """
 
 import asyncio
+import logging
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from typing import NotRequired, override, Iterable
 import pathlib
+
+_log = logging.getLogger(__name__)
 
 from pydantic import BaseModel, Field as PydanticField
 
@@ -24,6 +27,7 @@ from langgraph.store.base import BaseStore
 
 from graphcore.graph import FlowInput
 from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.tools.vfs import Materializer
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
@@ -216,7 +220,6 @@ async def run_registry_agent(
 
 STUB_STORE_KEY = "stub_content"
 FIELDS_STORE_KEY = "stub_fields"
-SPEC_FILES_STORE_KEY = "spec_files"
 
 
 @dataclass
@@ -257,6 +260,12 @@ class StubRegistry:
         """
         curr_res = await store.aget(namespace, STUB_STORE_KEY)
         if curr_res is None:
+            _log.debug(
+                "StubRegistry.acreate: FRESH init ns=%r initial_stubs=%s",
+                namespace,
+                {nm: {"path": d.path, "ident": d.solidity_identifier}
+                 for nm, d in initial_stubs.items()},
+            )
             await store.aput(namespace, STUB_STORE_KEY, {
                 nm: {
                     "path": decl.path,
@@ -284,8 +293,21 @@ class StubRegistry:
             curr_path_by_name = {
                 nm: t["path"] for (nm, t) in curr_res.value.items()
             }
+            _log.debug(
+                "StubRegistry.acreate: RESUMED ns=%r stored_stubs=%s "
+                "(initial_stubs ignored: %s)",
+                namespace,
+                {nm: {"path": t["path"], "ident": t.get("solidity_identifier")}
+                 for nm, t in curr_res.value.items()},
+                list(initial_stubs.keys()),
+            )
         if await store.aget(namespace, FIELDS_STORE_KEY) is None:
             await store.aput(namespace, FIELDS_STORE_KEY, {k: [] for k in initial_stubs.keys()})
+        _log.debug(
+            "StubRegistry.acreate: ready ns=%r path_by_name=%s "
+            "mirror_paths=%s",
+            namespace, curr_path_by_name, list(curr_content_path.keys()),
+        )
         return StubRegistry(
             _store=store,
             _builder=builder,
@@ -357,6 +379,11 @@ class StubRegistry:
         to_put[nm]["content"] = content
         self._mirror_by_name[nm] = content
         self._mirror_by_path[to_put[nm]["path"]] = content
+        _log.debug(
+            "StubRegistry._write_stub: ns=%r nm=%s path=%s ident=%s",
+            self._namespace, nm, to_put[nm]["path"],
+            to_put[nm].get("solidity_identifier"),
+        )
         await self._store.aput(self._namespace, STUB_STORE_KEY, to_put)
 
     async def request_field(self, nm: str, purpose: str) -> str:
@@ -460,50 +487,147 @@ class StubRegistry:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class FileEntry:
+    """A registered source file, optionally tagged with the Solidity identifier
+    to compile against. ``solidity_identifier=None`` means "use the file's stem
+    as the identifier" (Certora's default behavior)."""
+    path: str
+    solidity_identifier: str | None = None
+
+    def as_prover_arg(self) -> str:
+        if self.solidity_identifier is None:
+            return self.path
+        return f"{self.path}:{self.solidity_identifier}"
+
+
 @dataclass
 class FileRegistry:
     """Per-contract registry of source files to pull into the Certora conf
     ``files`` list.
 
     Unlike ``StubRegistry``, this is a plain registration — no agent decisions,
-    no validation. Each contract's spec may need a different compilation unit,
-    so registrations are scoped by contract name (matching how ``StubRegistry``
-    scopes stubs). Writes are serialized via a lock; reads are lock-free.
+    but ``register`` rejects paths that don't exist in the layered FS the
+    registry closes over (``_materializer``). Each contract gets its own KV
+    entry under ``_namespace`` keyed by contract name; ``read_all_contracts``
+    enumerates via ``asearch``. The lock serializes the read-modify-write that
+    backs ``register``'s per-path dedupe within a single contract.
     """
     _store: BaseStore
+    _materializer: Materializer
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _namespace: tuple[str, ...] = ()
 
     @staticmethod
-    async def acreate(store: BaseStore, namespace: tuple[str, ...]) -> "FileRegistry":
-        if await store.aget(namespace, SPEC_FILES_STORE_KEY) is None:
-            await store.aput(namespace, SPEC_FILES_STORE_KEY, {})
-        return FileRegistry(_store=store, _namespace=namespace)
+    async def acreate(
+        store: BaseStore,
+        namespace: tuple[str, ...],
+        materializer: Materializer,
+    ) -> "FileRegistry":
+        existing = await store.asearch(namespace, limit=10_000)
+        snapshot = {
+            item.key: [
+                {"path": e["path"], "ident": e["solidity_identifier"]}
+                for e in item.value["files"]
+            ]
+            for item in existing
+        }
+        _log.debug(
+            "FileRegistry.acreate: ns=%r existing_entries=%s",
+            namespace, snapshot,
+        )
+        return FileRegistry(
+            _store=store, _materializer=materializer, _namespace=namespace,
+        )
 
-    async def _read_map(self) -> dict[str, list[str]]:
-        item = await self._store.aget(self._namespace, SPEC_FILES_STORE_KEY)
+    async def _read_contract(self, contract_name: str) -> list[FileEntry]:
+        item = await self._store.aget(self._namespace, contract_name)
         if item is None:
-            return {}
-        return {k: list(v) for k, v in item.value.items()}
+            return []
+        return [
+            FileEntry(path=e["path"], solidity_identifier=e["solidity_identifier"])
+            for e in item.value["files"]
+        ]
+
+    async def _write_contract(self, contract_name: str, files: list[FileEntry]) -> None:
+        _log.debug(
+            "FileRegistry._write_contract: ns=%r contract=%s entries=%s",
+            self._namespace, contract_name,
+            [{"path": e.path, "ident": e.solidity_identifier} for e in files],
+        )
+        await self._store.aput(self._namespace, contract_name, {
+            "files": [
+                {"path": e.path, "solidity_identifier": e.solidity_identifier}
+                for e in files
+            ],
+        })
 
     async def read_all(self, contract_name: str) -> list[str]:
-        """Read the files registered for ``contract_name``."""
-        return (await self._read_map()).get(contract_name, [])
+        """Read the prover-ready file arguments registered for ``contract_name``.
+
+        Each entry is either ``path`` or ``path:Identifier`` depending on
+        whether a Solidity identifier was supplied at registration.
+        """
+        return [e.as_prover_arg() for e in await self._read_contract(contract_name)]
 
     async def read_all_contracts(self) -> dict[str, list[str]]:
-        """Read the full registration map (contract → files)."""
-        return await self._read_map()
+        """Read the full registration map (contract → prover-ready file args)."""
+        items = await self._store.asearch(self._namespace, limit=10_000)
+        return {
+            item.key: [
+                FileEntry(
+                    path=e["path"],
+                    solidity_identifier=e["solidity_identifier"],
+                ).as_prover_arg()
+                for e in item.value["files"]
+            ]
+            for item in items
+        }
 
-    async def register(self, contract_name: str, path: str) -> str:
-        """Register ``path`` as a compilation-unit file for ``contract_name``. Idempotent."""
+    async def register(
+        self,
+        contract_name: str,
+        path: str,
+        solidity_identifier: str | None = None,
+    ) -> str:
+        """Register ``path`` as a compilation-unit file for ``contract_name``.
+
+        Rejects paths that don't exist in the layered FS this registry closes
+        over. If ``path`` is already registered for this contract, the
+        existing entry's ``solidity_identifier`` is overwritten (latest call
+        wins). Each path appears at most once per contract.
+        """
+        _log.debug(
+            "FileRegistry.register: ns=%r contract=%s path=%s ident=%s",
+            self._namespace, contract_name, path, solidity_identifier,
+        )
+        if self._materializer.get(path) is None:
+            _log.debug(
+                "FileRegistry.register: REJECTED ns=%r contract=%s "
+                "path=%s (not in materializer)",
+                self._namespace, contract_name, path,
+            )
+            return (
+                f"Cannot register {path}: that file does not exist in the "
+                f"project tree. Use your source tools (`list_files`, "
+                f"`grep_files`) to find the correct path before registering."
+            )
         async with self._lock:
-            current = await self._read_map()
-            files = current.setdefault(contract_name, [])
-            if path in files:
-                return f"{path} is already registered for {contract_name}."
-            files.append(path)
-            await self._store.aput(self._namespace, SPEC_FILES_STORE_KEY, current)
-        return f"Registered {path} for {contract_name}."
+            files = await self._read_contract(contract_name)
+            new_entry = FileEntry(path=path, solidity_identifier=solidity_identifier)
+            for i, existing in enumerate(files):
+                if existing.path == path:
+                    if existing == new_entry:
+                        return f"{new_entry.as_prover_arg()} is already registered for {contract_name}."
+                    files[i] = new_entry
+                    await self._write_contract(contract_name, files)
+                    return (
+                        f"Updated {path} for {contract_name}: "
+                        f"{existing.as_prover_arg()} -> {new_entry.as_prover_arg()}."
+                    )
+            files.append(new_entry)
+            await self._write_contract(contract_name, files)
+        return f"Registered {new_entry.as_prover_arg()} for {contract_name}."
 
     def get_tools(self, contract_name: str) -> list[BaseTool]:
         """Return tools scoped to ``contract_name`` for injection into that
@@ -523,7 +647,9 @@ class FileRegistry:
 
             The path must be project-relative and point to a ``.sol`` file
             already present in the source tree (inspect the tree with the
-            source tools if unsure). Registering the same path twice is a no-op.
+            source tools if unsure). Registration of a path that does not
+            exist in the project tree is rejected — verify with `list_files`
+            or `get_file` before calling this tool. Registering the same path twice is a no-op.
             """
             path: str = PydanticField(
                 description="Project-relative path to a .sol file"

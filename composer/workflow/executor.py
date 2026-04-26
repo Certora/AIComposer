@@ -169,6 +169,7 @@ async def _execute_ai_composer_workflow(
     memory_namespace: str | None,
     resume_work_key: str | None,
     prover_conf_overrides: dict | None,
+    kickstart_context: str | None,
 
     checkpointer: AsyncPostgresSaver,
     store: BaseStore,
@@ -198,9 +199,11 @@ async def _execute_ai_composer_workflow(
 
     audit_store = AuditStore(store)
 
+    has_kickstart = bool(kickstart_context and kickstart_context.strip())
+
     match input:
         case InputData():
-            prompt_params = PromptParams(is_resume=False)
+            prompt_params = PromptParams(is_resume=False, has_kickstart=has_kickstart)
             flow_input = get_fresh_input(input, workflow_options)
             system_doc = input.system_doc
             interface_file = input.intf
@@ -208,7 +211,7 @@ async def _execute_ai_composer_workflow(
             fs_layer = input.source_root
 
         case ResumeIdData() | ResumeFSData():
-            prompt_params = PromptParams(is_resume=True)
+            prompt_params = PromptParams(is_resume=True, has_kickstart=has_kickstart)
 
             resume_art = await audit_store.get_resume_artifact(thread_id=input.thread_id)
             if input.new_system is None:
@@ -343,6 +346,18 @@ async def _execute_ai_composer_workflow(
             recovery_msg = load_jinja_template("crash_recovery_context.j2", vfs_files=vfs_files)
             flow_input["input"].insert(0, recovery_msg)
 
+    if has_kickstart:
+        flow_input["input"].append(
+            "<kickstart_context>\n"
+            "The following briefing was supplied by the orchestrator that launched "
+            "this run. Treat it as authoritative context — it may include required "
+            "implementation paths, scaffold source code, storage-field requirements, "
+            "and other framing the orchestrator has decided you need. Path constraints "
+            "stated here OVERRIDE any default behavior.\n\n"
+            f"{kickstart_context}\n"
+            "</kickstart_context>"
+        )
+
     try:
         import grandalf # type: ignore
         layout = workflow_exec.get_graph().draw_ascii()
@@ -414,6 +429,7 @@ async def execute_ai_composer_workflow(
     memory_namespace: str | None = None,
     resume_work_key: str | None = None,
     prover_conf_overrides: dict | None = None,
+    kickstart_context: str | None = None,
 ) -> WorkflowResult:
     """Execute the AI Composer workflow with interrupt handling.
 
@@ -434,6 +450,6 @@ async def execute_ai_composer_workflow(
         memory_backend_context() as mem:
         return await _execute_ai_composer_workflow(
             handler, llm, input, workflow_options, memory_namespace, resume_work_key,
-            prover_conf_overrides, checkpointer,
+            prover_conf_overrides, kickstart_context, checkpointer,
             store, indexed_store, rag_db, mem
         )

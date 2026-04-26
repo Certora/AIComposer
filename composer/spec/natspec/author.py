@@ -246,7 +246,8 @@ async def generate_cvl_batch(
         .with_tools([
             GiveUpTool.as_tool("give_up"),
             AdvisoryTypecheck.bind(typechecker).as_tool("advisory_typecheck"),
-            PublishTool.bind(typechecker).as_tool("publish")
+            PublishTool.bind(typechecker).as_tool("publish"),
+            ctx.get_memory_tool()
         ])
         .with_output_key("result")
         .with_input(NatspecGenerationInput)

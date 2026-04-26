@@ -84,60 +84,68 @@ class AgentDescription[T, X: Mapping[str, Any]]:
 
 
 class ConfigurationBuilder:
-    """Fluent builder for a Certora conf dict.
+    """Fluent, **functional** builder for a Certora conf dict.
 
     Seed with the user-supplied ``config_init`` (e.g. ``prover_conf`` overrides).
-    Each ``with_*`` call overwrites the corresponding key, so pipeline-authoritative
-    writes always win over seeded values. ``build_to`` materializes the merged conf
-    as a temp file under ``<path>/certora/`` and yields its absolute path.
+    Each ``with_*`` call returns a NEW builder with the corresponding key
+    overwritten — the receiver is never mutated. This makes a single shared
+    "base" builder safe to fan out across parallel workers, each of which can
+    chain its own task-specific overrides without racing on a shared dict.
+
+    Pipeline-authoritative ``with_*`` calls still always win over seeded values
+    (their later application overwrites). ``build_to`` materializes the merged
+    conf as a temp file under ``<path>/certora/`` and yields its absolute path.
     """
 
     def __init__(self, config_init: dict | None = None):
         self.config: dict = dict(config_init or {})
 
+    def _replace(self, **updates: Any) -> Self:
+        """Return a new builder of the same type with ``updates`` merged in.
+
+        Shallow-merges into a fresh dict; existing list/dict values aren't
+        deep-copied because every ``with_*`` either supplies a fresh list at
+        the call site or sets a primitive, so aliasing isn't possible in
+        normal use.
+        """
+        new = type(self).__new__(type(self))
+        new.config = {**self.config, **updates}
+        return new
+
     def with_files(self, files: list[str]) -> Self:
-        self.config["files"] = list(files)
-        return self
+        return self._replace(files=list(files))
 
     def with_verify(self, *, main_contract: str, spec_file: str) -> Self:
-        self.config["verify"] = f"{main_contract}:certora/{spec_file}"
-        return self
+        return self._replace(verify=f"{main_contract}:certora/{spec_file}")
 
     def with_solc(self, version: str) -> Self:
-        self.config["solc"] = version if version.startswith("solc") else f"solc{version}"
-        return self
+        return self._replace(
+            solc=version if version.startswith("solc") else f"solc{version}"
+        )
 
     def with_compilation_steps_only(self) -> Self:
-        self.config["compilation_steps_only"] = True
-        return self
+        return self._replace(compilation_steps_only=True)
 
     def with_loop_iter(self, n: int) -> Self:
-        self.config["loop_iter"] = str(n)
-        return self
+        return self._replace(loop_iter=str(n))
 
     def with_optimistic_loop(self) -> Self:
-        self.config["optimistic_loop"] = True
-        return self
+        return self._replace(optimistic_loop=True)
 
     def with_optimistic_hashing(self) -> Self:
-        self.config["optimistic_hashing"] = True
-        return self
+        return self._replace(optimistic_hashing=True)
 
     def with_solc_via_ir(self) -> Self:
-        self.config["solc_via_ir"] = True
-        return self
+        return self._replace(solc_via_ir=True)
 
     def with_strict_solc_optimizer(self) -> Self:
-        self.config["strict_solc_optimizer"] = True
-        return self
+        return self._replace(strict_solc_optimizer=True)
 
     def with_prover_args(self, args: list[str]) -> Self:
-        self.config["prover_args"] = list(args)
-        return self
+        return self._replace(prover_args=list(args))
 
     def with_rule(self, rule: str) -> Self:
-        self.config["rule"] = [rule]
-        return self
+        return self._replace(rule=[rule])
 
     def build_to(self, path: pathlib.Path) -> ContextManager[pathlib.Path]:
         """Write the merged conf to ``<path>/certora/run_<uniq>.conf``; yield its absolute path; clean up on exit."""

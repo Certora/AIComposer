@@ -166,6 +166,17 @@ class PipelineServices:
     env: ServiceHost
     mental_model: MentalModel
     file_registry: FileRegistry
+    # When True, the bug-analysis step opens a per-component conversation
+    # channel via the TUI's switcher so the user can refine the extracted
+    # property list interactively. Parallel components each get their own
+    # conversation_provider scoped to their own panel.
+    #
+    # Note for any future console_natspec driver: the multiplexing here
+    # relies on the TUI switcher giving each task its own focusable panel.
+    # A pure-console driver running this code path would need to serialize
+    # interactive sessions via a conversation lock, the way
+    # console_autoprove already does.
+    interactive: bool = False
 
 async def analyze_single_contract(
     system_doc: SystemDoc,
@@ -214,10 +225,18 @@ async def analyze_single_contract(
             },
         )
 
+        interactive = services.interactive
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{summary.contract.name}-{component_idx}", name, "bug_analysis"),
-            lambda: run_bug_analysis(feat_ctx, services.env, feat),
+            lambda conv: run_bug_analysis(
+                feat_ctx, services.env, feat,
+                refinement=conv if interactive else None,
+                extra_input=[
+                    "For reference, the system document describing the entire application is as follows.",
+                    system_doc.content
+                ]
+            ),
             semaphore,
         )
 
@@ -239,13 +258,10 @@ async def analyze_single_contract(
         batch_idx: int,
         batch: _ComponentBatch,
     ) -> GenerationSuccess | GaveUp:
-        import logging
-        logging.getLogger(__name__).info(f"parent key: {batch.feat_ctx.cache_namespace}")
         batch_ctx = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
         )
-        logging.getLogger(__name__).info(f"child key: {batch_ctx.cache_namespace}")
         batch_config_builder = services.mental_model.config_builder().with_solc(solc_version)
 
         stub_tools = registry.get_tools(contract_name)
@@ -255,7 +271,7 @@ async def analyze_single_contract(
             files=services.file_registry,
             assembler=assembler,
             config_builder=batch_config_builder,
-            primary_contract=stub.solidity_identifier,
+            primary_contract=contract_name,
         )
 
         label = f"{contract_name} {batch.feat.component.name} ({len(batch.props)} properties)"
@@ -375,6 +391,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     source_factory: ToolGenerator,
     *,
     max_concurrent: int = 4,
+    interactive: bool = False,
 ) -> PipelineResult:
     """Run the full natspec multi-agent pipeline.
 
@@ -482,20 +499,11 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
         mat, dict(generated_stubs), solc_version,
     )
 
-    file_registry = await FileRegistry.acreate(store, FILES_NS + (doc_digest,))
-
-
     name_to_stub = { nm: stub for (nm, stub) in generated_stubs }
 
-    for c in summary.contract_components:
-        if not _is_new(c):
-            continue
-        assert c.name in name_to_stub
-        await file_registry.register(
-            contract_name=c.name,
-            path=name_to_stub[c.name].path
-        )
-
+    # Build the layered FS (with stubs + interfaces) BEFORE constructing the
+    # FileRegistry so the registry can close over the same materializer the
+    # agents will see — that's what backs its existence-check on register.
     with_stub_and_intf, mat_ = source_factory([
         registry, intf_backend
     ])
@@ -504,12 +512,41 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
 
     mat = MaterializerAssembler(mat_)
 
+    file_registry = await FileRegistry.acreate(
+        store, FILES_NS + (doc_digest,), materializer=mat_,
+    )
+
+    for c in summary.contract_components:
+        if not _is_new(c):
+            continue
+        assert c.name in name_to_stub
+        stub = name_to_stub[c.name]
+        import logging
+        logging.getLogger(__name__).debug("%s %s", c.name, stub.path)
+        # Cached pre-validation runs may have produced stubs whose path stem
+        # diverges from the declared Solidity identifier (e.g.
+        # NESTControllerStub.sol declaring contract NESTController). Pin the
+        # identifier explicitly when that's the case so Certora compiles the
+        # right type instead of guessing from the stem.
+        stub_stem = Path(stub.path).stem
+        ident_override = (
+            stub.solidity_identifier
+            if stub.solidity_identifier != stub_stem
+            else None
+        )
+        await file_registry.register(
+            contract_name=c.name,
+            path=stub.path,
+            solidity_identifier=ident_override,
+        )
+
     serv = PipelineServices(
         sem=semaphore,
         env=curr_env,
         factory=handler_factory,
         mental_model=mental_model,
         file_registry=file_registry,
+        interactive=interactive,
     )
 
     tasks : list[Awaitable[ContractResult]] = []

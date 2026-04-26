@@ -66,6 +66,10 @@ async def typecheck_spec(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            import logging
+            logging.getLogger(__name__).debug(config_file.read_text())
+            logging.getLogger(__name__).debug(entry)
+            logging.getLogger(__name__).debug(files)
             stdout_b, stderr_b = await proc.communicate()
             if proc.returncode == 0:
                 return None

@@ -83,6 +83,27 @@ You will be operating on a VFS which provides a virtual file system on which you
 store your work. You have tools to read, modify, and query this VFS.
 </VFS>
 
+{% if has_kickstart %}
+<orchestrator_briefing>
+Your initial input includes a `<kickstart_context>` block. Treat it as authoritative
+briefing from the orchestrator that launched this run — it carries upstream decisions
+you must respect, not optional context. In particular:
+
+- If the briefing names a target implementation path, your generated implementation file
+  MUST be placed at that exact path on the VFS. Do NOT pick a different path "because it
+  fits the project layout better"; the path was chosen upstream and downstream tooling
+  depends on it.
+- If the briefing supplies scaffold source (e.g. a stub from a prior pipeline stage), use
+  it as your starting point — copy it into the VFS at the mandated path and evolve it
+  toward a full implementation. Do NOT ignore it and start from scratch.
+- If the briefing lists required storage fields with names, types, and purposes, your
+  implementation MUST declare those fields with those names and types. Do NOT rename them
+  or substitute alternatives; specifications written upstream reference them by name.
+- Any other context (dependency notes, design rationale, role tags) is informative but
+  worth absorbing before you start work.
+</orchestrator_briefing>
+{% endif %}
+
 
 <guidance>
   <hard_requirement>The code you generate MUST be type correct, and syntactically valid</hard_requirement>

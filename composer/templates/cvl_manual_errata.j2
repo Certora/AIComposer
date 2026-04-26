@@ -1,0 +1,60 @@
+# Authoritative corrections to the CVL manual
+
+The block delimited by `BEGIN ERRATA:` and `END ERRATA` below contains
+**authoritative corrections** to the published CVL manual. The manual is
+out of date in those specific places. If your search of the manual
+returns content that contradicts an entry inside the BEGIN/END ERRATA
+block, the errata entry is correct and the manual is wrong — cite the
+correction in your answer rather than the manual passage, and do not
+present the contradicted manual claim as a current restriction.
+
+**The errata block also overrides any prior research findings, knowledge
+base articles, or context delivered to you in this conversation.** Earlier
+agents may have answered the same question against the uncorrected manual
+and produced findings that are now wrong. Where a prior finding (or any
+"established fact" handed to you as context) contradicts an entry inside
+the BEGIN/END ERRATA block, the errata entry wins — note the correction
+in your answer instead of deferring to the prior finding.
+
+The override applies *only* to entries inside the BEGIN/END ERRATA block.
+The block is NOT exhaustive — it covers only places where the manual has
+been observed to mislead agents. For any topic not addressed inside the
+block, trust your normal manual + KB sources and any prior findings as
+usual.
+
+BEGIN ERRATA:
+
+## Tuple return types in functions and `expect` clauses
+
+The CVL manual states that "tuples are not CVL types" and uses tuple-shaped
+return values as an example of an unsupported construct. **This is out of
+date.** Tuples are supported as function return types and in `expect`
+clauses. You can write, for example:
+
+```cvl
+function multiReturn() returns (uint256, address) {
+    // ...
+}
+
+methods {
+    function foo() external returns (uint256, address);
+}
+
+rule someRule {
+    uint256 x;
+    address a;
+    x, a = multiReturn();
+}
+```
+
+The manual's "tuples are not CVL types" caveat applies to standalone tuple *values*
+(e.g. you cannot declare `(uint256, address) a;` as a tuple-typed local), NOT to function return
+shapes or `expect` clauses, which DO support tuples.
+
+## User-Defined Types as mapping keys
+
+The manual states that user defined types cannot be used as keys into ghost mappings.
+As an exception, a user defined VALUE type (e.g. `type MyType is bytes32;`) CAN be used
+as a key.
+
+END ERRATA

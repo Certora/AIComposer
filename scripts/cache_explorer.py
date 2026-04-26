@@ -7,6 +7,7 @@ Usage:
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from contextvars import ContextVar
 from contextlib import contextmanager, asynccontextmanager
@@ -15,7 +16,10 @@ _repo_root = str(Path(__file__).parent.parent.absolute())
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
 
-from composer.ui.cache_explorer import CacheNode, CacheExplorerApp, DummyServices, CacheTreeNode, OrgNode
+from composer.ui.cache_explorer import (
+    CacheNode, CacheExplorerApp, DummyServices, CacheTreeNode, OrgNode,
+    StoreNode, StoreSlot,
+)
 from composer.spec.context import (
     WorkflowContext, CacheKey, CVLGeneration, get_document_input,
     Contract, CacheTypes, Marker, ComponentGroup, Properties,
@@ -36,7 +40,9 @@ from composer.spec.cvl_generation import (
 )
 from composer.spec.natspec.pipeline import (
     PROPERTIES_KEY, _component_cache_key, _batch_cache_key,
+    STUB_NS, FILES_NS,
 )
+from composer.spec.natspec.registry import STUB_STORE_KEY, FIELDS_STORE_KEY
 from composer.spec.natspec.author import AuthorResult, GenerationSuccess, GaveUp
 from composer.spec.util import string_hash
 
@@ -53,14 +59,35 @@ type NatSpecCachedValue = (
     | _AgentHistory
     | AuthorResult
     | _LastAttemptCache
+    | RegistryRaw
 )
+
+
+@dataclass
+class RegistryRaw:
+    """Wrapper for raw dict values pulled from the StubRegistry / FileRegistry
+    KV slots — these aren't BaseModels (the registries persist plain dicts),
+    so we display them via a dedicated ``format_value`` case rather than
+    rehydrating into a typed model."""
+    kind: str  # "stub_content" | "stub_fields" | "file_registry_contract"
+    payload: dict
 
 # Cache-key literal used by source_analysis — same across mental models.
 SOURCE_ANALYSIS_KEY = CacheKey[None, NatspecApplication]("source-analysis")
 
 # Both interface-decl variants may have been used; the cache key encodes the
-# decl subtype name, so we try each.
-_INTERFACE_DECL_TYPES: tuple[type, ...] = (LocatedInterfaceDecl, AutoInterfaceDecl)
+# concrete result-type name. For interfaces this is the *parameterized*
+# Pydantic class — `InterfaceResult[LocatedInterfaceDecl]`, NOT just
+# `LocatedInterfaceDecl` — because interface_gen does
+# ``result_ty = description.output_ty`` where ``output_ty`` is the
+# parameterized generic. Pydantic's parameterized classes carry the parameter
+# in ``__name__``, so we have to construct the same parameterization here.
+_INTERFACE_RESULT_TYPES: tuple[type, ...] = (
+    InterfaceResult[LocatedInterfaceDecl],
+    InterfaceResult[AutoInterfaceDecl],
+)
+# Stubs are not generic — ``stub_ty = description.output_ty`` is the concrete
+# decl subclass directly, so its ``__name__`` is just the class name.
 _STUB_DECL_TYPES: tuple[type, ...] = (LocatedStubDeclaration, AutoStubDeclaration)
 
 
@@ -187,27 +214,70 @@ async def build_contract_tree(
                 yield t
 
 
-async def build_tree_inner(root_ctx: WorkflowContext[None]):
-    # Source analysis: try Application first (greenfield), then
-    # FromSourceApplication (update). Whichever hits is the run's flavour.
+async def build_tree_inner(
+    root_ctx: WorkflowContext[None],
+    store,
+    doc_digest: str,
+    from_source: bool,
+):
+    # Source analysis: which Application subclass was used is determined by
+    # whether the original pipeline run passed --source-root. Caller tells us.
     sa_ctx = root_ctx.child(SOURCE_ANALYSIS_KEY)
-    summary: NatspecApplication | None = await sa_ctx.cache_get(Application)
-    if summary is None:
-        summary = await sa_ctx.cache_get(FromSourceApplication)
+    app_ty: type[NatspecApplication] = FromSourceApplication if from_source else Application
+    summary: NatspecApplication | None = await sa_ctx.cache_get(app_ty)
     yield CacheNode(label="source-analysis", ctx=sa_ctx, value=summary)
+
+    # Registry slots — these are written by ``store.aput`` directly (not
+    # via the typed ``WorkflowContext`` cache hierarchy), so they're
+    # surfaced as ``StoreNode`` entries with explicit ``(namespace, key)``
+    # slots. This is what lets ``d`` (delete) target them — e.g. nuking
+    # the StubRegistry's ``stub_fields`` slot when a re-run sees the
+    # cached "field already exists" answer for a stub that was wiped.
+    with section("Registries"):
+        stub_ns = STUB_NS + (doc_digest,)
+        for slot_key in (STUB_STORE_KEY, FIELDS_STORE_KEY):
+            item = await store.aget(stub_ns, slot_key)
+            yield StoreNode[NatSpecCachedValue](
+                label=f"StubRegistry: {slot_key}",
+                slot=(stub_ns, slot_key),
+                value=RegistryRaw(kind=slot_key, payload=item.value)
+                      if item is not None else None,
+            )
+
+        files_ns = FILES_NS + (doc_digest,)
+        file_items = await store.asearch(files_ns, limit=10_000)
+        if file_items:
+            with section("FileRegistry"):
+                for item in file_items:
+                    yield StoreNode[NatSpecCachedValue](
+                        label=f"FileRegistry: {item.key}",
+                        slot=(files_ns, item.key),
+                        value=RegistryRaw(
+                            kind="file_registry_contract",
+                            payload=item.value,
+                        ),
+                    )
+        else:
+            yield StoreNode[NatSpecCachedValue](
+                label="FileRegistry: (empty)",
+                slot=(files_ns, "<empty>"),
+                value=None,
+            )
 
     if summary is None:
         return
 
-    # Interfaces: the cache key suffix encodes the decl subtype, so try both.
+    # Interfaces: cache-key suffix is the parameterized result-type ``__name__``
+    # (e.g. ``InterfaceResult[LocatedInterfaceDecl]``). Probe with the same
+    # parameterization the pipeline used at write time.
     cached_intf: InterfaceResult | None = None
     intf_ctx = None
-    for decl_ty in _INTERFACE_DECL_TYPES:
+    for result_ty in _INTERFACE_RESULT_TYPES:
         intf_key = CacheKey[None, InterfaceResult](
-            f"interface-{string_hash(summary.model_dump_json())}-{decl_ty.__name__}"
+            f"interface-{string_hash(summary.model_dump_json())}-{result_ty.__name__}"
         )
         probe_ctx = root_ctx.child(intf_key)
-        cached = await probe_ctx.cache_get(InterfaceResult)
+        cached = await probe_ctx.cache_get(result_ty)
         if cached is not None:
             cached_intf = cached
             intf_ctx = probe_ctx
@@ -261,11 +331,13 @@ async def build_tree_inner(root_ctx: WorkflowContext[None]):
                 yield t
 
 
-async def build_tree(root_ctx: WorkflowContext) -> CacheNode[NatSpecCachedValue]:
+async def build_tree(
+    root_ctx: WorkflowContext, store, doc_digest: str, from_source: bool,
+) -> CacheNode[NatSpecCachedValue]:
     """Build the NatSpec pipeline cache tree by reading the store."""
     root: CacheNode[NatSpecCachedValue] = CacheNode(label="root", ctx=root_ctx)
     with node(root):
-        async for n in build_tree_inner(root_ctx):
+        async for n in build_tree_inner(root_ctx, store, doc_digest, from_source):
             curr_node = _node_context.get()
             assert curr_node is not None
             curr_node.children.append(n)  # type: ignore
@@ -362,6 +434,33 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
             lines.append("--- Last attempt CVL ---")
             lines.append(cvl)
 
+        case RegistryRaw(kind="stub_content", payload=payload):
+            lines.append(f"Stubs ({len(payload)}):")
+            for nm, entry in payload.items():
+                lines.append(
+                    f"  - {nm}: path={entry.get('path')} "
+                    f"ident={entry.get('solidity_identifier')}"
+                )
+
+        case RegistryRaw(kind="stub_fields", payload=payload):
+            fields_by_contract = payload.get("stub_fields", payload)
+            lines.append(f"Field metadata ({len(fields_by_contract)} contracts):")
+            for nm, fields in fields_by_contract.items():
+                lines.append(f"  {nm}: {len(fields)} field(s)")
+                for f in fields:
+                    lines.append(
+                        f"    - {f.get('name')}: {f.get('type')}  "
+                        f"({f.get('description')})"
+                    )
+
+        case RegistryRaw(kind="file_registry_contract", payload=payload):
+            entries = payload.get("files", [])
+            lines.append(f"Registered files ({len(entries)}):")
+            for e in entries:
+                ident = e.get("solidity_identifier")
+                suffix = f":{ident}" if ident else ""
+                lines.append(f"  - {e.get('path')}{suffix}")
+
     return lines
 
 
@@ -378,6 +477,10 @@ def main() -> int:
                         help="Cache namespace (same as passed to tui_pipeline)")
     parser.add_argument("--memory-ns", dest="memory_ns", default=None,
                         help="Memory namespace (enables memory browsing)")
+    parser.add_argument("--from-source", action="store_true",
+                        help="Set if the original pipeline run was invoked with "
+                             "--source-root (selects the FromSourceApplication "
+                             "model for cache lookups). Omit for greenfield runs.")
 
     args = parser.parse_args()
 
@@ -390,7 +493,8 @@ def main() -> int:
     from composer.workflow.services import get_store
     store = get_store()
 
-    root_ns = (args.cache_ns, string_hash(str(content)))
+    doc_digest = string_hash(str(content))
+    root_ns = (args.cache_ns, doc_digest)
     print(f"Root namespace: {root_ns}")
 
     root_ctx: WorkflowContext = WorkflowContext.create(
@@ -406,7 +510,9 @@ def main() -> int:
         status += f"  |  Memory NS: {args.memory_ns}"
 
     app = CacheExplorerApp(
-        build_tree=lambda: build_tree(root_ctx),
+        build_tree=lambda: build_tree(
+            root_ctx, store, doc_digest, from_source=args.from_source,
+        ),
         format_value=format_value,
         store=store,
         status=status,

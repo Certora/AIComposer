@@ -4,15 +4,14 @@ Property generation agent: extracts security properties from application compone
 Parameterized by source availability via AnalysisInput tuple.
 """
 
-from typing import NotRequired, Protocol, override, Literal
+from typing import NotRequired, override, Literal, Sequence
 import re
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
 
-from langchain_core.tools import BaseTool
 from langgraph.types import interrupt, Command
 
-from langchain_core.messages import AnyMessage, SystemMessage, AIMessage, ToolMessage
+from langchain_core.messages import AnyMessage, SystemMessage, AIMessage, ToolMessage, HumanMessage
 
 from graphcore.graph import MessagesState, FlowInput
 from graphcore.tools.schemas import WithImplementation
@@ -34,9 +33,22 @@ from rich.console import Group
 from rich.text import Text
 
 class _BugAnalysisCache(BaseModel):
-    items: list[PropertyFormulation]
+    items: list[PropertyFormulation] = Field(description="The security properties you have extracted about the component. Do NOT include any properties " \
+    "mentioned in <prior_properties> (if any were provided to you. If you have not extracted any novel properties, return an empty list")
 
-class _AgentHistory(_BugAnalysisCache):
+
+class _AgentRoundResult(_BugAnalysisCache):
+    """
+    The results of your analysis from this round.
+    """
+    reasoning: str = Field(description="What you considered this round, what you rejected and why, "
+        "and how the properties you extracted capture parts of the bug surface "
+        "prior rounds missed. Future rounds (and the user, in interactive "
+        "mode) will read this -- not your message history -- to "
+        "understand your reasoning. Be specific."
+    )
+
+class _AgentRoundWithHistory(_AgentRoundResult):
     agent_conversation: list[AnyMessage]
 
 def bug_analysis_key(
@@ -46,7 +58,15 @@ def bug_analysis_key(
         return CacheKey[ComponentGroup, _BugAnalysisCache]("bug_analysis")
     return CacheKey[ComponentGroup, _BugAnalysisCache]("bug_analysis-tm-" + string_hash(str(threat_model)))
 
-AGENT_RESULT_KEY = CacheKey[_BugAnalysisCache, _AgentHistory]("agent_bug_analysis")
+class _AgentResult(_BugAnalysisCache):
+    final_history: list[AnyMessage]
+
+def agent_round_key(
+    i: int
+) -> CacheKey[_AgentResult, _AgentRoundWithHistory]:
+    return CacheKey[_AgentResult, _AgentRoundWithHistory](f"round-{i}")
+
+AGENT_RESULT_KEY = CacheKey[_BugAnalysisCache, _AgentResult]("agent_bug_analysis")
 
 DESCRIPTION = "Property extraction"
 
@@ -56,11 +76,13 @@ class RefinementState(MessagesState):
 def _get_initial_prompt(
     context: ContractComponentInstance,
     sort: Literal["greenfield", "update", "existing"],
+    prev_results: list[_AgentRoundResult]
 ) -> str:
     return load_jinja_template(
         "property_analysis_prompt.j2",
         context=context,
         sort=sort,
+        prior_properties=prev_results
     )
 
 @tool_display("Ending conversation...", None)
@@ -168,62 +190,130 @@ def diff_states(state_a: list[str], state_b: list[str]) -> Group:
 
     return Group(*out)
 
+def _front_matter_message(items: Sequence[str | dict]) -> HumanMessage | None:
+    """Pack reference material (system doc, threat model) into a single
+    ``HumanMessage`` that lives in ``FlowInput.front_matter`` — placed
+    between the system prompt and the initial prompt — with the last
+    content block marked as a prompt-cache breakpoint.
 
-async def _run_bug_analysis_inner(
-    agent_component_analysis: WorkflowContext[_AgentHistory],
+    All blocks before and including the breakpoint are cached and reused
+    across rounds, so the per-round delta is just the small initial prompt
+    + the agent's per-round work, not the (large) system doc / threat
+    model on every call.
+    """
+    if not items:
+        return None
+    blocks: list[dict] = []
+    for item in items:
+        if isinstance(item, str):
+            blocks.append({"type": "text", "text": item})
+        else:
+            blocks.append(dict(item))
+    blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+    return HumanMessage(content=[ *blocks ])
+
+
+async def _run_bug_round(
     env: ServiceHost,
     component: ContractComponentInstance,
-    threat_model: str | dict | None
-) -> _AgentHistory:
-    if (cached := await agent_component_analysis.cache_get(_AgentHistory)) is not None:
+    front_matter_items: Sequence[str | dict],
+    ctx: WorkflowContext[_AgentResult],
+    round: int,
+    prev: list[_AgentRoundResult]
+) -> _AgentRoundWithHistory:
+    round_ctx = ctx.child(agent_round_key(round))
+    if (cached := await round_ctx.cache_get(_AgentRoundWithHistory)) is not None:
         return cached
-    
+
+
     builder = env.builder
 
     class BugAnalysisInput(FlowInput, RoughDraftState):
         pass
 
     class ST(MessagesState, RoughDraftState):
-        result: NotRequired[list[PropertyFormulation]]
+        result: NotRequired[_AgentRoundResult]
 
     d = bind_standard(
         builder, ST, "The security properties you have extracted about the component"
     ).with_input(
         BugAnalysisInput
     ).with_initial_prompt(
-        _get_initial_prompt(component, env.sort)
+        _get_initial_prompt(component, env.sort, prev)
     ).with_tools(
         get_rough_draft_tools(ST)
     ).with_tools(
         env.source_tools
-    ).with_sys_prompt(
-        "You are an expert security and software analyst, with extensive knowledge of the types of issues and vulnerabilities found in DeFi protocols"
+    ).with_sys_prompt_template(
+        "property_analysis_system_prompt.j2", sort=env.sort
     ).compile_async()
 
-    extra_input = []
+    flow_input: BugAnalysisInput = BugAnalysisInput(
+        input=[], memory=None, did_read=False,
+    )
+    front = _front_matter_message(front_matter_items)
+    if front is not None:
+        flow_input["front_matter"] = [front]
 
+    r = await run_to_completion(
+        d,
+        flow_input,
+        thread_id=round_ctx.thread_id,
+        description=f"{DESCRIPTION} (Round {round + 1})",
+    )
+    assert "result" in r
+
+    result: _AgentRoundResult = r["result"]
+
+    to_ret = _AgentRoundWithHistory(items=result.items, agent_conversation=r["messages"], reasoning=result.reasoning)
+
+    await round_ctx.cache_put(to_ret)
+    return to_ret
+
+
+async def _run_bug_analysis_inner(
+    agent_component_analysis: WorkflowContext[_AgentResult],
+    env: ServiceHost,
+    component: ContractComponentInstance,
+    extra_input: Sequence[str | dict],
+    threat_model: str | dict | None,
+    max_rounds: int
+) -> _AgentResult:
+    if (cached := await agent_component_analysis.cache_get(_AgentResult)) is not None:
+        return cached
+    
+    front_matter_items: list[str | dict] = [ *extra_input ]
     if threat_model is not None:
-        extra_input = [
+        front_matter_items.extend([
             "In addition, a coworker has already written a 'threat model' for this application, which may include vulnerabilities/issues that"
             "are common in this type of application. This threat model is written for the entire application (not just the component you are analyzing) "
             "so some of the issues/vulnerabilities/attacks may not be relevant to your analysis. Do *NOT* overfit to this threat model; carefully "
             "analyze what content of the provided threat model is worth considering vs out of scope. Further, this threat model is just a starting point, "
             "you should ALSO look for threats *not* mentioned in this document.",
             threat_model
-        ]
+        ])
 
-    r = await run_to_completion(
-        d,
-        BugAnalysisInput(input=extra_input, memory=None, did_read=False),
-        thread_id=agent_component_analysis.thread_id,
-        description=DESCRIPTION,
+    prev_rounds : list[_AgentRoundResult] = []
+    last_round_convo : list[AnyMessage] | None = None
+
+    for i in range(0, max_rounds):
+        next_result = await _run_bug_round(
+            env, component, front_matter_items, agent_component_analysis, i, prev_rounds
+        )
+        if len(next_result.items) == 0:
+            assert last_round_convo is not None
+            break
+
+        prev_rounds.append(next_result)
+        last_round_convo = next_result.agent_conversation
+    
+    assert last_round_convo is not None
+    to_ret = _AgentResult(
+        items=[
+            prop for sublist in prev_rounds for prop in sublist.items
+        ],
+        final_history=last_round_convo
     )
-    assert "result" in r
-
-    result: list[PropertyFormulation] = r["result"]
-
-    to_ret = _AgentHistory(items=result, agent_conversation=r["messages"])
-
     await agent_component_analysis.cache_put(to_ret)
     return to_ret
 
@@ -231,6 +321,7 @@ async def run_bug_analysis(
     ctx: WorkflowContext[ComponentGroup],
     env: ServiceHost,
     component: ContractComponentInstance,
+    extra_input : Sequence[str | dict] = tuple(),
     threat_model: str | dict | None = None,
     refinement: ConversationContextProvider | None = None
 ) -> list[PropertyFormulation]:
@@ -246,14 +337,16 @@ async def run_bug_analysis(
         component_analysis.child(AGENT_RESULT_KEY),
         env,
         component,
-        threat_model
+        extra_input,
+        threat_model,
+        max_rounds=3
     )
     if refinement is None:
         to_ret = agent_attempt.items
         await component_analysis.cache_put(_BugAnalysisCache(items=to_ret))
         return to_ret
 
-    msg_history = agent_attempt.agent_conversation
+    msg_history = agent_attempt.final_history
     assert isinstance(msg_history[0], SystemMessage) and isinstance(msg_history[-1], ToolMessage)
     import uuid
     edited_history = [

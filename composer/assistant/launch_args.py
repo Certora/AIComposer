@@ -26,6 +26,20 @@ class LaunchCodegenArgs(CommonCodeGen):
         ),
     )
     prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
+    kickstart_context: str | None = Field(
+        default=None,
+        description=(
+            "Free-form briefing fed verbatim into the codegen agent's initial prompt. "
+            "Use this to pass forward whatever context the agent needs to start work that "
+            "isn't already covered by spec / interface / system_doc. Typical contents when "
+            "this codegen run follows a natspec invocation: the agent-chosen implementation "
+            "path (so the codegen agent writes its file at the same location the stub "
+            "occupied — STRONGLY recommended), the natspec stub source as scaffold to "
+            "evolve, the table of required storage fields with their types and purposes, "
+            "and any dependency / tag notes from the implementation plan. The codegen "
+            "agent treats anything in this field as authoritative orchestrator briefing."
+        ),
+    )
 
 
 class LaunchResumeArgs(CommonCodeGen):
@@ -54,3 +68,23 @@ class LaunchNatSpecArgs(BaseModel):
         ),
     )
     prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
+    output_root: str | None = Field(
+        default=None,
+        description=(
+            "Workspace-relative directory under which the natspec run's `implementation_plan.json` "
+            "is written, plus any generated files in no-IDE fallback. When unset, defaults to "
+            "`natspec_output/<cache_namespace>` (or `natspec_output/` if no cache_namespace was "
+            "supplied). The plan path is reported back in the launch result so subsequent "
+            "codegen invocations can locate it."
+        ),
+    )
+    interactive: bool = Field(
+        default=False,
+        description=(
+            "When True, opens a per-component conversation channel during bug analysis so "
+            "the user can refine the extracted property list interactively before CVL "
+            "generation begins. Each component's channel is its own focusable panel in the "
+            "TUI. Set when the user has expressed intent to review properties before "
+            "formalization; leave false for batch / hands-off runs."
+        ),
+    )

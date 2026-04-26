@@ -114,6 +114,7 @@ async def launch_codegen_workflow(
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,
             prover_conf_overrides=args.prover_conf,
+            kickstart_context=args.kickstart_context,
         )
 
     app.set_work(work)

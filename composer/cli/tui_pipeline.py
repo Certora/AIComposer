@@ -52,6 +52,7 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
     forbidden_read: str | None
     prover_conf: str | None
     output_root: str | None
+    interactive: bool
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +91,13 @@ async def _main() -> int:
         help="Path to a Certora config JSON file whose keys (packages, link, solc_args, etc.) "
              "are merged into every typecheck invocation. Dynamic keys (files, verify, solc, "
              "compilation_steps_only) are always set by the pipeline.",
+    )
+    parser.add_argument(
+        "--interactive", action="store_true", default=False,
+        help="Open a per-component conversation channel during bug analysis so the user "
+             "can refine the extracted property list interactively before CVL generation. "
+             "Each component's channel is its own focusable panel in the TUI; use the "
+             "switcher to navigate.",
     )
     parser.add_argument(
         "--output-root", default=None,
@@ -190,6 +198,7 @@ async def _main() -> int:
                     mental_model=mental_model,
                     source_factory=source_factory,
                     max_concurrent=args.max_concurrent,
+                    interactive=args.interactive,
                 )
                 await app.on_pipeline_done(result)
             except Exception as exc:

@@ -23,6 +23,7 @@ from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.spec._env_common import build_rag_tool_env
 from composer.spec.service_host import ServiceHost
 from composer.cli.natspec_startup import make_source_factory, build_mental_model
+from composer.ui.tool_display import async_tool_context
 
 async def launch_natspec_workflow(
     args: LaunchNatSpecArgs,
@@ -40,7 +41,8 @@ async def launch_natspec_workflow(
         standard_connections(embedder=DefaultEmbedder(the_model)) as conn,
         PostgreSQLRAGDatabase.rag_context(
             the_model, ctx.config.rag_db
-        ) as rag_db
+        ) as rag_db,
+        async_tool_context()
     ):
 
         thread_id = f"pipeline_{uuid.uuid4().hex[:12]}"
@@ -76,7 +78,24 @@ async def launch_natspec_workflow(
         source_root_path: pathlib.Path | None = None
         if args.source_root:
             source_root_path = (ctx.workspace / args.source_root).resolve()
-        app = PipelineApp(ide=ctx.ide)
+
+        # Resolve output_root: explicit > derived from cache_namespace > generic.
+        if args.output_root:
+            output_root_path = (ctx.workspace / args.output_root).resolve()
+        elif args.cache_namespace:
+            output_root_path = (
+                ctx.workspace / "natspec_output" / args.cache_namespace
+            ).resolve()
+        else:
+            output_root_path = (ctx.workspace / "natspec_output").resolve()
+
+        app = PipelineApp(
+            ide=ctx.ide,
+            system_doc_path=input_path.resolve(),
+            source_root=source_root_path,
+            prover_conf=args.prover_conf,
+            output_root=output_root_path,
+        )
         # don't let pyright conclude these variables remain None (they are mutated in work)
         pipeline_result: PipelineResult | None = cast(PipelineResult | None, None)
         captured_error: Exception | None = cast(Exception | None, None)
@@ -98,7 +117,8 @@ async def launch_natspec_workflow(
                     source_factory=make_source_factory(
                         source_root=source_root_path,
                         forbidden_read=args.forbidden_read
-                    )
+                    ),
+                    interactive=args.interactive,
                 )
                 await app.on_pipeline_done(pipeline_result)
             except Exception as exc:
@@ -116,19 +136,28 @@ async def launch_natspec_workflow(
                 f"{type(captured_error).__name__}: {captured_error}\n"
                 f"Traceback:\n{tb}"
             )
+        plan_path = output_root_path / "implementation_plan.json"
+        plan_info = (
+            f" Plan written to: {plan_path}"
+            if plan_path.is_file()
+            else " (plan was not persisted; check pipeline logs)"
+        )
+
         if pipeline_result is not None:
-            n_fail = 0
-            failures_obj : list[ComponentGenerationFailure] = []
+            failures_obj: list[ComponentGenerationFailure] = []
             for rc in pipeline_result.contracts:
                 for f in rc.spec_results.failures:
-                    failures_obj.append(
-                        f
-                    )
+                    failures_obj.append(f)
             if len(failures_obj) == 0:
-                return "NatSpec pipeline completed successfully. All properties formalized."
+                return (
+                    "NatSpec pipeline completed successfully. All properties "
+                    f"formalized.{plan_info}"
+                )
             failures = "; ".join(
-                f"{f.component}: {f.reason}"
-                for f in failures_obj
+                f"{f.component}: {f.reason}" for f in failures_obj
             )
-            return f"NatSpec pipeline completed with {n_fail} failure(s): {failures}"
+            return (
+                f"NatSpec pipeline completed with {len(failures_obj)} failure(s): "
+                f"{failures}.{plan_info}"
+            )
         return "NatSpec pipeline finished without producing a result."
