@@ -1,6 +1,7 @@
 import composer.bind as _
 
 import asyncio
+import sys
 
 from composer.input.parsing import fresh_workflow_argument_parser
 from composer.workflow.services import create_llm
@@ -11,7 +12,7 @@ from composer.diagnostics.debug import setup_logging, dump_fs
 
 async def main() -> int:
     """Main entry point for the AI Composer tool."""
-    parser = fresh_workflow_argument_parser()
+    parser = fresh_workflow_argument_parser(sys.argv[1:])
     args = parser.parse_args()
 
     setup_logging(args.debug)
@@ -38,5 +39,4 @@ async def main() -> int:
     return result.exit_code
 
 if __name__ == "__main__":
-    import sys
     sys.exit(asyncio.run(main()))

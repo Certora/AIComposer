@@ -131,43 +131,88 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
                              "invocation. Dynamic keys (files, verify, solc) are always set by the pipeline.")
 
 
-def fresh_workflow_argument_parser() -> TypedArgumentParser[CommandLineArgs]:
+def _has_input_json_flag(argv: list[str]) -> bool:
+    """True if ``--input-json`` (with or without an attached ``=value``)
+    appears anywhere in ``argv``. Used by the parser builder to decide
+    whether to require the legacy positional triad."""
+    for tok in argv:
+        if tok == "--input-json" or tok.startswith("--input-json="):
+            return True
+    return False
+
+
+def fresh_workflow_argument_parser(argv: list[str]) -> TypedArgumentParser[CommandLineArgs]:
     """Configure command line argument parser.
 
-    Two input modes:
-      1. Legacy triad (single spec): positional ``spec_file`` ``interface_file``
-         ``system_doc``. Good for one-off single-spec runs.
-      2. JSON input (``--input-json path.json``): describes a contract task
-         with multiple specs, optional contract name, implementation path,
-         source root, and per-task prover config. Positional args are not
-         required (and ignored) when ``--input-json`` is supplied.
+    Two input modes — the parser shape varies based on whether ``argv``
+    contains ``--input-json``:
+
+      1. Legacy triad (single spec): positional ``spec_file``
+         ``interface_file`` ``system_doc``, REQUIRED. Good for one-off
+         single-spec runs. Used when ``--input-json`` is not in ``argv``.
+      2. JSON input (``--input-json path.json``): describes a contract
+         task with multiple specs, optional contract name, implementation
+         path, source root, and per-task prover config. The positional
+         triad is NOT registered on the parser in this mode (so argparse
+         won't reject extra args or demand them); the namespace still
+         exposes ``spec_file`` / ``interface_file`` / ``system_doc`` as
+         ``None`` via ``set_defaults`` so downstream consumers can read
+         them uniformly.
+
+    ``--input-json`` itself is registered unconditionally so it always
+    appears under ``--help``, regardless of which mode is selected.
+
+    Args:
+        argv: The argv list (typically ``sys.argv[1:]``) — peeked at to
+            choose between the two parser shapes. Pre-parse, so we can
+            shape the parser before argparse sees the args.
     """
     parser = argparse.ArgumentParser(description="Certora AI Composer for Smart Contract Generation")
-    # Positionals are optional so that ``--input-json`` can supply them instead.
-    # Post-parse validation enforces that exactly one of the two modes is used.
-    parser.add_argument("spec_file", nargs='?', default=None,
-                        help="Specification file for the smart contract (legacy single-spec mode)")
-    parser.add_argument("interface_file", nargs='?', default=None,
-                        help="The interface file for the smart contract (legacy single-spec mode)")
-    parser.add_argument("system_doc", nargs='?', default=None,
-                        help="A text document describing the system (legacy single-spec mode)")
+
+    # Always register --input-json so it shows up in --help regardless of
+    # which mode the current invocation selected.
     parser.add_argument("--input-json", default=None,
                         help="Path to a JSON file describing the contract task (multi-spec mode). "
-                             "Mutually exclusive with the positional spec/interface/system-doc triad. "
+                             "When set, the positional spec/interface/system-doc triad is omitted "
+                             "from this invocation's parser shape. "
                              "Schema: {name?, interface, implementation_path?, specs[], system_doc, "
                              "source_root?, prover_conf?}. Relative paths resolve against the JSON "
                              "file's directory.")
-    parser.add_argument("--source-root", default=None,
-                        help="Path to an existing codebase to use as the VFS underlay. "
-                             "When set, agents see existing files read-only and can layer new files on top. "
-                             "In JSON mode, this is taken from the JSON's source_root field instead.")
-    parser.add_argument("--contract-name", default=None,
+
+    if _has_input_json_flag(argv):
+        # JSON mode: don't register the positionals (would conflict with
+        # the JSON file's contents and confuse --help). Surface the
+        # attributes as ``None`` so downstream code can read them
+        # uniformly without ``hasattr`` guards.
+        parser.set_defaults(
+            spec_file=None,
+            interface_file=None,
+            system_doc=None,
+            contract_name=None,
+            implementation_path=None
+        )
+    else:
+        # Legacy triad mode: positionals are REQUIRED; argparse enforces.
+        parser.add_argument("spec_file",
+                            help="Specification file for the smart contract (legacy single-spec mode)")
+        parser.add_argument("interface_file",
+                            help="The interface file for the smart contract (legacy single-spec mode)")
+        parser.add_argument("system_doc",
+                            help="A text document describing the system (legacy single-spec mode)")
+        
+        parser.add_argument("--contract-name", default=None,
                         help="Solidity identifier of the contract being implemented. Informational; "
                              "agents may still choose their own target_contract per prover run. "
                              "In JSON mode, taken from the JSON's name field instead.")
-    parser.add_argument("--implementation-path", default=None,
-                        help="Suggested VFS path for the generated Solidity implementation. "
-                             "In JSON mode, taken from the JSON's implementation_path field instead.")
+        parser.add_argument("--implementation-path", default=None,
+                            help="Suggested VFS path for the generated Solidity implementation. "
+                                "In JSON mode, taken from the JSON's implementation_path field instead.")
+
+
+    parser.add_argument("--source-root", default=None,
+                        help="Path to an existing codebase to use as the VFS underlay. "
+                             "When set, agents see existing files read-only and can layer new files on top. "
+                             "In JSON mode, this overrides the JSON's source_root field instead")
     _common_options(parser)
 
     return cast(TypedArgumentParser[CommandLineArgs], parser)

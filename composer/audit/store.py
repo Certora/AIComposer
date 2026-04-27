@@ -30,19 +30,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import AsyncIterator, Iterable, Iterator, TypedDict, cast
+from typing import AsyncIterator, Iterable, Iterator, Optional, TypedDict, cast
 import pathlib
 import uuid
 
 from langgraph.store.base import BaseStore
 
 from composer.audit.types import (
-    InputFileLike,
     ManualResult,
     RuleResult,
     RunInput,
     SpecRunEntry,
 )
+from composer.input.types import InputFileLike, TextInputFile
 from composer.audit.sink import AuditSink
 from composer.prover.ptypes import StatusCodes
 from composer.rag.types import ManualRef
@@ -64,7 +64,10 @@ class StoredRunInfo(TypedDict):
     interface_name: str
     interface_contents: str
     system_name: str
-    system_contents: str
+    # System doc is stored as base64 unconditionally — text or binary.
+    # The decode-back-to-text path is opt-in (the heuristic on the
+    # decoded bytes); the API doesn't promise text on read.
+    system_b64: str
     num_reqs: int | None
 
 
@@ -102,10 +105,15 @@ class StoredManualResult(TypedDict):
 
 
 @dataclass
-class _StoredFile:
-    """``InputFileLike`` backed by a string that has already been read
+class _StoredTextFile:
+    """``TextInputFile`` backed by a string that has already been read
     out of the store. No lazy loading; the contents live in memory as
-    soon as the enclosing record is fetched."""
+    soon as the enclosing record is fetched.
+
+    Always text-shaped — used for specs and interfaces, both of which
+    are guaranteed text by the upstream upload contract
+    (``upload_text_file_if_needed``). Satisfies ``TextInputFile``
+    (``string_contents -> str``, never None)."""
 
     path: str
     contents: str
@@ -121,6 +129,66 @@ class _StoredFile:
     @property
     def string_contents(self) -> str:
         return self.contents
+
+    def to_document_dict(self) -> dict:
+        """Inline text block — the audit only persisted text, so the
+        re-feed shape is just the captured string body."""
+        return {"type": "text", "text": self.contents}
+
+
+@dataclass
+class _StoredSystemDoc:
+    """``InputFileLike`` for an audit-recorded system document. The
+    audit persists the bytes as base64 unconditionally so binary system
+    docs (e.g. PDFs) round-trip through resume. ``string_contents``
+    opts into text decoding via the same heuristic the upload path uses
+    (NUL byte in the first 8 KiB → binary → returns ``None``)."""
+
+    path: str
+    contents_b64: str
+
+    @property
+    def basename(self) -> str:
+        return pathlib.Path(self.path).name
+
+    @property
+    def bytes_contents(self) -> bytes:
+        import base64
+        return base64.standard_b64decode(self.contents_b64)
+
+    @property
+    def string_contents(self) -> Optional[str]:
+        # Same predicate as the upload-side heuristic: known binary
+        # suffix → binary; otherwise scan the first 8 KiB for a NUL
+        # byte. Decoding is best-effort; on UnicodeDecodeError fall
+        # back to None.
+        suffix = pathlib.Path(self.path).suffix.lower()
+        if suffix in {".pdf"}:
+            return None
+        raw = self.bytes_contents
+        if b"\x00" in raw[: 8 * 1024]:
+            return None
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+    def to_document_dict(self) -> dict:
+        text = self.string_contents
+        if text is not None:
+            return {"type": "text", "text": text}
+        # Binary — emit an inline base64 document block. Suffix-based
+        # mime; everything we don't recognize falls to octet-stream.
+        suffix = pathlib.Path(self.path).suffix.lower()
+        media_type = "application/pdf" if suffix == ".pdf" else "application/octet-stream"
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": self.contents_b64,
+            },
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -139,13 +207,13 @@ class VFSRetriever:
         for p, c in self._files.items():
             yield (p, c.encode("utf-8"))
 
-    def get_file(self, p: str) -> _StoredFile | None:
+    def get_file(self, p: str) -> _StoredTextFile | None:
         c = self._files.get(p)
         if c is None:
             return None
-        return _StoredFile(path=p, contents=c)
+        return _StoredTextFile(path=p, contents=c)
 
-    def __getitem__(self, p: str) -> _StoredFile | None:
+    def __getitem__(self, p: str) -> _StoredTextFile | None:
         return self.get_file(p)
 
 
@@ -159,7 +227,10 @@ class ResumeSpecEntry:
     """A single spec file as captured on the completed run, surfaced back to
     a resume caller. The VFS path is what the executor needs to re-overlay
     the spec into the resumed state; ``contents`` is what was there at
-    completion time (before any resume-time updates the user may apply)."""
+    completion time (before any resume-time updates the user may apply).
+
+    Satisfies ``TextInputFile`` — specs are always text by upstream
+    contract."""
     vfs_path: str
     basename: str
     contents: str
@@ -172,6 +243,12 @@ class ResumeSpecEntry:
     def bytes_contents(self) -> bytes:
         return self.contents.encode("utf-8")
 
+    def to_document_dict(self) -> dict:
+        """Inline text block. Used if a resume flow ever feeds a prior
+        spec back to the LLM (uncommon — the conversation history
+        typically already has it)."""
+        return {"type": "text", "text": self.contents}
+
 
 class ResumeArtifact:
     """Bundle of everything needed to resume a prior run: the final interface
@@ -180,16 +257,16 @@ class ResumeArtifact:
 
     def __init__(
         self,
-        final_intf: _StoredFile,
+        final_intf: _StoredTextFile,
         spec_entries: list[ResumeSpecEntry],
-        system_doc: _StoredFile,
+        system_doc: "_StoredSystemDoc",
         commentary: str,
         intf_path: str,
         vfs_cur: VFSRetriever,
     ):
         self.intf_vfs_handle = final_intf
         self._spec_entries = spec_entries
-        self.system_vfs_handle = system_doc
+        self.system_vfs_handle: "_StoredSystemDoc" = system_doc
         self.vfs = vfs_cur
         self.commentary = commentary
         self.interface_path = intf_path
@@ -213,7 +290,12 @@ class ResumeArtifact:
         raise KeyError(f"No spec at vfs_path {vfs_path!r} in resume artifact")
 
     @cached_property
-    def system_doc(self) -> str:
+    def system_doc(self) -> str | None:
+        """Text body of the original system doc, or ``None`` if it was
+        a binary input (e.g. PDF) — the audit only persists text bodies,
+        so binary system docs can't round-trip through here. Callers
+        that need the actual content should reach for the live
+        Files-API handle on the input side."""
         return self.system_vfs_handle.string_contents
 
 
@@ -252,8 +334,8 @@ class AuditStore:
     async def register_run(
         self,
         thread_id: str,
-        specs: list[tuple[str, InputFileLike]],
-        interface_file: InputFileLike,
+        specs: list[tuple[str, TextInputFile]],
+        interface_file: TextInputFile,
         system_doc: InputFileLike,
         vfs_init: Iterable[tuple[str, bytes]],
         reqs: list[str] | None,
@@ -261,7 +343,13 @@ class AuditStore:
         """``specs`` is a list of ``(vfs_path, file)`` pairs — one per spec
         file participating in this contract task. ``vfs_path`` is where the
         spec lives in the VFS (e.g. ``certora/foo.spec`` in greenfield).
+
+        Spec/interface contents persist as plain strings (text-guaranteed
+        upstream). System doc persists as base64 unconditionally so
+        binary inputs (e.g. PDF) round-trip through resume; text decoding
+        is opt-in on the read side.
         """
+        import base64
         stored_specs: list[StoredSpecFile] = [
             {
                 "vfs_path": vfs_path,
@@ -275,7 +363,7 @@ class AuditStore:
             "interface_name": interface_file.basename,
             "interface_contents": interface_file.string_contents,
             "system_name": system_doc.basename,
-            "system_contents": system_doc.string_contents,
+            "system_b64": base64.standard_b64encode(system_doc.bytes_contents).decode("utf-8"),
             "num_reqs": len(reqs) if reqs is not None else None,
         }
         vfs_payload: StoredVFS = {
@@ -351,12 +439,12 @@ class AuditStore:
             ))
 
         return ResumeArtifact(
-            final_intf=_StoredFile(
+            final_intf=_StoredTextFile(
                 path=ra["interface_path"], contents=intf_contents
             ),
             spec_entries=spec_entries,
-            system_doc=_StoredFile(
-                path=ri["system_name"], contents=ri["system_contents"]
+            system_doc=_StoredSystemDoc(
+                path=ri["system_name"], contents_b64=ri["system_b64"]
             ),
             commentary=ra["commentary"],
             intf_path=ra["interface_path"],
@@ -394,12 +482,12 @@ class AuditStore:
             for s in ri["specs"]
         ]
         run_input: RunInput = {
-            "interface": _StoredFile(
+            "interface": _StoredTextFile(
                 path=ri["interface_name"], contents=ri["interface_contents"]
             ),
             "specs": run_specs,
-            "system": _StoredFile(
-                path=ri["system_name"], contents=ri["system_contents"]
+            "system": _StoredSystemDoc(
+                path=ri["system_name"], contents_b64=ri["system_b64"]
             ),
             "reqs": reqs,
         }

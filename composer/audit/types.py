@@ -1,17 +1,8 @@
-from typing import TypedDict, NotRequired, Protocol
+from typing import TypedDict, NotRequired
 
-class InputFileLike(Protocol):
-    @property
-    def basename(self) -> str:
-        ...
-
-    @property
-    def bytes_contents(self) -> bytes:
-        ...
-
-    @property
-    def string_contents(self) -> str:
-        ...
+# ``InputFileLike`` and ``TextInputFile`` live in ``composer.input.types``;
+# imported here for use in TypedDicts below.
+from composer.input.types import InputFileLike, TextInputFile
 
 
 class RuleResult(TypedDict):
@@ -37,6 +28,6 @@ class SpecRunEntry(TypedDict):
 
 class RunInput(TypedDict):
     specs: list[SpecRunEntry]
-    interface: InputFileLike
+    interface: TextInputFile
     system: InputFileLike
     reqs: list[str] | None

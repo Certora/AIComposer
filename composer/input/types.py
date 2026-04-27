@@ -3,6 +3,7 @@ from composer.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
 import pathlib
 from dataclasses import dataclass
 
+
 @dataclass
 class BasicArg:
     help: str
@@ -17,60 +18,51 @@ class OptionalArg(BasicArg):
     pass
 
 
-@dataclass
-class UploadedFile:
+# ---------------------------------------------------------------------------
+# File-content Protocols
+# ---------------------------------------------------------------------------
+
+
+class InputFileLike(Protocol):
+    """A file that may or may not be representable as a text string.
+
+    ``string_contents`` returns ``None`` for files whose bytes aren't
+    text (e.g. PDF system documents). Callers that need a guaranteed
+    string body should narrow to ``TextInputFile`` at the type level
+    rather than testing for ``None`` at every call site.
+
+    For LLM ingestion, ``to_document_dict`` is the universal mechanism —
+    a content block of whatever shape the implementation has access to
+    (Files-API reference, inline text, inline base64). The caller
+    doesn't care which.
     """
-    Represents a file uploaded with claude's file API
-    """
-    file_id: str
-    basename: str
 
-    path: str
-
-    def to_document_dict(self) -> dict:
-        """Convert to document dictionary format for LangGraph"""
-        return {
-            "type": "document",
-            "source": {
-                "type": "file",
-                "file_id": self.file_id
-            }
-        }
-
-    def read(self) -> str:
-        with open(self.path, 'r') as f:
-            return f.read()
-        
-    @property
-    def string_contents(self) -> str:
-        return self.read()
-
-    @property
-    def bytes_contents(self) -> bytes:
-        with open(self.path, 'rb') as f:
-            return f.read()
-
-class InMemoryFile:
-    def __init__(self, name: str, contents: str | bytes):
-        self.basname = name
-        self.bytes_contents = contents if isinstance(contents, bytes) else contents.encode("utf-8")
-
-class NativeFS:
-    def __init__(self, p: pathlib.Path):
-        self.where = p
-
-    @property
-    def bytes_contents(self) -> bytes:
-        return self.where.read_bytes()
-    
     @property
     def basename(self) -> str:
-        return self.where.name
-    
+        ...
+
+    @property
+    def bytes_contents(self) -> bytes:
+        ...
+
+    @property
+    def string_contents(self) -> Optional[str]:
+        """The file's text body, or ``None`` if the file is binary."""
+        ...
+
+    def to_document_dict(self) -> dict:
+        ...
+
+
+class TextInputFile(InputFileLike, Protocol):
+    """An ``InputFileLike`` known statically to be text — ``string_contents``
+    is guaranteed non-None. Use this parameter type for specs, interfaces,
+    and other places where binary input would be a programming error."""
+
     @property
     def string_contents(self) -> str:
-        return self.where.read_text()
-    
+        ...
+
 class RAGDBOptions(Protocol):
     # database options
     rag_db: Annotated[str, Arg(
@@ -191,7 +183,7 @@ class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
 class SpecInput:
     """A single spec file paired with the VFS path at which it should be
     materialized inside the workflow's virtual filesystem."""
-    file: UploadedFile
+    file: TextInputFile
     vfs_path: str
 
 
@@ -209,8 +201,10 @@ class InputData:
     ``source_root`` land at their workspace-relative path.
     """
     specs: list[SpecInput]
-    system_doc: UploadedFile
-    intf: UploadedFile
+    # ``system_doc`` may be binary (e.g. PDF); ``intf`` is always text
+    # (Solidity interface).
+    system_doc: InputFileLike
+    intf: TextInputFile
     source_root: Optional[str] = None
     contract_name: Optional[str] = None
     implementation_path: Optional[str] = None
@@ -227,7 +221,7 @@ class ResumeInput(Protocol):
         ...
 
     @property
-    def new_system(self) -> Optional[NativeFS]:
+    def new_system(self) -> Optional[InputFileLike]:
         ...
 
     @property
@@ -239,14 +233,17 @@ class ResumeIdData:
     thread_id: str
     # Mapping from VFS path → new spec content. Only paths present here are
     # updated on resume; other specs keep their prior state. For single-spec
-    # resumes from legacy CLI callers, this dict carries one entry.
-    new_specs: dict[str, NativeFS]
+    # resumes from legacy CLI callers, this dict carries one entry. Specs
+    # are guaranteed text — the construction site uploads via
+    # ``FileUploader.upload_text_file_if_needed`` so the type system
+    # carries the guarantee.
+    new_specs: dict[str, TextInputFile]
     comments: Optional[str]
-    new_system: Optional[NativeFS]
+    new_system: Optional[InputFileLike]
 
 @dataclass
 class ResumeFSData:
     thread_id: str
     file_path: str
     comments: Optional[str]
-    new_system: Optional[NativeFS]
+    new_system: Optional[InputFileLike]

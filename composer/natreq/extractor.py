@@ -17,7 +17,7 @@ from langgraph.graph import MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
-from composer.audit.types import InputFileLike
+from composer.input.types import InputFileLike, TextInputFile
 from composer.audit.store import ResumeArtifact
 from composer.input.types import RAGDBOptions
 from composer.rag.db import ComposerRAGDB, rag_context
@@ -141,7 +141,7 @@ async def get_requirements(
     options: RAGDBOptions,
     llm: BaseChatModel,
     sys_doc: InputFileLike,
-    specs: list[tuple[str, InputFileLike]],
+    specs: list[tuple[str, TextInputFile]],
     mem_backend: AsyncMemoryBackend,
     resume_artifact: ResumeArtifact | None,
     oracle: list[str]
@@ -173,9 +173,12 @@ async def get_requirements(
 
         config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
+        # ``sys_doc`` is ``InputFileLike`` (may be PDF). Use the
+        # universal document-block path so the LLM ingests text and
+        # binary system docs identically.
         input_text : list[str | dict] = [
             "The system document is as follows:",
-            sys_doc.string_contents,
+            sys_doc.to_document_dict(),
         ]
         if len(specs) == 1:
             input_text.append("The spec file is as follows:")

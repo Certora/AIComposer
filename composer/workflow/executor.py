@@ -16,7 +16,11 @@ from graphcore.graph import Builder
 from graphcore.tools.memory import async_memory_tool
 from graphcore.tools.vfs import VFSState
 
-from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
+from composer.input.types import (
+    WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput,
+    TextInputFile,
+)
+from composer.input.files import FileUploader
 from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools, DEFAULT_KB_NS
 from composer.workflow.factories import get_cryptostate_builder, get_vfs_tools, get_memory_ns
 from composer.workflow.types import PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
@@ -27,7 +31,7 @@ from composer.core.validation import prover, reqs as req_type
 from composer.rag.db import PostgreSQLRAGDatabase, rag_context, ComposerRAGDB
 from composer.rag.models import get_model as get_rag_model
 from composer.audit.store import AuditStore, AuditStoreSink, ResumeArtifact
-from composer.audit.types import InputFileLike
+from composer.input.types import InputFileLike
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
 from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, _build_research_tool
@@ -65,7 +69,7 @@ def _get_empty_extra() -> AIComposerExtra:
 def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> AIComposerInput:
     vfs: dict[str, str] = {}
     for s in input.specs:
-        vfs[s.vfs_path] = s.file.read()
+        vfs[s.vfs_path] = s.file.string_contents
 
     messages: list[str | dict] = [input.intf.to_document_dict()]
     for s in input.specs:
@@ -105,13 +109,33 @@ def get_resume_prompt_common(
         changes.extend(other_changes)
 
     if res.new_system is not None:
-        changes.append(InputChangeDesc(
-            orig_text=art.system_doc,
-            updated_text=res.new_system.string_contents,
-            plural="system documents",
-            single_form="system document",
-            vfs_note=None
-        ))
+        # ``string_contents`` is now ``str | None`` — None for binaries
+        # (e.g. PDF). Fall through to a textual diff when both sides
+        # have a string body; otherwise emit a "doc was replaced"
+        # notice (the LLM gets the actual content via the document
+        # block ingestion path elsewhere).
+        prior = art.system_vfs_handle.string_contents
+        new = res.new_system.string_contents
+        if prior is not None and new is not None:
+            changes.append(InputChangeDesc(
+                orig_text=prior,
+                updated_text=new,
+                plural="system documents",
+                single_form="system document",
+                vfs_note=None
+            ))
+        else:
+            changes.append(InputChangeDesc(
+                orig_text=f"[prior {art.system_vfs_handle.basename}]",
+                updated_text=f"[updated {res.new_system.basename}]",
+                plural="system documents",
+                single_form="system document",
+                vfs_note=(
+                    "Binary system document was replaced; see the document "
+                    "content block in the conversation history for the "
+                    "current contents."
+                )
+            ))
 
     return [load_jinja_template(
         "resume_prompt.j2",
@@ -156,7 +180,7 @@ def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflo
         **_get_empty_extra()
     )
 
-def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[AIComposerInput, InputFileLike, list[tuple[str, InputFileLike]]]:
+async def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[AIComposerInput, TextInputFile, list[tuple[str, TextInputFile]]]:
     """Resume from a file-system directory that mirrors the last run's VFS.
 
     Every spec VFS path registered with the run at its original start is
@@ -164,11 +188,15 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     contents have changed relative to the resume artifact are recorded as
     deltas for the resume prompt. Returns the flow input plus handles to
     the interface and all specs (for re-registration in the audit store).
+    Specs and interface are uploaded via the Files API as
+    ``UploadedTextFile`` so the type system carries the text guarantee
+    through to audit registration.
     """
     path = pathlib.Path(input.file_path)
+    uploader = await FileUploader.fresh()
 
     spec_deltas: list[SpecDelta] = []
-    spec_handles: list[tuple[str, InputFileLike]] = []
+    spec_handles: list[tuple[str, TextInputFile]] = []
     for vfs_path in resume_art.spec_vfs_paths:
         spec_p = path / vfs_path
         if not spec_p.is_file():
@@ -183,7 +211,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
                 orig_text=orig,
                 updated_text=new_spec_content,
             ))
-        spec_handles.append((vfs_path, NativeFS(spec_p)))
+        spec_handles.append((vfs_path, await uploader.upload_text_file_if_needed(spec_p)))
 
     intf_p = path / resume_art.interface_path
     if not intf_p.is_file():
@@ -210,7 +238,11 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
 
-    return (AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()), NativeFS(intf_p), spec_handles)
+    return (
+        AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()),
+        await uploader.upload_text_file_if_needed(intf_p),
+        spec_handles,
+    )
 
 
 async def _execute_ai_composer_workflow(
@@ -247,7 +279,7 @@ async def _execute_ai_composer_workflow(
     system_doc: InputFileLike
     interface_file: InputFileLike
     # (vfs_path, file) pairs — always at least one entry.
-    specs_for_audit: list[tuple[str, InputFileLike]]
+    specs_for_audit: list[tuple[str, TextInputFile]]
     resume_art : None | ResumeArtifact = None
     # Per-task prover conf override sourced from the input (InputData.prover_conf
     # for fresh runs; from the resume artifact's prior run for resumes — TODO).
@@ -277,7 +309,7 @@ async def _execute_ai_composer_workflow(
                 system_doc = input.new_system
             match input:
                 case ResumeFSData():
-                    (flow_input, interface_file, specs_for_audit) = get_resume_fs_input(input, resume_art, workflow_options)
+                    (flow_input, interface_file, specs_for_audit) = await get_resume_fs_input(input, resume_art, workflow_options)
                     fs_layer = input.file_path
                 case ResumeIdData():
                     interface_file = resume_art.intf_vfs_handle

@@ -1,10 +1,11 @@
 import traceback
 from dataclasses import dataclass, field
+import pathlib
 from typing import Optional
 
 from composer.assistant.launch_args import LaunchCodegenArgs, LaunchResumeArgs, CommonCodeGen
 from composer.assistant.types import OrchestratorContext
-from composer.input.files import upload_input
+from composer.input.files import upload_configuration
 from composer.input.types import ResumeFSData
 from composer.ui.codegen_rich import CodeGenRichApp
 from composer.io.protocol import WorkflowPurpose
@@ -16,14 +17,6 @@ from composer.workflow.services import create_llm
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-@dataclass
-class _CodegenUploadPaths:
-    spec_file: str
-    interface_file: str
-    system_doc: str
-    source_root: Optional[str] = None
-
 
 @dataclass
 class CodegenWorkflowArgs:
@@ -94,13 +87,7 @@ async def launch_codegen_workflow(
     args: LaunchCodegenArgs,
     ctx: OrchestratorContext,
 ) -> str:
-    paths = _CodegenUploadPaths(
-        spec_file=str(ctx.workspace / args.spec_file),
-        interface_file=str(ctx.workspace / args.interface_file),
-        system_doc=str(ctx.workspace / args.system_doc),
-        source_root=str(ctx.workspace / args.source_root) if args.source_root else None,
-    )
-    input_data = upload_input(paths)
+    input_data = await upload_configuration(args.launch_config, pathlib.Path(args.source_root))
 
     wf_args = _codegen_args(ctx, args)
     llm = create_llm(wf_args)
@@ -113,8 +100,7 @@ async def launch_codegen_workflow(
             workflow_options=wf_args,
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,
-            prover_conf_overrides=args.prover_conf,
-            kickstart_context=args.kickstart_context,
+            prover_conf_overrides=args.launch_config.prover_conf,
         )
 
     app.set_work(work)

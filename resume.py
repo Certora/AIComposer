@@ -5,7 +5,8 @@ import composer.certora as _
 from composer.input.parsing import resume_workflow_parser
 from composer.workflow.services import create_llm, store_context, checkpointer_context
 from composer.workflow.executor import execute_ai_composer_workflow
-from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
+from composer.input.types import ResumeIdData, ResumeFSData, TextInputFile, InputFileLike
+from composer.input.files import FileUploader
 from composer.ui.console import ConsoleHandler
 from composer.audit.store import AuditStore
 
@@ -45,7 +46,11 @@ async def main() -> int:
                     commentary = pathlib.Path(args.commentary[1:]).read_text()
                 else:
                     commentary = args.commentary
-            new_system=NativeFS(pathlib.Path(args.updated_system)) if args.updated_system is not None else None
+            uploader = await FileUploader.fresh()
+            new_system: InputFileLike | None = (
+                await uploader.upload_file_if_needed(args.updated_system)
+                if args.updated_system is not None else None
+            )
             if args.command == "resume-dir":
                 input_data = ResumeFSData(
                     comments=commentary,
@@ -60,7 +65,7 @@ async def main() -> int:
                 # run had exactly one spec, the mapping is unambiguous;
                 # otherwise the user must supply the VFS path explicitly via
                 # ``<vfs_path>=<local_file>`` syntax (repeatable).
-                new_specs: dict[str, NativeFS] = {}
+                new_specs: dict[str, TextInputFile] = {}
                 async with store_context() as store:
                     audit = AuditStore(store)
                     art = await audit.get_resume_artifact(args.src_thread_id)
@@ -68,7 +73,7 @@ async def main() -> int:
                 for entry in raw_entries:
                     if "=" in entry:
                         vfs_path, local_path = entry.split("=", 1)
-                        new_specs[vfs_path] = NativeFS(pathlib.Path(local_path))
+                        new_specs[vfs_path] = await uploader.upload_text_file_if_needed(local_path)
                     else:
                         if len(art.spec_vfs_paths) != 1:
                             print(
@@ -77,7 +82,7 @@ async def main() -> int:
                                 f"`<vfs_path>=<local_file>` to disambiguate which one to update."
                             )
                             return 1
-                        new_specs[art.spec_vfs_paths[0]] = NativeFS(pathlib.Path(entry))
+                        new_specs[art.spec_vfs_paths[0]] = await uploader.upload_text_file_if_needed(entry)
                 input_data = ResumeIdData(
                     thread_id=args.src_thread_id,
                     new_specs=new_specs,

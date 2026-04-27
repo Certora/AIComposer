@@ -1,10 +1,7 @@
 import composer.bind as _
 
-from composer.testing.ui_harness import install_vault_tape
-
-install_vault_tape()
-
 import asyncio
+import sys
 
 from composer.input.parsing import fresh_workflow_argument_parser
 from composer.workflow.services import create_llm
@@ -18,7 +15,7 @@ from composer.ui.tool_display import tool_context
 
 async def main() -> int:
     """TUI entry point for the AI Composer tool."""
-    parser = fresh_workflow_argument_parser()
+    parser = fresh_workflow_argument_parser(sys.argv[1:])
     parser.add_argument("--show-checkpoints", action="store_true", #type: ignore
                         help="Show checkpoint IDs inline in the event log")
     args = parser.parse_args()
@@ -33,7 +30,7 @@ async def main() -> int:
             return 1
         return dump_fs(args, llm)
 
-    input_data = upload_input(args, prover_conf_path=args.prover_conf)
+    input_data = await upload_input(args, prover_conf_path=args.prover_conf)
 
     ide = await IDEBridge.connect()
 
@@ -58,5 +55,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(asyncio.run(main()))

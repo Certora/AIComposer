@@ -1,12 +1,16 @@
-from typing import Dict, Protocol
+import asyncio
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Protocol
 import json
 import os
 import pathlib
 import zlib
 import anthropic
 
+from composer.input.models import CodegenConfiguration, CmdlineCodegenConfiguration
+
 from composer.input.types import (
-    UploadPaths, InputJSONPath, InputData, SpecInput, UploadedFile,
+    UploadPaths, InputJSONPath, InputData, SpecInput,
 )
 
 
@@ -14,22 +18,185 @@ class _CombinedPaths(UploadPaths, InputJSONPath, Protocol):
     pass
 
 
-def upload_file_if_needed(client: anthropic.Anthropic, file_path: str, uploaded_files: Dict[str, str]) -> UploadedFile:
-    """Upload a file if not already uploaded, return UploadedFile."""
-    with open(file_path, 'rb') as f_bytes:
-        crc_hex = hex(zlib.crc32(f_bytes.read()))
-    basename = os.path.basename(file_path)
-    crc_basename = f"{crc_hex}_{basename}"
-    if crc_basename not in uploaded_files:
-        print(f"Uploading {basename}... (canonical name {crc_basename})")
-        uploaded_file = client.beta.files.upload(
-            file=(crc_basename, open(file_path, "rb"), "text/plain")
-        )
-        print(f"Uploaded {basename} with ID: {uploaded_file.id}")
-        return UploadedFile(file_id=uploaded_file.id, basename=basename, path=file_path)
-    else:
-        print(f"Found existing {basename} with ID: {uploaded_files[crc_basename]} (canonical name {crc_basename})")
-        return UploadedFile(file_id=uploaded_files[crc_basename], basename=basename, path=file_path)
+# ---------------------------------------------------------------------------
+# Concrete Files-API-backed file shapes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UploadedFile:
+    """A file uploaded to the Files API. The general (potentially-binary)
+    shape — satisfies ``InputFileLike``. ``string_contents`` always
+    returns ``None`` here; text uploads land as ``UploadedTextFile``
+    instead, where the type system records the text guarantee.
+
+    ``to_document_dict`` is always a Files-API reference; the LLM
+    handles text and binary content identically from a ``file_id``."""
+
+    file_id: str
+    basename: str
+    path: str
+
+    def to_document_dict(self) -> dict:
+        return {
+            "type": "document",
+            "source": {
+                "type": "file",
+                "file_id": self.file_id
+            }
+        }
+
+    @property
+    def string_contents(self) -> Optional[str]:
+        return None
+
+    @property
+    def bytes_contents(self) -> bytes:
+        with open(self.path, 'rb') as f:
+            return f.read()
+
+
+@dataclass
+class UploadedTextFile(UploadedFile):
+    """A Files-API upload that was classified as text at upload time.
+    Satisfies the stronger ``TextInputFile`` refinement —
+    ``string_contents`` is non-None."""
+
+    @property
+    def string_contents(self) -> str:  # type: ignore[override]
+        with open(self.path, 'r') as f:
+            return f.read()
+
+
+# Suffixes that we always treat as binary regardless of byte content;
+# saves a sniff pass for the common PDF case. Anything not in this set
+# falls through to the byte-scan heuristic.
+_KNOWN_BINARY_SUFFIXES = {".pdf"}
+
+# Bytes scanned by the binary heuristic. The git/grep-I trick: if any
+# NUL byte appears in the first 8 KiB the file is binary.
+_BINARY_SNIFF_BYTES = 8 * 1024
+
+
+async def _is_binary_file(path: str) -> bool:
+    """True if ``path`` should be treated as binary at upload time.
+
+    Short-circuits on known binary suffixes (``.pdf``). Otherwise scans
+    the first 8 KiB for a NUL byte, the same heuristic ``git`` and
+    ``grep -I`` use for the binary/text classification.
+
+    Disk I/O for the byte-scan runs on a thread so the calling event
+    loop isn't held up on a slow filesystem."""
+    suffix = pathlib.Path(path).suffix.lower()
+    if suffix in _KNOWN_BINARY_SUFFIXES:
+        return True
+
+    def _scan() -> bytes:
+        with open(path, "rb") as f:
+            return f.read(_BINARY_SNIFF_BYTES)
+
+    chunk = await asyncio.to_thread(_scan)
+    return b"\x00" in chunk
+
+
+@dataclass
+class FileUploader:
+    """Bundles the Anthropic client with the cache of already-uploaded
+    files (indexed by canonical CRC-prefixed filename) so callers pass
+    a single handle through the upload pipeline instead of threading
+    the ``(client, uploaded_files)`` pair through every helper.
+
+    Construct via :meth:`fresh`; that static getter creates an async
+    Anthropic client and seeds the cache from the live Files API
+    listing so duplicate uploads are skipped on subsequent calls.
+
+    Two upload entry points (both async — the network I/O can take a
+    beat, so callers running inside an event loop don't block the UI):
+
+    - :meth:`upload_text_file_if_needed` — caller asserts the file is
+      text. Raises ``ValueError`` if the binary heuristic disagrees.
+      Returns ``UploadedTextFile`` whose ``string_contents`` is
+      guaranteed non-None.
+    - :meth:`upload_file_if_needed` — general path. Detects text vs
+      binary at upload time and returns ``UploadedTextFile`` or
+      ``UploadedFile`` accordingly. Use for inputs that may be either
+      (system documents, etc.).
+    """
+
+    client: anthropic.AsyncAnthropic
+    uploaded: Dict[str, str] = field(default_factory=dict)
+
+    @staticmethod
+    async def fresh() -> "FileUploader":
+        """Build a ``FileUploader`` with a new async Anthropic client and
+        the cache pre-populated from the account's existing uploaded
+        files. Network call to list — kept off the event loop via the
+        async client."""
+        client = anthropic.AsyncAnthropic()
+        uploaded: Dict[str, str] = {}
+        async for f in await client.beta.files.list():
+            uploaded[f.filename] = f.id
+        return FileUploader(client=client, uploaded=uploaded)
+
+    async def _upload_raw(
+        self, file_path: str | pathlib.Path
+    ) -> tuple[str, str, str]:
+        """Upload-or-reuse and return ``(file_id, basename, abs_path)``.
+        File I/O (CRC + open-for-upload) runs on a thread; the upload
+        itself is awaited on the async client."""
+        if isinstance(file_path, pathlib.Path):
+            file_path = str(file_path)
+        basename = os.path.basename(file_path)
+
+        def _crc() -> str:
+            with open(file_path, 'rb') as f_bytes:
+                return hex(zlib.crc32(f_bytes.read()))
+
+        crc_hex = await asyncio.to_thread(_crc)
+        crc_basename = f"{crc_hex}_{basename}"
+        if crc_basename not in self.uploaded:
+            print(f"Uploading {basename}... (canonical name {crc_basename})")
+            # ``open(...)`` here is the file-handle the SDK reads from
+            # during upload. It runs sync at the OS level but the async
+            # SDK drives the network I/O; the open itself is fast enough
+            # to leave on the event loop.
+            uploaded_file = await self.client.beta.files.upload(
+                file=(crc_basename, open(file_path, "rb"), "text/plain")
+            )
+            print(f"Uploaded {basename} with ID: {uploaded_file.id}")
+            self.uploaded[crc_basename] = uploaded_file.id
+            return uploaded_file.id, basename, file_path
+        else:
+            print(f"Found existing {basename} with ID: {self.uploaded[crc_basename]} (canonical name {crc_basename})")
+            return self.uploaded[crc_basename], basename, file_path
+
+    async def upload_file_if_needed(self, file_path: str | pathlib.Path) -> UploadedFile:
+        """Upload ``file_path`` (or reuse cached upload). Returns an
+        ``UploadedTextFile`` if the file is text per the binary
+        heuristic, otherwise a plain ``UploadedFile`` (binary). The
+        caller can narrow via ``isinstance`` if it wants the
+        ``TextInputFile`` shape."""
+        file_id, basename, abs_path = await self._upload_raw(file_path)
+        if await _is_binary_file(abs_path):
+            return UploadedFile(file_id=file_id, basename=basename, path=abs_path)
+        return UploadedTextFile(file_id=file_id, basename=basename, path=abs_path)
+
+    async def upload_text_file_if_needed(self, file_path: str | pathlib.Path) -> UploadedTextFile:
+        """Upload ``file_path`` and assert it is text. Raises
+        ``ValueError`` if the binary heuristic flags it. Use for inputs
+        whose text-ness is part of the contract (specs, interfaces);
+        callers that aren't sure should use ``upload_file_if_needed``."""
+        result = await self.upload_file_if_needed(file_path)
+        if not isinstance(result, UploadedTextFile):
+            raise ValueError(
+                f"Expected a text file at {file_path!r} but binary "
+                f"heuristic flagged it (NUL byte in first "
+                f"{_BINARY_SNIFF_BYTES} bytes, or known binary suffix). "
+                f"If this file really is text, fix the heuristic; "
+                f"otherwise use ``upload_file_if_needed`` for the "
+                f"general path."
+            )
+        return result
 
 
 def _spec_vfs_path(spec_local_path: str, source_root: str | None) -> str:
@@ -43,20 +210,16 @@ def _spec_vfs_path(spec_local_path: str, source_root: str | None) -> str:
     if source_root is None:
         return f"certora/{abs_spec.name}"
     abs_root = pathlib.Path(source_root).resolve()
-    try:
-        rel = abs_spec.relative_to(abs_root)
-    except ValueError:
+    if not abs_spec.is_relative_to(abs_root):
         raise ValueError(
             f"Spec file {spec_local_path!r} does not resolve to a descendant of "
             f"source_root {source_root!r}. In from-source mode every spec must "
             f"live inside the workspace."
         )
-    return str(rel)
+    return str(abs_spec.relative_to(abs_root))
 
-
-def _build_specs(
-    client: anthropic.Anthropic,
-    uploaded: Dict[str, str],
+async def _build_specs(
+    uploader: FileUploader,
     spec_local_paths: list[str],
     source_root: str | None,
 ) -> list[SpecInput]:
@@ -71,16 +234,17 @@ def _build_specs(
                 f"{seen[vfs_path]!r} and {local!r}. Rename one of the files or "
                 f"use a source_root layout that gives them distinct paths."
             )
+
         seen[vfs_path] = local
-        uploaded_file = upload_file_if_needed(client, local, uploaded)
+        uploaded_file = await uploader.upload_text_file_if_needed(local)
         specs.append(SpecInput(file=uploaded_file, vfs_path=vfs_path))
     return specs
 
 
-def _upload_from_json(
-    client: anthropic.Anthropic,
-    uploaded: Dict[str, str],
-    json_path: str,
+async def _upload_from_json(
+    uploader: FileUploader,
+    json_model: CodegenConfiguration,
+    root: pathlib.Path
 ) -> InputData:
     """Load a JSON task descriptor and upload its referenced files.
 
@@ -88,68 +252,53 @@ def _upload_from_json(
     against the JSON file's directory. ``source_root`` is absolute or relative
     to the JSON file's directory. ``prover_conf`` is passed through as-is.
     """
-    json_abs = pathlib.Path(json_path).resolve()
-    base = json_abs.parent
 
-    with open(json_abs, "r") as f:
-        data = json.load(f)
-
-    def _resolve(p: str) -> str:
+    def _resolve(p: str) -> pathlib.Path:
         q = pathlib.Path(p)
         if not q.is_absolute():
-            q = base / q
-        return str(q.resolve())
+            q = root / q
+        return q.resolve()
 
-    spec_paths_raw = data.get("specs")
-    if not isinstance(spec_paths_raw, list) or not spec_paths_raw:
-        raise ValueError(
-            f"{json_path}: `specs` must be a non-empty list of paths."
-        )
-    spec_paths = [_resolve(p) for p in spec_paths_raw]
+    interface_file = await uploader.upload_text_file_if_needed(_resolve(json_model.interface_file))
+    system_doc_file = await uploader.upload_file_if_needed(_resolve(json_model.system_doc))
 
-    intf_raw = data.get("interface")
-    if not isinstance(intf_raw, str):
-        raise ValueError(f"{json_path}: `interface` (string path) is required.")
-    intf_path = _resolve(intf_raw)
+    spec_files : list[SpecInput] = []
 
-    sysdoc_raw = data.get("system_doc")
-    if not isinstance(sysdoc_raw, str):
-        raise ValueError(f"{json_path}: `system_doc` (string path) is required.")
-    sysdoc_path = _resolve(sysdoc_raw)
-
-    source_root_raw = data.get("source_root")
-    source_root: str | None = _resolve(source_root_raw) if source_root_raw else None
-
-    interface_file = upload_file_if_needed(client, intf_path, uploaded)
-    system_doc_file = upload_file_if_needed(client, sysdoc_path, uploaded)
-    specs = _build_specs(client, uploaded, spec_paths, source_root)
+    for p in json_model.spec_files:
+        r_path = _resolve(p)
+        if not r_path.is_relative_to(root):
+            raise ValueError(f"Input spec file not in source root: {root}")
+        spec_files.append(SpecInput(
+            file=await uploader.upload_text_file_if_needed(r_path),
+            vfs_path=str(r_path.relative_to(root))
+        ))
 
     return InputData(
-        specs=specs,
+        specs=spec_files,
         system_doc=system_doc_file,
         intf=interface_file,
-        source_root=source_root,
-        contract_name=data.get("name"),
-        implementation_path=data.get("implementation_path"),
-        prover_conf=data.get("prover_conf"),
+        source_root=str(root),
+        contract_name=json_model.contract_name,
+        implementation_path=json_model.implementation_path,
+        prover_conf=json_model.prover_conf,
     )
 
 
-def _upload_from_triad(
-    client: anthropic.Anthropic,
-    uploaded: Dict[str, str],
+async def _upload_from_triad(
+    uploader: FileUploader,
     i: UploadPaths,
     prover_conf_path: str | None,
+    *,
+    spec_file: str,
+    interface_file_path: str,
+    system_doc: str
 ) -> InputData:
     """Legacy single-spec path. Loads --prover-conf from its JSON file, if set."""
-    assert i.spec_file is not None
-    assert i.interface_file is not None
-    assert i.system_doc is not None
 
-    interface_file = upload_file_if_needed(client, i.interface_file, uploaded)
-    system_doc_file = upload_file_if_needed(client, i.system_doc, uploaded)
-    source_root = getattr(i, "source_root", None)
-    specs = _build_specs(client, uploaded, [i.spec_file], source_root)
+    interface_file = await uploader.upload_text_file_if_needed(interface_file_path)
+    system_doc_file = await uploader.upload_file_if_needed(system_doc)
+    source_root = i.source_root
+    specs = await _build_specs(uploader, [spec_file], source_root)
 
     prover_conf: dict | None = None
     if prover_conf_path is not None:
@@ -160,44 +309,65 @@ def _upload_from_triad(
         system_doc=system_doc_file,
         intf=interface_file,
         source_root=source_root,
-        contract_name=getattr(i, "contract_name", None),
-        implementation_path=getattr(i, "implementation_path", None),
+        contract_name=i.contract_name,
+        implementation_path=i.implementation_path,
         prover_conf=prover_conf,
     )
 
+async def upload_configuration(
+    conf: CodegenConfiguration,
+    root: pathlib.Path
+) -> InputData:
+    return await _upload_from_json(
+        await FileUploader.fresh(),
+        json_model=conf,
+        root=root
+    )
 
-def upload_input(i: _CombinedPaths, prover_conf_path: str | None = None) -> InputData:
+async def upload_input(i: _CombinedPaths, prover_conf_path: str | None = None) -> InputData:
     """Resolve CLI args to a normalized ``InputData``.
 
     If ``i.input_json`` is set, ingest the JSON descriptor (multi-spec path).
     Otherwise fall back to the legacy positional triad (single-spec).
     Validates that exactly one of the two modes is in use.
     """
-    input_json = getattr(i, "input_json", None)
-    has_triad = all(
-        getattr(i, field, None) is not None
-        for field in ("spec_file", "interface_file", "system_doc")
+    if i.input_json is not None:
+        assert all([
+            x is None for x in [
+                i.spec_file, i.system_doc, i.interface_file
+            ]
+        ])
+    else:
+        assert i.input_json is None
+
+    uploader = await FileUploader.fresh()
+
+    if i.input_json is not None:
+        explicit_root = i.source_root
+        read_conf = pathlib.Path(i.input_json).read_text()
+        if explicit_root is None:
+            mod = CmdlineCodegenConfiguration.model_validate_json(
+                read_conf
+            )
+            source_root = pathlib.Path(mod.source_root)
+        else:
+            source_root = pathlib.Path(explicit_root)
+            mod = CodegenConfiguration.model_validate_json(read_conf)
+        return await _upload_from_json(
+            root=source_root,
+            uploader=uploader,
+            json_model=mod
+        )
+
+    assert i.spec_file is not None
+    assert i.interface_file is not None
+    assert i.system_doc is not None
+
+    return await _upload_from_triad(
+        uploader,
+        i,
+        prover_conf_path,
+        system_doc=i.system_doc,
+        interface_file_path=i.interface_file,
+        spec_file=i.spec_file
     )
-
-    if input_json is not None and any(
-        getattr(i, field, None) is not None
-        for field in ("spec_file", "interface_file", "system_doc")
-    ):
-        raise ValueError(
-            "--input-json is mutually exclusive with the positional "
-            "spec_file/interface_file/system_doc triad."
-        )
-    if input_json is None and not has_triad:
-        raise ValueError(
-            "Must supply either the positional spec_file/interface_file/system_doc "
-            "triad OR --input-json <path>."
-        )
-
-    client = anthropic.Anthropic()
-    uploaded: Dict[str, str] = {}
-    for f in client.beta.files.list():
-        uploaded[f.filename] = f.id
-
-    if input_json is not None:
-        return _upload_from_json(client, uploaded, input_json)
-    return _upload_from_triad(client, uploaded, i, prover_conf_path)

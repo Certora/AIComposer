@@ -1,43 +1,19 @@
 from pydantic import BaseModel, Field
 
-_PROVER_CONF_DESC = (
-    "Certora config object (the JSON shape of certora.conf) whose keys — packages, link, solc_args, "
-    "solc_via_ir, optimistic_loop, rule_sanity, etc. — are merged into every prover / typecheck "
-    "invocation. Dynamic keys (`files`, `verify`, `solc`) are always set by the pipeline and will "
-    "override whatever is in this object. Pass inline as a dict; the assistant will usually "
-    "construct it from the codebase but users may override manually."
-)
+from composer.input.models import CodegenConfiguration, _PROVER_CONF_DESC
 
 
 class CommonCodeGen(BaseModel):
     prompt_addition: str | None = Field(description="Extra instructions for the codegen agent.", default=None)
 
 class LaunchCodegenArgs(CommonCodeGen):
-    spec_file: str = Field(description="Relative path to CVL spec file (.spec)")
-    interface_file: str = Field(description="Relative path to Solidity interface file (.sol)")
-    system_doc: str = Field(description="Relative path to system/design document")
+    launch_config: CodegenConfiguration = Field(description="The input configuration for the code generation")
     memory_namespace: str | None = Field(description="Namespace for persistent agent memory. When set, memory persists across thread changes (including crashes and relaunches).", default=None)
     resume_work_key: str | None = Field(description="Key to recover in-progress work from a crashed run. Provided in the crash result of a previous launch.", default=None)
-    source_root: str | None = Field(
-        default=None,
+    source_root: str = Field(
         description=(
             "Path to an existing codebase to use as the VFS underlay. When set, agents see "
             "existing files read-only and can layer new files on top."
-        ),
-    )
-    prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
-    kickstart_context: str | None = Field(
-        default=None,
-        description=(
-            "Free-form briefing fed verbatim into the codegen agent's initial prompt. "
-            "Use this to pass forward whatever context the agent needs to start work that "
-            "isn't already covered by spec / interface / system_doc. Typical contents when "
-            "this codegen run follows a natspec invocation: the agent-chosen implementation "
-            "path (so the codegen agent writes its file at the same location the stub "
-            "occupied — STRONGLY recommended), the natspec stub source as scaffold to "
-            "evolve, the table of required storage fields with their types and purposes, "
-            "and any dependency / tag notes from the implementation plan. The codegen "
-            "agent treats anything in this field as authoritative orchestrator briefing."
         ),
     )
 
