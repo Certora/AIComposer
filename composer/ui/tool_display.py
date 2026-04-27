@@ -1,3 +1,4 @@
+from enum import Enum
 from langchain_core.messages import ToolMessage
 from dataclasses import dataclass, field
 from typing import Callable
@@ -8,6 +9,30 @@ from contextlib import contextmanager, asynccontextmanager
 
 type DisplayLabelTy = Callable[[dict], str] | str
 type ResultOutputTy = str | Callable[[str, ToolMessage], str | None | tuple[str, str]] | None
+
+
+class ToolDisplayClassifier(Enum):
+    """Display-shape classifier for tool calls in TUI handlers.
+
+    Pure-console handlers ignore this — it only affects rendering in
+    ``MessageRenderer`` (BaseRichConsoleApp / MultiJobTaskHandler).
+    """
+
+    DEFAULT = "default"
+    """Synchronous-feeling tool. Result anchors under the call when it
+    lands; no spinner."""
+
+    LONG_RUNNING = "long_running"
+    """Tool whose execution takes long enough that the user benefits from
+    a "still working" indicator. A spinner is mounted under the call
+    widget at call time and replaced by the result when it lands."""
+
+    LONG_RUNNING_AGENT = "long_running_agent"
+    """Tool that spawns a sub-agent with its own UI lifecycle (e.g.
+    ``cvl_research``, ``code_explorer``). The sub-agent renders activity
+    in its own panel, so a spinner here would be redundant — the result
+    just anchors under the call when it lands."""
+
 
 @dataclass
 class ToolDisplay:
@@ -29,6 +54,9 @@ class ToolDisplay:
       ``str`` for a label (message content as body), or ``(label, body)``
       to override both.
     """
+
+    classifier: ToolDisplayClassifier = ToolDisplayClassifier.DEFAULT
+    """Display-shape classifier — see ``ToolDisplayClassifier``."""
 
 
 @dataclass
@@ -271,6 +299,17 @@ class ToolDisplayConfig:
         entry = self._find_formatter(name)
         return entry if isinstance(entry, GroupedTool) else None
 
+    def get_classifier(self, name: str) -> ToolDisplayClassifier:
+        """Return the display-shape classifier for *name*.
+
+        Defaults to ``DEFAULT`` for unknown tools and grouped tools (the
+        latter doesn't anchor results under individual calls, so the
+        classifier is moot)."""
+        entry = self._find_formatter(name)
+        if isinstance(entry, ToolDisplay):
+            return entry.classifier
+        return ToolDisplayClassifier.DEFAULT
+
     # -- result formatting ---------------------------------------------------
 
     def format_result(self, name: str, msg: ToolMessage) -> tuple[str, str] | None:
@@ -397,6 +436,9 @@ def tool_display_of(
 
 def tool_display(
     label: DisplayLabelTy,
-    result: ResultOutputTy
+    result: ResultOutputTy,
+    classifier: ToolDisplayClassifier = ToolDisplayClassifier.DEFAULT,
 ) -> Callable[[T_VAR], T_VAR]:
-    return tool_display_of(ToolDisplay(display_name=label, result=result))
+    return tool_display_of(
+        ToolDisplay(display_name=label, result=result, classifier=classifier)
+    )

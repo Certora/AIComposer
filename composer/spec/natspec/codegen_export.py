@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING, Literal
 
 from composer.spec.natspec.registry import FieldSpec
 from composer.spec.system_model import (
-    ComponentInteraction,
     ExplicitContract,
     FreshFromSource,
     FromSourceApplication,
@@ -135,36 +134,39 @@ def _build_dep_graph(
     ``forward[X]`` is the set of generated contracts X depends on.
     ``reverse[X]`` is the set of generated contracts that depend on X.
 
-    Interactions with pre-existing ``unchanged``/``edited`` contracts and
-    external actors are intentionally dropped — those aren't nodes in
+    The graph is derived from the ``FileRegistry`` snapshot on
+    ``result.spec_file_paths``: contract B depends on contract A iff A's
+    ``stub.path`` appears in ``spec_file_paths[B]`` (i.e. B's spec
+    explicitly registered A's stub for its verification compilation
+    unit). Path-based matching avoids assuming Solidity identifiers
+    align with design-doc names; the only authority is what the spec
+    author actually registered.
+
+    Pre-existing ``unchanged``/``edited`` contract registrations and
+    external-actor references are dropped — those aren't nodes in
     *this* plan, they're fixed dependencies on the driver's side.
     """
-    generated_names = {c.name for c in result.contracts}
-
-    # Build a name -> ExplicitContract lookup from the application model so
-    # we can read each generated contract's interactions back out.
-    by_name = {
-        c.name: c for c in result.app.contract_components
+    # Path → name lookup for generated contracts. Built from the
+    # explicit ``stub.path`` on each ``ContractFormulation`` so we
+    # match on real persisted state, not derived state.
+    path_to_name: dict[str, str] = {
+        c.stub.path: c.name for c in result.contracts
     }
 
-    forward: dict[str, set[str]] = {name: set() for name in generated_names}
-    reverse: dict[str, set[str]] = {name: set() for name in generated_names}
+    forward: dict[str, set[str]] = {c.name: set() for c in result.contracts}
+    reverse: dict[str, set[str]] = {c.name: set() for c in result.contracts}
 
-    for name in generated_names:
-        c = by_name.get(name)
-        if c is None:
-            continue
-        for comp in c.components:
-            for inter in comp.interactions:
-                if not isinstance(inter, ComponentInteraction):
-                    continue
-                target = inter.contract_name
-                if target == name:
-                    continue  # self-interaction, ignore
-                if target not in generated_names:
-                    continue  # pre-existing or external, not in plan
-                forward[name].add(target)
-                reverse[target].add(name)
+    for name, registered_paths in result.spec_file_paths.items():
+        if name not in forward:
+            continue  # registration for a non-generated contract; skip
+        for path in registered_paths:
+            target = path_to_name.get(path)
+            if target is None:
+                continue  # registered file isn't one of our stubs
+            if target == name:
+                continue  # self-registration (the contract's own stub)
+            forward[name].add(target)
+            reverse[target].add(name)
 
     return forward, reverse
 

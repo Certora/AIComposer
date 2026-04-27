@@ -128,6 +128,13 @@ class PipelineResult:
     # consumers (codegen export, implementation plan) don't need live registry
     # access.
     stub_fields: dict[str, list[FieldSpec]] = field(default_factory=dict)
+    # Per-contract snapshot of registered .sol file paths from the
+    # ``FileRegistry``. Used by ``codegen_export`` to derive the
+    # implementation-plan dep graph: contract B depends on contract A iff
+    # A's ``stub.path`` appears in ``spec_file_paths[B]``. Path-based
+    # matching avoids assuming Solidity identifiers align with design-doc
+    # names. Empty for contracts that registered nothing.
+    spec_file_paths: dict[str, list[str]] = field(default_factory=dict)
 
 
 
@@ -580,9 +587,11 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
         ))
 
     stub_fields_snapshot = await registry.read_fields()
+    spec_file_paths_snapshot = await file_registry.read_all_paths()
 
     return PipelineResult(
         app=summary,
         contracts=to_ret,
         stub_fields=stub_fields_snapshot,
+        spec_file_paths=spec_file_paths_snapshot,
     )

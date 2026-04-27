@@ -584,6 +584,19 @@ class FileRegistry:
             for item in items
         }
 
+    async def read_all_paths(self) -> dict[str, list[str]]:
+        """Read the full registration map (contract → list of registered
+        file paths). Used by ``codegen_export`` to derive the dep graph
+        by matching registered paths against each generated contract's
+        ``stub.path``. Path-based matching avoids assuming
+        ``path.stem == solidity_identifier == ExplicitContract.name``,
+        which can drift as the stub layout evolves."""
+        items = await self._store.asearch(self._namespace, limit=10_000)
+        return {
+            item.key: [e["path"] for e in item.value["files"]]
+            for item in items
+        }
+
     async def register(
         self,
         contract_name: str,

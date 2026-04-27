@@ -488,7 +488,31 @@ class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, Ap
     .interaction-hint { color: $text-muted; padding: 0 1; }
     Collapsible { background: transparent; border: none; padding: 0; }
     CollapsibleTitle { padding: 0 1; }
-    Collapsible Contents { padding: 0 0 0 3; }
+    Collapsible Contents {
+        padding: 0 0 0 3;
+        max-height: 50%;
+        overflow-y: auto;
+    }
+
+    /* Tool-call block: see BaseRichConsoleApp.CSS for the contract. */
+    .tool-call-block { height: auto; }
+    .tool-call-block > * { margin-bottom: 0; }
+    .tool-call-attachment {
+        margin-left: 2;
+        margin-top: 0;
+        margin-bottom: 0;
+        height: auto;
+    }
+    .attachment-row { height: auto; width: 1fr; }
+    .attachment-corner {
+        width: 3;
+        color: $text-muted;
+        padding: 0;
+    }
+    .attachment-pending {
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     BINDINGS = [

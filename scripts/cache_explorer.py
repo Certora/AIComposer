@@ -12,6 +12,8 @@ from pathlib import Path
 from contextvars import ContextVar
 from contextlib import contextmanager, asynccontextmanager
 
+from pydantic import BaseModel
+
 _repo_root = str(Path(__file__).parent.parent.absolute())
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
@@ -34,7 +36,10 @@ from composer.spec.natspec.models import (
     LocatedStubDeclaration, AutoStubDeclaration,
     StubDeclarationModel,
 )
-from composer.spec.bug import _BugAnalysisCache, _AgentHistory, bug_analysis_key, AGENT_RESULT_KEY
+from composer.spec.bug import (
+    _BugAnalysisCache, _AgentResult, _AgentRoundWithHistory,
+    bug_analysis_key, AGENT_RESULT_KEY, agent_round_key,
+)
 from composer.spec.cvl_generation import (
     _LastAttemptCache, CVL_JUDGE_KEY, LAST_ATTEMPT_KEY,
 )
@@ -56,7 +61,8 @@ type NatSpecCachedValue = (
     | InterfaceResult
     | StubDeclarationModel
     | _BugAnalysisCache
-    | _AgentHistory
+    | _AgentResult
+    | _AgentRoundWithHistory
     | AuthorResult
     | _LastAttemptCache
     | RegistryRaw
@@ -151,7 +157,7 @@ async def node_for[T: CacheTypes, S: CacheTypes](
         yield child_ctx
 
 
-async def leaf[T: CacheTypes, S: NatSpecCachedValue](
+async def leaf[T: CacheTypes, S: BaseModel](
     ctx: WorkflowContext[T],
     child: CacheKey[T, S],
     label: str,
@@ -183,10 +189,25 @@ async def build_component_tree(
     comp,
 ):
     async with node_for(contract_ctx, key, comp.name) as feat_ctx:
-        # Bug analysis cache (with nested agent history).
+        # Bug analysis cache: aggregate (_BugAnalysisCache.items) → agent
+        # result (_AgentResult) → per-round (_AgentRoundWithHistory).
         bug_key = bug_analysis_key(None)
         async with node_for(feat_ctx, bug_key, "Bug Analysis", _BugAnalysisCache) as bug_ctx:
-            yield (await leaf(bug_ctx, AGENT_RESULT_KEY, "Agent history", _AgentHistory))
+            async with node_for(
+                bug_ctx, AGENT_RESULT_KEY, "Agent result", _AgentResult,
+            ) as agent_ctx:
+                # Probe rounds 0..N until first miss. Round indices are dense
+                # (no holes) by construction in _run_bug_analysis_inner.
+                i = 0
+                while True:
+                    round_node = await leaf(
+                        agent_ctx, agent_round_key(i),
+                        f"Round {i + 1}", _AgentRoundWithHistory,
+                    )
+                    if round_node.value is None:
+                        break
+                    yield round_node
+                    i += 1
 
         # If bug analysis is cached, its items drive the per-batch cache key.
         bug_cache = await feat_ctx.child(bug_key).cache_get(_BugAnalysisCache)
@@ -418,12 +439,22 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
             lines.append(head)
             lines.append(val.content)
 
-        case _AgentHistory(items=items, agent_conversation=history):
-            lines.append(f"Properties ({len(items)}):")
+        case _AgentRoundWithHistory(items=items, reasoning=reasoning, agent_conversation=history):
+            lines.append(f"Properties this round ({len(items)}):")
             for p in items:
                 lines.append(f"  - [{p.sort}] {p.description}")
             lines.append("")
+            lines.append("--- Reasoning ---")
+            lines.append(reasoning)
+            lines.append("")
             lines.append(f"Agent history: {len(history)} message(s)")
+
+        case _AgentResult(items=items, final_history=history):
+            lines.append(f"Cumulative properties ({len(items)}):")
+            for p in items:
+                lines.append(f"  - [{p.sort}] {p.description}")
+            lines.append("")
+            lines.append(f"Final-round history: {len(history)} message(s)")
 
         case _BugAnalysisCache(items=items):
             lines.append(f"Properties ({len(items)}):")

@@ -32,7 +32,34 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
     .vfs-change { color: cyan; }
     Collapsible { background: transparent; border: none; padding: 0; }
     CollapsibleTitle { padding: 0 1; }
-    Collapsible Contents { padding: 0 0 0 3; }
+    Collapsible Contents {
+        padding: 0 0 0 3;
+        max-height: 50%;
+        overflow-y: auto;
+    }
+
+    /* Tool-call block: a (call line, attachment) pair mounted as one
+     * unit so the attachment hugs the parent line with no inter-row
+     * gap, while the block itself participates in the standard
+     * ``> * { margin-bottom: 1 }`` separation. */
+    .tool-call-block { height: auto; }
+    .tool-call-block > * { margin-bottom: 0; }
+    .tool-call-attachment {
+        margin-left: 2;
+        margin-top: 0;
+        margin-bottom: 0;
+        height: auto;
+    }
+    .attachment-row { height: auto; width: 1fr; }
+    .attachment-corner {
+        width: 3;
+        color: $text-muted;
+        padding: 0;
+    }
+    .attachment-pending {
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     BINDINGS = [
