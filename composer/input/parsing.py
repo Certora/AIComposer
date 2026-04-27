@@ -1,5 +1,14 @@
 import argparse
+import json
+import pathlib
 from typing import TypeVar, Protocol, cast, Annotated, get_type_hints, get_origin, Any, get_args, Union
+
+
+def _parse_prover_conf(path: str) -> dict:
+    """argparse ``type=`` callback for ``--prover-conf``: resolve the
+    given path to the loaded JSON dict at parse time so downstream
+    consumers see a dict everywhere, never a path string."""
+    return json.loads(pathlib.Path(path).read_text())
 from composer.input.types import CommandLineArgs, ResumeArgs, Arg, OptionalArg, RAGDBOptions, ModelOptions, LanggraphOptions
 
 ArgNS = TypeVar("ArgNS", covariant=True)
@@ -125,10 +134,12 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     "this option starts with '@', taken to be the thread id of another run whose requirements should be copied.")
     parser.add_argument("--skip-reqs", action="store_true", help="If provided, no natural language requirements are added, and requirement judgment is skipped.")
 
-    parser.add_argument("--prover-conf", default=None,
+    parser.add_argument("--prover-conf", default=None, type=_parse_prover_conf,
                         help="Path to a Certora config JSON file whose keys (packages, link, solc_args, "
                              "optimistic_loop, rule_sanity, etc.) are merged into every prover/typecheck "
-                             "invocation. Dynamic keys (files, verify, solc) are always set by the pipeline.")
+                             "invocation. The file is loaded at argparse time so the value reaches the "
+                             "rest of the pipeline as a dict. Dynamic keys (files, verify, solc) are "
+                             "always set by the pipeline and override whatever is in this dict.")
 
 
 def _has_input_json_flag(argv: list[str]) -> bool:

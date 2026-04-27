@@ -1,13 +1,5 @@
 from pydantic import BaseModel, Field
 
-_PROVER_CONF_DESC = (
-    "Certora config object (the JSON shape of certora.conf) whose keys — packages, link, solc_args, "
-    "solc_via_ir, optimistic_loop, rule_sanity, etc. — are merged into every prover / typecheck "
-    "invocation. Dynamic keys (`files`, `verify`, `solc`) are always set by the pipeline and will "
-    "override whatever is in this object. Pass inline as a dict; the assistant will usually "
-    "construct it from the codebase but users may override manually."
-)
-
 
 class FileConfiguration(BaseModel):
     spec_files: list[str] = Field(description="Relative path to CVL spec files (.spec)")
@@ -17,6 +9,11 @@ class FileConfiguration(BaseModel):
 class CodegenConfiguration(FileConfiguration):
     """
     A rich codegen input.
+
+    ``prover_conf`` is intentionally *not* on this configuration —
+    prover overrides are an orthogonal runtime concern (independent of
+    which spec/interface/system-doc set is being verified) and live on
+    ``CommonCodeGen`` (assistant) / ``--prover-conf`` (CLI) instead.
     """
     kickstart_context: str | None = Field(
         default=None,
@@ -34,7 +31,6 @@ class CodegenConfiguration(FileConfiguration):
     )
     implementation_path : str | None = Field(description="The recommended (relative) path to the implemented component", default=None)
     contract_name : str | None = Field(description="The recommended Solidity identifier to use for the generated contract", default=None)
-    prover_conf: dict | None = Field(description=_PROVER_CONF_DESC, default=None)
 
 class CmdlineCodegenConfiguration(CodegenConfiguration):
     source_root: str = Field(description="REQUIRED The absolute path to the root where code generation must take place")

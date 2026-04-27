@@ -108,7 +108,7 @@ async def launch_natspec_workflow(
                     start_env=service_env,
                     solc_version=args.solc_version,
                     ctx=wf_ctx,
-                    store=conn.store, # stub stuff is all sync still, use sync store
+                    store=conn.store,
                     handler_factory=app.make_handler,
                     mental_model=build_mental_model(
                         source_root=source_root_path,

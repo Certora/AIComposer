@@ -38,7 +38,10 @@ class CodegenWorkflowArgs:
     thinking_tokens: int = 2048
     memory_tool: bool = True
     interleaved_thinking: bool = False
-    prover_conf: Optional[str] = None
+    # ``prover_conf`` matches ``WorkflowOptions.prover_conf`` shape:
+    # an inline dict resolved at the agent boundary (or ``None``).
+    # Forwarded straight to the executor — no path-loading inline.
+    prover_conf: Optional[dict] = None
 
 
 def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
@@ -50,6 +53,7 @@ def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflo
         memory_tool=ctx.config.memory_tool,
         recursion_limit=200,
         debug_prompt_override=cg.prompt_addition,
+        prover_conf=cg.prover_conf,
     )
 
 
@@ -100,7 +104,6 @@ async def launch_codegen_workflow(
             workflow_options=wf_args,
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,
-            prover_conf_overrides=args.launch_config.prover_conf,
         )
 
     app.set_work(work)
@@ -138,7 +141,6 @@ async def launch_resume_workflow(
             workflow_options=wf_args,
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,
-            prover_conf_overrides=args.prover_conf,
         )
 
     app.set_work(work)

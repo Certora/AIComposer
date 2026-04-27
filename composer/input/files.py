@@ -48,7 +48,10 @@ class UploadedFile:
 
     @property
     def string_contents(self) -> Optional[str]:
-        return None
+        try:
+            pathlib.Path(self.path).read_text()
+        except UnicodeDecodeError:
+            return None
 
     @property
     def bytes_contents(self) -> bytes:
@@ -250,7 +253,10 @@ async def _upload_from_json(
 
     Relative paths (specs, interface, system_doc, implementation_path) resolve
     against the JSON file's directory. ``source_root`` is absolute or relative
-    to the JSON file's directory. ``prover_conf`` is passed through as-is.
+    to the JSON file's directory. Prover-config overrides are NOT carried
+    here — they're an orthogonal runtime concern, supplied via
+    ``--prover-conf`` (CLI) or ``CommonCodeGen.prover_conf`` (assistant)
+    and passed straight to the executor.
     """
 
     def _resolve(p: str) -> pathlib.Path:
@@ -280,29 +286,23 @@ async def _upload_from_json(
         source_root=str(root),
         contract_name=json_model.contract_name,
         implementation_path=json_model.implementation_path,
-        prover_conf=json_model.prover_conf,
     )
 
 
 async def _upload_from_triad(
     uploader: FileUploader,
     i: UploadPaths,
-    prover_conf_path: str | None,
     *,
     spec_file: str,
     interface_file_path: str,
     system_doc: str
 ) -> InputData:
-    """Legacy single-spec path. Loads --prover-conf from its JSON file, if set."""
+    """Legacy single-spec path."""
 
     interface_file = await uploader.upload_text_file_if_needed(interface_file_path)
     system_doc_file = await uploader.upload_file_if_needed(system_doc)
     source_root = i.source_root
     specs = await _build_specs(uploader, [spec_file], source_root)
-
-    prover_conf: dict | None = None
-    if prover_conf_path is not None:
-        prover_conf = json.loads(pathlib.Path(prover_conf_path).read_text())
 
     return InputData(
         specs=specs,
@@ -311,7 +311,6 @@ async def _upload_from_triad(
         source_root=source_root,
         contract_name=i.contract_name,
         implementation_path=i.implementation_path,
-        prover_conf=prover_conf,
     )
 
 async def upload_configuration(
@@ -324,12 +323,15 @@ async def upload_configuration(
         root=root
     )
 
-async def upload_input(i: _CombinedPaths, prover_conf_path: str | None = None) -> InputData:
+async def upload_input(i: _CombinedPaths) -> InputData:
     """Resolve CLI args to a normalized ``InputData``.
 
     If ``i.input_json`` is set, ingest the JSON descriptor (multi-spec path).
     Otherwise fall back to the legacy positional triad (single-spec).
     Validates that exactly one of the two modes is in use.
+    Prover-config overrides flow separately via ``i.prover_conf`` (already
+    a dict, parsed at argparse time) — they don't ride along on
+    ``InputData``.
     """
     if i.input_json is not None:
         assert all([
@@ -366,7 +368,6 @@ async def upload_input(i: _CombinedPaths, prover_conf_path: str | None = None) -
     return await _upload_from_triad(
         uploader,
         i,
-        prover_conf_path,
         system_doc=i.system_doc,
         interface_file_path=i.interface_file,
         spec_file=i.spec_file

@@ -30,7 +30,7 @@ async def main() -> int:
             return 1
         return dump_fs(args, llm)
 
-    input_data = await upload_input(args, prover_conf_path=args.prover_conf)
+    input_data = await upload_input(args)
 
     ide = await IDEBridge.connect()
 

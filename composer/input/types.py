@@ -93,7 +93,11 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     set_reqs: Optional[str]
     skip_reqs: bool
 
-    prover_conf: Optional[str]
+    # Pre-parsed at the CLI boundary: ``--prover-conf <path>`` resolves
+    # to a dict at argparse-time (``type=`` callback in
+    # ``input/parsing.py``), so consumers always see the merged dict
+    # form here, never a path string. ``None`` means no overrides.
+    prover_conf: Optional[dict]
 
 
 class ModelOptionsBase(Protocol):
@@ -208,7 +212,10 @@ class InputData:
     source_root: Optional[str] = None
     contract_name: Optional[str] = None
     implementation_path: Optional[str] = None
-    prover_conf: Optional[dict] = None
+    # ``prover_conf`` is *not* on ``InputData`` — prover overrides are
+    # an orthogonal runtime concern and travel via the workflow-options
+    # channel (CLI ``--prover-conf`` / ``CommonCodeGen.prover_conf``)
+    # straight to the executor, not on the input bundle.
 
     @property
     def spec_vfs_paths(self) -> list[str]:

@@ -1,10 +1,20 @@
 from pydantic import BaseModel, Field
 
-from composer.input.models import CodegenConfiguration, _PROVER_CONF_DESC
+from composer.input.models import CodegenConfiguration
+
+
+_PROVER_CONF_DESC = (
+    "Certora config object (the JSON shape of certora.conf) whose keys — packages, "
+    "link, solc_args, solc_via_ir, optimistic_loop, rule_sanity, etc. — are merged "
+    "into every prover / typecheck invocation. Dynamic keys (`files`, `verify`, "
+    "`solc`) are always set by the pipeline and override whatever is in this object. "
+    "Pass inline as a dict; null means no overrides."
+)
 
 
 class CommonCodeGen(BaseModel):
     prompt_addition: str | None = Field(description="Extra instructions for the codegen agent.", default=None)
+    prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
 
 class LaunchCodegenArgs(CommonCodeGen):
     launch_config: CodegenConfiguration = Field(description="The input configuration for the code generation")
@@ -24,7 +34,6 @@ class LaunchResumeArgs(CommonCodeGen):
     commentary: str = Field(description="Description of changes since last run", default="")
     memory_namespace: str | None = Field(description="Namespace for persistent agent memory. Should match the memory_namespace used in the original codegen run.", default=None)
     resume_work_key: str | None = Field(description="Key to recover in-progress work from a crashed run. Provided in the crash result of a previous launch.", default=None)
-    prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
 
 
 class LaunchNatSpecArgs(BaseModel):
