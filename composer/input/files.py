@@ -286,6 +286,7 @@ async def _upload_from_json(
         source_root=str(root),
         contract_name=json_model.contract_name,
         implementation_path=json_model.implementation_path,
+        kickstart_context=json_model.kickstart_context
     )
 
 
@@ -311,6 +312,7 @@ async def _upload_from_triad(
         source_root=source_root,
         contract_name=i.contract_name,
         implementation_path=i.implementation_path,
+        kickstart_context=None
     )
 
 async def upload_configuration(

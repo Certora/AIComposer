@@ -209,6 +209,7 @@ class InputData:
     # (Solidity interface).
     system_doc: InputFileLike
     intf: TextInputFile
+    kickstart_context: str | None
     source_root: Optional[str] = None
     contract_name: Optional[str] = None
     implementation_path: Optional[str] = None

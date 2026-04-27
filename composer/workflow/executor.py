@@ -282,6 +282,8 @@ async def _execute_ai_composer_workflow(
 
     audit_store = AuditStore(store)
 
+    kickstart_context = input.kickstart_context if isinstance(input, InputData) else None
+
     has_kickstart = bool(kickstart_context and kickstart_context.strip())
 
     match input:
