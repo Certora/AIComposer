@@ -13,7 +13,7 @@ import logging
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from typing import NotRequired, override, Iterable
+from typing import Callable, NotRequired, override, Iterable
 import pathlib
 
 _log = logging.getLogger(__name__)
@@ -328,8 +328,14 @@ class StubRegistry:
     def list(self) -> Iterable[str]:
         return self._mirror_by_path.keys()
     
-    async def dump_to(self, target: pathlib.Path):
+    async def dump_to(
+        self,
+        target: pathlib.Path,
+        include_path: Callable[[str], bool] | None = None,
+    ) -> None:
         for (k, v) in self._mirror_by_path.items():
+            if include_path is not None and not include_path(k):
+                continue
             full_path = target / k
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(v)

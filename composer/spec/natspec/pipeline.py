@@ -377,12 +377,18 @@ class InMemoryBackend:
         for i in self._vfs.keys():
             to_ret.append(i)
         return to_ret
-    
+
     def get(self, path: str) -> str | None:
         return self._vfs.get(path, None)
-    
-    async def dump_to(self, target: Path):
+
+    async def dump_to(
+        self,
+        target: Path,
+        include_path: Callable[[str], bool] | None = None,
+    ) -> None:
         for (k, v) in self._vfs.items():
+            if include_path is not None and not include_path(k):
+                continue
             tgt = (target / k)
             tgt.parent.mkdir(exist_ok=True, parents=True)
             tgt.write_text(v)
