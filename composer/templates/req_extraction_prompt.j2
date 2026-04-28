@@ -33,3 +33,21 @@ draft your extracted requirements as you work through the analysis, before submi
 list. You MUST call `read_rough_draft` to review your draft before submitting — the
 completion will be rejected otherwise.
 </reasoning>
+
+<cvl_research>
+You have access to the CVL manual and Certora knowledge base, plus a `cvl_research` sub-agent.
+Use these when phrasing a requirement hinges on what CVL can or cannot express — for example,
+when deciding whether a property is expressible as a CVL invariant/rule (and therefore could
+already be in the spec) versus something purely off-chain or out-of-scope.
+
+- Direct lookup: `cvl_manual_search`, `cvl_keyword_search`, `cvl_get_section` for targeted manual queries.
+- Knowledge-base lookup: the `kb_*` tools surface curated CVL examples and explanations.
+- Delegation: `cvl_research` spins up a sub-agent that does its own multi-step CVL research and
+  returns a synthesized answer. Prefer this when your question is open-ended ("how would one
+  express X in CVL?") rather than a single-fact lookup. The sub-agent does not see the system
+  document or specification — phrase your question self-containedly.
+
+Do NOT use these tools for general protocol/DeFi questions, only for CVL-specific authorship
+and capability questions. Requirements extraction is primarily about reading the system doc;
+reach for the CVL tools when CVL expressibility is what's blocking a clean phrasing.
+</cvl_research>

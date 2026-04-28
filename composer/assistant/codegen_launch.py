@@ -42,6 +42,7 @@ class CodegenWorkflowArgs:
     # an inline dict resolved at the agent boundary (or ``None``).
     # Forwarded straight to the executor — no path-loading inline.
     prover_conf: Optional[dict] = None
+    cache_namespace: Optional[str] = None
 
 
 def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
@@ -54,6 +55,7 @@ def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflo
         recursion_limit=200,
         debug_prompt_override=cg.prompt_addition,
         prover_conf=cg.prover_conf,
+        cache_namespace=cg.cache_namespace,
     )
 
 

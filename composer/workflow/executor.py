@@ -47,6 +47,46 @@ from composer.workflow.services import checkpointer_context, store_context, inde
 
 _KB_NS = DEFAULT_KB_NS
 
+
+def _reqs_cache_location(
+    options: WorkflowOptions,
+    system_doc: 'InputFileLike',
+    interface_file: 'InputFileLike',
+    specs: list[tuple[str, 'TextInputFile']],
+) -> tuple[tuple[str, ...], str] | None:
+    """Compute ``(namespace_tuple, key)`` for the requirements cache.
+
+    Returns ``(None, None)`` when ``options.cache_namespace`` is unset —
+    callers should treat that as "skip cache reads/writes entirely". When
+    set, the namespace is ``(cache_namespace, "reqs")`` and the key is a
+    short hash of every input that influences the extracted requirements:
+    system doc bytes, interface text, sorted spec contents (by VFS path),
+    sorted oracle file paths, and the ``set_reqs`` / ``skip_reqs``
+    overrides. Any change to those invalidates the cache automatically;
+    cache_namespace gives the user a coarser switch on top of that
+    (e.g. "fresh extraction this week, please")."""
+    import hashlib
+    if options.cache_namespace is None:
+        return None
+    h = hashlib.sha256()
+    h.update(system_doc.bytes_contents)
+    h.update(b"\x00intf\x00")
+    h.update(interface_file.bytes_contents)
+    for vfs_path, spec in sorted(specs, key=lambda s: s[0]):
+        h.update(b"\x00spec\x00")
+        h.update(vfs_path.encode("utf-8"))
+        h.update(b"\x00")
+        h.update(spec.string_contents.encode("utf-8"))
+    for path in sorted(options.requirements_oracle or []):
+        h.update(b"\x00oracle\x00")
+        h.update(path.encode("utf-8"))
+    if options.set_reqs is not None:
+        h.update(b"\x00set_reqs\x00")
+        h.update(options.set_reqs.encode("utf-8"))
+    if options.skip_reqs:
+        h.update(b"\x00skip_reqs\x00")
+    return (options.cache_namespace, "reqs"), h.hexdigest()[:16]
+
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
     return load_jinja_template(
         "workflow_info.j2",
@@ -329,15 +369,34 @@ async def _execute_ai_composer_workflow(
         get_memory_ns(mem_root, "natreq")
     )
 
-    extra_reqs = await store.aget((thread_id,), "requirements")
+    req_cache_keys = _reqs_cache_location(
+        workflow_options, system_doc, interface_file, specs_for_audit
+    )
+
+    cached = (
+        await store.aget(req_cache_keys[0], req_cache_keys[1])
+        if req_cache_keys is not None else None
+    )
     reqs_list : list[str] | None
-    if extra_reqs is None:
+    if cached is not None:
+        assert req_cache_keys is not None
+        print(f"Reusing cached requirements from {req_cache_keys[0]}/{req_cache_keys[1]}")
+        reqs_list = cached.value["reqs"]
+    else:
         if workflow_options.skip_reqs:
             reqs_list = None
         elif workflow_options.set_reqs is not None:
             if workflow_options.set_reqs.startswith("@"):
-                other_reqs = await store.aget((workflow_options.set_reqs[1:],), "requirements")
-                assert other_reqs is not None
+                # Pull reqs from a prior run by thread id — looked up in
+                # the audit store, where ``register_run`` persists every
+                # run's reqs alongside its other state. Independent of the
+                # cache namespace.
+                other_tid = workflow_options.set_reqs[1:]
+                other_reqs = await store.aget(("audit", other_tid), "requirements")
+                assert other_reqs is not None, (
+                    f"--set-reqs @{other_tid} found no requirements in "
+                    f"the audit store; check the thread id."
+                )
                 reqs_list = other_reqs.value["reqs"]
             else:
                 reqs_list = [ v for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if (v := l.strip()) ]
@@ -345,20 +404,20 @@ async def _execute_ai_composer_workflow(
             print("Analyzing requirements...")
             extraction = await get_requirements(
                 handler,
-                workflow_options,
                 llm,
                 system_doc,
                 specs_for_audit,
                 req_memories,
                 resume_art,
-                workflow_options.requirements_oracle
+                workflow_options.requirements_oracle,
+                rag_db=rag,
+                indexed_store=indexed_store,
+                checkpointer=checkpointer,
             )
             reqs_list = extraction.reqs
             await handler.log_workflow_thread(WorkflowPurpose.NATREQ, extraction.thread_id)
-        await store.aput((thread_id,), "requirements", {"reqs": reqs_list})
-    else:
-        print("Read requirements from store")
-        reqs_list = extra_reqs.value["reqs"]
+        if req_cache_keys is not None:
+            await store.aput(req_cache_keys[0], req_cache_keys[1], {"reqs": reqs_list})
     extra_tools = []
 
     if reqs_list is not None:

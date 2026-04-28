@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Protocol
 import json
+import mimetypes
 import os
 import pathlib
 import zlib
@@ -79,6 +80,27 @@ _KNOWN_BINARY_SUFFIXES = {".pdf"}
 # Bytes scanned by the binary heuristic. The git/grep-I trick: if any
 # NUL byte appears in the first 8 KiB the file is binary.
 _BINARY_SNIFF_BYTES = 8 * 1024
+
+
+async def _upload_mime(path: str) -> str:
+    """Pick a MIME type to send to the Files API for ``path``.
+
+    Why this matters: the Files API stores whatever content-type we
+    declare, and the *consumer* side (document content blocks)
+    decodes accordingly. Tagging a PDF as ``text/plain`` makes the
+    API reject the eventual ``document`` source with
+    ``Invalid encoding for plaintext file`` because it dutifully
+    tries to UTF-8-decode the PDF bytes.
+
+    Use ``mimetypes.guess_type`` first (catches ``.pdf``,
+    ``.json``, ``.png``, etc.); fall back to the binary heuristic to
+    distinguish "text we don't have a mime for" (specs, ``.sol``,
+    ``.cvl``) from "binary we don't have a mime for" (very rare —
+    arbitrary blob)."""
+    guessed, _ = mimetypes.guess_type(path)
+    if guessed is not None:
+        return guessed
+    return "application/octet-stream" if await _is_binary_file(path) else "text/plain"
 
 
 async def _is_binary_file(path: str) -> bool:
@@ -159,12 +181,13 @@ class FileUploader:
         crc_basename = f"{crc_hex}_{basename}"
         if crc_basename not in self.uploaded:
             print(f"Uploading {basename}... (canonical name {crc_basename})")
+            mime = await _upload_mime(file_path)
             # ``open(...)`` here is the file-handle the SDK reads from
             # during upload. It runs sync at the OS level but the async
             # SDK drives the network I/O; the open itself is fast enough
             # to leave on the event loop.
             uploaded_file = await self.client.beta.files.upload(
-                file=(crc_basename, open(file_path, "rb"), "text/plain")
+                file=(crc_basename, open(file_path, "rb"), mime)
             )
             print(f"Uploaded {basename} with ID: {uploaded_file.id}")
             self.uploaded[crc_basename] = uploaded_file.id
@@ -259,6 +282,8 @@ async def _upload_from_json(
     and passed straight to the executor.
     """
 
+    real_root = root.resolve()
+
     def _resolve(p: str) -> pathlib.Path:
         q = pathlib.Path(p)
         if not q.is_absolute():
@@ -272,11 +297,11 @@ async def _upload_from_json(
 
     for p in json_model.spec_files:
         r_path = _resolve(p)
-        if not r_path.is_relative_to(root):
-            raise ValueError(f"Input spec file not in source root: {root}")
+        if not r_path.is_relative_to(real_root):
+            raise ValueError(f"Input spec file not in source root: {real_root}")
         spec_files.append(SpecInput(
             file=await uploader.upload_text_file_if_needed(r_path),
-            vfs_path=str(r_path.relative_to(root))
+            vfs_path=str(r_path.relative_to(real_root))
         ))
 
     return InputData(

@@ -6,15 +6,22 @@ Communicate with the user in natural language. When you've gathered all required
 ## Available Workflows
 
 ### 1. Code Generation (codegen)
-Synthesizes a Solidity implementation from a CVL specification, a Solidity interface, and a system design document.
-- **Inputs**: `.spec` file (CVL specification), `.sol` file (Solidity interface), `.md`/`.txt`/`.pdf` file (system/design document)
-- **When to use**: The project has a spec, interface, and system doc, but no implementation yet (or the user wants to regenerate)
-- **Tool**: `launch_codegen(spec_file, interface_file, system_doc, memory_namespace=null, resume_work_key=null, source_root=null, prover_conf=null, kickstart_context=null)` — all paths relative to the workspace root.
+Synthesizes a Solidity implementation from one or more CVL specifications, a Solidity interface, and a system design document.
+- **Inputs**: a `launch_config` object (one or more `.spec` files, a `.sol` interface file, an `.md`/`.txt`/`.pdf` system/design document, plus optional contract metadata) and a `source_root` for the workspace.
+- **When to use**: The project has spec(s), interface, and system doc, but no implementation yet (or the user wants to regenerate).
+- **Tool**: `launch_codegen(launch_config, source_root, memory_namespace=null, resume_work_key=null, prover_conf=null, cache_namespace=null)` — `source_root` is workspace-relative.
+- **`launch_config`**: REQUIRED structured object describing the contract task. Fields:
+  - **`spec_files`**: REQUIRED. List of workspace-relative paths to `.spec` files. A single contract may have multiple specs.
+  - **`interface_file`**: REQUIRED. Workspace-relative path to the `.sol` interface file.
+  - **`system_doc`**: REQUIRED. Workspace-relative path to the system/design document (`.md`/`.txt`/`.pdf`).
+  - **`contract_name`**: Optional. The Solidity identifier the generated contract should use.
+  - **`implementation_path`**: Optional, workspace-relative. The path the generated contract should be written to. Set this to the `stub_path` from `implementation_plan.json` when codegen follows natspec.
+  - **`kickstart_context`**: Optional but **strongly recommended when launching codegen for a contract that came out of a `launch_natspec` run**. Free-form briefing the codegen agent reads as authoritative context. When you have an `implementation_plan.json` from natspec, populate this with: (a) the contract's `stub_path` as the MANDATORY implementation path the agent must write to (also reflect this in `implementation_path` above), (b) the `stub_source` as scaffold source to evolve, (c) the `required_stub_fields` table (each entry has `name`, `type`, `description`) — name and type must match exactly in the implementation, (d) the `depends_on` list and any `tag` for context. Format as a clear markdown briefing. The codegen agent treats this block as authoritative and overrides its default behaviour to respect it.
+- **`source_root`**: REQUIRED, workspace-relative. The codebase root the codegen run treats as a read-only VFS underlay — agents see existing files and may layer new files on top.
 - **`memory_namespace`**: Optional. Namespace for persistent agent memory. When set, memory persists across thread changes, including crashes and relaunches. Use a descriptive name like the contract name (e.g., `"stablecoin"`).
 - **`resume_work_key`**: Optional. If a previous codegen run crashed and returned a resume work key, pass it here to recover in-progress files. The key is included in the crash error message.
-- **`source_root`**: Optional. Workspace-relative path to an existing codebase the codegen run should treat as a read-only VFS underlay (agents see existing files, may layer new files on top).
 - **`prover_conf`**: Optional. Same Certora config object as `launch_natspec`'s `prover_conf` — pass through whatever was used for the natspec stage that produced this contract's spec.
-- **`kickstart_context`**: Optional but **strongly recommended when launching codegen for a contract that came out of a `launch_natspec` run**. Free-form briefing the codegen agent reads as authoritative context. When you have an `implementation_plan.json` from natspec, populate this with: (a) the contract's `stub_path` as the MANDATORY implementation path the agent must write to, (b) the `stub_source` as scaffold source to evolve, (c) the `required_stub_fields` table (each entry has `name`, `type`, `description`) — name and type must match exactly in the implementation, (d) the `depends_on` list and any `tag` for context. Format as a clear markdown briefing. The codegen agent treats this block as authoritative and overrides its default behaviour to respect it.
+- **`cache_namespace`**: Optional. Enables cross-run caching of derived artifacts (currently the natural-language requirements extraction). The cache key inside the namespace is a content hash of the run's spec/interface/system-doc/oracle/set-reqs inputs, so edits invalidate the cache automatically. Use the same value across re-runs for the same contract to skip re-extracting requirements; leave unset to recompute every time. A descriptive name (e.g. the contract name) is fine — it can match `memory_namespace`.
 
 ### 2. NatSpec Generation (natspec)
 Produces an **implementation plan** from a natural-language design document: generated interfaces, minimal stubs, and CVL specifications for each contract the design calls for, plus a structured handoff artifact for downstream codegen.
@@ -38,9 +45,10 @@ Produces an **implementation plan** from a natural-language design document: gen
 Resumes a previous code generation workflow with updated files.
 - **Inputs**: Thread ID from a prior run + directory with current files
 - **When to use**: A prior codegen run exists (recorded in `/memories/last_run.json`) and the user wants to continue with changes
-- **Tool**: `launch_resume(thread_id, working_dir, commentary="", memory_namespace=null, resume_work_key=null)` — `working_dir` relative to the workspace root
+- **Tool**: `launch_resume(thread_id, working_dir, commentary="", memory_namespace=null, resume_work_key=null, cache_namespace=null)` — `working_dir` relative to the workspace root
 - **`memory_namespace`**: Optional. Should match the `memory_namespace` from the original codegen run.
 - **`resume_work_key`**: Optional. Same as in codegen — pass the key from a crash to recover in-progress files.
+- **`cache_namespace`**: Optional. Same semantics as in `launch_codegen`. Pass the same value the original codegen run used so requirements can be reused on resume.
 
 ### 4. Post-Mortem Analysis
 Extracts key decisions from a completed or failed workflow into persistent memory so they survive across relaunches.

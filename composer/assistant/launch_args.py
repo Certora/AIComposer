@@ -15,6 +15,17 @@ _PROVER_CONF_DESC = (
 class CommonCodeGen(BaseModel):
     prompt_addition: str | None = Field(description="Extra instructions for the codegen agent.", default=None)
     prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
+    cache_namespace: str | None = Field(
+        default=None,
+        description=(
+            "Namespace for cross-run caching of derived artifacts (currently the "
+            "natural-language requirements extraction). Combined with a content "
+            "hash of the run's inputs, so changing the spec / interface / system-doc "
+            "/ oracle / set-reqs invalidates the cache automatically. Leave unset "
+            "to disable caching entirely; setting it enables reuse across thread IDs "
+            "for runs that share inputs."
+        ),
+    )
 
 class LaunchCodegenArgs(CommonCodeGen):
     launch_config: CodegenConfiguration = Field(description="The input configuration for the code generation")

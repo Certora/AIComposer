@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.status import Status
 from rich.table import Table
+from rich.markdown import Markdown
 
 from composer.assistant.launch_args import (
     LaunchCodegenArgs,
@@ -138,13 +139,17 @@ class OrchestratorHandler:
             case LaunchCodegenArgs() | LaunchNatSpecArgs() | LaunchResumeArgs():
                 return await self._confirm_launch(payload)
             case _:
-                self._console.print(Panel(str(payload), title="Agent Message"))
+                self._console.print(Panel(Markdown(payload), title="Agent Message"))
                 return await self._prompt(multiline=True)
 
     async def _confirm_launch(self, payload: ConfirmLaunch) -> str:
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Key", style="bold")
         table.add_column("Value")
+
+        # Long-form fields rendered as their own Panel below the launch
+        # summary so the table stays scannable.
+        long_form: list[tuple[str, str]] = []
 
         match payload:
             case LaunchNatSpecArgs(input_file=f, solc_version=v,
@@ -160,16 +165,31 @@ class OrchestratorHandler:
                     table.add_row("Load from existing path", payload.source_root)
                 if payload.forbidden_read:
                     table.add_row("Forbid reads", payload.forbidden_read)
-            case LaunchCodegenArgs(spec_file=s, interface_file=i, system_doc=d,
+                if payload.prover_conf:
+                    table.add_row("Prover conf keys", ", ".join(sorted(payload.prover_conf)))
+            case LaunchCodegenArgs(launch_config=cfg, source_root=root,
                                    memory_namespace=mem, prompt_addition=prompt):
                 title = "Code Generation"
-                table.add_row("Spec file", s)
-                table.add_row("Interface", i)
-                table.add_row("System doc", d)
+                spec_label = "Spec file" if len(cfg.spec_files) == 1 else f"Spec files ({len(cfg.spec_files)})"
+                table.add_row(spec_label, "\n".join(cfg.spec_files))
+                table.add_row("Interface", cfg.interface_file)
+                table.add_row("System doc", cfg.system_doc)
+                table.add_row("Source root", root)
+                if cfg.contract_name:
+                    table.add_row("Contract name", cfg.contract_name)
+                if cfg.implementation_path:
+                    table.add_row("Implementation path", cfg.implementation_path)
+                if cfg.kickstart_context:
+                    table.add_row("Kickstart context", "(rendered below)")
+                    long_form.append(("Kickstart context", cfg.kickstart_context))
                 if mem:
                     table.add_row("Memory NS", mem)
                 if prompt:
                     table.add_row("Extra Prompt", prompt)
+                if payload.prover_conf:
+                    table.add_row("Prover conf keys", ", ".join(sorted(payload.prover_conf)))
+                if payload.cache_namespace:
+                    table.add_row("Cache NS", payload.cache_namespace)
             case LaunchResumeArgs(thread_id=t, working_dir=w, commentary=c,
                                   memory_namespace=mem, prompt_addition=prompt):
                 title = "Resume Workflow"
@@ -181,7 +201,15 @@ class OrchestratorHandler:
                     table.add_row("Memory NS", mem)
                 if prompt:
                     table.add_row("Extra Prompt", prompt)
+                if payload.prover_conf:
+                    table.add_row("Prover conf keys", ", ".join(sorted(payload.prover_conf)))
+                if payload.cache_namespace:
+                    table.add_row("Cache NS", payload.cache_namespace)
         self._console.print(Panel(table, title=f"Launch: {title}"))
+        for section_title, body in long_form:
+            self._console.print(
+                Panel(Markdown(body), title=section_title, border_style="dim")
+            )
 
         choice = await questionary.select(
             "",

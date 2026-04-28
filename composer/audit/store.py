@@ -303,14 +303,41 @@ class ResumeArtifact:
 # AuditStore
 # ---------------------------------------------------------------------------
 
-def _safe_dict(x: StoredProverResult | 
-               StoredRunInfo | 
-               StoredRequirements | 
-               StoredResumeArtifact | 
-               StoredVFS | 
+def _safe_dict(x: StoredProverResult |
+               StoredRunInfo |
+               StoredRequirements |
+               StoredResumeArtifact |
+               StoredVFS |
                StoredSummary |
                StoredManualResult) -> dict:
     return { **x }
+
+
+def _decode_text_files(items: Iterable[tuple[str, bytes]]) -> dict[str, str]:
+    """Decode VFS bytes as UTF-8, dropping anything binary.
+
+    The audit store's ``StoredVFS`` is a flat ``{path: str}`` dict — it
+    has no place for binary blobs. NEST source roots routinely contain
+    PDFs / images / fonts; rather than crash the run on the first
+    ``UnicodeDecodeError``, skip them with a log line and keep going.
+    Resume from this snapshot won't restore those binaries, but they
+    weren't going to round-trip through a JSONB string column anyway."""
+    import logging
+    logger = logging.getLogger(__name__)
+    out: dict[str, str] = {}
+    skipped: list[str] = []
+    for path, content in items:
+        try:
+            out[path] = content.decode("utf-8")
+        except UnicodeDecodeError:
+            skipped.append(path)
+    if skipped:
+        logger.info(
+            "Skipped %d binary file(s) when persisting initial VFS: %s",
+            len(skipped),
+            ", ".join(skipped[:10]) + (f" (+{len(skipped) - 10} more)" if len(skipped) > 10 else ""),
+        )
+    return out
 
 class AuditStore:
     """Async accessor for the audit archive.
@@ -367,7 +394,7 @@ class AuditStore:
             "num_reqs": len(reqs) if reqs is not None else None,
         }
         vfs_payload: StoredVFS = {
-            "files": {p: c.decode("utf-8") for (p, c) in vfs_init}
+            "files": _decode_text_files(vfs_init)
         }
 
         await self._store.aput(self._ns(thread_id), "run_info", _safe_dict(run_info))
@@ -385,7 +412,7 @@ class AuditStore:
         commentary: str,
     ) -> None:
         vfs_payload: StoredVFS = {
-            "files": {p: c.decode("utf-8") for (p, c) in vfs}
+            "files": _decode_text_files(vfs)
         }
         await self._store.aput(self._ns(thread_id), "vfs_result", _safe_dict(vfs_payload))
 

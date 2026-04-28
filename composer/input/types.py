@@ -99,6 +99,13 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     # form here, never a path string. ``None`` means no overrides.
     prover_conf: Optional[dict]
 
+    # Namespace for cross-run caching of derived artifacts (requirements
+    # extraction, today). Cache key inside this namespace is a content
+    # hash of the inputs that determine the artifact, so spec / interface
+    # / system-doc edits invalidate automatically. ``None`` disables
+    # caching — every run recomputes from scratch.
+    cache_namespace: Optional[str]
+
 
 class ModelOptionsBase(Protocol):
     """Read-only view of model options. thinking_tokens may be None to disable thinking."""

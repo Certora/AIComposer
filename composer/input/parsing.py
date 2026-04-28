@@ -134,6 +134,12 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     "this option starts with '@', taken to be the thread id of another run whose requirements should be copied.")
     parser.add_argument("--skip-reqs", action="store_true", help="If provided, no natural language requirements are added, and requirement judgment is skipped.")
 
+    parser.add_argument("--cache-namespace", dest="cache_namespace", default=None,
+                        help="Namespace for cross-run caching of derived artifacts "
+                             "(requirements extraction). Combined with a content hash of "
+                             "the run's inputs so edits invalidate automatically. "
+                             "Leave unset to disable caching entirely.")
+
     parser.add_argument("--prover-conf", default=None, type=_parse_prover_conf,
                         help="Path to a Certora config JSON file whose keys (packages, link, solc_args, "
                              "optimistic_loop, rule_sanity, etc.) are merged into every prover/typecheck "
