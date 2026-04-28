@@ -1,0 +1,11 @@
+{# An AI / sub-agent text message rendered as safe HTML. The body
+   comes pre-rendered from ``render_markdown`` (CommonMark + linkify,
+   raw-HTML disabled), so we mark it ``|safe`` to skip Jinja's
+   autoescape. The wrapper class lets CSS apply markdown-element
+   styling (headings, code, lists, …) without leaking those styles
+   into other log entries.
+
+   ctx:
+     html  — pre-rendered HTML from render_markdown
+#}
+<div class="log-entry log-ai ai-message">{{ html|safe }}</div>

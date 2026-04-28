@@ -1,0 +1,13 @@
+{# Replacement <summary> emitted on leave() to stamp final status onto a
+   closed nested workflow. The id MUST match the summary_id registered
+   at enter() time so the browser's ``replace`` op (outerHTML =) finds
+   the right element.
+
+   ctx:
+     summary_id  — id of the original <summary>
+     label       — original label text
+     status      — short trailing status (e.g. "done (1.4s)", "failed")
+#}
+<summary id="{{ summary_id }}" class="nested-summary status-{{ status_class }}">
+  {{ label }} <span class="nested-status">— {{ status }}</span>
+</summary>

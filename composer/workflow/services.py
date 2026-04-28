@@ -400,7 +400,7 @@ async def memory_backend_context() -> AsyncIterator[MemoryBackendGenerator]:
     async with _async_memory_pool() as p:
         yield (lambda ns: AsyncPostgresBackend(ns, p))
 
-_ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
+_ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7"}
 
 
 def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:

@@ -1,0 +1,15 @@
+{# A closed-by-default <details> for set-once context messages —
+   the system prompt and the initial human prompt are typically the
+   longest individual chunks in a conversation, so cluttering the
+   panel with their full content would dominate the actual run output.
+   Open on click for inspection.
+
+   ctx:
+     kind   — "system" / "human" (controls CSS variant)
+     label  — summary text (e.g. "System prompt", "Initial prompt")
+     html   — pre-rendered markdown body
+#}
+<details class="prompt-block prompt-{{ kind }}">
+  <summary class="prompt-summary">{{ label }}</summary>
+  <div class="prompt-body">{{ html|safe }}</div>
+</details>

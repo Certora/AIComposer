@@ -1,0 +1,18 @@
+{# A task row in the summary aside.
+
+   Emitted as ``append`` on first registration, then ``replace`` on each
+   status transition (the row's id is the replace target).
+
+   ctx:
+     task_id  — id of the task, used in selectors throughout
+     label    — human-readable task label
+     status   — one of "pending" / "running" / "done" / "error"
+     icon     — single-glyph status icon (○ ● ✓ ✗)
+#}
+<li id="row-{{ task_id }}" class="task-row status-{{ status }}">
+  <a href="#panel-{{ task_id }}">
+    <span class="task-icon">{{ icon }}</span>
+    <span class="task-label">{{ label }}</span>
+    <span class="task-status">({{ status }})</span>
+  </a>
+</li>

@@ -1,0 +1,10 @@
+{# A grouped tool-call row that gets ``replace``d as items accumulate.
+   Same visual treatment as a single tool-call entry; the ``id`` is the
+   replace target so successive calls in the same group fold into this
+   one element rather than appending new rows.
+
+   ctx:
+     row_id  — DOM id assigned by Task; same value reused on replace
+     text    — output of GroupedTool.render_group (autoescaped)
+#}
+<div id="{{ row_id }}" class="log-entry log-tool tool-group">{{ text }}</div>

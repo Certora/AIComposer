@@ -1,0 +1,15 @@
+{# Skeleton for an open nested-workflow context.
+
+   Owned by EmitTree.enter(). The body div is the append target for
+   subsequent log events at this path; the summary id lets the caller
+   stamp final status onto the closed nest via a ``replace`` op.
+
+   ctx:
+     summary_id  — id of the <summary> for later replace ops
+     body_id     — id of the <div> append target
+     label       — initial summary text (autoescaped)
+#}
+<details class="nested-workflow" open>
+  <summary id="{{ summary_id }}" class="nested-summary">{{ label }}</summary>
+  <div id="{{ body_id }}" class="nested-body"></div>
+</details>

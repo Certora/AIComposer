@@ -35,6 +35,12 @@ dependencies = [
 ml = ["sentence-transformers>=5.1", "einops"] # save CI
 prover = ["certora_cli"]
 pou = ["prover-output-utility @ git+ssh://git@github.com/Certora/ProverOutputUtility.git@e340bfb2cd7a32979286c4c3be60988748e4ce0e"]
+web = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.18",  # FastAPI's Form/UploadFile parser; needed for /runs in Phase 2+
+    "markdown-it-py>=3.0",       # safe-HTML rendering for AI / sub-agent text content
+]
 
 [dependency-groups]
 test = ["pytest>=9.0", "pytest-asyncio>=1.3", "testcontainers>=4.0"]
@@ -65,4 +71,10 @@ include = ["composer*", "sanity_analyzer*", "analyzer*"]
 "" = "."
 
 [tool.setuptools.package-data]
-composer = ["templates/*.j2"]
+composer = [
+    "templates/*.j2",
+    "web/templates/*.html",
+    "web/templates/**/*.j2",
+    "web/static/*.css",
+    "web/static/*.js",
+]

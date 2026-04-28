@@ -1,0 +1,11 @@
+{# The run-level status pill in the page header.
+
+   Initial render uses ``status_class="running"``; replaced on completion
+   via a ``replace`` op against ``#run-status``. The id MUST stay
+   ``run-status`` so the replace target resolves.
+
+   ctx:
+     status_class  — "running" / "done" / "error"
+     status_text   — short human-readable status
+#}
+<div id="run-status" class="run-status status-{{ status_class }}">{{ status_text }}</div>

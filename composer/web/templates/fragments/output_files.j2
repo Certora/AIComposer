@@ -1,0 +1,16 @@
+{# Generated-output file links. Sent as an ``inner`` op against
+   ``#outputs`` once the run completes (mock pipeline emits a few
+   ``.spec`` files into the workspace; Phase 4's real run does the same
+   but with real CVL output).
+
+   ctx:
+     files  — list of {"url": str, "label": str}
+#}
+{% if files %}
+<h2 class="outputs-heading">Outputs</h2>
+<ul class="outputs-list">
+  {% for file in files %}
+  <li><a href="{{ file.url }}">{{ file.label }}</a></li>
+  {% endfor %}
+</ul>
+{% endif %}

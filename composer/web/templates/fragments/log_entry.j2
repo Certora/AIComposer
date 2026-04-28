@@ -1,0 +1,8 @@
+{# Generic log entry — used by Phase 1 demo scenarios and reused by
+   Phase 2's AutoProveWebHandler for the standard log lines.
+
+   ctx:
+     kind  — semantic class suffix (e.g. "tool", "ai", "thinking", "error")
+     text  — body text (autoescaped)
+#}
+<div class="log-entry log-{{ kind }}">{{ text }}</div>
