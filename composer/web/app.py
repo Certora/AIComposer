@@ -20,8 +20,9 @@ import os
 import pathlib
 import shutil
 import uuid
+from dataclasses import replace
 from datetime import datetime
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
@@ -44,8 +45,8 @@ from composer.web.projects import (
     describe_source,
     run_project_setup,
 )
-from composer.web.real_pipeline import run_real_pipeline
-from composer.web.runs import RUNS, RunState, serialize_event
+from composer.web.real_pipeline import run_real_pipeline, slugify
+from composer.web.runs import RUNS, RunRequest, RunState, serialize_event
 
 
 _USE_MOCK = os.environ.get("AUTOPROVE_WEB_MOCK") == "1"
@@ -250,18 +251,97 @@ async def create_run(
         from composer.web.mock_pipeline import run_mock_pipeline
         asyncio.create_task(run_mock_pipeline(run))
     else:
-        asyncio.create_task(run_real_pipeline(
-            run,
-            project_root=project.project_root,
+        # Build the RunRequest at submit time so retry has a stable
+        # handle on cache_ns / root_thread_id (the two values needed
+        # to differentiate soft vs hard retry semantics).
+        request = RunRequest(
+            project_id=project_id,
             main_contract_raw=main_contract,
             model=model,
             max_concurrent=max_concurrent,
             cloud=cloud,
             system_doc_path=sys_doc_path,
             threat_model_path=threat_path,
+            cache_ns=f"web-{slugify(main_contract)}",
+            memory_ns=None,
+            root_thread_id=f"autoprove_{uuid.uuid4().hex[:12]}",
+        )
+        run.request = request
+        asyncio.create_task(run_real_pipeline(
+            run, project_root=project.project_root, request=request,
         ))
 
     return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
+
+
+@app.post("/runs/{old_run_id}/retry")
+async def retry_run(
+    old_run_id: str,
+    mode: Literal["soft", "hard"] = Form(...),
+):
+    """Re-launch a failed run.
+
+    *soft*: same ``(cache_ns, memory_ns, root_thread_id)`` triple →
+    cached phases skip, the failing phase resumes from its langgraph
+    checkpoint (cheap, but inherits the agent state at the moment of
+    failure).
+
+    *hard*: same ``(cache_ns, memory_ns)``, fresh ``root_thread_id`` →
+    cached phases still skip, but the failing phase gets a clean
+    conversation. Use when soft retry can't escape a bad agent loop.
+
+    The new run gets its own ``run_id`` and workspace; uploaded
+    artefacts (system doc, threat model) are referenced from the old
+    run's workspace rather than copied — Phase 6 polish can switch to
+    copy if workspace cleanup ever lands.
+    """
+    old_run = RUNS.get(old_run_id)
+    if old_run is None:
+        raise HTTPException(404, f"unknown run {old_run_id!r}")
+    if old_run.request is None:
+        raise HTTPException(400, "this run can't be retried (no recorded request)")
+
+    project = PROJECTS.get(old_run.request.project_id)
+    if project is None or project.project_root is None:
+        raise HTTPException(
+            400,
+            f"project {old_run.request.project_id} for run {old_run_id} "
+            f"is no longer available",
+        )
+
+    new_request: RunRequest
+    match mode:
+        case "soft":
+            new_request = old_run.request
+        case "hard":
+            new_request = replace(
+                old_run.request,
+                root_thread_id=f"autoprove_{uuid.uuid4().hex[:12]}",
+            )
+
+    new_run_id = uuid.uuid4().hex[:12]
+    new_workspace = WORKSPACE_ROOT / new_run_id
+    new_workspace.mkdir()
+
+    inputs = {
+        **old_run.inputs,
+        "retry_of":  old_run_id,
+        "retry_mode": mode,
+    }
+    new_run = RunState(
+        run_id=new_run_id,
+        workspace=new_workspace,
+        started_at=datetime.now(),
+        inputs=inputs,
+        request=new_request,
+    )
+    RUNS[new_run_id] = new_run
+
+    asyncio.create_task(run_real_pipeline(
+        new_run, project_root=project.project_root, request=new_request,
+    ))
+
+    return RedirectResponse(url=f"/runs/{new_run_id}", status_code=303)
 
 
 @app.get("/runs/{run_id}", response_class=HTMLResponse)

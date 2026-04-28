@@ -111,6 +111,38 @@ def serialize_event(e: Event) -> str:
 # RunState
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class RunRequest:
+    """Inputs needed to launch — or re-launch — a run.
+
+    Captured at submit time and stored on :class:`RunState` so the
+    retry endpoint can reconstruct a new run from an old one without
+    asking the user to re-upload artefacts. ``cache_ns`` and
+    ``root_thread_id`` are determined here (rather than later in the
+    pipeline) so a retry can reuse them deterministically.
+
+    Mock-mode runs leave ``RunState.request`` as ``None`` — they don't
+    support retry. The retry banner is only rendered when ``request``
+    is set."""
+    project_id: str
+    main_contract_raw: str
+    model: str
+    max_concurrent: int
+    cloud: bool
+    system_doc_path: pathlib.Path
+    threat_model_path: pathlib.Path | None
+    # Cache namespace; combined with a content hash of the inputs to
+    # form the actual cache key. Stable across retries of the same
+    # input so cached phases skip on re-run.
+    cache_ns: str
+    # Memory namespace; ``None`` falls through to thread_id inside
+    # WorkflowContext. v1 doesn't surface this in the UI.
+    memory_ns: str | None
+    # Root langgraph thread id. Soft retry reuses; hard retry
+    # generates a fresh one.
+    root_thread_id: str
+
+
 @dataclass
 class RunState:
     run_id: str
@@ -124,6 +156,9 @@ class RunState:
     final_status_text: str = "Running"
     final_status_class: str = "running"
     output_files: list[dict] = field(default_factory=list)
+    # Real-mode runs have a ``RunRequest``; mock-mode runs leave it
+    # ``None`` (they don't support retry).
+    request: "RunRequest | None" = None
     # Per-run event log for SSE replay. Order matches emission order.
     events: list[Event] = field(default_factory=list)
     # Monotonic counter for the next event's seq. Never decreases (even

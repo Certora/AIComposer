@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from composer.rag.db import DEFAULT_CONNECTION as RAG_DEFAULT
 from composer.spec.source.autoprove_common import AutoProveInputs, run_autoprove
 from composer.web.handler import AutoProveWebHandler
-from composer.web.runs import RunState
+from composer.web.runs import RunRequest, RunState
 
 
 _logger = logging.getLogger(__name__)
@@ -38,9 +38,12 @@ _logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _slugify(s: str) -> str:
+def slugify(s: str) -> str:
     """Sanitize a string into a cache-namespace-safe key. Alphanumerics
-    and ``_``/``-`` pass through; everything else collapses to ``_``."""
+    and ``_``/``-`` pass through; everything else collapses to ``_``.
+    Public so :mod:`composer.web.app` can use it when constructing
+    ``RunRequest.cache_ns`` at submit time (the same key shape needs
+    to come out for retry to find the prior cache)."""
     out = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in s)
     return out.strip("_") or "default"
 
@@ -81,18 +84,15 @@ async def run_real_pipeline(
     run: RunState,
     *,
     project_root: pathlib.Path,
-    main_contract_raw: str,
-    model: str,
-    max_concurrent: int,
-    cloud: bool,
-    system_doc_path: pathlib.Path,
-    threat_model_path: pathlib.Path | None,
+    request: RunRequest,
 ) -> None:
     """Drive a real autoprove run end-to-end.
 
-    *project_root* is expected to be already materialized (by
-    :mod:`composer.web.projects`). All other paths reference files
-    saved to the run's workspace at request time.
+    *project_root* is the materialized project (resolved by the
+    caller from ``request.project_id``). *request* carries every
+    other input; soft / hard retry both reuse the same ``RunRequest``
+    shape — only ``root_thread_id`` differs (hard retry generates a
+    fresh one).
 
     Catches its own exceptions and routes them through
     :meth:`AutoProveWebHandler.crashed` so a validation / pipeline
@@ -102,37 +102,37 @@ async def run_real_pipeline(
 
     try:
         # 1. Validate main_contract shape and resolve against project_root.
-        main_contract = parse_main_contract(main_contract_raw, project_root)
+        main_contract = parse_main_contract(request.main_contract_raw, project_root)
 
-        # 2. Build inputs. cache_ns auto-derived from contract name so
-        # retries for the same contract reuse cached phases (Phase 5
-        # plumbs the actual reuse; for now this just makes the key
-        # stable).
-        cache_ns = f"web-{_slugify(main_contract.name)}"
+        # 2. Build inputs. cache_ns / memory_ns / thread_id all come
+        # from the request — they're set at submit time so retry has a
+        # stable handle on them.
         inputs = AutoProveInputs(
             project_root=project_root,
             main_contract_path=main_contract.path,
             contract_name=main_contract.name,
-            system_doc_path=system_doc_path,
-            threat_model_path=threat_model_path,
-            max_concurrent=max_concurrent,
-            cloud=cloud,
+            system_doc_path=request.system_doc_path,
+            threat_model_path=request.threat_model_path,
+            max_concurrent=request.max_concurrent,
+            cloud=request.cloud,
             interactive=False,
-            cache_ns=cache_ns,
-            memory_ns=None,
+            cache_ns=request.cache_ns,
+            memory_ns=request.memory_ns,
             rag_db=RAG_DEFAULT,
-            model=model,
+            model=request.model,
             # tokens / thinking_tokens / memory_tool / interleaved_thinking
             # all stay at AutoProveInputs defaults — Phase 4 doesn't
             # surface them in the form. Phase 6 polish can if we want.
         )
 
-        # 3. Run. ``thread_id=None`` means a fresh UUID; Phase 5's retry
-        # path will pass an existing thread id for soft retry.
+        # 3. Run. Soft retry → same root_thread_id (resumes from the
+        # langgraph checkpoint); hard retry → fresh thread_id (cached
+        # phases still skip via cache_ns, the failing phase gets a
+        # clean conversation).
         await run_autoprove(
             inputs,
             handler_factory=handler.make_handler,
-            thread_id=None,
+            thread_id=request.root_thread_id,
         )
 
         # 4. Surface generated files. The pipeline writes ``.spec`` files

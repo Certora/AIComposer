@@ -592,3 +592,13 @@ class AutoProveWebHandler:
             "inner", "#outputs",
             render_fragment("fragments/output_files.j2", files=files),
         )
+        # On error, surface retry options (only for real-mode runs —
+        # mock runs leave ``request`` ``None`` and can't be retried).
+        if css_class == "error" and self.run.request is not None:
+            self.run.push(
+                "replace", "#retry-banner",
+                render_fragment(
+                    "fragments/retry_banner.j2",
+                    run_id=self.run.run_id,
+                ),
+            )

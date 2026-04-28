@@ -73,7 +73,7 @@ class IDEBridge:
                     )
                     try:
                         payload = json.loads(msg)
-                        if "id" not in payload or not isinstance(payload["id"], str):
+                        if "id" not in payload:
                             continue
                         id = payload["id"]
                         if id not in self.req_queue:
@@ -150,7 +150,7 @@ class IDEBridge:
             data=msg,
             id=this_id
         )
-        resp = await asyncio.wait_for(cb.get(), 0.5)
+        resp = await cb.get()
 
         if "error" in resp:
             err = resp["error"]
