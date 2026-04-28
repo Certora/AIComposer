@@ -5,23 +5,29 @@ The extension exposes workspace, editor, and results endpoints that let the
 Python side read/write files, show diffs, display webviews, and manage
 proposed-change previews inside VS Code.
 
-Usage::
+Usage — always as an async context manager. The yielded value is the
+bridge, or ``None`` when the extension isn't running / env vars aren't
+set, so callers can gracefully degrade::
 
-    bridge = await IDEBridge.connect()  # None if env vars are missing
-    if bridge:
-        root = await bridge.workspace_folder()
-        await bridge.close()
+    async with IDEBridge.connect() as bridge:
+        if bridge is None:
+            ...  # extension not available, fall back
+        else:
+            await bridge.show_file(content, "Token.sol", lang="solidity")
 
-Or as an async context manager::
-
-    async with await IDEBridge.connect() as bridge:
-        await bridge.show_file(content, "Token.sol", lang="solidity")
+The context manager owns the WebSocket lifecycle: connection close fires
+on exit (success, exception, or early return) so the underlying
+``websockets`` transport is always shut down cleanly. There is no public
+``close()`` and no plain ``await connect()`` form — the language-enforced
+shape is the only shape, since callers were forgetting to close.
 """
 
 import json
 import os
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
-from types import TracebackType
+from typing import AsyncIterator, Any
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -38,51 +44,93 @@ class IDEBridgeError(Exception):
 
 
 class IDEBridge:
-    """Persistent WebSocket connection to the VS Code extension."""
+    """Persistent WebSocket connection to the VS Code extension.
+
+    Construct via :meth:`connect`, which is an async context manager that
+    yields an ``IDEBridge`` (when the extension is reachable) or ``None``
+    (when it isn't). Direct construction isn't part of the public API —
+    we want exactly one lifecycle entry point so the WebSocket close
+    can't be skipped."""
+
+    class _ReaderDaemon():
+        def __init__(self, _conn: ClientConnection):
+            self._conn = _conn
+            self.req_queue : dict[int, asyncio.Queue[dict[str, Any]]] = {}
+        
+        async def _send(self, id: int, data: dict[str, Any], cb: asyncio.Queue):
+            assert id not in self.req_queue
+            self.req_queue[id] = cb
+            await self._conn.send(json.dumps(data))
+
+        async def reader(
+            self
+        ):
+            while True:
+                try:
+                    msg = await asyncio.wait_for(
+                        self._conn.recv(),
+                        timeout=0.1
+                    )
+                    try:
+                        payload = json.loads(msg)
+                        if "id" not in payload or not isinstance(payload["id"], str):
+                            continue
+                        id = payload["id"]
+                        if id not in self.req_queue:
+                            continue
+                        self.req_queue[id].put_nowait(
+                            item=payload
+                        )
+                        del self.req_queue[id]
+                    except json.JSONDecodeError:
+                        pass
+                except asyncio.TimeoutError:
+                    pass
+                except asyncio.CancelledError:
+                    return
 
     def __init__(self, ws: ClientConnection):
         self._ws = ws
         self._next_id = 0
+        self._daemon = IDEBridge._ReaderDaemon(ws)
 
     # -- construction --------------------------------------------------------
 
     @classmethod
-    async def connect(cls) -> "IDEBridge | None":
-        """Connect to the extension WebSocket server.
+    @asynccontextmanager
+    async def connect(cls) -> AsyncIterator["IDEBridge | None"]:
+        """Connect to the extension WebSocket server for the duration of
+        the ``async with`` block.
 
         Reads ``COMPOSER_WS_PORT`` and ``COMPOSER_AUTH_TOKEN`` from the
-        environment.  Returns ``None`` if either variable is missing or the
-        connection fails, so callers can gracefully degrade when VS Code is
-        not available.
+        environment. Yields ``None`` if either variable is missing or
+        the WebSocket connection fails, so callers can branch on
+        availability without adding a separate try/except. On exit the
+        underlying connection (if any) is closed unconditionally.
         """
         port = os.environ.get("COMPOSER_WS_PORT")
         token = os.environ.get("COMPOSER_AUTH_TOKEN")
         if not port or not token:
-            return None
+            yield None
+            return
 
         uri = f"ws://127.0.0.1:{port}?token={token}"
         try:
             ws = await websockets.connect(uri)
         except (OSError, websockets.WebSocketException):
-            return None
-        return cls(ws)
+            yield None
+            return
 
-    async def close(self) -> None:
-        """Close the underlying WebSocket connection."""
-        await self._ws.close()
-
-    # -- async context manager -----------------------------------------------
-
-    async def __aenter__(self) -> "IDEBridge":
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        await self.close()
+        bridge = cls(ws)
+        task = asyncio.create_task(
+            bridge._daemon.reader()
+        )
+        try:
+            yield bridge
+        finally:
+            task.cancel()
+            await task
+            await ws.close()
 
     # -- JSON-RPC plumbing ---------------------------------------------------
 
@@ -92,13 +140,17 @@ class IDEBridge:
         Raises :class:`IDEBridgeError` if the response contains an ``error``.
         """
         self._next_id += 1
-        msg: dict = {"jsonrpc": "2.0", "id": self._next_id, "method": method}
+        this_id = self._next_id
+        cb = asyncio.Queue(maxsize=1)
+        msg: dict = {"jsonrpc": "2.0", "id": this_id, "method": method}
         if params is not None:
             msg["params"] = params
-
-        await self._ws.send(json.dumps(msg))
-        raw = await self._ws.recv()
-        resp = json.loads(raw)
+        await self._daemon._send(
+            cb=cb,
+            data=msg,
+            id=this_id
+        )
+        resp = await asyncio.wait_for(cb.get(), 0.5)
 
         if "error" in resp:
             err = resp["error"]

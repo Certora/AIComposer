@@ -43,6 +43,8 @@ from composer.io.context import with_handler, run_graph
 from composer.ui.codegen_events import CodeGenEventHandler
 from composer.core.state import AIComposerInput, AIComposerExtra
 from composer.workflow.services import checkpointer_context, store_context, indexed_store_context, memory_backend_context, MemoryBackendGenerator
+from composer.ui.tool_display import async_tool_context
+
 
 
 _KB_NS = DEFAULT_KB_NS
@@ -607,6 +609,7 @@ async def execute_ai_composer_workflow(
         store_context() as store, \
         indexed_store_context(DefaultEmbedder(model)) as indexed_store, \
         rag_context(workflow_options.rag_db, model) as rag_db, \
+        async_tool_context(), \
         memory_backend_context() as mem:
         return await _execute_ai_composer_workflow(
             handler, llm, input, workflow_options, memory_namespace, resume_work_key,

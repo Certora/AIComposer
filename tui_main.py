@@ -3,9 +3,11 @@ import composer.bind as _
 import asyncio
 import sys
 
-from composer.input.parsing import fresh_workflow_argument_parser
+from langchain_core.language_models.chat_models import BaseChatModel
+
+from composer.input.parsing import fresh_workflow_argument_parser, CommandLineArgs
 from composer.workflow.services import create_llm
-from composer.input.files import upload_input
+from composer.input.files import upload_input, InputData
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.ui.codegen_rich import CodeGenRichApp
 from composer.ui.ide_bridge import IDEBridge
@@ -32,8 +34,18 @@ async def main() -> int:
 
     input_data = await upload_input(args)
 
-    ide = await IDEBridge.connect()
+    async with IDEBridge.connect() as ide:
+        return await _main_runner(
+            llm, input_data, args, ide
+        )
 
+async def _main_runner(
+    llm: BaseChatModel,
+    input_data: InputData,
+    args: CommandLineArgs,
+    ide: IDEBridge | None
+) -> int:
+    
     app = CodeGenRichApp(show_checkpoints=args.show_checkpoints, ide=ide) #type: ignore
 
     async def work():
@@ -47,9 +59,6 @@ async def main() -> int:
     app.set_work(work)
     with tool_context():
         await app.run_async()
-
-    if ide is not None:
-        await ide.close()
 
     return app.exit_code
 

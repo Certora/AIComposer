@@ -87,7 +87,7 @@ class OrchestratorHandler:
                     self._stop_thinking()
                     text = msg.text
                     if text:
-                        self._console.print(text)
+                        self._console.print(Markdown(text))
                     for tc in msg.tool_calls:
                         self._render_tool_call(tc)
 
@@ -228,6 +228,7 @@ class OrchestratorHandler:
             case "yes":
                 return "yes"
             case "no":
+                self._start_thinking()
                 return "no"
             case "feedback":
                 to_ret = await self._prompt("Feedback: ")

@@ -45,10 +45,15 @@ async def _main() -> int:
 
     llm = create_llm(config)
 
-    # Connect IDE bridge if available
-    ide = await IDEBridge.connect()
+    async with IDEBridge.connect() as ide:
+        return await _run_orchestrator(ide, llm, config)
 
-    # Determine workspace
+
+async def _run_orchestrator(
+    ide: IDEBridge | None,
+    llm,
+    config: OrchestratorModelConfig,
+) -> int:
     workspace: Path
     if ide is not None:
         workspace = await ide.workspace_folder()
@@ -58,16 +63,13 @@ async def _main() -> int:
     console = Console()
     console.print(f"[bold]Workspace:[/bold] {workspace}")
 
-    # Build orchestrator graph
     compiled = build_orchestrator(workspace, llm)
     ctxt = OrchestratorContext(
         workspace=workspace, ide=ide, llm=llm, config=config,
     )
 
-    # Set up handler
     handler = OrchestratorHandler(console=console)
 
-    # Set up event queue for async rendering
     ev_queue = EventQueue(asyncio.Event(), [])
     drainer = asyncio.create_task(_drain_events(ev_queue, handler))
 
@@ -99,15 +101,11 @@ async def _main() -> int:
         except asyncio.CancelledError:
             pass
 
-    if ide is not None:
-        await ide.close()
-
     result = final_state.get("result")
     if result:
         console.print(f"\n[bold]{result}[/bold]")
 
     return 0
-
 
 def main() -> int:
     return asyncio.run(_main())
