@@ -581,7 +581,7 @@ async def _execute_ai_composer_workflow(
             ct = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
             if ct is not None:
                 channel_values = cast(VFSState, ct.checkpoint["channel_values"])
-                vfs_snapshot = {path: content.decode("utf-8") for path, content in materializer.iterate(channel_values)}
+                vfs_snapshot = channel_values["vfs"]
                 resume_key = f"crash_{thread_id}_{uuid.uuid4().hex[:8]}"
                 await store.aput(("crash_recovery",), resume_key, {"vfs": vfs_snapshot})
                 logger.info(f"Saved crash recovery snapshot: {resume_key}")

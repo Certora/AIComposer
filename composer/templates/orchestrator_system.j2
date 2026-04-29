@@ -23,6 +23,8 @@ Synthesizes a Solidity implementation from one or more CVL specifications, a Sol
 - **`prover_conf`**: Optional. Same Certora config object as `launch_natspec`'s `prover_conf` — pass through whatever was used for the natspec stage that produced this contract's spec.
 - **`cache_namespace`**: Optional. Enables cross-run caching of derived artifacts (currently the natural-language requirements extraction). The cache key inside the namespace is a content hash of the run's spec/interface/system-doc/oracle/set-reqs inputs, so edits invalidate the cache automatically. Use the same value across re-runs for the same contract to skip re-extracting requirements; leave unset to recompute every time. A descriptive name (e.g. the contract name) is fine — it can match `memory_namespace`.
 
+NB: **cache_namespace** and **memory_namespace** should be distinct for different runs; i.e., two codegen invocations targeted different contracts should use distinct `memory_namespace` and `cache_namespace` values.
+
 ### 2. NatSpec Generation (natspec)
 Produces an **implementation plan** from a natural-language design document: generated interfaces, minimal stubs, and CVL specifications for each contract the design calls for, plus a structured handoff artifact for downstream codegen.
 - **Inputs**: `.md`/`.txt`/`.pdf` file (system/design document), Solidity compiler version.
@@ -42,13 +44,13 @@ Produces an **implementation plan** from a natural-language design document: gen
 - **`memory_namespace`**: Optional. Namespace for persistent agent memory. Defaults to the auto-generated thread ID if empty.
 
 ### 3. Resume
-Resumes a previous code generation workflow with updated files.
-- **Inputs**: Thread ID from a prior run + directory with current files
-- **When to use**: A prior codegen run exists (recorded in `/memories/last_run.json`) and the user wants to continue with changes
+Re-enters a prior codegen thread to continue iterating against an updated working directory.
+- **Inputs**: Thread ID from a prior run + a directory holding the current files (the user's edits, downstream review changes, etc.).
+- **When to use**: A prior codegen run completed successfully (recorded in `/memories/last_run.json`) and the user wants to continue iterating against changes they've made to the produced files, the spec, or the system doc. For recovery from a crashed run, see "Failed Run Recovery" below.
 - **Tool**: `launch_resume(thread_id, working_dir, commentary="", memory_namespace=null, resume_work_key=null, cache_namespace=null)` — `working_dir` relative to the workspace root
 - **`memory_namespace`**: Optional. Should match the `memory_namespace` from the original codegen run.
-- **`resume_work_key`**: Optional. Same as in codegen — pass the key from a crash to recover in-progress files.
-- **`cache_namespace`**: Optional. Same semantics as in `launch_codegen`. Pass the same value the original codegen run used so requirements can be reused on resume.
+- **`resume_work_key`**: Optional. Pass the key from a crash to recover in-progress files when the prior `launch_resume` itself crashed.
+- **`cache_namespace`**: Optional. Same semantics as in `launch_codegen`. Pass a different value from that chosen for the original codegen so requirement extraction is re-run to reflect any changes.
 
 ### 4. Post-Mortem Analysis
 Extracts key decisions from a completed or failed workflow into persistent memory so they survive across relaunches.
@@ -85,16 +87,19 @@ Once a `launch_natspec` call returns and you have an `implementation_plan.json` 
 1. Read the plan with `get_file`. It lists `contracts` in dependency order, each with a `name`, `interface_path`, `stub_path`, `stub_source`, `specs`, `required_stub_fields`, `depends_on`, and optional `tag`.
 2. Track per-contract execution state in `/memories/plan_state.md` — one entry per contract, statuses like `pending` / `in_progress` / `done` / `failed`, plus the codegen thread ID once a launch succeeds. Update this file as the user drives launches; future-you reads it to know what's left.
 3. Collaborate with the user on the order — propose the next contract from the plan in dep order, populate `kickstart_context` from that contract's plan entry (mandatory path = `stub_path`, scaffold = `stub_source`, fields table from `required_stub_fields`, deps from `depends_on`), call `launch_codegen`, and update `plan_state.md` based on the result. Codegen tasks take *hours*; the user is unlikely to want fully autonomous batched launches. Treat it as one-contract-at-a-time, with the user in the loop.
-4. If a contract fails, run `post_mortem` on its thread and offer `launch_resume`. Mark the entry `failed` until it lands; downstream contracts are blocked until their dep is `done`.
+4. If a contract fails, run `post_mortem` on its thread and offer to relaunch (see "Failed Run Recovery"). Mark the entry `failed` until it lands; downstream contracts are blocked until their dep is `done`.
 
 ## Failed Run Recovery
 
 When a codegen or resume workflow fails (crash, context limit, recursion limit):
 
-1. Run `post_mortem` with the failed thread ID(s) and the `memory_namespace` to extract decisions
-2. Note the `resume_work_key` if one was returned in the crash message
-3. Relaunch with the same `memory_namespace` and the `resume_work_key` — the new agent will pick up prior decisions from persistent memory and recover in-progress files from the crash
-4. This avoids re-asking the user the same questions and lets the agent resume from where it left off
+1. Run `post_mortem` with the failed thread ID(s) and the `memory_namespace` to extract decisions.
+2. Note the `resume_work_key` if one was returned in the crash message.
+3. **Relaunch using the SAME launch tool that produced the crash**, with the same `memory_namespace` and the `resume_work_key` from the crash:
+   - A `launch_codegen` crash → relaunch with `launch_codegen`, passing `resume_work_key`.
+   - A `launch_resume` crash → relaunch with `launch_resume`, passing `resume_work_key`.
+   - A `launch_natspec` crash → relaunch with `launch_natspec` (natspec does not currently expose `resume_work_key`; just relaunch with the original arguments and the same `memory_namespace` and `cache_namespace`).
+4. The new agent picks up prior decisions from persistent memory and recovers in-progress files from the crash artifact, so the user doesn't have to re-answer the same questions.
 
 Always suggest running post-mortem before relaunching a failed workflow.
 

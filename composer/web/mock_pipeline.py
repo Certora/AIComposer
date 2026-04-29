@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from composer.io.multi_job import TaskInfo
+from composer.io.protocol import IOHandler
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.web.handler import AutoProveWebHandler, Task
 from composer.web.runs import RunState
@@ -98,7 +99,7 @@ def _state_with_thinking(
     """Build a state update with an AIMessage in extended-thinking
     shape: content is a list of typed blocks. Optional *text* tacks on
     a follow-up text block in the same message."""
-    blocks: list[dict] = [{"type": "thinking", "thinking": thinking}]
+    blocks: list[dict | str] = [{"type": "thinking", "thinking": thinking}]
     if text is not None:
         blocks.append({"type": "text", "text": text})
     return {node_name: {"messages": [AIMessage(content=blocks)]}}
@@ -159,7 +160,7 @@ class _Nest:
 
 
 async def _drive_nest(
-    task: Task, parent_path: list[str], nest: _Nest, slice_dur: float,
+    task: IOHandler[None], parent_path: list[str], nest: _Nest, slice_dur: float,
 ) -> None:
     """Recursively drive one nest: open, emit events, descend into
     children, close. Pre-order on entry, post-order on close — the

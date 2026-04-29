@@ -2,10 +2,10 @@ from typing import Annotated, Optional
 
 from pydantic import Field
 
-from graphcore.graph import tool_return
+from graphcore.graph import tool_return, tool_state_update
 from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 
-from langchain_core.messages import ToolMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 from langgraph.runtime import get_runtime
@@ -24,7 +24,7 @@ from composer.ui.tool_display import tool_display
     ),
     None,
 )
-class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
+class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command | str]):
     """
     Invoke the Certora Prover, a powerful symbolic reasoning tool for verifying the correctness of smart contracts.
 
@@ -103,15 +103,17 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
 
     state: Annotated[AIComposerState, InjectedState]
 
-    async def run(self) -> Command:
+    async def run(self) -> Command | str:
         if not self.use_working_spec and not self.target_spec:
-            return tool_return(
-                tool_call_id=self.tool_call_id,
-                content=(
-                    "target_spec is required when use_working_spec is false. "
-                    "Pass the VFS path of one of the registered spec files."
-                ),
+            return (
+                "target_spec is required when use_working_spec is false. "
+                "Pass the VFS path of one of the registered spec files."
             )
+        last = self.state["messages"][-1]
+        if isinstance(last, AIMessage):
+            tcs = last.tool_calls
+            if any(tc["id"] == self.tool_call_id for tc in tcs) and len(tcs) > 1:
+                return "Error: certora_prover must be the only tool call in its turn. Re-issue this call alone."
         result = await prover_impl(
             self.source_files,
             self.target_contract,
@@ -125,7 +127,7 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
         )
         match result:
             case str():
-                return tool_return(tool_call_id=self.tool_call_id, content=result)
+                return result
             case RawReport():
                 # Stamp only on: a full (non-ruled) run against a committed
                 # spec that verified. Working-spec runs never stamp.
@@ -137,41 +139,17 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
                 ):
                     ctxt = get_runtime(AIComposerContext).context
                     state_digest = compute_state_digest(c=ctxt, state=self.state)
-                    return Command(
-                        update={
-                            "messages": [
-                                ToolMessage(
-                                    tool_call_id=self.tool_call_id,
-                                    content=result.report
-                                )
-                            ],
-                            "validation": {
-                                # One stamp per spec — the overall task is
-                                # complete when every registered spec has its
-                                # own stamped entry.
-                                f"{prover_key}:{self.target_spec}": state_digest
-                            }
+                    return tool_state_update(
+                        self.tool_call_id, result.report, validation={
+                            # One stamp per spec — the overall task is
+                            # complete when every registered spec has its
+                            # own stamped entry.
+                            f"{prover_key}:{self.target_spec}": state_digest
                         }
                     )
                 return tool_return(tool_call_id=self.tool_call_id, content=result.report)
             case SummarizedReport():
-                return Command(
-                    update={
-                        "messages": [
-                            ToolMessage(
-                                tool_call_id=self.tool_call_id,
-                                content="... Output truncated ..."
-                            ),
-                            HumanMessage(
-                                content=[
-                                    "The prover output was too large for the context window. A TODO list extracted from its output is as follows",
-                                    result.todo_list
-                                ],
-                                display_tag="prover_summary"
-                            )
-                        ]
-                    }
-                )
+                return result.todo_list
 
 
 certora_prover = CertoraProverTool.as_tool("certora_prover")

@@ -1,8 +1,11 @@
-"""
-Cache & Memory Explorer for the NatSpec pipeline.
+"""Cache & Memory Explorer for the NatSpec pipeline.
 
-Usage:
-    python scripts/cache_explorer.py <input_file> --cache-ns <ns> [--memory-ns <ns>]
+Browses the cache + memory namespaces produced by ``tui-natspec``.
+Wired as ``cache-natspec`` in ``pyproject.toml``.
+
+Usage::
+
+    cache-natspec <input_file> --cache-ns <ns> [--memory-ns <ns>] [--from-source]
 """
 
 import argparse
@@ -13,10 +16,6 @@ from contextvars import ContextVar
 from contextlib import contextmanager, asynccontextmanager
 
 from pydantic import BaseModel
-
-_repo_root = str(Path(__file__).parent.parent.absolute())
-if _repo_root not in sys.path:
-    sys.path.append(_repo_root)
 
 from composer.ui.cache_explorer import (
     CacheNode, CacheExplorerApp, DummyServices, CacheTreeNode, OrgNode,

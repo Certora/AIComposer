@@ -99,6 +99,8 @@ async def _upload_mime(path: str) -> str:
     arbitrary blob)."""
     guessed, _ = mimetypes.guess_type(path)
     if guessed is not None:
+        if guessed.startswith("text/"):
+            return "text/plain"
         return guessed
     return "application/octet-stream" if await _is_binary_file(path) else "text/plain"
 

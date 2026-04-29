@@ -32,11 +32,6 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
     .vfs-change { color: cyan; }
     Collapsible { background: transparent; border: none; padding: 0; }
     CollapsibleTitle { padding: 0 1; }
-    Collapsible Contents {
-        padding: 0 0 0 3;
-        max-height: 50%;
-        overflow-y: auto;
-    }
 
     /* Tool-call block: a (call line, attachment) pair mounted as one
      * unit so the attachment hugs the parent line with no inter-row

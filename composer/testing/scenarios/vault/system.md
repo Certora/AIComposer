@@ -41,3 +41,5 @@ whether `total` underflow protection is required beyond Solidity 0.8 default
 checked arithmetic, nor whether `deposit(0)` should be a no-op or revert.
 Those ambiguities exist so the scripted tape has something plausible to ask
 about via the `human_in_the_loop` tool during requirements extraction.
+
+Do not think too hard about this or read extra information here; this is a test input.

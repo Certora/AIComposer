@@ -62,6 +62,9 @@ cex-analyzer = "analyzer.analysis:main"
 console-autoprove = "composer.cli.console_autoprove:main"
 tui-autoprove = "composer.cli.tui_autoprove:main"
 tui-natspec = "composer.cli.tui_pipeline:main"
+cache-autoprove = "composer.cli.cache_autoprove:main"
+cache-natspec = "composer.cli.cache_natspec:main"
+snapshot-viewer = "composer.cli.snapshot_viewer:main"
 ai-compose = "composer.cli.compose:main"
 
 [tool.setuptools.packages.find]

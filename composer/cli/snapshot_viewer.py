@@ -6,14 +6,18 @@ collapsed to one-line summaries.  Expand any item to see full content.
 Nested sub-agent threads are excluded — only the top-level conversation
 for the snapshot's thread is shown.
 
-Usage:
-    python scripts/snapshot_viewer.py <mnemonic>
-    python scripts/snapshot_viewer.py --thread <thread_id>
+Wired as ``snapshot-viewer`` in ``pyproject.toml``.
+
+Usage::
+
+    snapshot-viewer <mnemonic>
+    snapshot-viewer --thread <thread_id>
 """
 
 import argparse
 import json
 import sys
+import asyncio
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -26,7 +30,7 @@ from rich.syntax import Syntax
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
 from composer.diagnostics.handlers import normalize_content
-from composer.workflow.services import get_checkpointer, get_store
+from composer.workflow.services import checkpointer_context, store_context
 from composer.spec.context import SNAPSHOT_NAMESPACE
 
 
@@ -34,30 +38,30 @@ from composer.spec.context import SNAPSHOT_NAMESPACE
 # Data loading
 # ---------------------------------------------------------------------------
 
-def _load_thread_from_mnemonic(mnemonic: str) -> str:
+async def _load_thread_from_mnemonic(mnemonic: str) -> str:
     """Look up a snapshot by mnemonic and return its thread_id."""
-    store = get_store()
-    item = store.get(SNAPSHOT_NAMESPACE, mnemonic)
-    if item is None:
-        print(f"No snapshot found for mnemonic: {mnemonic}", file=sys.stderr)
-        sys.exit(1)
-    return item.value["thread_id"]
+    async with store_context() as store:
+        item = await store.aget(SNAPSHOT_NAMESPACE, mnemonic)
+        if item is None:
+            print(f"No snapshot found for mnemonic: {mnemonic}", file=sys.stderr)
+            sys.exit(1)
+        return item.value["thread_id"]
 
 
-def _load_messages(thread_id: str) -> tuple[list, str | None]:
+async def _load_messages(thread_id: str) -> tuple[list, str | None]:
     """Load messages from the latest checkpoint for a thread.
 
     Returns (messages, checkpoint_id).
     """
-    checkpointer = get_checkpointer()
-    ct = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
-    if ct is None:
-        print(f"No checkpoint found for thread {thread_id}", file=sys.stderr)
-        sys.exit(1)
-
-    checkpoint_id = ct.config["configurable"].get("checkpoint_id")
-    messages = ct.checkpoint["channel_values"].get("messages", [])
-    return messages, checkpoint_id
+    async with checkpointer_context() as checkpointer:
+        ct = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
+        if ct is None:
+            print(f"No checkpoint found for thread {thread_id}", file=sys.stderr)
+            sys.exit(1)
+        assert "configurable" in ct.config
+        checkpoint_id = ct.config["configurable"].get("checkpoint_id")
+        messages = ct.checkpoint["channel_values"].get("messages", [])
+        return messages, checkpoint_id
 
 
 # ---------------------------------------------------------------------------
@@ -261,13 +265,10 @@ class SnapshotViewerApp(App):
         for tc in msg.tool_calls or []:
             name = tc["name"]
             args = tc.get("args", {})
-            tc_id = tc.get("id", "?")
+            tc_id = tc.get("id") or "?"
             summary = _compact_args(args)
 
-            call_title = Text()
-            call_title.append("  > ", style="green")
-            call_title.append(name, style="bold green")
-            call_title.append(f"({summary})", style="dim")
+            call_title = f"  > {name}({summary})"
 
             args_str = json.dumps(args, indent=2, default=str)
             widgets.append(Collapsible(
@@ -285,11 +286,10 @@ class SnapshotViewerApp(App):
                 preview = _first_line(content)
 
                 result_title = Text()
-                result_title.append("  < ", style="yellow")
-                result_title.append(name, style="bold yellow")
+                result_title = f"  < {name}"
                 if status != "ok":
-                    result_title.append(f" [{status}]", style="bold red")
-                result_title.append(f": {preview}", style="dim")
+                    result_title += f" [{status}]"
+                result_title += f": {preview}"
 
                 widgets.append(Collapsible(
                     Static(content),
@@ -313,7 +313,7 @@ class SnapshotViewerApp(App):
 # CLI
 # ---------------------------------------------------------------------------
 
-def main():
+async def _main():
     parser = argparse.ArgumentParser(
         description="Browse the conversation history of a CVL generation snapshot"
     )
@@ -325,21 +325,25 @@ def main():
 
     if args.thread:
         thread_id = args.thread
+        mnemonic = None
     else:
         mnemonic = args.mnemonic
         print(f"Looking up snapshot: {mnemonic}...", file=sys.stderr)
-        thread_id = _load_thread_from_mnemonic(mnemonic)
+        thread_id = await _load_thread_from_mnemonic(mnemonic)
         print(f"Thread ID: {thread_id}", file=sys.stderr)
 
-    messages, checkpoint_id = _load_messages(thread_id)
+    messages, checkpoint_id = await _load_messages(thread_id)
     if not messages:
         print("Thread has no messages.", file=sys.stderr)
         sys.exit(1)
 
     print(f"Loaded {len(messages)} messages. Launching viewer...", file=sys.stderr)
     app = SnapshotViewerApp(thread_id, messages, checkpoint_id, mnemonic)
-    app.run()
+    await app.run_async()
 
+def main() -> int:
+    asyncio.run(_main())
+    return 0
 
 if __name__ == "__main__":
     main()

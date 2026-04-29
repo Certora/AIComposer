@@ -32,7 +32,7 @@ def get_vfs_tools(
             # Block writes to ANY spec file. Spec mutations must go through
             # propose_spec_change (for committed edits) or write_working_spec
             # + commit_working_spec (for iterative drafts).
-            forbidden_write=r"^.+\.spec$",
+            forbidden_write=r"^.+\.spec$|^natspec_output/.+$",
             put_doc_extra= \
     """
     By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library definitions.

@@ -52,7 +52,10 @@ class OrchestratorHandler:
         self._thinking: Status | None = None
 
     async def _prompt(self, message: str = "> ", multiline: bool = False) -> str:
-        return await self._session.prompt_async(message, multiline=multiline)
+        to_ret : str | None = None
+        while not to_ret:
+            to_ret = await self._session.prompt_async(message, multiline=multiline)
+        return to_ret
 
     # ------------------------------------------------------------------
     # SinkProtocol

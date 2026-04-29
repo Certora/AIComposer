@@ -5,7 +5,8 @@ Provides a generic two-pane Textual app for browsing WorkflowContext cache
 hierarchies and memory filesystems. Workflow-specific scripts supply the
 tree builder and value formatter.
 
-See scripts/cache_explorer.py for the NatSpec pipeline entry point.
+See composer/cli/cache_natspec.py and composer/cli/cache_autoprove.py for
+pipeline-specific entry points.
 """
 
 from typing import Callable, Awaitable

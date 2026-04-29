@@ -194,9 +194,9 @@ The cache key is derived from a SHA-256 hash of the project root, design documen
 
 ### Exploring the cache/memory
 
-You can view the cache/memory of the various phases by running `scripts/autoprove_cache_explorer.py`. This script takes the same positional arguments as the `*_autoprove.py` entrypoints, as well as the `--memory-ns` and `--cache-ns`.
+You can view the cache/memory of the various phases by running `cache-autoprove`. This takes the same positional arguments as the `*-autoprove` entrypoints, as well as `--memory-ns`, `--cache-ns`, and `--threat-model` (required to resolve the bug-analysis cache key when the original run used a threat model).
 This should load up a TUI frame that lets you inspect the currently cached values. You can toggle to memory mode to view (and potentially edit) the memories of the various sub agents.
 
 ### Debugging Agents
 
-In headless mode, the CVL Generation agents will produce a mnemonic name. You can pass this mnemonic into the `snapshot_viewer.py` to view the conversation history of that agent.
+In headless mode, the CVL Generation agents will produce a mnemonic name. You can pass this mnemonic into `snapshot-viewer` to view the conversation history of that agent.
