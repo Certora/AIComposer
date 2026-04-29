@@ -1,4 +1,5 @@
-from typing import override, TypedDict, cast, TYPE_CHECKING
+from typing import override, TypedDict, cast, TYPE_CHECKING, Literal
+from enum import StrEnum
 
 from pydantic import Field
 
@@ -21,7 +22,41 @@ else:
     except ImportError:
         pass
 
+# tqdm tries to create a multiprocessing.RLock on first use, which calls
+# fork_exec to start a resource tracker process.  In an async event loop
+# with open DB connections this fails with "bad value(s) in fds_to_keep"
+# and eventually hangs.  Pre-set a threading lock so tqdm never attempts
+# the fork.  This is the narrowest fix: no env-var side effects, and
+# sentence_transformers (which uses tqdm internally) just works.
+import threading
+from tqdm import tqdm as _tqdm_cls
+_tqdm_cls.set_lock(threading.RLock())
+
 DEFAULT_KB_NS = ("cvl",)
+
+class ReviewStatus(StrEnum):
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+    @property
+    def sort_key(self) -> int:
+        return {ReviewStatus.APPROVED: 0, ReviewStatus.PENDING_REVIEW: 1, ReviewStatus.REJECTED: 2}[self]
+
+    @property
+    def display_tag(self) -> str:
+        """Tag string for agent-facing output. Empty for approved articles."""
+        if self == ReviewStatus.APPROVED:
+            return ""
+        return f" [{self.name.replace('_', ' ')}]"
+
+ArticleSource = Literal["human", "agent"]
+
+def get_review_status(article: KnowledgeBaseArticle | dict) -> ReviewStatus: # type: ignore[type-arg]
+    try:
+        return ReviewStatus(article.get("review_status", "pending_review"))
+    except ValueError:
+        return ReviewStatus.PENDING_REVIEW
 
 class DefaultEmbedder(Embeddings):
     def __init__(self, model: "SentenceTransformer | None" = None):
@@ -43,6 +78,8 @@ class KnowledgeBaseArticle(TypedDict):
     title: str
     symptom: str
     body: str
+    review_status: ReviewStatus
+    source: ArticleSource
 
 def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[BaseTool]:
     kb = kb_ns + ("agent", "knowledge")
@@ -64,11 +101,14 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
                     offset=offset,
                     limit=lim
                 )
+                r = [it for it in r if get_review_status(it.value) != ReviewStatus.REJECTED]
+                r.sort(key=lambda it: get_review_status(it.value).sort_key)
                 to_ret = []
                 for it in r:
                     as_name = cast(KnowledgeBaseArticle, it.value)
+                    status = get_review_status(it.value)
                     to_ret.extend([
-                        f"Title: {as_name['title']}",
+                        f"Title: {as_name['title']}{status.display_tag}",
                         f"Symptom: {as_name['symptom']}"
                     ])
                 return "\n".join(to_ret)
@@ -82,13 +122,16 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
                 to_ret = []
                 for it in r:
                     as_name = cast(KnowledgeBaseArticle, it.value)
+                    status = get_review_status(it.value)
+                    if status == ReviewStatus.REJECTED:
+                        continue
                     to_ret.extend([
-                        f"Title: {as_name['title']}",
+                        f"Title: {as_name['title']}{status.display_tag}",
                         f"Symptom: {as_name['symptom']}",
                         f"Similarity: {it.score}"
                     ])
                 return "\n".join(to_ret)
-        
+
     class KBGet(WithAsyncImplementation[str]):
         """
         Retrieve the contents of a knowledge base article
@@ -98,17 +141,20 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
         @override
         async def run(self) -> str:
             r = await store.aget(kb, self.title)
-            if r is None:
+            if r is None or get_review_status(r.value) == ReviewStatus.REJECTED:
                 return f"No such article with title '{self.title}'"
             art = cast(KnowledgeBaseArticle, r.value)
+            warning = ""
+            if get_review_status(art) == ReviewStatus.PENDING_REVIEW:
+                warning = "\n> **Note:** This article has not yet been reviewed by a human. Treat its advice with caution.\n"
             return f"""
 ## {art['title']}
-
+{warning}
 *Symptom*: {art['symptom']}
 
 {art['body']}
 """
-        
+
     class KBPut(WithAsyncImplementation[str]):
         """
         Add a novel, non-trivial insight to the knowledge base.
@@ -144,11 +190,13 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
             article : KnowledgeBaseArticle = {
                 "title": self.title,
                 "symptom": self.symptom,
-                "body": self.body
+                "body": self.body,
+                "review_status": ReviewStatus.PENDING_REVIEW,
+                "source": "agent"
             }
             await store.aput(kb, self.title, cast(dict, article), index=["symptom"])
-            return "Contribution accepted."
-    
+            return "Contribution accepted (pending human review)."
+
     to_ret : list[BaseTool] = [KBScan.as_tool("scan_knowledge_base"), KBGet.as_tool("get_knowledge_base_article")]
     if not read_only:
         to_ret.append(KBPut.as_tool("knowledge_base_contribute"))
