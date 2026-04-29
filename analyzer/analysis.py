@@ -306,8 +306,8 @@ async def _analyze_core(
             if not args.quiet:
                 print("current checkpoint: " + d["config"]["configurable"]["checkpoint_id"])
         else:
-                if isinstance(d, dict):
-                    _accumulate_token_usage(d, token_usage)
+            if isinstance(d, dict):
+                _accumulate_token_usage(d, token_usage)
             if not args.quiet:
                 print(d)
 
