@@ -52,7 +52,7 @@ class ReviewStatus(StrEnum):
 
 ArticleSource = Literal["human", "agent"]
 
-def get_review_status(article: dict) -> ReviewStatus: # type: ignore[type-arg]
+def get_review_status(article: KnowledgeBaseArticle | dict) -> ReviewStatus: # type: ignore[type-arg]
     try:
         return ReviewStatus(article.get("review_status", "pending_review"))
     except ValueError:
@@ -141,14 +141,11 @@ def kb_tools(store: BaseStore, kb_ns: tuple[str, ...], read_only: bool) -> list[
         @override
         async def run(self) -> str:
             r = await store.aget(kb, self.title)
-            if r is None:
-                return f"No such article with title '{self.title}'"
-            status = get_review_status(r.value)
-            if status == ReviewStatus.REJECTED:
+            if r is None or get_review_status(r.value) == ReviewStatus.REJECTED:
                 return f"No such article with title '{self.title}'"
             art = cast(KnowledgeBaseArticle, r.value)
             warning = ""
-            if status == ReviewStatus.PENDING_REVIEW:
+            if get_review_status(art) == ReviewStatus.PENDING_REVIEW:
                 warning = "\n> **Note:** This article has not yet been reviewed by a human. Treat its advice with caution.\n"
             return f"""
 ## {art['title']}
