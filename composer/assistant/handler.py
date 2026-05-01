@@ -193,6 +193,10 @@ class OrchestratorHandler:
                     table.add_row("Prover conf keys", ", ".join(sorted(payload.prover_conf)))
                 if payload.cache_namespace:
                     table.add_row("Cache NS", payload.cache_namespace)
+                if payload.resume_work_key:
+                    table.add_row("Recovery Key", payload.resume_work_key)
+                if payload.thread_id:
+                    table.add_row("Resume Key", payload.thread_id)
             case LaunchResumeArgs(thread_id=t, working_dir=w, commentary=c,
                                   memory_namespace=mem, prompt_addition=prompt):
                 title = "Resume Workflow"

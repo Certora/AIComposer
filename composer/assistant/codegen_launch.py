@@ -45,7 +45,7 @@ class CodegenWorkflowArgs:
     cache_namespace: Optional[str] = None
 
 
-def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
+def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen, thread_id: str | None = None) -> CodegenWorkflowArgs:
     return CodegenWorkflowArgs(
         rag_db=ctx.config.rag_db,
         model=ctx.config.model,
@@ -56,6 +56,7 @@ def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflo
         debug_prompt_override=cg.prompt_addition,
         prover_conf=cg.prover_conf,
         cache_namespace=cg.cache_namespace,
+        thread_id=thread_id
     )
 
 

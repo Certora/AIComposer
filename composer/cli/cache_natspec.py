@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from contextvars import ContextVar
 from contextlib import contextmanager, asynccontextmanager
+from typing import AsyncIterator
 
 from pydantic import BaseModel
 
@@ -146,7 +147,7 @@ async def node_for[T: CacheTypes, S: CacheTypes](
     child: CacheKey[T, S],
     label: str,
     ty: type[S] | None = None,
-):
+) -> AsyncIterator[WorkflowContext[S]]:
     child_ctx = ctx.child(child)
     value: S | None = None
     if ty is not None:

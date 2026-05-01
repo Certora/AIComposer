@@ -57,7 +57,8 @@ async def run_generation_pipeline(
     prover_tool: BaseTool,
     prover_config: dict,
     interactive: bool,
-    threat_model: str | dict | None
+    threat_model: str | dict | None,
+    max_bug_rounds: int = 3,
 ) -> AutoProveResult:
     
     contract_instance : ContractInstance
@@ -102,7 +103,7 @@ async def run_generation_pipeline(
                 lambda p: p.source_tools,
                 lambda p: p.rag_tools,
                 "update"
-            ), feat, refinement=conv if interactive else None, threat_model=threat_model),
+            ), feat, refinement=conv if interactive else None, threat_model=threat_model, max_rounds=max_bug_rounds),
             semaphore,
         )
 

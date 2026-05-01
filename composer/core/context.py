@@ -5,6 +5,7 @@ from graphcore.graph import BoundLLM
 from graphcore.tools.vfs import VFSAccessor
 
 from composer.core.state import AIComposerState
+from composer.core.validation import Validation
 from composer.rag.db import ComposerRAGDB
 from composer.prover.core import CloudConfig
 
@@ -18,10 +19,10 @@ class ProverOptions:
 class AIComposerContext:
     """Per-run context for the codegen workflow.
 
-    ``required_validations`` is a flat list of validation keys. A prover-stamp
-    entry looks like ``"prover:<spec_vfs_path>"`` (one per registered spec so
-    each spec must be independently verified); the natural-language
-    requirements entry is ``"natural language requirements"``. The set is
+    ``required_validations`` is a flat list of typed validation keys (see
+    :class:`composer.core.validation.Validation`). One ``prover_validation``
+    entry per registered spec (each spec must be independently verified)
+    plus ``REQS_VALIDATION`` if requirements were extracted. The set is
     built in the executor from ``InputData.specs`` + whether reqs were
     extracted.
     """
@@ -29,12 +30,12 @@ class AIComposerContext:
     rag_db: ComposerRAGDB
     prover_opts: ProverOptions
     vfs_materializer: VFSAccessor[AIComposerState]
-    required_validations: list[str] = field(default_factory=list)
+    required_validations: list[Validation] = field(default_factory=list)
     prover_conf_overrides: dict | None = None
 
-def compute_state_digest(c: AIComposerContext, state: AIComposerState) -> str:
+def compute_state_digest(state: AIComposerState) -> str:
     # not interested in cryptographic bulletproofing, just need *some* digest
     digester = hashlib.md5()
-    for (_, cont) in sorted(c.vfs_materializer.iterate(state), key = lambda x: x[0]):
-        digester.update(cont)
+    for (_, cont) in sorted(state["vfs"].items(), key = lambda x: x[0]):
+        digester.update(cont.encode("utf-8"))
     return digester.hexdigest()

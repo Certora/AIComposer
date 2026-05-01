@@ -323,7 +323,8 @@ async def run_bug_analysis(
     component: ContractComponentInstance,
     extra_input : Sequence[str | dict] = tuple(),
     threat_model: str | dict | None = None,
-    refinement: ConversationContextProvider | None = None
+    refinement: ConversationContextProvider | None = None,
+    max_rounds: int = 3,
 ) -> list[PropertyFormulation]:
     """
     Extract security properties for a component.
@@ -332,14 +333,14 @@ async def run_bug_analysis(
     component_analysis = ctx.child(bug_analysis_key(threat_model))
     if (cached := await component_analysis.cache_get(_BugAnalysisCache)) is not None:
         return cached.items
-    
+
     agent_attempt = await _run_bug_analysis_inner(
         component_analysis.child(AGENT_RESULT_KEY),
         env,
         component,
         extra_input,
         threat_model,
-        max_rounds=3
+        max_rounds=max_rounds,
     )
     if refinement is None:
         to_ret = agent_attempt.items

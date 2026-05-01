@@ -58,8 +58,7 @@ class StoredSpecFile(TypedDict):
     basename: str
     contents: str
 
-
-class StoredRunInfo(TypedDict):
+class StoredRunInfoBase(TypedDict):
     specs: list[StoredSpecFile]
     interface_name: str
     interface_contents: str
@@ -68,8 +67,12 @@ class StoredRunInfo(TypedDict):
     # The decode-back-to-text path is opt-in (the heuristic on the
     # decoded bytes); the API doesn't promise text on read.
     system_b64: str
+
+class StoredRunInfo(StoredRunInfoBase):
     num_reqs: int | None
 
+class StoredRunInfoV2(StoredRunInfoBase):
+    reqs: list[str] | None
 
 class StoredRequirements(TypedDict):
     reqs: list[str]
@@ -304,7 +307,7 @@ class ResumeArtifact:
 # ---------------------------------------------------------------------------
 
 def _safe_dict(x: StoredProverResult |
-               StoredRunInfo |
+               StoredRunInfoV2 |
                StoredRequirements |
                StoredResumeArtifact |
                StoredVFS |
@@ -317,7 +320,7 @@ def _decode_text_files(items: Iterable[tuple[str, bytes]]) -> dict[str, str]:
     """Decode VFS bytes as UTF-8, dropping anything binary.
 
     The audit store's ``StoredVFS`` is a flat ``{path: str}`` dict — it
-    has no place for binary blobs. Sources routingly contain binary files
+    has no place for binary blobs. Sources routinely contain binary files
     (images, pdf, git blobs); skip them with a log line and keep going.
     Resume from this snapshot won't restore those binaries, but they
     weren't going to round-trip through a JSONB string column anyway."""
@@ -337,6 +340,12 @@ def _decode_text_files(items: Iterable[tuple[str, bytes]]) -> dict[str, str]:
             ", ".join(skipped[:10]) + (f" (+{len(skipped) - 10} more)" if len(skipped) > 10 else ""),
         )
     return out
+
+_RUN_INFO_KEY = "run_info"
+_VFS_INITIAL_KEY = "vfs_initial"
+_VFS_RESULTS_KEY = "vfs_result"
+_RESUME_ARTIFACT_KEY = "resume_artifact"
+_REQUIREMENTS_KEY_OLD = "requirements"
 
 class AuditStore:
     """Async accessor for the audit archive.
@@ -384,24 +393,20 @@ class AuditStore:
             }
             for (vfs_path, file) in specs
         ]
-        run_info: StoredRunInfo = {
+        run_info: StoredRunInfoV2 = {
             "specs": stored_specs,
             "interface_name": interface_file.basename,
             "interface_contents": interface_file.string_contents,
             "system_name": system_doc.basename,
             "system_b64": base64.standard_b64encode(system_doc.bytes_contents).decode("utf-8"),
-            "num_reqs": len(reqs) if reqs is not None else None,
+            "reqs": reqs
         }
         vfs_payload: StoredVFS = {
             "files": _decode_text_files(vfs_init)
         }
 
-        await self._store.aput(self._ns(thread_id), "run_info", _safe_dict(run_info))
-        await self._store.aput(self._ns(thread_id), "vfs_initial", _safe_dict(vfs_payload))
-        if reqs is not None:
-            await self._store.aput(
-                self._ns(thread_id), "requirements", {"reqs": reqs}
-            )
+        await self._store.aput(self._ns(thread_id), _RUN_INFO_KEY, _safe_dict(run_info))
+        await self._store.aput(self._ns(thread_id), _VFS_INITIAL_KEY, _safe_dict(vfs_payload))
 
     async def register_complete(
         self,
@@ -413,28 +418,28 @@ class AuditStore:
         vfs_payload: StoredVFS = {
             "files": _decode_text_files(vfs)
         }
-        await self._store.aput(self._ns(thread_id), "vfs_result", _safe_dict(vfs_payload))
+        await self._store.aput(self._ns(thread_id), _VFS_RESULTS_KEY, _safe_dict(vfs_payload))
 
         resume: StoredResumeArtifact = {
             "interface_path": intf,
             "commentary": commentary,
         }
-        await self._store.aput(self._ns(thread_id), "resume_artifact", _safe_dict(resume))
+        await self._store.aput(self._ns(thread_id), _RESUME_ARTIFACT_KEY, _safe_dict(resume))
 
     # -- reads -------------------------------------------------------------
 
     async def get_resume_artifact(self, thread_id: str) -> ResumeArtifact:
-        ra_item = await self._store.aget(self._ns(thread_id), "resume_artifact")
+        ra_item = await self._store.aget(self._ns(thread_id), _RESUME_ARTIFACT_KEY)
         if ra_item is None:
             raise RuntimeError(f"No resume artifact found for thread {thread_id}")
         ra = cast(StoredResumeArtifact, ra_item.value)
 
-        ri_item = await self._store.aget(self._ns(thread_id), "run_info")
+        ri_item = await self._store.aget(self._ns(thread_id), _RUN_INFO_KEY)
         if ri_item is None:
             raise RuntimeError(f"No run info found for thread {thread_id}")
         ri = cast(StoredRunInfo, ri_item.value)
 
-        vfs_item = await self._store.aget(self._ns(thread_id), "vfs_result")
+        vfs_item = await self._store.aget(self._ns(thread_id), _VFS_RESULTS_KEY)
         if vfs_item is None:
             raise RuntimeError(f"No vfs_result found for thread {thread_id}")
         vfs_files = cast(StoredVFS, vfs_item.value)["files"]
@@ -480,24 +485,29 @@ class AuditStore:
     async def get_run_info(
         self, thread_id: str
     ) -> tuple[RunInput, VFSRetriever]:
-        ri_item = await self._store.aget(self._ns(thread_id), "run_info")
+        ri_item = await self._store.aget(self._ns(thread_id), _RUN_INFO_KEY)
         if ri_item is None:
             raise RuntimeError(f"Didn't find run info for {thread_id}")
-        ri = cast(StoredRunInfo, ri_item.value)
+        if "num_reqs" in ri_item.value:
+            ri = cast(StoredRunInfo, ri_item.value)
+        else:
+            ri = cast(StoredRunInfoV2, ri_item.value)
 
-        vfs_item = await self._store.aget(self._ns(thread_id), "vfs_initial")
+        vfs_item = await self._store.aget(self._ns(thread_id), _VFS_INITIAL_KEY)
         vfs_files: dict[str, str] = {}
         if vfs_item is not None:
             vfs_files = cast(StoredVFS, vfs_item.value)["files"]
         retriever = VFSRetriever(_files=vfs_files)
 
         reqs: list[str] | None = None
-        if ri["num_reqs"] is not None:
+        if "num_reqs" in ri:
             req_item = await self._store.aget(
-                self._ns(thread_id), "requirements"
+                self._ns(thread_id), _REQUIREMENTS_KEY_OLD
             )
             if req_item is not None:
                 reqs = cast(StoredRequirements, req_item.value)["reqs"]
+        else:
+            reqs = ri["reqs"]
 
         run_specs: list[SpecRunEntry] = [
             {

@@ -53,6 +53,7 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
     prover_conf: str | None
     output_root: str | None
     interactive: bool
+    max_bug_rounds: int
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,12 @@ async def _main() -> int:
              "can refine the extracted property list interactively before CVL generation. "
              "Each component's channel is its own focusable panel in the TUI; use the "
              "switcher to navigate.",
+    )
+    parser.add_argument(
+        "--max-bug-rounds", type=int, default=3,
+        help="Maximum number of bug-extraction rounds run per component during property "
+             "analysis (default: 3). Lower for faster runs at the cost of less thorough "
+             "property surfacing; higher to give the agent more room to refine.",
     )
     parser.add_argument(
         "--output-root", default=None,
@@ -199,6 +206,7 @@ async def _main() -> int:
                     source_factory=source_factory,
                     max_concurrent=args.max_concurrent,
                     interactive=args.interactive,
+                    max_bug_rounds=args.max_bug_rounds,
                 )
                 await app.on_pipeline_done(result)
             except Exception as exc:

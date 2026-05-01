@@ -23,7 +23,7 @@ async def main() -> int:
         if not args.checkpoint_id or not args.thread_id:
             print("Need to provide checkpoint-id and thread-id")
             return 1
-        return dump_fs(args, llm)
+        return await dump_fs(args.debug_fs, thread_id=args.thread_id, checkpoint_id=args.checkpoint_id)
 
     print("Reading input files...")
 

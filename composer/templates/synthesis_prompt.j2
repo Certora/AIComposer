@@ -60,10 +60,38 @@ algorithmic complexity. Prover incompleteness shows up as timeouts and is caused
 patterns the prover can't analyze tractably — keep the implementation simple even when
 efficient code is tempting. See "Code style for verifiability" below.
 
-When the component depends on contracts you don't have (external tokens, upstream
-routers, etc.), generate "mock" implementations consistent with the system document.
-Mocks aren't part of the deliverable but should ride along so reviewers understand your
-assumptions about the environment.
+### Dependencies — verify against the real implementation whenever you can
+
+This task may be taking place within a larger software development context, and the
+source code for other contracts your component interacts with may be available to you
+via the VFS. When it is, **verify against the real implementation**. Use `list_files` /
+`grep_files` / `get_file` to locate the dependency and pull it into the prover input on
+demand. Verifying against actual code is enormously more valuable than verifying
+against a fabricated stand-in: it catches real integration bugs, exercises the actual
+control flow your code interacts with, and collapses the HAVOC-shaped counterexamples
+you would otherwise have to paper over. A stub gives you the *shape* of an interaction;
+the real implementation gives you the *truth* of it.
+
+Pull dependencies in *as the prover needs them*, not preemptively — every contract you
+add to the prover input enlarges the verification problem and invites timeouts. The
+expected rhythm is: prover surfaces a counterexample that implicates an external call →
+locate the real callee in the VFS → add it to the prover input → re-verify. If the
+enlarged scene then times out, that's where summaries come in (Step 3), not before.
+
+When the real implementation isn't available — the dependency genuinely isn't in the
+VFS, or it's an arbitrary user-supplied contract the protocol must accept (e.g. an
+ERC20), or it's out of scope by design — the next best thing is a **sound CVL summary**
+that models the callee's observable effects via ghost variables. See the HAVOC bullet
+in Step 3 for the summary toolkit.
+
+Hand-written stub/mock implementations are a **last resort**, below both real-code
+verification and sound summarization. Reach for one only when neither of the above is
+viable — for instance, when summarization would lose too much fidelity and no real
+implementation exists. When you do write a stub, label it clearly (e.g.
+`mocks/StubFoo.sol`), keep its behavior consistent with the system document and the
+dependency's interface contract, and note in a comment why a stub was unavoidable.
+Stubs ride along so reviewers can see your environmental assumptions but are not part
+of the deliverable.
 
 ## Step 2 — Verify
 
@@ -92,21 +120,49 @@ not random edits. Use the strategies below.
 For each, ask: does this show a genuine bug in my implementation, or does it show that
 the verification needs more help (a summary, a precondition, a justified assumption)?
 
+When a CEX needs a CVL-side fix (summary, ghost model, invariant) and the change is
+non-trivial, delegate the drafting to the **`cex_remediation`** sub-agent. It reads the
+diagnosis, explores the source, validates its proposal against a soundness critic, and
+returns a full proposed spec replacement plus rationale. You then stage the proposal
+via the working-spec flow and commit it. For obvious one-line fixes you can write the
+change inline; for anything involving a new summary or ghost-model, prefer the
+sub-agent — it has the system document, the soundness critic, and the focus you don't
+have while juggling the rest of the implementation.
+
 - **Genuine bug** — fix the code. The counterexample's input shape and starting state
   tell you what scenario triggers the violation.
 
 - **HAVOC from an unresolved external call** — when your contract calls into something
   the prover can't see (an arbitrary token, an unknown router, etc.), the prover assumes
-  the worst-case effect on the entire scene, which violates almost any spec. Add a CVL
-  summary that soundly models the external behavior:
-  - If the callee's implementation is in scope (e.g. a known token in the prover input),
-    use a `DISPATCHER` summary (with caveats below).
-  - If the callee isn't in scope, write a sound summary that models the callee's
-    observable effect using **ghost variables** for the callee's state.
-  - For completely unresolved calls (no resolved selector / signature), use a
-    **dispatch-list** summary.
+  the worst-case effect on the entire scene, which violates almost any spec. Resolve in
+  this order of preference:
+  1. **Pull the real callee into the prover input if it lives in the VFS.** Real-code
+     verification is strictly more informative than any summary — see "Dependencies" in
+     Step 1. This is the right move whenever the source is available.
+  2. If the callee's implementation is already in the prover input, use a `DISPATCHER`
+     summary (with caveats below).
+  3. If the callee genuinely isn't available (and can't be brought in), write a sound
+     summary that models the callee's observable effect using **ghost variables** for
+     the callee's state.
+  4. For completely unresolved calls (no resolved selector / signature), use a
+     **dispatch-list** summary.
   Add summaries via the **working-spec flow** (see "Working with the spec" below) — never
   via `put_file` directly on a registered spec.
+
+  Do NOT mark a ghost `persistent` to escape this HAVOC. `persistent` is for state that
+  genuinely spans every external call (a global supply counter, a monotone clock) —
+  using it because *this specific* unresolved call is clobbering your ghost hides the
+  call's effect from verification rather than modeling it, and is a form of weakening.
+  Resolve the call via the ladder above.
+
+  Do NOT use `NONDET` on a side-effect-bearing call to "prevent HAVOC". `NONDET`
+  summarizes the call as a **no-op body** with a non-deterministic return — it does the
+  opposite of what its name suggests: rather than constraining the call, it erases it.
+  Applying it to anything whose semantics IS the side effect (`transfer`, `mint`,
+  `burn`, `swap`, `wrap`, `accountFor*`, `update*`, etc.) makes those operations
+  invisible to the prover — every value movement becomes a silent zero-effect call,
+  catastrophically unsound. `NONDET` is appropriate only for pure / view-shaped
+  functions whose return value is the only thing the protocol depends on.
 
 - **Counterexample assumes an impossible starting state** — if the trace relies on a
   scenario that can't actually arise, the spec is missing a precondition. Express the
@@ -217,6 +273,12 @@ For CVL syntax, patterns, language features, summary idioms, or any "how do I ex
 in CVL?" question — delegate to the **`cvl_research`** sub-agent. It synthesizes answers
 from the manual and knowledge base across multiple steps, which produces a far more
 complete answer than a single manual search.
+
+The researcher only knows CVL — it has no view of your VFS, the spec files, or the system
+doc. For *source-code* questions ("what does this contract do?", "where is X defined?",
+"what's already in the implementation?") use the VFS tools (`get_file`, `grep_files`,
+`list_files`) instead. Phrase researcher questions self-contained — include the CVL
+fragment or pattern you're asking about, since the sub-agent can't see your state.
 
 Use `cvl_manual_search` only for narrow lookups where you already know the section name
 or want to skim near-hits.

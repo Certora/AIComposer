@@ -440,7 +440,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
 class StandardConnections:
     checkpointer: AsyncPostgresSaver
     store: AsyncPostgresStore
-    memory: Callable[[str], AsyncPostgresBackend]
+    memory: MemoryBackendGenerator
 
 @dataclass
 class IndexedConnections(StandardConnections):

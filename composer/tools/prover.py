@@ -8,11 +8,10 @@ from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 from langchain_core.messages import AIMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
-from langgraph.runtime import get_runtime
 
 from composer.core.state import AIComposerState
-from composer.core.context import AIComposerContext, compute_state_digest
-from composer.core.validation import prover as prover_key
+from composer.core.context import compute_state_digest
+from composer.core.validation import prover_validation
 from composer.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
 from composer.ui.tool_display import tool_display
 
@@ -137,14 +136,15 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command | str]):
                     and not self.rule
                     and self.target_spec is not None
                 ):
-                    ctxt = get_runtime(AIComposerContext).context
-                    state_digest = compute_state_digest(c=ctxt, state=self.state)
+                    state_digest = compute_state_digest(state=self.state)
                     return tool_state_update(
                         self.tool_call_id, result.report, validation={
                             # One stamp per spec — the overall task is
                             # complete when every registered spec has its
-                            # own stamped entry.
-                            f"{prover_key}:{self.target_spec}": state_digest
+                            # own stamped entry. ``str(...)`` because state
+                            # holds ``dict[str, str]``; see validation.py
+                            # module docstring for why.
+                            str(prover_validation(self.target_spec)): state_digest
                         }
                     )
                 return tool_return(tool_call_id=self.tool_call_id, content=result.report)

@@ -34,7 +34,7 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     event_sink: SinkProtocol,
     graph: CompiledStateGraph[S, C, I, Any],
     ctxt: C,
-    input: I,
+    input: I | None,
     run_conf: RunnableConfig,
     description: str,
     human_handler: HumanHandler[H, S] | None = None,
@@ -49,6 +49,12 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     When the graph raises an ``__interrupt__``, calls
     *human_handler* with the interrupt value and current state, then
     resumes with the returned string.
+
+    ``input`` may be ``None`` to resume from the last checkpoint on
+    ``thread_id`` without seeding any new state — the only safe way to
+    reuse a thread_id, since LangGraph treats a non-None input on an
+    existing thread as "merge into checkpoint state and replay from the
+    entry node", which compounds append-style channels.
     """
     config = run_conf.get("configurable", None)
     if config is None or "thread_id" not in config:

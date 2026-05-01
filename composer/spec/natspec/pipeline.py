@@ -184,6 +184,7 @@ class PipelineServices:
     # interactive sessions via a conversation lock, the way
     # console_autoprove already does.
     interactive: bool = False
+    max_bug_rounds: int = 3
 
 async def analyze_single_contract(
     system_doc: SystemDoc,
@@ -242,7 +243,8 @@ async def analyze_single_contract(
                 extra_input=[
                     "For reference, the system document describing the entire application is as follows.",
                     system_doc.content
-                ]
+                ],
+                max_rounds=services.max_bug_rounds,
             ),
             semaphore,
         )
@@ -405,6 +407,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     *,
     max_concurrent: int = 4,
     interactive: bool = False,
+    max_bug_rounds: int = 3,
 ) -> PipelineResult:
     """Run the full natspec multi-agent pipeline.
 
@@ -560,6 +563,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
         mental_model=mental_model,
         file_registry=file_registry,
         interactive=interactive,
+        max_bug_rounds=max_bug_rounds,
     )
 
     tasks : list[Awaitable[ContractResult]] = []

@@ -1,39 +1,29 @@
-from typing import NotRequired, Callable, Any
+from typing import NotRequired, Callable
 from dataclasses import dataclass
-import uuid
-import pathlib
 
 from pydantic import BaseModel, Field
 
-from graphcore.graph import Builder, FlowInput, build_async_workflow
+from graphcore.graph import Builder, FlowInput
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.memory import async_memory_tool, AsyncMemoryBackend
 
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from langchain_core.language_models.chat_models import BaseChatModel
 
-from langgraph._internal._typing import StateLike
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import MessagesState
-from langgraph.graph.state import CompiledStateGraph
-from langgraph.store.base import BaseStore
 from langgraph.types import interrupt
 
 from composer.input.types import InputFileLike, TextInputFile
 from composer.audit.store import ResumeArtifact
-from composer.kb.knowledge_base import kb_tools as make_kb_tools, DEFAULT_KB_NS
-from composer.rag.db import ComposerRAGDB
-from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, _build_research_tool
-from composer.tools.search import cvl_manual_tools
+from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
-from composer.natreq.automation import requirements_oracle
 from composer.human.types import HumanInteractionType
 from composer.io.protocol import IOHandler
 from composer.io.context import with_handler, run_graph
 from composer.io.event_handler import NullEventHandler
 from composer.ui.tool_display import tool_display
+from composer.spec.util import uniq_thread_id
 
 
 @dataclass
@@ -48,10 +38,6 @@ class ExtractionState(MessagesState, RoughDraftState):
 
 class ExtractionInput(FlowInput, RoughDraftState):
     pass
-
-@dataclass
-class ExtractionContext:
-    rag_db: ComposerRAGDB
 
 class HumanClarificationArgs(BaseModel):
     """
@@ -115,41 +101,14 @@ system_prompt = load_jinja_template("req_role_prompt.j2")
 initial_prompt = load_jinja_template("req_extraction_prompt.j2")
 
 
-class OracleHandler:
-    """Delegation-based wrapper around any IOHandler.
-
-    Forwards all methods except human_interaction, where extraction_question
-    interrupts are routed to the oracle (if available).
-    """
-
-    def __init__(self, inner: IOHandler, oracle: Callable[[tuple[str, str]], str] | None):
-        self._inner = inner
-        self._oracle = oracle
-
-    def __getattr__(self, name: str):
-        return getattr(self._inner, name)
-
-    async def human_interaction(self, ty: HumanInteractionType, debug_thunk: Callable[[], None]) -> str:
-        if ty["type"] == "extraction_question" and self._oracle is not None:
-            print(f"Calling oracle...\nQuestion: {ty['question']}\nContext: {ty['context']}")
-            resp = self._oracle((ty["context"], ty["question"]))
-            print(f"Oracle response: {resp}")
-            return resp
-        return await self._inner.human_interaction(ty, debug_thunk)
-
-
 async def get_requirements(
     io: IOHandler,
-    llm: BaseChatModel,
+    cvl_builder: Builder[None, None, None],
+
     sys_doc: InputFileLike,
     specs: list[tuple[str, TextInputFile]],
     mem_backend: AsyncMemoryBackend,
     resume_artifact: ResumeArtifact | None,
-    oracle: list[str],
-    *,
-    rag_db: ComposerRAGDB,
-    indexed_store: BaseStore,
-    checkpointer: AsyncPostgresSaver,
 ) -> ExtractionResult:
     """Extract natural-language requirements that the spec leaves implicit.
 
@@ -158,64 +117,25 @@ async def get_requirements(
     graph) instead of being opened privately here — saves a duplicate set
     of pool connections per run and lets the CVL research sub-agent share
     the parent's checkpointer for its own thread state."""
-    cvl_research_doc = (
-        CVL_RESEARCH_BASE_DOC +
-        " Use this when phrasing a requirement requires understanding what "
-        "CVL can or cannot express; the researcher won't see the system "
-        "doc or spec, only your specific question."
-    )
-
-    research_builder = Builder().with_llm(
-        llm
-    ).with_loader(
-        load_jinja_template
-    ).with_tools(
-        cvl_manual_tools(rag_db)
-    ).with_checkpointer(
-        checkpointer
-    ).with_tools(
-        make_kb_tools(indexed_store, DEFAULT_KB_NS, read_only=True)
-    )
-
-    async def research_runner[S: StateLike, I: StateLike](
-        graph: CompiledStateGraph[S, Any, I, Any],
-        i: I,
-    ) -> S:
-        return await run_graph(
-            ctxt=None,
-            description="CVL Researcher",
-            graph=graph,
-            input=i,
-            run_conf={
-                "recursion_limit": 100,
-                "configurable": {
-                    "thread_id": "natreq-research-" + uuid.uuid4().hex[:16],
-                },
-            },
-        )
 
     tools = [
         async_memory_tool(mem_backend),
         results_tool,
         human_in_the_loop,
-        *cvl_manual_tools(ExtractionContext),
-        *make_kb_tools(indexed_store, DEFAULT_KB_NS, read_only=True),
-        _build_research_tool(research_builder, research_runner, cvl_research_doc),
         *get_rough_draft_tools(ExtractionState),
     ]
-    built : CompiledStateGraph[ExtractionState, ExtractionContext, ExtractionInput, Any] = build_async_workflow(
-        state_class=ExtractionState,
-        context_schema=ExtractionContext,
-        input_type=ExtractionInput,
-        output_key="reqs",
-        tools_list=tools,
-        unbound_llm=llm,
-        summary_config=None,
-        sys_prompt=system_prompt,
-        initial_prompt=initial_prompt
-    )[0].compile(checkpointer=checkpointer)
 
-    thread_id = uuid.uuid1().hex
+    built = (
+        cvl_builder
+        .with_state(ExtractionState)
+        .with_input(ExtractionInput)
+        .with_tools(tools)
+        .with_output_key("reqs")
+        .with_initial_prompt_template("req_extraction_prompt.j2")
+        .with_sys_prompt_template("req_role_prompt.j2")
+    ).compile_async()
+
+    thread_id = uniq_thread_id("extraction")
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
@@ -255,17 +175,9 @@ are now covered by the spec).
                 input_text.append(f"OLD spec file at `{entry.vfs_path}`:")
                 input_text.append(entry.string_contents)
 
-    req_oracle : Callable[[tuple[str, str]], str] | None = None
-    if oracle is not None and len(oracle):
-        req_oracle = requirements_oracle(
-            llm,
-            [ pathlib.Path(p) for p in oracle ]
-        )
-
     graph_input = ExtractionInput(input=input_text, memory=None, did_read=False)
 
-    handler = OracleHandler(io, req_oracle)
-    async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
-        final_state = await run_graph(built, ExtractionContext(rag_db=rag_db), graph_input, config, description="Requirements extraction")
+    async with with_handler(io, NullEventHandler()):  # type: ignore[arg-type]
+        final_state = await run_graph(built, None, graph_input, config, description="Requirements extraction")
     assert "reqs" in final_state
     return ExtractionResult(reqs=final_state["reqs"], thread_id=thread_id)

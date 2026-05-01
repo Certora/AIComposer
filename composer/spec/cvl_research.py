@@ -112,7 +112,6 @@ def _build_research_tool(
     Args:
         builder: Builder with LLM and all external tools (CVL manual, KB, etc.)
             already bound.
-        checkpointer: Checkpointer for the sub-agent graph.
         runner: How to invoke the compiled graph. Thread ID management is
             the runner's responsibility.
         doc: Docstring for the tool schema.

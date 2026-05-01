@@ -134,7 +134,7 @@ def emit_custom_event(payload: Mapping[str, Any]):
 async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     graph: CompiledStateGraph[S, C, I, Any],
     ctxt: C,
-    input: I,
+    input: I | None,
     run_conf: RunnableConfig,
     description: str,
     within_tool: str | None = None,
@@ -147,6 +147,10 @@ async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     the drainer can reconstruct the execution path.
 
     HITL interrupts are bridged to ``IOHandler.human_interaction()``.
+
+    ``input`` may be ``None`` to resume from the last checkpoint on
+    ``thread_id`` (e.g. transient-failure recovery on the same thread).
+    See ``graph_runner.run_graph`` for the rationale.
     """
     curr_io = _io_handler.get()
     if curr_io is None:

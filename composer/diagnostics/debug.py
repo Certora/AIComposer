@@ -1,12 +1,10 @@
 import logging
 import pathlib
+from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 
-from composer.input.types import CommandLineArgs
-from composer.workflow.factories import get_cryptostate_builder
-from composer.workflow.services import get_checkpointer
+from composer.workflow.services import checkpointer_context
 
 
 def setup_logging(debug: bool) -> None:
@@ -17,23 +15,24 @@ def setup_logging(debug: bool) -> None:
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
 
-def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
-    workflow = get_cryptostate_builder(
-        llm=llm,
-        fs_layer=None,
-        summarization_threshold=None,
-    )[0]
+async def dump_fs(debug_fs: str, *, thread_id : str | None, checkpoint_id: str | None) -> int:
+    configurable : dict[str, Any] = {}
+    if thread_id:
+        configurable["thread_id"] = thread_id
+    if checkpoint_id:
+        configurable["checkpoint_id"] = checkpoint_id
     config: RunnableConfig = {
-        "configurable": {
-            "thread_id": args.thread_id,
-            "checkpoint_id": args.checkpoint_id
-        }
+        "configurable": configurable
     }
-    build = workflow.compile(checkpointer=get_checkpointer())
-    st = build.get_state(config)
-    output = pathlib.Path(args.debug_fs)
+    async with checkpointer_context() as check:
+        tup = await check.aget_tuple(config)
+    if tup is None:
+        print("Invalid config, no state found")
+        return 1
+    
+    output = pathlib.Path(debug_fs)
     output.mkdir(exist_ok=True, parents=True)
-    for (t, r) in st.values["vfs"].items():
+    for (t, r) in tup.checkpoint["channel_values"]["vfs"].items():
         out_path : pathlib.Path = output / t
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:

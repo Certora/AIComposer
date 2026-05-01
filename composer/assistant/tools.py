@@ -22,6 +22,8 @@ from composer.assistant.launch_args import (
 from composer.assistant.codegen_launch import launch_codegen_workflow, launch_resume_workflow
 from composer.assistant.natspec_launch import launch_natspec_workflow
 from composer.assistant.post_mortem import PostMortemTool
+from composer.workflow.recovery import recovery_from_thread
+from composer.workflow.services import checkpointer_context, store_context
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +147,26 @@ class LaunchNatSpecTool(LaunchNatSpecArgs, WithAsyncImplementation[str]):
         if (r := _check_confirmation(response)) is not None:
             return r
         return await launch_natspec_workflow(self, ctx)
+    
+class RecoverVFS(WithAsyncImplementation[str]):
+    """
+    Call this tool to create a resume key for a thread id if the workflow failed to create one.
+    """
+    thread_id : str = Field(description="The thread id of the run to create a recovery key from")
+
+    async def run(self) -> str:
+        async with (
+            store_context() as store,
+            checkpointer_context() as checkpointer
+        ):
+            recovery = await recovery_from_thread(
+                thread_id=self.thread_id,
+                checkpointer=checkpointer,
+                store=store
+            )
+            if recovery is None:
+                return "Recovery failed; is the thread id correct?"
+            return f"Resume key: {recovery}"
 
 
 # ---------------------------------------------------------------------------
@@ -171,4 +193,5 @@ def build_tools(workspace: Path) -> list[BaseTool]:
         LaunchNatSpecTool.as_tool("launch_natspec"),
         PostMortemTool.as_tool("post_mortem"),
         done,
+        RecoverVFS.as_tool("recover_vfs")
     ]

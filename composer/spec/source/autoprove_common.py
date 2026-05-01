@@ -54,6 +54,7 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cloud: bool
     interactive: bool
     threat_model: str
+    max_bug_rounds: int
 
 
 @dataclass
@@ -79,6 +80,7 @@ class AutoProveInputs:
     interactive: bool = False
     cache_ns: str | None = None
     memory_ns: str | None = None
+    max_bug_rounds: int = 3
 
     # ModelOptions + RAGDBOptions (consumed by ``create_llm``)
     rag_db: str = ""
@@ -190,6 +192,7 @@ async def run_autoprove(
             max_concurrent=inputs.max_concurrent,
             interactive=inputs.interactive,
             threat_model=threat_model,
+            max_bug_rounds=inputs.max_bug_rounds,
         )
 
 
@@ -216,6 +219,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
     parser.add_argument("--cloud", action="store_true", help="Run prover jobs in the cloud")
     parser.add_argument("--interactive", action="store_true", help="Interactively refine the security properties after extraction")
     parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'thread' model (text or pdf) with which to seed the property extraction process")
+    parser.add_argument("--max-bug-rounds", type=int, default=3, help="Maximum number of bug-extraction rounds run per component during property analysis (default: 3)")
 
     args = cast(AutoProveArgs, parser.parse_args())
 
@@ -248,6 +252,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
         interactive=args.interactive,
         cache_ns=args.cache_ns,
         memory_ns=args.memory_ns,
+        max_bug_rounds=args.max_bug_rounds,
         rag_db=args.rag_db,
         model=args.model,
         tokens=args.tokens,

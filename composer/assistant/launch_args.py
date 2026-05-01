@@ -38,6 +38,8 @@ class LaunchCodegenArgs(CommonCodeGen):
         ),
     )
 
+    thread_id: str | None = Field(description="The thread id from which to resume a workflow. ONLY use to resume workflows due to transient API failures.")
+
 
 class LaunchResumeArgs(CommonCodeGen):
     thread_id: str = Field(description="Thread ID of the previous workflow (from /memories/)")
