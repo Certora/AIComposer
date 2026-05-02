@@ -106,6 +106,11 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     # caching — every run recomputes from scratch.
     cache_namespace: Optional[str]
 
+    # Free-form human-readable label persisted on the audit ``run_meta``
+    # slot, so a run can be located later by description (e.g. "the most
+    # recent NESTController codegen") rather than only by thread id.
+    description: Optional[str]
+
 
 class ModelOptionsBase(Protocol):
     """Read-only view of model options. thinking_tokens may be None to disable thinking."""

@@ -43,6 +43,7 @@ class CodegenWorkflowArgs:
     # Forwarded straight to the executor — no path-loading inline.
     prover_conf: Optional[dict] = None
     cache_namespace: Optional[str] = None
+    description: Optional[str] = None
 
 
 def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen, thread_id: str | None = None) -> CodegenWorkflowArgs:
@@ -56,7 +57,8 @@ def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen, thread_id: str | 
         debug_prompt_override=cg.prompt_addition,
         prover_conf=cg.prover_conf,
         cache_namespace=cg.cache_namespace,
-        thread_id=thread_id
+        description=cg.run_description,
+        thread_id=thread_id,
     )
 
 

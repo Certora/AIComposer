@@ -26,6 +26,15 @@ class CommonCodeGen(BaseModel):
             "for runs that share inputs."
         ),
     )
+    run_description: str | None = Field(
+        default=None,
+        description=(
+            "Free-form human-readable label persisted on the audit run_meta slot. "
+            "Use a short, recognizable phrase identifying what this run is about — "
+            "the contract under verification, the property being targeted, or both. "
+            "Lets the run be located later by description rather than only by thread id."
+        ),
+    )
 
 class LaunchCodegenArgs(CommonCodeGen):
     launch_config: CodegenConfiguration = Field(description="The input configuration for the code generation")

@@ -1,0 +1,132 @@
+## Procedure
+
+1. Read the diagnosis, the current spec, and the relevant parts of the system document.
+   Identify the **root cause** the analyzer surfaced. Remediation strategy depends on the
+   root-cause category — pick the wrong category and even the right strategy lands the
+   wrong fix.
+
+2. Pick a strategy from the decision tree below. The branches are mutually exclusive: a
+   single CEX has one dominant root cause, even when several factors interact.
+
+### Decision tree
+
+#### Root cause A — Missing structural invariant on the starting state
+
+The Prover constructed a starting state no real execution could reach because the spec
+doesn't say it's unreachable. Diagnostic signals: the analyzer points at a state field
+whose value is "obviously wrong" (a `totalSupply` of 0 with `balanceOf[user] > 0`, a
+paused contract still accepting deposits, a vault's `totalAssets` exceeding the sum of
+all positions).
+
+Strategy:
+
+a. **Formulate the missing constraint as a CVL `invariant`.** Name it for what it asserts
+   (`sumOfBalancesEqualsSupply`, not `helper1`).
+b. **`requireInvariant` it in the failing rule's preamble or `invariant`'s preserved
+   blocks.** The Prover proves the invariant separately and then trusts it inside the
+   rule/invariant.
+c. **If the invariant is hard to prove on its own** — i.e., it is not inductive — the
+   next tier is to write a focused *justification rule* that proves the specific fact the
+   failing rule needs, then `require` the fact with a comment citing the justification
+   rule.
+d. **Bare `require` without any justification is a last resort.** If you go there, say so
+   explicitly in your rationale and recommend a follow-up to discharge the assumption
+   properly. For example, if the rule requires "the caller of method M is never X", write
+   a comment describing a rule for "X" that proves it never calls "M".
+
+#### Root cause B — HAVOC from an unresolved external call
+
+The Prover hit an external call it couldn't reason about, applied its sound HAVOC model
+(clobbering all non-`persistent` ghosts and any storage the callee might touch), and the
+rule's assertion now fails on the worst-case scene. Diagnostic signals: the trace mentions
+"all non-persistent ghosts were havoc'd", `AUTO`/`HAVOC_ECF` summaries, ghost values
+changing across an external call boundary.
+
+Strategy ladder, IN ORDER OF PREFERENCE — try each before falling through to the next:
+
+a. **Pull the real callee into the prover input.** When the callee's source exists in the
+   VFS, this is unambiguously the right move. Real-code verification eliminates the
+   imprecision entirely; no summary can match it. Use `get_file` / `grep_files` /
+   `list_files` to confirm the source exists before recommending. In your output say the
+   input file to pull in. You should also propose the "linking block" change necessary to
+   link in the implementation OR a **`DISPATCHER` summary** when the linking behavior
+   cannot be expressed as part of a `link` block.
+
+b. **The real callee doesn't exist yet, but is expected to be part of the same
+   application.** This can happen when the prover is being run during software development,
+   and smart contract A depends on smart contract B, but B hasn't yet been implemented or
+   only exists as a stub. In this case, you should propose a summary of B's behavior, along
+   with a suggested rule that *validates* B's eventual implementation matches this summary.
+   If a summary is not powerful enough to capture B's behavior wrt A, propose a *minimal*
+   Solidity stub of B along with a rule that validates B's implementation matches the
+   behavior expressed in the stub. Do **NOT** include the Solidity stub or the "validation
+   rule" in the `proposed_cvl` field of your output, use the "addendum" field of your
+   output to communicate this.
+
+c. **`DISPATCHER` summary** — *only* when the external call could plausibly dispatch to
+   multiple possible implementations, AND *all* implementations callee implementation are
+   available to include as input to the prover input (i.e., they exist on the VFS), AND
+   the linking behavior cannot be expressed via `link` block. **IMPORTANT**: A dispatcher
+   summary *assumes* that the calling contract ONLY calls one of the contract
+   implementations in the Prover's input. This can be unsound if, e.g., the external call
+   is to some *arbitrary* ERC20 token *and* the prover input already includes an ERC20
+   token. Using a dispatcher in this case will (unsoundly) assume that the ONLY ERC20 the
+   application ever interacts with is the one in the Prover input, which is almost never
+   the case.
+
+d. **Sound ghost-modeled summary.** Model the callee's *observable* effects via ghost
+   variables. Concretely:
+   - View functions whose return is a deterministic function of state — a ghost function
+     `f(args) -> ret` plus an axiom or `requireInvariant` capturing the relationship.
+   - State-mutating calls with effects on contracts outside your verification scope — a
+     ghost variable the summary updates.
+   For polymorphic calls (selector-resolved but callee identity varies) where *SOME* of
+   the callees exist in the prover input but there may be other, unknown implementations,
+   use a *hybrid* strategy. Write summaries which "dispatch" on the resolved callee
+   contract: if it is one of the known implementations, call that implementation; if it is
+   an unknown implementation, fallback on the ghost base approach. For ERC20's specifically
+   (where this pattern is *extremely* common) use the `erc20_guidance` tool to receive
+   guidance on how to perform this modeling.
+
+e. **`dispatch-list` summary** — for calls with NO resolved selector
+   (`address(x).call(opaqueData)` and similar). Enumerate plausible callees / selectors
+   explicitly; otherwise the Prover has nothing to constrain.
+
+#### Root cause C — Genuine bug
+
+The CEX describes a real, reachable execution where the implementation actually violates
+the spec. CVL changes are not the answer here; the implementation needs the fix.
+
+Return a result whose `proposed_cvl` is the *unchanged* current spec and whose `rationale`
+says: "this counterexample appears genuine; the implementation needs to change, not the
+spec." Your colleague will consider code-side fixes. Do not be tempted to add a `require`
+that papers over the path — that's spec weakening (see anti-patterns).
+
+#### Root cause D — Spec mismatch with the system document
+
+The rule asserts a property the system document doesn't actually require, or asserts it
+more strongly than the system document does. Diagnostic signals: the system document
+explicitly admits the behavior the rule rejects (e.g. "transfers may revert", "the oracle
+is paused after a failure"), or the system document weakens a property the rule assumes is
+absolute.
+
+This is rare — hold a high bar before declaring it. Be explicit in your rationale: cite
+the system-document passage, identify what the rule asserts, and explain the gap. Do NOT
+propose a remediation that weakens the rule on this basis without naming the citation. The
+codegen author may then escalate to `propose_spec_change` (which goes through user
+review).
+
+3. Draft the change as a full replacement of the spec file's contents (not a diff). The
+   whole file goes in `proposed_cvl`, including unmodified content; the codegen author
+   needs the entire text to stage it through the working-spec flow.
+
+4. Validate with `summary_critic`. If it returns `sound: false`, revise and re-check. The
+   critic looks specifically for the anti-patterns below; address its issues before
+   iterating again rather than retrying the same draft.
+
+5. Deliver via the result tool: full proposed spec text + a one-paragraph rationale citing
+   the root-cause category (A/B/C/D) and the specific strategy you applied within it + a
+   free form `addendum` field. The addendum field should be used to communicate any
+   additional, non-spec artifacts that your remediation requires (e.g., proposed rules to
+   add for other code, sound stubs, etc.). It can be left null if there is no extra
+   artifacts needed.

@@ -6,8 +6,9 @@ run_info/vfs_* tables. All state is stored as JSONB values under a
 small set of namespaces; there is no content-addressed blob store
 and no gzip.
 
-Namespaces (all rooted at ``("audit", thread_id[, ...])``):
+Namespaces:
 
+    ("audit_runs",)                           / thread_id           → StoredRunMeta
     ("audit", tid)                            / "run_info"          → StoredRunInfo
     ("audit", tid)                            / "requirements"      → StoredRequirements
     ("audit", tid)                            / "resume_artifact"   → StoredResumeArtifact
@@ -16,6 +17,11 @@ Namespaces (all rooted at ``("audit", thread_id[, ...])``):
     ("audit", tid, "summarization")           / checkpoint_id       → StoredSummary
     ("audit", tid, "prover_results", tool_id) / rule_name           → StoredProverResult
     ("audit", tid, "manual_results", tool_id) / uuid_hex            → StoredManualResult
+
+The ``audit_runs`` namespace is intentionally flat so callers can list
+every registered run without enumerating thread ids out-of-band — useful
+for description-based lookups after a crash, where the thread id has
+been lost but the human-supplied label survives.
 
 Spec / interface / system doc contents are inlined into StoredRunInfo
 (they're small, always read together with the filenames, and the plan
@@ -29,6 +35,7 @@ whole executor.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import cached_property
 from typing import AsyncIterator, Iterable, Iterator, Optional, TypedDict, cast
 import pathlib
@@ -85,6 +92,18 @@ class StoredResumeArtifact(TypedDict):
 
 class StoredVFS(TypedDict):
     files: dict[str, str]
+
+
+class StoredRunMeta(TypedDict):
+    """Run-lifecycle metadata distinct from the run's inputs.
+
+    Lives in its own audit slot so additive fields (parent thread,
+    completion time, run kind, etc.) can land here without bumping
+    ``StoredRunInfo``'s version. Optional ``description`` is free-form
+    user-supplied text — searchable so a run can be located later by
+    label after a crash, even when the thread id has been lost."""
+    started_at: str  # ISO 8601, UTC.
+    description: str | None
 
 
 class StoredSummary(TypedDict):
@@ -310,6 +329,7 @@ def _safe_dict(x: StoredProverResult |
                StoredRunInfoV2 |
                StoredRequirements |
                StoredResumeArtifact |
+               StoredRunMeta |
                StoredVFS |
                StoredSummary |
                StoredManualResult) -> dict:
@@ -342,6 +362,7 @@ def _decode_text_files(items: Iterable[tuple[str, bytes]]) -> dict[str, str]:
     return out
 
 _RUN_INFO_KEY = "run_info"
+_RUN_META_NS: tuple[str, ...] = ("audit_runs",)
 _VFS_INITIAL_KEY = "vfs_initial"
 _VFS_RESULTS_KEY = "vfs_result"
 _RESUME_ARTIFACT_KEY = "resume_artifact"
@@ -374,6 +395,7 @@ class AuditStore:
         system_doc: InputFileLike,
         vfs_init: Iterable[tuple[str, bytes]],
         reqs: list[str] | None,
+        description: str | None = None,
     ) -> None:
         """``specs`` is a list of ``(vfs_path, file)`` pairs — one per spec
         file participating in this contract task. ``vfs_path`` is where the
@@ -383,6 +405,10 @@ class AuditStore:
         upstream). System doc persists as base64 unconditionally so
         binary inputs (e.g. PDF) round-trip through resume; text decoding
         is opt-in on the read side.
+
+        ``description`` is free-form user-supplied text recorded on the
+        ``run_meta`` slot so callers can find a run by name later, after
+        the thread id has been lost.
         """
         import base64
         stored_specs: list[StoredSpecFile] = [
@@ -404,8 +430,13 @@ class AuditStore:
         vfs_payload: StoredVFS = {
             "files": _decode_text_files(vfs_init)
         }
+        run_meta: StoredRunMeta = {
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "description": description,
+        }
 
         await self._store.aput(self._ns(thread_id), _RUN_INFO_KEY, _safe_dict(run_info))
+        await self._store.aput(_RUN_META_NS, thread_id, _safe_dict(run_meta))
         await self._store.aput(self._ns(thread_id), _VFS_INITIAL_KEY, _safe_dict(vfs_payload))
 
     async def register_complete(
@@ -528,6 +559,26 @@ class AuditStore:
             "reqs": reqs,
         }
         return (run_input, retriever)
+
+    async def get_run_meta(self, thread_id: str) -> StoredRunMeta | None:
+        """Return run-lifecycle metadata for ``thread_id``, or ``None`` for
+        runs registered before the meta slot existed."""
+        item = await self._store.aget(_RUN_META_NS, thread_id)
+        if item is None:
+            return None
+        return cast(StoredRunMeta, item.value)
+
+    async def list_run_meta(self, limit: int = 1000) -> list[tuple[str, StoredRunMeta]]:
+        """Return ``(thread_id, meta)`` for every registered run, newest first.
+
+        Cheap cross-run query backed by the flat ``audit_runs`` namespace —
+        useful for crash-recovery lookups by description. Bring the data
+        home and filter in Python; the namespace is small.
+        """
+        items = await self._store.asearch(_RUN_META_NS, limit=limit)
+        out = [(item.key, cast(StoredRunMeta, item.value)) for item in items]
+        out.sort(key=lambda pair: pair[1].get("started_at", ""), reverse=True)
+        return out
 
     # -- prover + manual-search stream sinks -------------------------------
 
@@ -658,6 +709,7 @@ __all__ = [
     "ResumeArtifact",
     "VFSRetriever",
     "StoredRunInfo",
+    "StoredRunMeta",
     "StoredRequirements",
     "StoredResumeArtifact",
     "StoredVFS",

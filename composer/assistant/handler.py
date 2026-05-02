@@ -193,6 +193,8 @@ class OrchestratorHandler:
                     table.add_row("Prover conf keys", ", ".join(sorted(payload.prover_conf)))
                 if payload.cache_namespace:
                     table.add_row("Cache NS", payload.cache_namespace)
+                if payload.run_description:
+                    table.add_row("Description", payload.run_description)
                 if payload.resume_work_key:
                     table.add_row("Recovery Key", payload.resume_work_key)
                 if payload.thread_id:
@@ -212,6 +214,8 @@ class OrchestratorHandler:
                     table.add_row("Prover conf keys", ", ".join(sorted(payload.prover_conf)))
                 if payload.cache_namespace:
                     table.add_row("Cache NS", payload.cache_namespace)
+                if payload.run_description:
+                    table.add_row("Description", payload.run_description)
         self._console.print(Panel(table, title=f"Launch: {title}"))
         for section_title, body in long_form:
             self._console.print(

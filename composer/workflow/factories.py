@@ -12,18 +12,26 @@ from composer.core.state import AIComposerState
 def get_memory_ns(thread_id: str, ns: str) -> str:
     return f"ai-composer-{thread_id}-{ns}"
 
+_npm_md_noise = {
+    f"{f}.md" for f in [
+        "license", "security", "changelog", "history", "readme"
+    ]
+}
+
+_npm_suff_noise = {
+    f".{ext}" for ext in [
+        "js", "ts", "map", "json", "mjs"
+    ]
+}
+
 def exclude_ts_and_natspec(p: pathlib.PurePath) -> bool:
     suff = p.suffix
     lower_last = p.parts[-1].lower()
     # o7 for our hardhat friends
-    return (suff == ".js" or 
-            suff == ".ts" or
+    return (suff in _npm_suff_noise or
             (p.parts[0] == "natspec_output" and suff == ".sol") or
-            p.parts[-1] == "package.json" or
-            suff == ".map" or 
-            suff == ".json" or
-            suff == ".mjs" or
-            lower_last == "readme.md" or
+            lower_last == "package.json" or
+            lower_last in _npm_md_noise or
             lower_last == "license"
             )
 

@@ -4,14 +4,10 @@ import uuid
 from dataclasses import dataclass
 import pathlib
 
-import asyncio
-
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from langgraph.graph.state import CompiledStateGraph
-from langgraph._internal._typing import StateLike
 
 from graphcore.graph import Builder
 from graphcore.tools.memory import async_memory_tool
@@ -33,10 +29,12 @@ from composer.rag.db import rag_context, ComposerRAGDB
 from composer.rag.models import get_model as get_rag_model
 from composer.audit.store import AuditStore, AuditStoreSink, ResumeArtifact
 from composer.input.types import InputFileLike
-from composer.natreqAFAICT.extractor import get_requirements
+from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
-from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, _build_research_tool
+from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, indexed_cvl_research_tool, DEFAULT_CVL_AGENT_INDEX_NS
+from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
 from composer.spec.cex_remediation import cex_remediation_tool, summary_critic_tool
+from composer.spec.guidance import ERC20TokenGuidance
 from composer.tools.relaxation import requirements_relaxation
 from composer.tools.search import cvl_manual_tools as get_cvl_manual_tools
 from composer.templates.loader import load_jinja_template
@@ -47,7 +45,6 @@ from composer.core.state import AIComposerInput, AIComposerExtra
 from composer.workflow.services import IndexedConnections, standard_connections
 from composer.ui.tool_display import async_tool_context
 from composer.workflow.recovery import recover_vfs, recovery_from_thread
-from composer.spec.util import uniq_thread_id
 
 def _reqs_cache_location(
     options: WorkflowOptions,
@@ -110,6 +107,10 @@ def _get_empty_extra() -> AIComposerExtra:
 def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> AIComposerInput:
     vfs: dict[str, str] = {}
     for s in input.specs:
+        if input.source_root is not None and (file := pathlib.Path(input.source_root) / s.vfs_path).exists() and \
+          file.read_text() == s.file.string_contents:
+            # don't bother mounting, matches FS layer
+            continue
         vfs[s.vfs_path] = s.file.string_contents
 
     messages: list[str | dict] = [input.intf.to_document_dict()]
@@ -383,23 +384,6 @@ async def _requirements_setup(
         reqs_list, extra_tools, extra_prompt, [REQS_VALIDATION]
     )
 
-async def _cvl_research_runner[S: StateLike, I: StateLike](
-    graph: CompiledStateGraph[S, Any, I, Any],
-    i: I,
-) -> S:
-    return await run_graph(
-        ctxt=None,
-        description="CVL Researcher",
-        graph=graph,
-        input=i,
-        run_conf={
-            "recursion_limit": 100,
-            "configurable": {
-                "thread_id": uniq_thread_id("cvl-research")
-            }
-        }
-    )
-
 def _get_codegen_tools() -> list[BaseTool]:
     from composer.tools.prover import certora_prover
     from composer.tools.proposal import propose_spec_change
@@ -454,16 +438,42 @@ async def _execute_ai_composer_workflow(
         indexed_store, DEFAULT_KB_NS, True
     )
 
-    cvl_researcher = _build_research_tool(
-        builder=basic_builder.with_tools([*kb_tools, *cvl_manual_tools]),
-        runner=_cvl_research_runner,
-        doc=CVL_RESEARCH_BASE_DOC,
+    # Indexed CVL researcher: a single AgentIndex backs every researcher
+    # call across this codegen session (and across sessions, since the
+    # default namespace is shared). When the codegen author, the
+    # remediator, and the summary critic all need to look up the same
+    # CVL question, the second and third hits return cached answers
+    # plus a Document-Ref the agent can echo — no re-asking, no
+    # re-deriving. The companion `cvl_document_ref` tool resolves a
+    # ref-string back to the cached Q&A so an agent that sees the ref
+    # in a peer's output can fetch it without re-querying.
+    cvl_agent_index = AgentIndex(
+        store=indexed_store, cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
     )
+
+    @dataclass(frozen=True)
+    class _IndexedResearchEnv:
+        builder: Builder
+        llm: BaseChatModel
+        base_rag_tools: tuple[BaseTool, ...]
+        agent_index: AgentIndex
+
+    cvl_researcher = indexed_cvl_research_tool(
+        _IndexedResearchEnv(
+            builder=basic_builder,
+            llm=llm,
+            base_rag_tools=tuple(kb_tools) + tuple(cvl_manual_tools),
+            agent_index=cvl_agent_index,
+        ),
+        CVL_RESEARCH_BASE_DOC,
+    )
+    cvl_document_ref = RetrieveDocumentTool.bind(cvl_agent_index).as_tool("cvl_document_ref")
 
     all_cvl_tools = [
         cvl_researcher,
+        cvl_document_ref,
         *kb_tools,
-        *cvl_manual_tools
+        *cvl_manual_tools,
     ]
 
     logger = logging.getLogger(__name__)
@@ -572,12 +582,19 @@ async def _execute_ai_composer_workflow(
     # (NONDET on side-effect-bearing calls, naked DISPATCHER on ERC20s,
     # persistent-as-HAVOC-armor) and faithfulness to the system document.
     summary_critic = summary_critic_tool(
-        basic_builder.with_tools([*kb_tools, *cvl_manual_tools, *immut_vfs_tools]),
+        basic_builder.with_tools([*all_cvl_tools, *immut_vfs_tools]),
         system_doc,
     )
     cex_remediator = cex_remediation_tool(
-        basic_builder.with_tools([*all_cvl_tools, *immut_vfs_tools, summary_critic]),
+        basic_builder.with_tools([
+            *all_cvl_tools,
+            *immut_vfs_tools,
+            summary_critic,
+            ERC20TokenGuidance.as_tool("erc20_guidance"),
+        ]),
+        materializer,
         system_doc,
+        resources.memory(get_memory_ns(mem_root, "cex-remediation"))
     )
     extra_tools.append(cex_remediator)
 
@@ -606,15 +623,16 @@ async def _execute_ai_composer_workflow(
         interface_file=interface_file,
         specs=specs_for_audit,
         vfs_init=materializer.iterate(flow_input),
-        reqs=reqs_list
+        reqs=reqs_list,
+        description=workflow_options.description,
     )
 
     flow_input["input"].extend(req_input)
 
     if resume_work_key is not None and (snapshot := await recover_vfs(store, resume_work_key)) is not None:
-        vfs_files = list(snapshot.items())
-        recovery_msg = load_jinja_template("crash_recovery_context.j2", vfs_files=vfs_files)
-        flow_input["input"].insert(0, recovery_msg)
+        flow_input["working_spec"] = snapshot["working_spec"]
+        for (k, v) in snapshot["vfs"].items():
+            flow_input["vfs"][k] = v
 
     if has_kickstart:
         flow_input["input"].append(

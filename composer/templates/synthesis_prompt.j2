@@ -60,38 +60,16 @@ algorithmic complexity. Prover incompleteness shows up as timeouts and is caused
 patterns the prover can't analyze tractably — keep the implementation simple even when
 efficient code is tempting. See "Code style for verifiability" below.
 
-### Dependencies — verify against the real implementation whenever you can
+### Dependencies — pull real implementations on demand
 
-This task may be taking place within a larger software development context, and the
-source code for other contracts your component interacts with may be available to you
-via the VFS. When it is, **verify against the real implementation**. Use `list_files` /
-`grep_files` / `get_file` to locate the dependency and pull it into the prover input on
-demand. Verifying against actual code is enormously more valuable than verifying
-against a fabricated stand-in: it catches real integration bugs, exercises the actual
-control flow your code interacts with, and collapses the HAVOC-shaped counterexamples
-you would otherwise have to paper over. A stub gives you the *shape* of an interaction;
-the real implementation gives you the *truth* of it.
+If your component depends on other contracts whose source is in the VFS, plan to
+verify against the real implementations. Don't preemptively write stubs; don't
+preemptively add every dependency to the prover input either — every contract you
+add enlarges the verification problem and invites timeouts.
 
-Pull dependencies in *as the prover needs them*, not preemptively — every contract you
-add to the prover input enlarges the verification problem and invites timeouts. The
-expected rhythm is: prover surfaces a counterexample that implicates an external call →
-locate the real callee in the VFS → add it to the prover input → re-verify. If the
-enlarged scene then times out, that's where summaries come in (Step 3), not before.
-
-When the real implementation isn't available — the dependency genuinely isn't in the
-VFS, or it's an arbitrary user-supplied contract the protocol must accept (e.g. an
-ERC20), or it's out of scope by design — the next best thing is a **sound CVL summary**
-that models the callee's observable effects via ghost variables. See the HAVOC bullet
-in Step 3 for the summary toolkit.
-
-Hand-written stub/mock implementations are a **last resort**, below both real-code
-verification and sound summarization. Reach for one only when neither of the above is
-viable — for instance, when summarization would lose too much fidelity and no real
-implementation exists. When you do write a stub, label it clearly (e.g.
-`mocks/StubFoo.sol`), keep its behavior consistent with the system document and the
-dependency's interface contract, and note in a comment why a stub was unavoidable.
-Stubs ride along so reviewers can see your environmental assumptions but are not part
-of the deliverable.
+The rhythm is: implement, run the prover, react to what comes back. If the verification
+failed due to missing dependencies, the remediation agent (Step 3)
+will provide guidance on how to solve this problem. Until then, focus on the implementation.
 
 ## Step 2 — Verify
 
@@ -117,78 +95,35 @@ not random edits. Use the strategies below.
 
 ### Counterexamples — concrete states the prover found that violate the spec
 
-For each, ask: does this show a genuine bug in my implementation, or does it show that
-the verification needs more help (a summary, a precondition, a justified assumption)?
+A CEX is a concrete starting state where the implementation violates the rule. First
+question: is this a code bug or a spec-side issue?
 
-When a CEX needs a CVL-side fix (summary, ghost model, invariant) and the change is
-non-trivial, delegate the drafting to the **`cex_remediation`** sub-agent. It reads the
-diagnosis, explores the source, validates its proposal against a soundness critic, and
-returns a full proposed spec replacement plus rationale. You then stage the proposal
-via the working-spec flow and commit it. For obvious one-line fixes you can write the
-change inline; for anything involving a new summary or ghost-model, prefer the
-sub-agent — it has the system document, the soundness critic, and the focus you don't
-have while juggling the rest of the implementation.
+- **Code bug** — fix the implementation. The CEX's input shape and starting state tell
+  you what scenario triggers the violation. Don't reach for spec tweaks; the rule is
+  right.
 
-- **Genuine bug** — fix the code. The counterexample's input shape and starting state
-  tell you what scenario triggers the violation.
+- **Spec-side issue** (HAVOC from an unresolved external call, missing structural
+  invariant, ghost mismodeling, etc.) — invoke the **`cex_remediation`** sub-agent.
+  **One specific CEX per call** — if the prover returned multiple failing rules,
+  invoke the remediator once per rule or root cause, sequentially, never bundled. Each CEX has its
+  own root cause and warrants its own targeted proposal; bundling muddles the decision
+  tree and produces hand-wavy spec changes.
 
-- **HAVOC from an unresolved external call** — when your contract calls into something
-  the prover can't see (an arbitrary token, an unknown router, etc.), the prover assumes
-  the worst-case effect on the entire scene, which violates almost any spec. Resolve in
-  this order of preference:
-  1. **Pull the real callee into the prover input if it lives in the VFS.** Real-code
-     verification is strictly more informative than any summary — see "Dependencies" in
-     Step 1. This is the right move whenever the source is available.
-  2. If the callee's implementation is already in the prover input, use a `DISPATCHER`
-     summary (with caveats below).
-  3. If the callee genuinely isn't available (and can't be brought in), write a sound
-     summary that models the callee's observable effect using **ghost variables** for
-     the callee's state.
-  4. For completely unresolved calls (no resolved selector / signature), use a
-     **dispatch-list** summary.
-  Add summaries via the **working-spec flow** (see "Working with the spec" below) — never
-  via `put_file` directly on a registered spec.
+  Pass the rule name, the spec path, and the diagnosis for
+  that one rule; it returns a proposed full-spec replacement + rationale (and an
+  optional `addendum` for non-spec artifacts like stubs + validation rules). Stage the
+  returned CVL via `write_working_spec`, verify with
+  `certora_prover(use_working_spec=True, ...)`, then `commit_working_spec`. After
+  commit, re-run the prover; if a different rule now fails, that's the next remediator
+  invocation. The remediator owns the decision tree (HAVOC handling, invariant
+  formulation, summary changes, etc.); you own
+  sequencing, the working-spec flow, any Solidity code side changes that might be required,
+  and the final stamp.
 
-  Do NOT mark a ghost `persistent` to escape this HAVOC. `persistent` is for state that
-  genuinely spans every external call (a global supply counter, a monotone clock) —
-  using it because *this specific* unresolved call is clobbering your ghost hides the
-  call's effect from verification rather than modeling it, and is a form of weakening.
-  Resolve the call via the ladder above.
-
-  Do NOT use `NONDET` on a side-effect-bearing call to "prevent HAVOC". `NONDET`
-  summarizes the call as a **no-op body** with a non-deterministic return — it does the
-  opposite of what its name suggests: rather than constraining the call, it erases it.
-  Applying it to anything whose semantics IS the side effect (`transfer`, `mint`,
-  `burn`, `swap`, `wrap`, `accountFor*`, `update*`, etc.) makes those operations
-  invisible to the prover — every value movement becomes a silent zero-effect call,
-  catastrophically unsound. `NONDET` is appropriate only for pure / view-shaped
-  functions whose return value is the only thing the protocol depends on.
-
-- **Counterexample assumes an impossible starting state** — if the trace relies on a
-  scenario that can't actually arise, the spec is missing a precondition. Express the
-  precondition as an *invariant* and use `requireInvariant` in the rule's preserved
-  block when you can. If that's intractable, write a *justification rule* proving the
-  assumption holds and reference it in a `require` comment. A bare `require` without
-  justification is the last resort.
-
-- **Spec is genuinely incorrect** — propose a change via
-  `propose_spec_change(target_path=..., proposed_spec=...)`. **Only propose changes that
-  prove the same property differently.** Weakening the spec to make a rule pass is not
-  acceptable. The user reviews and approves. If you need clarification before proposing,
-  use the human-assistance tool.
-
-### `DISPATCHER` caveats (e.g. ERC20 calls)
-
-`DISPATCHER` *unsoundly* assumes the callee is one of the contracts in the prover's
-input. That's correct when the callee definitely is — but for ERC20-shaped calls, the
-prover input might contain *some* ERC20 contracts (a voting share, a reward token) that
-aren't the actual callee. A naked `DISPATCHER` then assumes *every* ERC20 interaction by
-*every* contract is one of those input tokens, which is almost always wrong and silently
-poisons your verification.
-
-For ERC20 (and similarly-shaped polymorphic) calls, use a **hybrid summary**: in the
-summary body, dispatch to known implementations when the callee matches; fall back to a
-ghost-modeled sound summary for calls outside the input set.
+- **Spec is genuinely incorrect** — if the remediator concludes (or you do) that the
+  rule asserts something the design doesn't actually require, propose the change via
+  `propose_spec_change(target_path=..., proposed_spec=...)`. Goes through user review;
+  never weaken a spec to make a rule pass.
 
 ### Timeouts — prover hit incompleteness
 
@@ -238,34 +173,40 @@ Deliver via the `result` tool when:
 - Every requirement is judged SATISFIED or LIKELY.
 - Memory has been updated with your final approach summary.
 
-## Working with the spec — when and how
+**IMPORTANT** After a restart, *every* spec must be re-stamped. Even if your memories
+indicate a spec file was successfully stamped, this stamping does not persist across
+runs. Further, any changes to the code requires all specs to be restamped.
 
-You may NOT modify registered spec files via `put_file`. Specs are mutated via two paths
-depending on intent:
+## Working with the spec — staging cex_remediation's output
 
-### When the spec needs a *summary* (verification tractability)
-
-Use the **working-spec flow**. Adding summaries doesn't change what the spec proves; it
-gives the prover the help it needs to prove it. This is the right path for HAVOC
-mitigation, timeout remediation, and isolating non-linear math.
+Registered spec files are not mutable via `put_file`. The CVL you stage through the
+working-spec flow is the CVL `cex_remediation` returned to you — you do not author
+spec changes yourself. The flow is mechanical: stage, verify, commit.
 
 ```
-write_working_spec(new_cvl=<full updated spec text>)
-  → certora_prover(use_working_spec=True, ...)        # iterate; does NOT stamp
-  → write_working_spec(...)                            # refine
-  → ... (as many cycles as needed)
-  → commit_working_spec(target_path=<spec VFS path>, explanation=...)
+# cex_remediation returned a proposed_cvl + rationale (and maybe an addendum)
+write_working_spec(new_cvl=<proposed_cvl from cex_remediation>)
+  → certora_prover(use_working_spec=True, ...)         # verify; does NOT stamp
+  → if it surfaces a new CEX, go back to cex_remediation with the updated diagnosis
+  → commit_working_spec(target_path=<spec VFS path>, explanation=<from rationale>)
   → certora_prover(target_spec=<same path>, use_working_spec=False)   # stamp
 ```
 
-There's only one working-spec slot — it's a scratch file, not bound to any particular
-spec until commit. Working-spec runs do NOT stamp; only post-commit
-`certora_prover(target_spec=...)` runs stamp the spec as VERIFIED for delivery.
+There's only one working-spec slot; it's a scratch file, not bound to any particular
+spec until commit. Iteration runs (`use_working_spec=True`) do NOT stamp. Only the
+post-commit `certora_prover(target_spec=...)` run stamps the spec as VERIFIED for
+delivery.
 
-### When the spec is *wrong* (corrections)
+If iteration surfaces a new CEX, do NOT revise the working spec yourself — go back to
+`cex_remediation` with the updated diagnosis and stage its next proposal. The
+remediator owns drafting; you own the mechanical staging + commit + final stamp.
 
-Use `propose_spec_change(target_path=..., proposed_spec=...)`. The user reviews. Only for
-changes that prove the same property in a different way — never weakening.
+### When the spec itself is wrong
+
+`cex_remediation`'s rationale will tell you when the rule asserts something the design
+doesn't actually require (its Strategy D). In that case, surface the change via
+`propose_spec_change(target_path=..., proposed_spec=...)` — goes through user review.
+Never weaken a spec on your own initiative; never weaken to make a rule pass.
 
 ## CVL questions — use the researcher
 
@@ -285,6 +226,8 @@ or want to skim near-hits.
 
 Do NOT invent CVL syntax based on guesses. If you're not sure something is valid CVL, ask
 the researcher first.
+
+{% include "cvl_document_ref_protocol.j2" %}
 
 ## Code style for verifiability
 
@@ -336,9 +279,6 @@ you must respect, not optional context. In particular:
 {% endif %}
 
 <guidance>
-{% include "cvl_guidelines.j2" %}
-{% include "cvl_additions.j2" %}
-
 <hard_requirement>The code you generate MUST be type correct, syntactically valid, and
 compile.</hard_requirement>
 
@@ -348,10 +288,15 @@ file. Each spec must be independently stamped via its own
 seemingly unrelated change in one function leaves rules in a different spec
 unaffected.</hard_requirement>
 
-<hard_requirement>You may NOT unilaterally edit any registered spec file via `put_file`.
-Use the working-spec flow for adding summaries, or `propose_spec_change` for proposing
-spec corrections (subject to user review). Weakening a spec to make a rule pass is never
-acceptable; only propose changes that prove the same property a different way.</hard_requirement>
+<hard_requirement>You may NOT unilaterally edit any registered spec file via `put_file`,
+and you may NOT author spec changes yourself in response to a counterexample. All
+spec-side fixes go through the `cex_remediation` sub-agent: pass it the diagnosis,
+receive a proposed CVL, stage that CVL via `write_working_spec`, verify, then
+`commit_working_spec`. If you find yourself drafting CVL summaries, ghost models, or
+invariants directly in `write_working_spec`, you have skipped the remediator — stop and
+invoke it. Weakening a spec to make a rule pass is never acceptable; corrections that
+prove the same property a different way go through `propose_spec_change` (which the
+remediator surfaces when warranted).</hard_requirement>
 
 <hard_requirement>Every natural-language requirement must be judged SATISFIED or LIKELY
 by the requirements judge oracle. You may NOT make this determination yourself.</hard_requirement>

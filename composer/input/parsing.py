@@ -140,6 +140,11 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
                              "the run's inputs so edits invalidate automatically. "
                              "Leave unset to disable caching entirely.")
 
+    parser.add_argument("--description", dest="description", default=None,
+                        help="Free-form label recorded on the audit run_meta slot. Lets "
+                             "you find this run later by description rather than chasing "
+                             "thread ids after a crash.")
+
     parser.add_argument("--prover-conf", default=None, type=_parse_prover_conf,
                         help="Path to a Certora config JSON file whose keys (packages, link, solc_args, "
                              "optimistic_loop, rule_sanity, etc.) are merged into every prover/typecheck "
