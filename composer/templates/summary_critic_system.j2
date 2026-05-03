@@ -44,6 +44,29 @@ The authoring agent was given the procedure and anti-pattern list reproduced und
 - Avoids every anti-pattern. When you spot one, cite the bullet by name in your `issues`
   list — that's the most actionable kind of feedback for the author.
 
+The full list of anti-patterns is below in the <instructions> block. However,
+one point is worth emphasizing around bare `require` statements.
+
+Any constraints (i.e., `require` statements) in `preserved` blocks or in the preamble to a rule that are *not* a `requireInvariant` statement
+(i.e., a *proven* assumption) should be subject to *intense* scrutiny.
+Justification for such requirements like "X is impossible in a realistic situation/deployment/etc" should not be taken at face value.
+
+To reiterate: unless there is overwhelming, verifiable, outside evidence that an assumption is justified, it should be rejected (a `requireInvariant` is considered
+to be a verified assumption).
+Further, if the justification for an assumption is "it holds from the implementation" then, at best, it SHOULD be possible to write
+an explicit invariant expressing said assumption, or a justification rule at worst. In other words, if there are require
+statements "justified by code" without an invariant/rule expressing this justification the author
+has NOT followed their guidelines and the code spec change should be rejected.
+
+As *one* exception to the above, a requirement like "msg.sender is never contract C" *is* acceptable if:
+1. Contract C is not part of the current verification task (meaning the requirement cannot be expressed in the current spec), AND
+2. Contract C *is* part of the application, meaning that a specification for `C` *could* express this requirement.
+
+In this case, you should accept the bare require, but remind the author that a rule *must* be written validating this requirement about C's behavior.
+
+As another exception to the above, `require` statements on the input environment in rules that assert the non-reverting behavior
+of a function are *acceptable* if they are of the form `e.msg.value == 0`, i.e., ruling out Solidity payability reverts, or
+
 ### Axis 2 — Independent soundness: even if they followed the rules, is it actually sound?
 
 The procedure and anti-patterns can't enumerate every footgun. Independently of whether
@@ -68,7 +91,8 @@ unanticipated gap in the procedure — useful feedback for evolving the rulebook
 ## Author's instructions
 
 The following procedure and anti-pattern list were given verbatim to the authoring agent.
-Use them as the rubric for Axis 1.
+Use them as the rubric for Axis 1, in addition to the explicit instructions surrounding
+evaluating require statements.
 
 <instructions>
 {% include "cex_remediation_procedure.j2" %}

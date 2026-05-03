@@ -14,12 +14,23 @@ _ADJECTIVES = [
     "closed", "open", "dense", "compact", "finite",
     "infinite", "maximal", "minimal", "optimal", "tight",
     "recursive", "continuous", "homomorphic", "convex",
-    "transfinite", "temporal", "reduced",
+    "transfinite", "reduced",
+
+    "axiomatic", "categorical", "projective", "injective", "surjective", "bijective",
+    "idempotent", "nullary", "unary", "binary", "regular",
+    "primitive", "derived", "dual", "free", "opaque", "polymorphic",
+    "monomorphic", "typed", "untyped", "total", "refined",
     # crypto & blockchain
     "staked", "minted", "bonded", "bridged", "wrapped",
     "frozen", "liquid", "vested", "slashed", "forked",
     "sharded", "pruned", "anchored", "pegged", "settled",
     "signed", "hashed", "salted", "masked", "blinded",
+    "sealed",
+
+    # ZK
+    "succinct", "trustless", "trusted", "incremental",
+    "hiding", "binding", "extractable", "universal", "updatable",
+
     # general color
     "golden", "silver", "crimson", "cobalt", "amber",
     "ivory", "onyx", "jade", "scarlet", "obsidian",
@@ -38,6 +49,15 @@ _NOUNS = [
     "sieve", "filter", "ideal", "ring", "field",
     "analysis", "widening", "narrowing", "join", "meet", "heap",
     "stack", "rule", "codomain", "abstraction",
+
+    "category", "homotopy", "groupoid", "presheaf", "spectrum",
+    "limit", "colimit", "pullback", "pushout", "adjoint",
+    "isomorphism", "automaton", "tableau", "judgment", "sequent",
+    "context", "substitution", "unifier", "skolem", "polynomial",
+    "commitment", "transcript", "ratchet", "sponge", "permutation",
+    "accumulator", "scalar", "pairing", "callsite", "slice",
+    "summary", "taint", "sink", "source",
+    
     # crypto & blockchain
     "ledger", "epoch", "block", "shard", "vault",
     "stake", "beacon", "bridge", "relay", "anchor",
@@ -45,6 +65,13 @@ _NOUNS = [
     "genesis", "finality", "receipt", "calldata", "opcode",
     "delegator", "proposer", "attester", "sequencer", "prover",
     "verifier", "relayer", "keeper", "solver", "miner",
+    # ZK
+    "snark", "stark", "plonk", "groth", "halo",
+    "nova", "bulletproof", "sumcheck", "circuit",
+    "gate", "wire", "constraint", "gadget", "lookup",
+    "selector", "advice", "challenge", "ceremony",
+    "isogeny", "endomorphism", "cofactor", "subgroup", "generator",
+
     # general evocative
     "summit", "forge", "nexus", "prism", "sigil",
     "glyph", "rune", "codex", "vertex", "helix",
@@ -61,6 +88,10 @@ _VERBS = [
     "slicing", "pruning", "tracing", "solving", "seeking",
     "anchoring", "relaying", "attesting", "proposing", "sequencing",
     "verifying", "yielding", "claiming", "indexing", "compiling",
+
+    # zk
+    "opening", "evaluating", "querying", "accumulating",
+    "absorbing", "squeezing", "interpolating", "blinding", "arithmetizing",
 ]
 
 # ~40 adverbs / manner words (fourth slot)
@@ -73,7 +104,10 @@ _ADVERBS = [
     "outward", "forward", "upward", "always", "finally",
     "exactly", "densely", "finitely", "locally", "globally",
     "totally", "strictly", "lazily", "eagerly", "greedily",
-    "unsoundly", "optimistically", "recursively", "iteratively", "infinitely"
+    "unsoundly", "optimistically", "recursively", "iteratively", "infinitely",
+    
+    # ZK
+    "succinctly", "incrementally", "transparently", "knowledgeably",
 ]
 
 

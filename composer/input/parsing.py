@@ -145,6 +145,19 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
                              "you find this run later by description rather than chasing "
                              "thread ids after a crash.")
 
+    parser.add_argument("--resume-work-key", dest="resume_work_key", default=None,
+                        help="Recovery key from a previously crashed run. When set, the "
+                             "in-progress VFS snapshot from that run (working spec + dirty "
+                             "buffer) is overlaid onto the new run before execution. "
+                             "Surfaced in the crash result of a previous launch.")
+
+    parser.add_argument("--memory-namespace", dest="memory_namespace", default=None,
+                        help="Namespace for the agent's persistent memory. When set, memory "
+                             "persists across thread changes (including crashes and relaunches); "
+                             "pair with --resume-work-key (and optionally --thread-id) to give "
+                             "the relaunched agent visibility into its own prior notes. Defaults "
+                             "to the thread id when unset, which makes memory thread-local.")
+
     parser.add_argument("--prover-conf", default=None, type=_parse_prover_conf,
                         help="Path to a Certora config JSON file whose keys (packages, link, solc_args, "
                              "optimistic_loop, rule_sanity, etc.) are merged into every prover/typecheck "

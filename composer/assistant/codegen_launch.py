@@ -27,7 +27,7 @@ class CodegenWorkflowArgs:
     local_prover: bool = False
     debug_prompt_override: Optional[str] = None
     recursion_limit: int = 100
-    summarization_threshold: Optional[int] = 50
+    summarization_threshold: Optional[int] = 75
     requirements_oracle: list[str] = field(default_factory=list)
     set_reqs: Optional[str] = None
     skip_reqs: bool = False

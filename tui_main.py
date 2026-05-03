@@ -1,66 +1,29 @@
-import composer.bind as _
+"""DEPRECATED. Use ``tui-codegen`` (registered in ``[project.scripts]``).
+
+This shim continues to work — it forwards to ``composer.cli.tui_codegen``,
+which carries the same parser surface and runs the same workflow against
+``CodeGenRichApp``. New code, scripts, and harnesses should reach for
+``tui-codegen`` (or import ``composer.cli.tui_codegen`` directly).
+"""
 
 import asyncio
 import sys
+import warnings
 
-from langchain_core.language_models.chat_models import BaseChatModel
+from composer.cli.tui_codegen import run as _run
 
-from composer.input.parsing import fresh_workflow_argument_parser, CommandLineArgs
-from composer.workflow.services import create_llm
-from composer.input.files import upload_input, InputData
-from composer.workflow.executor import execute_ai_composer_workflow
-from composer.ui.codegen_rich import CodeGenRichApp
-from composer.ui.ide_bridge import IDEBridge
-from composer.diagnostics.debug import setup_logging, dump_fs
-from composer.ui.tool_display import tool_context
+
+warnings.warn(
+    "tui_main.py is deprecated; use the `tui-codegen` console script "
+    "or import `composer.cli.tui_codegen` instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 async def main() -> int:
-    """TUI entry point for the AI Composer tool."""
-    parser = fresh_workflow_argument_parser(sys.argv[1:])
-    parser.add_argument("--show-checkpoints", action="store_true", #type: ignore
-                        help="Show checkpoint IDs inline in the event log")
-    args = parser.parse_args()
-
-    setup_logging(args.debug)
-
-    llm = create_llm(args)
-
-    if args.debug_fs:
-        if not args.checkpoint_id or not args.thread_id:
-            print("Need to provide checkpoint-id and thread-id")
-            return 1
-        return dump_fs(args, llm)
-
-    input_data = await upload_input(args)
-
-    async with IDEBridge.connect() as ide:
-        return await _main_runner(
-            llm, input_data, args, ide
-        )
-
-async def _main_runner(
-    llm: BaseChatModel,
-    input_data: InputData,
-    args: CommandLineArgs,
-    ide: IDEBridge | None
-) -> int:
-    
-    app = CodeGenRichApp(show_checkpoints=args.show_checkpoints, ide=ide) #type: ignore
-
-    async def work():
-        app.result = await execute_ai_composer_workflow(
-            handler=app,
-            llm=llm,
-            input=input_data,
-            workflow_options=args
-        )
-
-    app.set_work(work)
-    with tool_context():
-        await app.run_async()
-
-    return app.exit_code
+    """Backwards-compat async entry. Delegates to ``composer.cli.tui_codegen.run``."""
+    return await _run()
 
 
 if __name__ == "__main__":

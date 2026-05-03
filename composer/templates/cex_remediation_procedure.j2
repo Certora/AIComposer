@@ -14,18 +14,23 @@
 
 The Prover constructed a starting state no real execution could reach because the spec
 doesn't say it's unreachable. Diagnostic signals: the analyzer points at a state field
-whose value is "obviously wrong" (a `totalSupply` of 0 with `balanceOf[user] > 0`, a
-paused contract still accepting deposits, a vault's `totalAssets` exceeding the sum of
-all positions).
+whose value is "obviously wrong". A non-exhaustive list of examples of such structural invariants,
+and the starting states the prover constructs that violate them:
+* **Invariant**: `totalSupply` must equal the sum of `balances`, **Invalid State**: `totalSupply` of 0 with `balanceOf[user] > 0`
+* **Invariant**: `adminUser` and `depositorUser` must be distinct, **Invalid State**: `adminUser` = `depositorUser`
+* **Invariant**: `targetToken` is not `address(0)`, **Invalid State**: `targetToken` == `address(0)
+* **Invariant**: `totalAssets` is greater than the sum of all liquidity provider's deposits, **Invalid State**: `totalAssets == 0`, `depositedAssets[user] > 0`
+* **Invariant**: `totalAssetA == 0 <=> totalAssetB == 0`, **Invalid State**: `totalAssetA == 1`, and `totalAssetB == 0`
+* **Invariant**: "Every market in the markets array is initialized", **Invalid State**: some `i < markets.length` and `markets[i].active == false`
 
 Strategy:
 
 a. **Formulate the missing constraint as a CVL `invariant`.** Name it for what it asserts
-   (`sumOfBalancesEqualsSupply`, not `helper1`).
+   (`sumOfBalancesEqualsSupply`, `adminAndDepositorDistinct`,not `helper1`).
 b. **`requireInvariant` it in the failing rule's preamble or `invariant`'s preserved
    blocks.** The Prover proves the invariant separately and then trusts it inside the
    rule/invariant.
-c. **If the invariant is hard to prove on its own** — i.e., it is not inductive — the
+c. **If the invariant is hard to prove on its own** — e.g., it is not inductive — the
    next tier is to write a focused *justification rule* that proves the specific fact the
    failing rule needs, then `require` the fact with a comment citing the justification
    rule.
@@ -44,7 +49,7 @@ changing across an external call boundary.
 
 Strategy ladder, IN ORDER OF PREFERENCE — try each before falling through to the next:
 
-a. **Pull the real callee into the prover input.** When the callee's source exists in the
+a. **Pull the real callee into the prover input.** When the callee's (real) source exists in the
    VFS, this is unambiguously the right move. Real-code verification eliminates the
    imprecision entirely; no summary can match it. Use `get_file` / `grep_files` /
    `list_files` to confirm the source exists before recommending. In your output say the

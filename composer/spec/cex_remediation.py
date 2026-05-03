@@ -24,7 +24,7 @@ the critic can judge faithfulness of a proposed summary against the
 protocol's stated design — not just local CVL soundness.
 """
 
-from typing import NotRequired, override, Any
+from typing import NotRequired, override
 from typing_extensions import TypedDict
 from dataclasses import dataclass
 import difflib
@@ -33,7 +33,6 @@ from pydantic import BaseModel, Field
 
 from langchain_core.tools import BaseTool
 from langgraph.graph import MessagesState
-from langgraph.graph.state import CompiledStateGraph
 
 from graphcore.graph import Builder, FlowInput
 from graphcore.tools.schemas import WithAsyncDependencies, WithInjectedState, WithAsyncImplementation, WithInjectedId
@@ -267,9 +266,16 @@ class _RemediationInput(FlowInput, _RemediationExtra):
 
 @dataclass
 class _CEXRemediationDeps:
-    system_doc: InputFileLike
     mat: VFSAccessor[VFSState]
-    graph: CompiledStateGraph[_RemediationState, None, _RemediationInput, Any]
+    # Builder is fully bound except for the initial prompt — state, input,
+    # tools (including the per-spec memory tool), system prompt, summarizer,
+    # and result tool are all in place. The initial prompt is rendered per
+    # call so the per-CEX context (rule, diagnosis, ground truth, working
+    # version, system doc text) lives inline in the prompt body, where it
+    # survives a summarization round; ``state["input"]`` does not survive,
+    # since ``_get_summarizer_pure`` rebuilds the post-summary message list
+    # from the rendered initial prompt template alone.
+    builder: Builder[_RemediationState, None, _RemediationInput]
 
 
 @tool_display("Drafting CEX remediation plan", "CEX remediation plan")
@@ -306,8 +312,6 @@ class CEXRemediator(
     @override
     async def run(self) -> str:
         with self.tool_deps() as deps:
-            system_doc = deps.system_doc
-
             # Ground truth — the committed spec on the VFS. Authoritative
             # baseline; the codegen author cannot mutate this except via
             # `commit_working_spec` (an observable event the remediator's
@@ -329,38 +333,34 @@ class CEXRemediator(
             # else — flag the divergence in your rationale.
             working_version = self.state.get("working_spec")
 
-            draft_against = ground_truth
+            draft_against = working_version if working_version is not None else ground_truth
 
-            input_parts: list[str | dict] = [
-                "System document (the authoritative description of the protocol's design):",
-                system_doc.to_document_dict(),
-                f"Rule under repair: {self.rule_name}",
-                f"Target spec VFS path: {self.target_spec_path}",
-                f"CEX diagnosis: {self.cex_diagnosis}",
-                'The "original version" of the specification',
-                ground_truth,
-            ]
-            if working_version is not None:
-                input_parts.extend([
-                    (
-                        "Working version — the version produced by the author that may include your suggestions"
-                        " from prior rounds & changes added at the author's own discretion."
-                    ),
-                    working_version,
-                ])
-                draft_against = working_version
-            else:
-                input_parts.append(
-                    "Working version — none. The prover ran against the original version spec above."
-                )
+            # Render and compile per call so the per-CEX inputs sit inside
+            # the rendered initial prompt template — the only part of the
+            # message history the summarizer replays after a summarization
+            # round (see graphcore's _get_summarizer_pure). The system
+            # document is intentionally NOT inlined here; the agent fetches
+            # it on demand via the `read_system_document` tool.
+            graph = deps.builder.with_initial_prompt_template(
+                "cex_remediation_initial.j2",
+                rule_name=self.rule_name,
+                target_spec_path=self.target_spec_path,
+                cex_diagnosis=self.cex_diagnosis,
+                ground_truth=ground_truth,
+                working_version=working_version,
+            ).compile_async()
 
-            inp = _RemediationInput(input=input_parts, vfs=self.state["vfs"], draft_against_version=draft_against)
+            inp = _RemediationInput(
+                input=[],
+                vfs=self.state["vfs"],
+                draft_against_version=draft_against,
+            )
             st = await run_to_completion(
-                deps.graph, inp,
+                graph, inp,
                 thread_id=uniq_thread_id("cex-remediation"),
                 description="CEX Remediation Agent",
                 within_tool=self.tool_call_id,
-                recursion_limit=300
+                recursion_limit=300,
             )
             assert "result" in st
             return _render_remediation(st["result"])
@@ -386,16 +386,38 @@ def cex_remediation_tool(
     so the two don't pollute each other's context windows. The agent
     organizes its notes by spec path under ``/memories/work/{path}``;
     the convention is enforced at the prompt level, not the framework.
+
+    All builder configuration except the initial prompt happens here;
+    the initial prompt is rendered per call inside ``CEXRemediator.run``
+    so the per-CEX context survives summarization. See the comment on
+    ``_CEXRemediationDeps.builder``.
     """
     memory_tool = async_memory_tool(mem)
 
-    graph = (
+    @tool_display("Reading system document", None)
+    class ReadSystemDocument(WithAsyncImplementation[list[str | dict]]):
+        """Read the protocol's system document — the authoritative
+        description of the system you're verifying. Returns the document
+        as a multimodal content block (text or PDF, whichever the upstream
+        run supplied), so binary system docs round-trip correctly.
+
+        The contents do not change across calls. Cache key passages in
+        your memory after the first read; do not re-call this every round.
+        """
+
+        @override
+        async def run(self) -> list[str | dict]:
+            return ["System document:", system_doc.to_document_dict()]
+
+    read_system_document = ReadSystemDocument.as_tool("read_system_document")
+
+    prebuilt = (
         bind_standard(builder, _RemediationState)
         .with_input(_RemediationInput)
-        .with_tools([memory_tool])
+        .with_tools([memory_tool, read_system_document])
         .with_sys_prompt_template("cex_remediation_system.j2")
-        .with_initial_prompt_template("cex_remediation_initial.j2")
-        .compile_async()
     )
 
-    return CEXRemediator.bind(_CEXRemediationDeps(system_doc=system_doc, mat=mat, graph=graph)).as_tool("cex_remediation")
+    return CEXRemediator.bind(_CEXRemediationDeps(
+        mat=mat, builder=prebuilt
+    )).as_tool("cex_remediation")

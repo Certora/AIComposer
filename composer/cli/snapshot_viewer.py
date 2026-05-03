@@ -15,9 +15,10 @@ Usage::
 """
 
 import argparse
-import json
-import sys
 import asyncio
+import json
+import pathlib
+import sys
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -48,20 +49,58 @@ async def _load_thread_from_mnemonic(mnemonic: str) -> str:
         return item.value["thread_id"]
 
 
-async def _load_messages(thread_id: str) -> tuple[list, str | None]:
+async def _load_messages(
+    thread_id: str,
+) -> tuple[list, str | None, list[str | None]]:
     """Load messages from the latest checkpoint for a thread.
 
-    Returns (messages, checkpoint_id).
+    Returns ``(messages, latest_checkpoint_id, per_message_checkpoint_id)``.
+    The third value is a parallel list to ``messages``: index ``i`` holds
+    the checkpoint id of the earliest checkpoint where the message with
+    that id appears (``None`` for messages that never matched any
+    historical checkpoint, e.g. their ``id`` was ``None``). This is what
+    the per-turn copy-to-clipboard widget uses — clicking a turn copies
+    the checkpoint id at which that turn was first persisted, not the
+    snapshot's overall latest id.
+
+    Robust to summarization (``RemoveMessage`` shrinks the channel and
+    later turns repopulate it with new ids); the by-id match means the
+    final-state turns get their *own* introducing checkpoints, not the
+    pre-summary one.
     """
     async with checkpointer_context() as checkpointer:
-        ct = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
-        if ct is None:
+        config = {"configurable": {"thread_id": thread_id}}
+        latest = await checkpointer.aget_tuple(config)
+        if latest is None:
             print(f"No checkpoint found for thread {thread_id}", file=sys.stderr)
             sys.exit(1)
-        assert "configurable" in ct.config
-        checkpoint_id = ct.config["configurable"].get("checkpoint_id")
-        messages = ct.checkpoint["channel_values"].get("messages", [])
-        return messages, checkpoint_id
+        assert "configurable" in latest.config
+        latest_checkpoint_id = latest.config["configurable"].get("checkpoint_id")
+        messages = latest.checkpoint["channel_values"].get("messages", [])
+
+        # Walk every checkpoint on the thread; record the message id sets at
+        # each. ``alist`` is newest-first, so we reverse to walk
+        # chronologically and stop updating ``seen_at[mid]`` once we've found
+        # the introducing checkpoint.
+        history: list[tuple[str, set[str]]] = []
+        async for ct in checkpointer.alist(config):
+            cid = ct.config["configurable"].get("checkpoint_id")
+            if cid is None:
+                continue
+            ckpt_msgs = ct.checkpoint["channel_values"].get("messages", [])
+            ids = {m.id for m in ckpt_msgs if getattr(m, "id", None) is not None}
+            history.append((cid, ids))
+        history.reverse()
+
+        seen_at: dict[str, str] = {}
+        for cid, ids in history:
+            for mid in ids:
+                seen_at.setdefault(mid, cid)
+        per_message_checkpoint = [
+            seen_at.get(m.id) if getattr(m, "id", None) is not None else None
+            for m in messages
+        ]
+        return messages, latest_checkpoint_id, per_message_checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +143,41 @@ def _compact_args(args: dict, max_len: int = 80) -> str:
 # TUI
 # ---------------------------------------------------------------------------
 
+_CHECKPOINT_FILE = pathlib.Path("/tmp/checkpoint-id")
+
+
+class TurnHeader(Static):
+    """Clickable turn header. Click the row to write this turn's
+    checkpoint id to ``/tmp/checkpoint-id``. We tried Textual's OSC 52
+    ``copy_to_clipboard`` first; the file path is a more reliable
+    fallback in terminals that swallow OSC 52 (VS Code's xterm.js
+    among them, depending on settings)."""
+
+    def __init__(self, content, checkpoint_id: str | None, **kwargs) -> None:
+        super().__init__(content, **kwargs)
+        self._checkpoint_id = checkpoint_id
+
+    def on_click(self) -> None:
+        if self._checkpoint_id is None:
+            self.app.notify(
+                "No checkpoint id available for this turn.",
+                severity="warning",
+            )
+            return
+        try:
+            _CHECKPOINT_FILE.write_text(self._checkpoint_id)
+        except OSError as exc:
+            self.app.notify(
+                f"Could not write {_CHECKPOINT_FILE}: {exc}",
+                severity="error",
+            )
+            return
+        self.app.notify(
+            f"Wrote {self._checkpoint_id[:16]}... to {_CHECKPOINT_FILE}",
+            severity="information",
+        )
+
+
 class SnapshotViewerApp(App):
     """Compact conversation viewer for CVL generation threads."""
 
@@ -111,6 +185,7 @@ class SnapshotViewerApp(App):
     #scroll { height: 1fr; padding: 0 2; }
     #scroll > * { margin-bottom: 1; }
     .turn-header { margin-top: 1; }
+    .turn-header:hover { background: $accent 30%; }
     .tool-call { margin-left: 2; }
     .tool-result { margin-left: 2; }
     .ai-text { margin-left: 2; color: #6699cc; }
@@ -130,12 +205,14 @@ class SnapshotViewerApp(App):
         thread_id: str,
         messages: list,
         checkpoint_id: str | None,
+        per_message_checkpoint: list[str | None],
         mnemonic: str | None = None,
     ):
         super().__init__()
         self._lg_thread_id = thread_id
         self._messages = messages
         self._checkpoint_id = checkpoint_id
+        self._per_message_checkpoint = per_message_checkpoint
         self._mnemonic = mnemonic
 
     def compose(self) -> ComposeResult:
@@ -231,14 +308,20 @@ class SnapshotViewerApp(App):
                         parts.append(f"cached={cache_r:,}")
                     usage_str = f"  ({', '.join(parts)})"
 
-        # Turn header
+        # Turn header — clickable; copies this turn's checkpoint id.
         header = Text()
         header.append(f"Turn {turn}", style="bold blue")
         header.append(f"  [{idx}]", style="dim")
         if n_tool_calls:
             header.append(f"  {n_tool_calls} tool call(s)", style="dim")
         header.append(usage_str, style="dim")
-        widgets.append(Static(header, classes="turn-header"))
+        header.append("  📋 click → /tmp/checkpoint-id", style="dim italic")
+        ckpt_id = (
+            self._per_message_checkpoint[idx]
+            if idx < len(self._per_message_checkpoint)
+            else None
+        )
+        widgets.append(TurnHeader(header, ckpt_id, classes="turn-header"))
 
         # Content blocks
         for block in blocks:
@@ -292,7 +375,7 @@ class SnapshotViewerApp(App):
                 result_title += f": {preview}"
 
                 widgets.append(Collapsible(
-                    Static(content),
+                    Static(content, markup=False),
                     title=result_title,
                     collapsed=True,
                     classes="tool-result",
@@ -332,13 +415,15 @@ async def _main():
         thread_id = await _load_thread_from_mnemonic(mnemonic)
         print(f"Thread ID: {thread_id}", file=sys.stderr)
 
-    messages, checkpoint_id = await _load_messages(thread_id)
+    messages, checkpoint_id, per_message_checkpoint = await _load_messages(thread_id)
     if not messages:
         print("Thread has no messages.", file=sys.stderr)
         sys.exit(1)
 
     print(f"Loaded {len(messages)} messages. Launching viewer...", file=sys.stderr)
-    app = SnapshotViewerApp(thread_id, messages, checkpoint_id, mnemonic)
+    app = SnapshotViewerApp(
+        thread_id, messages, checkpoint_id, per_message_checkpoint, mnemonic
+    )
     await app.run_async()
 
 def main() -> int:

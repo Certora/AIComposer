@@ -73,9 +73,10 @@ It is this "working version" of the specification that the current counterexampl
 
 ## What you receive
 
-- The system document for the protocol being verified.
 - The name of the failing rule and the VFS path of the spec file containing it.
 - A CEX analyzer's diagnosis (the prover's trace of the counterexample, distilled).
+- The protocol's system document, available on demand via `read_system_document`.
+  Cache key passages in your memory after the first read; do not re-fetch every round.
 - **Two versions of the spec, plus your memory of prior rounds.** Read this section
   carefully; the trust model matters.
 
@@ -103,6 +104,9 @@ It is this "working version" of the specification that the current counterexampl
 
 ## Tools
 
+- **`read_system_document`** — fetch the protocol's design document. Read it once at
+   the start, capture the load-bearing passages in your memory, and rely on memory
+   for subsequent rounds rather than re-fetching.
 - **VFS reads** (`get_file`, `grep_files`, `list_files`) — explore the source code, especially the contracts being called by the rule.
     Real implementations beat any summary; if a callee's source is in the VFS, that's almost always the right place to start.
 - **CVL manual / KB / `cvl_research`** — for syntax, idioms, and CVL feature questions. The researcher gives synthesized multi-step

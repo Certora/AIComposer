@@ -60,7 +60,9 @@ graphcore = { path = "./graphcore", editable = true }
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
 console-autoprove = "composer.cli.console_autoprove:main"
+console-codegen = "composer.cli.console_codegen:main"
 tui-autoprove = "composer.cli.tui_autoprove:main"
+tui-codegen = "composer.cli.tui_codegen:main"
 tui-natspec = "composer.cli.tui_pipeline:main"
 cache-autoprove = "composer.cli.cache_autoprove:main"
 cache-natspec = "composer.cli.cache_natspec:main"

@@ -75,7 +75,7 @@ class LanggraphOptions(Protocol):
     thread_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     recursion_limit: Annotated[int, Arg(
         help="The number of iterations of the graph to allow (default: {default}",
-        default=50
+        default=200
     )]
 
 
@@ -105,6 +105,7 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     # / system-doc edits invalidate automatically. ``None`` disables
     # caching — every run recomputes from scratch.
     cache_namespace: Optional[str]
+
 
     # Free-form human-readable label persisted on the audit ``run_meta``
     # slot, so a run can be located later by description (e.g. "the most
@@ -171,8 +172,10 @@ class InputJSONPath(Protocol):
 
 class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, InputJSONPath, Protocol):
     debug_fs: str
-
     debug: bool
+    resume_work_key: str
+    memory_namespace: Optional[str]
+
 
 class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
     # common
