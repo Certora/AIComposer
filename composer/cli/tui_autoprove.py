@@ -5,17 +5,14 @@ import asyncio
 import composer.bind as _
 
 from composer.ui.autoprove_app import AutoProveApp
-from composer.spec.source.autoprove_common import Executor, _entry_point
+from composer.spec.source.autoprove_common import _entry_point
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 async def _main() -> int:
-    async def run_thunk(
-        pipeline: Executor
-    ):
-        # Set up TUI
+    async with _entry_point() as pipeline:
         app = AutoProveApp()
 
         async def work():
@@ -36,7 +33,6 @@ async def _main() -> int:
         app.set_work(work)
         await app.run_async()
         return 0
-    return await _entry_point(run_thunk)
 
 def main() -> int:
     return asyncio.run(_main())
