@@ -607,9 +607,8 @@ async def _execute_ai_composer_workflow(
         .with_state(AIComposerState)
         .with_input(AIComposerInput)
         .with_context(AIComposerContext)
-        .with_initial_prompt_template(
-            "synthesis_prompt.j2", **prompt_params
-        ).with_sys_prompt_template("system_prompt.j2")
+        .with_initial_prompt_template("synthesis_prompt.j2")
+        .with_sys_prompt_template("system_prompt.j2", **prompt_params)
         .with_output_key("generated_code")
         .inject(_get_summary_injector(workflow_options.summarization_threshold))
     ).build()[0].compile(

@@ -5,7 +5,7 @@ from pydantic import Field
 from graphcore.graph import tool_return, tool_state_update
 from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
@@ -14,6 +14,47 @@ from composer.core.context import compute_state_digest
 from composer.core.validation import prover_validation
 from composer.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
 from composer.ui.tool_display import tool_display
+
+
+def _routing_reminder(failing_rules: list[str], spec_label: str) -> HumanMessage:
+    """Build the system-reminder HumanMessage that rides on a prover result
+    with violations.
+
+    Lands at the head of recent context — the only place the model's
+    attention budget actually fights recency bias. The reminder restates
+    the routing rule (spec-side fix → ``cex_remediation``; code-side bug →
+    fix the code) so the long-context drift mode where the codegen author
+    inlines a bare ``require`` into the working spec doesn't get traction.
+
+    Safe to emit alongside the prover's ``ToolMessage`` only because the
+    parallel-prover guard in ``CertoraProverTool.run`` rejects any turn
+    that issues the prover with sibling tool calls; a single ``tool_use``
+    pairs with a single ``tool_result``, after which the API permits any
+    user-role content.
+    """
+    bullets = "\n".join(f"  - `{r}`" for r in failing_rules)
+    body = (
+        f"The prover run on {spec_label} produced violations on the following "
+        f"rule(s):\n{bullets}\n\n"
+        "For EACH failing rule, decide root cause:\n"
+        "- **Code-side bug** → fix the implementation directly.\n"
+        "- **Spec-side issue** (HAVOC from an unresolved external call, missing "
+        "structural invariant, ghost mismodeling, summary needed, etc.) → call "
+        "`cex_remediation` ONCE per rule, sequentially. Stage the returned CVL via "
+        "`write_working_spec`, verify with `certora_prover(use_working_spec=True, ...)`, "
+        "then `commit_working_spec`.\n\n"
+        "Do NOT inline `require`, summary, or invariant changes into the working spec "
+        "yourself — `cex_remediation` owns drafting. Do NOT bundle multiple CEXes into "
+        "a single remediation call — each rule gets its own diagnosis and its own call."
+    )
+    return HumanMessage(
+        content=f"<system-reminder>\n{body}\n</system-reminder>",
+        display_tag="prover_routing_reminder",
+    )
+
+
+def _failing_rules(report: RawReport | SummarizedReport) -> list[str]:
+    return [name for name, ok in report.rule_status.items() if not ok]
 
 
 @tool_display(
@@ -124,6 +165,12 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command | str]):
             self.use_working_spec,
             self.target_spec,
         )
+        spec_label = (
+            "the working spec draft"
+            if self.use_working_spec
+            else f"`{self.target_spec}`"
+        )
+
         match result:
             case str():
                 return result
@@ -147,9 +194,34 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command | str]):
                             str(prover_validation(self.target_spec)): state_digest
                         }
                     )
+                # Violation case — append a routing reminder alongside the
+                # ToolMessage so the cex_remediation rule lands at the head
+                # of recent context. See ``_routing_reminder``.
+                failing = _failing_rules(result)
+                if failing:
+                    return Command(update={
+                        "messages": [
+                            ToolMessage(
+                                tool_call_id=self.tool_call_id,
+                                content=result.report,
+                            ),
+                            _routing_reminder(failing, spec_label),
+                        ]
+                    })
                 return tool_return(tool_call_id=self.tool_call_id, content=result.report)
             case SummarizedReport():
-                return result.todo_list
+                # Truncated-result case — the prover had so many failures it
+                # produced a summarized to-do list. Always a violation case.
+                failing = _failing_rules(result)
+                return Command(update={
+                    "messages": [
+                        ToolMessage(
+                            tool_call_id=self.tool_call_id,
+                            content=result.todo_list,
+                        ),
+                        _routing_reminder(failing, spec_label),
+                    ]
+                })
 
 
 certora_prover = CertoraProverTool.as_tool("certora_prover")

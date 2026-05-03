@@ -19,6 +19,7 @@ import asyncio
 import json
 import pathlib
 import sys
+from dataclasses import dataclass
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -28,11 +29,37 @@ from textual.binding import Binding
 from rich.text import Text
 from rich.syntax import Syntax
 
-from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langgraph.checkpoint.base import CheckpointTuple
 
 from composer.diagnostics.handlers import normalize_content
 from composer.workflow.services import checkpointer_context, store_context
 from composer.spec.context import SNAPSHOT_NAMESPACE
+
+
+# ---------------------------------------------------------------------------
+# Timeline shape
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SummarizationMarker:
+    """A point in the rendered timeline where summarization wiped the message
+    channel and replaced it with a fresh system + initial-prompt + resume
+    triple. We surface these so pre-summary turns stay visible — the
+    checkpoint chain itself is intact, the latest-state ``messages`` view just
+    loses everything dropped by the summarizer."""
+
+    checkpoint_id: str
+
+
+type TimelineItem = BaseMessage | SummarizationMarker
 
 
 # ---------------------------------------------------------------------------
@@ -51,56 +78,113 @@ async def _load_thread_from_mnemonic(mnemonic: str) -> str:
 
 async def _load_messages(
     thread_id: str,
-) -> tuple[list, str | None, list[str | None]]:
-    """Load messages from the latest checkpoint for a thread.
+    checkpoint_id: str | None = None,
+) -> tuple[list[TimelineItem], str | None, list[str | None]]:
+    """Walk the checkpoint chain for ``thread_id``, return a timeline
+    that includes pre-summary turns that the latest-state view has dropped.
 
-    Returns ``(messages, latest_checkpoint_id, per_message_checkpoint_id)``.
-    The third value is a parallel list to ``messages``: index ``i`` holds
-    the checkpoint id of the earliest checkpoint where the message with
-    that id appears (``None`` for messages that never matched any
-    historical checkpoint, e.g. their ``id`` was ``None``). This is what
-    the per-turn copy-to-clipboard widget uses — clicking a turn copies
-    the checkpoint id at which that turn was first persisted, not the
-    snapshot's overall latest id.
+    When ``checkpoint_id`` is supplied, the walk is truncated at that
+    checkpoint — useful for inspecting the conversation as it stood at a
+    specific point in time. Without it, the walk runs to the latest
+    checkpoint.
 
-    Robust to summarization (``RemoveMessage`` shrinks the channel and
-    later turns repopulate it with new ids); the by-id match means the
-    final-state turns get their *own* introducing checkpoints, not the
-    pre-summary one.
+    Returns ``(timeline, anchor_checkpoint_id, checkpoint_for_item)``:
+
+    * ``timeline`` — chronological list of every ``BaseMessage`` that was
+      checkpointed up to the anchor (deduped by message id), with
+      ``SummarizationMarker`` entries inserted at the points where a
+      summarization round wiped the channel.
+    * ``anchor_checkpoint_id`` — id of the requested checkpoint, or the
+      latest one when none was requested.
+    * ``checkpoint_for_item`` — parallel to ``timeline``: for each
+      message, the id of the checkpoint that first persisted it; for
+      summarization markers, ``None``.
+
+    Summarization detection: a checkpoint is a summarization point iff
+    its message-id set is disjoint from the previous checkpoint's
+    non-empty message-id set. The summarizer always RemoveMessages all
+    prior messages and inserts three fresh ones (system + initial +
+    resume); the disjoint-id signature is exact.
     """
     async with checkpointer_context() as checkpointer:
-        config = {"configurable": {"thread_id": thread_id}}
-        latest = await checkpointer.aget_tuple(config)
-        if latest is None:
-            print(f"No checkpoint found for thread {thread_id}", file=sys.stderr)
+        anchor_config: dict = {"configurable": {"thread_id": thread_id}}
+        if checkpoint_id is not None:
+            anchor_config["configurable"]["checkpoint_id"] = checkpoint_id
+        anchor = await checkpointer.aget_tuple(anchor_config)
+        if anchor is None:
+            if checkpoint_id is not None:
+                print(
+                    f"No checkpoint {checkpoint_id} found on thread {thread_id}",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"No checkpoint found for thread {thread_id}", file=sys.stderr)
             sys.exit(1)
-        assert "configurable" in latest.config
-        latest_checkpoint_id = latest.config["configurable"].get("checkpoint_id")
-        messages = latest.checkpoint["channel_values"].get("messages", [])
+        assert "configurable" in anchor.config
+        anchor_checkpoint_id = anchor.config["configurable"].get("checkpoint_id")
 
-        # Walk every checkpoint on the thread; record the message id sets at
-        # each. ``alist`` is newest-first, so we reverse to walk
-        # chronologically and stop updating ``seen_at[mid]`` once we've found
-        # the introducing checkpoint.
-        history: list[tuple[str, set[str]]] = []
-        async for ct in checkpointer.alist(config):
+        # The thread's checkpoint table is a forest — every restart from a
+        # non-tip checkpoint forks a new branch that shares the thread_id
+        # with the original. ``alist`` returns the union, which is wrong:
+        # it would surface messages from branches we abandoned. Walk the
+        # parent chain from the anchor instead, which gives us exactly the
+        # lineage that produced the anchor state.
+        #
+        # Pre-fetch the whole forest by id so the parent walk is in-memory
+        # rather than one DB round trip per hop.
+        list_config = {"configurable": {"thread_id": thread_id}}
+        by_id: dict[str, CheckpointTuple] = {}
+        async for ct in checkpointer.alist(list_config):
             cid = ct.config["configurable"].get("checkpoint_id")
+            if cid is not None:
+                by_id[cid] = ct
+
+        history: list[tuple[str, list[BaseMessage]]] = []
+        current_ct = anchor
+        while current_ct is not None:
+            cid = current_ct.config["configurable"].get("checkpoint_id")
             if cid is None:
-                continue
-            ckpt_msgs = ct.checkpoint["channel_values"].get("messages", [])
-            ids = {m.id for m in ckpt_msgs if getattr(m, "id", None) is not None}
-            history.append((cid, ids))
+                break
+            ckpt_msgs = current_ct.checkpoint["channel_values"].get("messages", [])
+            history.append((cid, ckpt_msgs))
+            parent_cfg = current_ct.parent_config
+            if parent_cfg is None:
+                break
+            parent_cid = parent_cfg.get("configurable", {}).get("checkpoint_id")
+            if parent_cid is None:
+                break
+            current_ct = by_id.get(parent_cid)
         history.reverse()
 
-        seen_at: dict[str, str] = {}
-        for cid, ids in history:
-            for mid in ids:
-                seen_at.setdefault(mid, cid)
-        per_message_checkpoint = [
-            seen_at.get(m.id) if getattr(m, "id", None) is not None else None
-            for m in messages
-        ]
-        return messages, latest_checkpoint_id, per_message_checkpoint
+        timeline: list[TimelineItem] = []
+        checkpoint_for_item: list[str | None] = []
+        seen_ids: set[str] = set()
+        prev_ids: set[str] = set()
+
+        for cid, msgs in history:
+            curr_ids = {m.id for m in msgs if getattr(m, "id", None) is not None}
+
+            # Summarization signature: prev was non-empty, curr is
+            # non-empty, the two id-sets are disjoint. The intersection
+            # check rules out normal checkpoint-to-checkpoint shrinkage
+            # (e.g. RemoveMessage on a single id), which would still
+            # carry over surviving messages.
+            if prev_ids and curr_ids and prev_ids.isdisjoint(curr_ids):
+                timeline.append(SummarizationMarker(checkpoint_id=cid))
+                checkpoint_for_item.append(None)
+
+            for m in msgs:
+                mid = getattr(m, "id", None)
+                if mid is not None and mid in seen_ids:
+                    continue
+                if mid is not None:
+                    seen_ids.add(mid)
+                timeline.append(m)
+                checkpoint_for_item.append(cid)
+
+            prev_ids = curr_ids
+
+        return timeline, anchor_checkpoint_id, checkpoint_for_item
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +280,7 @@ class SnapshotViewerApp(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
+        Binding("r", "refresh", "Refresh", show=True),
         Binding("home", "scroll_home", "Top", show=False),
         Binding("end", "scroll_end", "Bottom", show=False),
     ]
@@ -203,17 +288,22 @@ class SnapshotViewerApp(App):
     def __init__(
         self,
         thread_id: str,
-        messages: list,
+        timeline: list[TimelineItem],
         checkpoint_id: str | None,
-        per_message_checkpoint: list[str | None],
+        checkpoint_for_item: list[str | None],
         mnemonic: str | None = None,
+        pinned_checkpoint: str | None = None,
     ):
         super().__init__()
         self._lg_thread_id = thread_id
-        self._messages = messages
+        self._timeline = timeline
         self._checkpoint_id = checkpoint_id
-        self._per_message_checkpoint = per_message_checkpoint
+        self._checkpoint_for_item = checkpoint_for_item
         self._mnemonic = mnemonic
+        # When set, refresh re-fetches at this exact checkpoint instead of
+        # tracking the latest. Lets you re-render the same point-in-time
+        # view after the harness has continued past it.
+        self._pinned_checkpoint = pinned_checkpoint
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -225,43 +315,96 @@ class SnapshotViewerApp(App):
         if self._mnemonic:
             title_parts.insert(0, self._mnemonic)
         self.title = " | ".join(title_parts)
-
-        sub_parts = [f"{len(self._messages)} messages"]
-        if self._checkpoint_id:
-            sub_parts.append(f"checkpoint: {self._checkpoint_id[:16]}...")
-        self.sub_title = " | ".join(sub_parts)
+        self._update_subtitle()
 
         scroll = self.query_one("#scroll", VerticalScroll)
         widgets = self._render_all()
         scroll.mount_all(widgets)
+
+    def _update_subtitle(self) -> None:
+        n_msgs = sum(
+            1 for x in self._timeline if not isinstance(x, SummarizationMarker)
+        )
+        n_summaries = sum(
+            1 for x in self._timeline if isinstance(x, SummarizationMarker)
+        )
+        sub_parts = [f"{n_msgs} messages"]
+        if n_summaries:
+            sub_parts.append(f"{n_summaries} summarization(s)")
+        if self._checkpoint_id:
+            label = "pinned" if self._pinned_checkpoint else "checkpoint"
+            sub_parts.append(f"{label}: {self._checkpoint_id[:16]}...")
+        self.sub_title = " | ".join(sub_parts)
+
+    async def action_refresh(self) -> None:
+        """Re-fetch the thread's full chain and replace the rendered timeline.
+        Useful when watching a thread that's still being written to."""
+        prev_count = len(self._timeline)
+        timeline, checkpoint_id, ckpt_for_item = await _load_messages(
+            self._lg_thread_id, checkpoint_id=self._pinned_checkpoint
+        )
+        self._timeline = timeline
+        self._checkpoint_id = checkpoint_id
+        self._checkpoint_for_item = ckpt_for_item
+        self._update_subtitle()
+
+        scroll = self.query_one("#scroll", VerticalScroll)
+        await scroll.remove_children()
+        await scroll.mount_all(self._render_all())
+
+        delta = len(timeline) - prev_count
+        if delta > 0:
+            self.notify(f"Refreshed: +{delta} new item(s) ({len(timeline)} total)")
+            scroll.scroll_end(animate=False)
+        else:
+            self.notify(f"Refreshed: no new items ({len(timeline)} total)")
 
     # ── Rendering ─────────────────────────────────────────────
 
     def _render_all(self) -> list[Static | Collapsible]:
         widgets: list[Static | Collapsible] = []
 
-        # Index tool results by tool_call_id so we can pair them with calls
+        # Index tool results by tool_call_id so we can pair them with calls.
+        # Pairing across summary epochs is fine — tool_call_ids are unique.
         tool_results: dict[str, ToolMessage] = {}
-        for msg in self._messages:
-            if isinstance(msg, ToolMessage):
-                tool_results[msg.tool_call_id] = msg
+        for item in self._timeline:
+            if isinstance(item, ToolMessage):
+                tool_results[item.tool_call_id] = item
 
         turn = 0
-        for idx, msg in enumerate(self._messages):
-            match msg:
+        for idx, item in enumerate(self._timeline):
+            match item:
+                case SummarizationMarker():
+                    widgets.append(self._render_summarization(item, idx))
                 case SystemMessage():
-                    widgets.append(self._render_system(msg, idx))
+                    widgets.append(self._render_system(item, idx))
                 case HumanMessage():
-                    widgets.append(self._render_human(msg, idx))
+                    widgets.append(self._render_human(item, idx))
                 case AIMessage():
                     turn += 1
-                    widgets.extend(self._render_turn(msg, idx, turn, tool_results))
+                    widgets.extend(self._render_turn(item, idx, turn, tool_results))
                 case ToolMessage():
                     pass  # rendered inline with their AI message
                 case _:
-                    widgets.append(Static(Text(f"[{idx}] {type(msg).__name__}", style="dim")))
+                    widgets.append(Static(Text(f"[{idx}] {type(item).__name__}", style="dim")))
 
         return widgets
+
+    def _render_summarization(
+        self, marker: SummarizationMarker, idx: int
+    ) -> Static:
+        """Render a summarization boundary as a horizontal-rule separator
+        with the checkpoint id of the post-summary state. Everything above
+        belongs to a prior summary epoch."""
+        line = Text()
+        line.append("─" * 60 + "\n", style="yellow")
+        line.append(f"[{idx}] Summarization", style="bold yellow")
+        line.append(
+            f"  (post-summary checkpoint {marker.checkpoint_id[:16]}...)",
+            style="dim",
+        )
+        line.append("\n" + "─" * 60, style="yellow")
+        return Static(line)
 
     def _render_system(self, msg: SystemMessage, idx: int) -> Collapsible:
         content = msg.text()
@@ -317,8 +460,8 @@ class SnapshotViewerApp(App):
         header.append(usage_str, style="dim")
         header.append("  📋 click → /tmp/checkpoint-id", style="dim italic")
         ckpt_id = (
-            self._per_message_checkpoint[idx]
-            if idx < len(self._per_message_checkpoint)
+            self._checkpoint_for_item[idx]
+            if idx < len(self._checkpoint_for_item)
             else None
         )
         widgets.append(TurnHeader(header, ckpt_id, classes="turn-header"))
@@ -403,6 +546,15 @@ async def _main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("mnemonic", nargs="?", help="Snapshot mnemonic ID")
     group.add_argument("--thread", help="Thread ID directly (skip snapshot lookup)")
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help=(
+            "Pin the viewer to a specific checkpoint id; the timeline is "
+            "rendered as it stood at that point. Without this flag, the "
+            "latest checkpoint is used and refresh tracks the head."
+        ),
+    )
     args = parser.parse_args()
 
 
@@ -415,14 +567,28 @@ async def _main():
         thread_id = await _load_thread_from_mnemonic(mnemonic)
         print(f"Thread ID: {thread_id}", file=sys.stderr)
 
-    messages, checkpoint_id, per_message_checkpoint = await _load_messages(thread_id)
-    if not messages:
+    timeline, checkpoint_id, checkpoint_for_item = await _load_messages(
+        thread_id, checkpoint_id=args.checkpoint
+    )
+    if not timeline:
         print("Thread has no messages.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Loaded {len(messages)} messages. Launching viewer...", file=sys.stderr)
+    n_msgs = sum(1 for x in timeline if not isinstance(x, SummarizationMarker))
+    n_summaries = sum(1 for x in timeline if isinstance(x, SummarizationMarker))
+    summary_note = f" across {n_summaries} summarization(s)" if n_summaries else ""
+    pin_note = f" (pinned at {args.checkpoint[:16]}...)" if args.checkpoint else ""
+    print(
+        f"Loaded {n_msgs} messages{summary_note}{pin_note}. Launching viewer...",
+        file=sys.stderr,
+    )
     app = SnapshotViewerApp(
-        thread_id, messages, checkpoint_id, per_message_checkpoint, mnemonic
+        thread_id,
+        timeline,
+        checkpoint_id,
+        checkpoint_for_item,
+        mnemonic,
+        pinned_checkpoint=args.checkpoint,
     )
     await app.run_async()
 
