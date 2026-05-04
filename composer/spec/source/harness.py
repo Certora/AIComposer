@@ -2,7 +2,7 @@
 Harness analysis and prover setup.
 
 Identifies external contracts, classifies them, generates harness files
-for contracts needing multiple instances, and runs PreAudit compilation
+for contracts needing multiple instances, and runs AutoSetup compilation
 to produce a ``Configuration`` for downstream phases.
 
 Two entry points:
@@ -14,7 +14,7 @@ Two entry points:
 
 ``setup_and_harness_agent``
     Pipeline entry point: runs the classification agent within a
-    ``WorkflowContext``, writes harness files to disk, runs PreAudit
+    ``WorkflowContext``, writes harness files to disk, runs AutoSetup
     compilation, and returns a ``Configuration``.
 """
 
@@ -31,7 +31,7 @@ from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.tools.results import result_tool_generator
 
 from composer.spec.graph_builder import run_to_completion, bind_standard
-from composer.spec.source.preaudit_setup import run_preaudit_setup, SetupFailure, SetupSuccess
+from composer.spec.source.autosetup import run_autosetup, SetupFailure, SetupSuccess
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
@@ -517,7 +517,7 @@ async def run_setup(
         c.path for c in sys_desc.transitive_closure if c.name != source.contract_name
     ]
 
-    setup_result = await run_preaudit_setup(
+    setup_result = await run_autosetup(
         Path(source.project_root),
         source.relative_path,
         source.contract_name,
