@@ -22,6 +22,7 @@ from composer.spec.gen_types import CVLResource, TypedTemplate
 from composer.spec.source.source_env import SourceEnvironment
 from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
+from composer.ui.tool_display import tool_display
 
 from graphcore.graph import FlowInput
 from composer.spec.source.snapshot import take_snapshot
@@ -35,6 +36,7 @@ class SourceCVLGenerationInput(SourceCVLGenerationExtra, FlowInput):
 class SourceCVLGenerationState(SourceCVLGenerationExtra, MessagesState):
     result: NotRequired[str]
 
+@tool_display(lambda p: f"Expecting rule `{p['rule_name']}` to fail", None)
 class ExpectRuleFailure(WithAsyncImplementation[Command], WithInjectedId):
     """
     Mark a rule name as expected to fail.
@@ -51,7 +53,9 @@ class ExpectRuleFailure(WithAsyncImplementation[Command], WithInjectedId):
                 self.rule_name: self.reason
             }
         )
-
+@tool_display(
+    lambda p: f"Expecting rule `{p["rule_name"]} to pass", None
+)
 class ExpectRulePassage(WithAsyncImplementation[Command], WithInjectedId):
     """
     Unmark a rule as expected to fail. By default all rules/invariants are expected to pass,

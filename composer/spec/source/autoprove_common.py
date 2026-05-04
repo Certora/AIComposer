@@ -133,7 +133,8 @@ async def _entry_point(cb: ExecutorCB) -> int:
         standard_connections(
             embedder=DefaultEmbedder(model)
         ) as conns,
-        PostgreSQLRAGDatabase.rag_context(model) as rag_db
+        PostgreSQLRAGDatabase.rag_context(model) as rag_db,
+        async_tool_context()
     ):
         source_env = build_source_env(
             llm=llm,
