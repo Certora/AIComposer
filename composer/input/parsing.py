@@ -1,6 +1,5 @@
 import argparse
 from typing import TypeVar, Protocol, cast, Annotated, get_type_hints, get_origin, Any, get_args, Union
-from composer.audit.db import DEFAULT_CONNECTION as AUDITDB_DEFAULT_CONNECTION
 from composer.input.types import CommandLineArgs, ResumeArgs, Arg, OptionalArg, RAGDBOptions, ModelOptions, LanggraphOptions
 
 ArgNS = TypeVar("ArgNS", covariant=True)
@@ -114,8 +113,6 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
     # Summarization options
     parser.add_argument("--summarization-threshold", type=int, help="The number of messages that triggers summarization")
-
-    parser.add_argument("--audit-db", help="Database connection string for audit results, given as: postgresql://user:password@localhost:5432/db_name", default=AUDITDB_DEFAULT_CONNECTION)
 
     # prover options
     parser.add_argument("--prover-capture-output", action=argparse.BooleanOptionalAction, default=True, help="Whether to capture the stdout/stderr of the prover")

@@ -1,14 +1,13 @@
 import pathlib
-import psycopg
 import asyncio
 import composer.certora as _
 
 from composer.input.parsing import resume_workflow_parser
-from composer.workflow.services import create_llm
+from composer.workflow.services import create_llm, store_context
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.input.types import ResumeIdData, NativeFS, ResumeFSData
 from composer.ui.console import ConsoleHandler
-from composer.audit.db import AuditDB
+from composer.audit.store import AuditStore
 
 async def main() -> int:
     """Main entry point for the AI Composer tool."""
@@ -19,26 +18,26 @@ async def main() -> int:
 
     match args.command:
         case "materialize":
-            conn = psycopg.connect(args.audit_db)
-            audit = AuditDB(conn)
-            res = audit.get_resume_artifact(args.src_thread_id)
-            out_dir = pathlib.Path(args.target)
-            out_dir.mkdir(exist_ok=True, parents=True)
+            async with store_context() as store:
+                audit = AuditStore(store)
+                res = await audit.get_resume_artifact(args.src_thread_id)
+                out_dir = pathlib.Path(args.target)
+                out_dir.mkdir(exist_ok=True, parents=True)
 
-            if not out_dir.is_dir():
-                raise RuntimeError(f"output dir {args.target} is not a directory")
-            session_id_file = out_dir / ".session-id"
-            if session_id_file.is_file() and \
-                (curr_id := session_id_file.read_text().strip()) != args.src_thread_id:
-                print(f"Refusing to materialize in a folder that appears to be a materialization of {curr_id}")
-                print("You can remove the .session-id file to override this behavior")
-                return 1
-            for (p, cont) in res.vfs:
-                output_path = out_dir / p
-                output_path.parent.mkdir(exist_ok=True, parents=True)
-                output_path.write_bytes(cont)
-            session_id_file.write_text(args.src_thread_id)
-            return 0
+                if not out_dir.is_dir():
+                    raise RuntimeError(f"output dir {args.target} is not a directory")
+                session_id_file = out_dir / ".session-id"
+                if session_id_file.is_file() and \
+                    (curr_id := session_id_file.read_text().strip()) != args.src_thread_id:
+                    print(f"Refusing to materialize in a folder that appears to be a materialization of {curr_id}")
+                    print("You can remove the .session-id file to override this behavior")
+                    return 1
+                for (p, cont) in res.vfs:
+                    output_path = out_dir / p
+                    output_path.parent.mkdir(exist_ok=True, parents=True)
+                    output_path.write_bytes(cont)
+                session_id_file.write_text(args.src_thread_id)
+                return 0
         case "resume-dir" | "resume-id":
             commentary: str | None = None
             if args.commentary is not None:

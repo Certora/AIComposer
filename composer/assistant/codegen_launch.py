@@ -4,7 +4,6 @@ from typing import Optional
 
 from composer.assistant.launch_args import LaunchCodegenArgs, LaunchResumeArgs, CommonCodeGen
 from composer.assistant.types import OrchestratorContext
-from composer.audit.db import DEFAULT_CONNECTION as AUDIT_DEFAULT
 from composer.input.files import upload_input
 from composer.input.types import ResumeFSData
 from composer.ui.codegen_rich import CodeGenRichApp
@@ -28,7 +27,6 @@ class _CodegenUploadPaths:
 @dataclass
 class CodegenWorkflowArgs:
     """Satisfies WorkflowOptions protocol for programmatic invocation."""
-    audit_db: str
     rag_db: str
     prover_capture_output: bool = True
     prover_keep_folders: bool = False
@@ -50,7 +48,6 @@ class CodegenWorkflowArgs:
 
 def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
     return CodegenWorkflowArgs(
-        audit_db=AUDIT_DEFAULT,
         rag_db=ctx.config.rag_db,
         model=ctx.config.model,
         tokens=ctx.config.tokens,

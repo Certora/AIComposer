@@ -18,7 +18,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 from composer.audit.types import InputFileLike
-from composer.audit.db import ResumeArtifact
+from composer.audit.store import ResumeArtifact
 from composer.input.types import RAGDBOptions
 from composer.rag.db import ComposerRAGDB, rag_context
 from composer.rag.models import get_model
