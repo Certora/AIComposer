@@ -11,6 +11,9 @@ from composer.core.state import AIComposerState
 from composer.human.types import ProposalType
 from composer.cvl.tools import maybe_update_cvl
 
+from composer.ui.tool_display import tool_display
+
+@tool_display("Read working spec", None)
 class ReadWorkingSpec(WithImplementation[str], WithInjectedState[AIComposerState], WithInjectedId):
     """
     Read the contents of your working spec.
@@ -20,7 +23,8 @@ class ReadWorkingSpec(WithImplementation[str], WithInjectedState[AIComposerState
         if not self.state["working_spec"]:
             return "No working spec written"
         return self.state["working_spec"]
-    
+
+@tool_display("Write working spec", None)
 class WriteWorkingSpec(WithImplementation[Command | str], WithInjectedId):
     """
     Write a new version of your working spec. If the new version is not syntactically correct this tool call will be rejected
@@ -35,7 +39,8 @@ class WriteWorkingSpec(WithImplementation[Command | str], WithInjectedId):
             pp=self.new_cvl,
             spec_key="working_spec"
         )
-    
+
+@tool_display("Requested spec change", None)
 class CommitWorkingSpec(WithImplementation[Command | str], WithInjectedId, WithInjectedState[AIComposerState]):
     """
     Call this tool to ask a human reviewer to approve "committing" your working spec to the "master" copy.
