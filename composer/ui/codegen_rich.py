@@ -12,7 +12,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from composer.ui.ide_bridge import IDEBridge
-from composer.ui.tool_display import CodeGenToolDisplay
+from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay
 from composer.ui.rich_console import BaseRichConsoleApp
 from composer.io.protocol import WorkflowPurpose
 from composer.workflow.types import WorkflowResult, WorkflowSuccess
@@ -69,7 +69,33 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
     def __init__(self, show_checkpoints: bool = False, ide: IDEBridge | None = None):
         super().__init__(
-            tool_config=CodeGenToolDisplay(),
+            tool_config=ToolDisplayConfig(
+                tool_display={
+                    "requirement_relaxation_request": ToolDisplay(
+                        lambda p: (
+                            f"Requesting requirement relaxation #{p.get('req_number', '?')}: {p.get('req_text', '')}"
+                            if p.get("req_text")
+                            else "Requesting requirement relaxation"
+                        ),
+                        None,
+                    ),
+
+                    "propose_spec_change": ToolDisplay(
+                        lambda p: (
+                            f"Proposing spec change: {p['explanation']}"
+                            if p.get("explanation") else "Proposing spec change"
+                        ),
+                        None,
+                    ),
+                    "human_in_the_loop": ToolDisplay(
+                        lambda p: (
+                            f"Asking for input: {p['question']}"
+                            if p.get("question") else "Asking for input"
+                        ),
+                        None,
+                    ),
+                }
+            ),
             show_checkpoints=show_checkpoints,
             ide=ide,
         )
