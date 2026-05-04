@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from composer.diagnostics.handlers import normalize_content
 from composer.ui.tool_display import ToolDisplayConfig
+from composer.ui.tool_call_renderer import ToolCallRenderer
 
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
 from graphcore.utils import get_token_usage
@@ -98,7 +99,7 @@ _HUMAN_TAG_DISPLAY: dict[str, tuple[str, bool]] = {
 }
 
 
-class MessageRenderer:
+class MessageRenderer(ToolCallRenderer):
     """Per-stream rendering state, widget production, and mounting.
 
     Used by both ``BaseRichConsoleApp`` (single-stream) and
@@ -111,23 +112,14 @@ class MessageRenderer:
         mount_to: MountFn,
         on_tokens: Callable[[AIMessage], None],
     ):
-        self.tool_config = tool_config
+        super().__init__(tool_config)
         self._mount_to = mount_to
         self._on_tokens = on_tokens
         self.nested_containers: dict[str, VerticalScroll] = {}
 
-        # Consecutive tool call collapsing state
-        self._last_tool_group: str | None = None
-        self._last_tool_items: list[str] = []
-        self._last_tool_widget: Static | None = None
-
-        # Tool call anchor tracking for live output panes
-        self._tool_call_anchors: dict[str, Static] = {}
-
     def render_ai_turn(self, msg: AIMessage) -> list[Static | Collapsible]:
         """Render an AI turn as a list of widgets."""
         widgets: list[Static | Collapsible] = []
-        tc = self.tool_config
 
         for c in normalize_content(msg.content):
             match c["type"]:
@@ -142,40 +134,12 @@ class MessageRenderer:
                         widgets.append(Static(dot("blue", stripped)))
                 case "tool_use":
                     logger.info("tool call")
-                    tool_call_id = c.get("id")
-                    name = c["name"]
-                    input_args = c.get("input", {})
-                    grouped = tc.get_group(name)
-
-                    if grouped is not None:
-                        raw = grouped.extract_group_items(input_args)
-                        new_items = [raw] if isinstance(raw, str) else list(raw)
-
-                        if grouped.group_id == self._last_tool_group:
-                            # Same group — update existing widget
-                            self._last_tool_items.extend(new_items)
-                            new_text = grouped.render_group(self._last_tool_items)
-                            if self._last_tool_widget is not None:
-                                self._last_tool_widget.update(dot("green", Text(new_text, style="dim")))
-                            w = self._last_tool_widget
-                        else:
-                            # New group
-                            self._last_tool_group = grouped.group_id
-                            self._last_tool_items = new_items
-                            display_text = grouped.render_group(self._last_tool_items)
-                            w = Static(dot("green", Text(display_text, style="dim")))
-                            self._last_tool_widget = w
-                            widgets.append(w)
-
-                        if tool_call_id is not None and w is not None:
-                            self._tool_call_anchors[tool_call_id] = w
-                    else:
-                        # Non-grouped tool — reset and emit standalone
-                        self.reset_tool_collapsing()
-                        friendly = tc.format_tool_call(name, input_args)
-                        w = Static(dot("green", Text(friendly, style="dim")))
-                        if tool_call_id is not None:
-                            self._tool_call_anchors[tool_call_id] = w
+                    w = self.render_tool_call(
+                        name=c["name"],
+                        input_args=c.get("input", {}),
+                        tool_call_id=c.get("id"),
+                    )
+                    if w is not None:
                         widgets.append(w)
                 case other:
                     widgets.append(Static(f"Unknown block: {other}"))
@@ -191,16 +155,6 @@ class MessageRenderer:
         self.reset_tool_collapsing()
         label, body = result_info
         return Collapsible(Static(body, markup=False), title=label, collapsed=True)
-
-    def get_tool_call_anchor(self, tool_call_id: str) -> Static | None:
-        """Return the widget for a tool call, if tracked."""
-        return self._tool_call_anchors.get(tool_call_id)
-
-    def reset_tool_collapsing(self):
-        """Reset consecutive tool call collapsing state."""
-        self._last_tool_group = None
-        self._last_tool_items = []
-        self._last_tool_widget = None
 
     def get_mount_target(self, root: VerticalScroll, path: list[str]) -> VerticalScroll:
         """Resolve the mount target for a given path.
