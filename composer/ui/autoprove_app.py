@@ -10,14 +10,15 @@ import enum
 from typing import cast, override
 
 from textual.containers import VerticalScroll
-from textual.widgets import Static, RichLog, Collapsible
+from textual.widgets import RichLog, Collapsible
 
 from rich.text import Text
 
 from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, suppress_ack
 from composer.io.event_handler import EventHandler, NullEventHandler
+from composer.io.multi_job import TaskInfo
 from composer.ui.multi_job_app import (
-    MultiJobApp, MultiJobTaskHandler, TaskInfo, TaskHost,
+    MultiJobApp, MultiJobTaskHandler, TaskHost,
 )
 from composer.spec.source.prover import ProverOutputEvent, CloudPollingEvent
 from composer.spec.source.preaudit_setup import PreAuditEvents

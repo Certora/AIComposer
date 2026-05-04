@@ -239,7 +239,7 @@ class WorkflowContext[K: CacheTypes]:
 # Utility
 # ---------------------------------------------------------------------------
 
-def get_system_doc(sys_path: Path) -> dict | str | None:
+def get_document_input(sys_path: Path) -> dict | str | None:
     """Load a system document from a file path, returning base64-encoded PDF or text."""
     if not sys_path.is_file():
         return None

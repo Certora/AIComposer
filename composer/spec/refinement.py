@@ -3,27 +3,34 @@ import enum
 
 from typing import Callable, Literal, Never, cast
 
+
 from langgraph.graph import StateGraph, START
 from langgraph.graph import MessagesState
 from langgraph.types import Command
+from abc import ABC, abstractmethod
 
 from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from langgraph.types import interrupt
 from langgraph.checkpoint.memory import InMemorySaver
 
+from rich.console import RenderableType
 
 from graphcore.utils import acached_invoke
+from graphcore.graph import tool_state_update
+from graphcore.tools.schemas import WithAsyncImplementation, WithImplementation, WithInjectedId
 
 from langchain_core.messages import AnyMessage, BaseMessage, AIMessage, HumanMessage, ToolMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ToolBatch, ThinkingStart
+from composer.io.conversation import (
+    ConversationClient, AIYapping, ToolComplete, ToolBatch, ThinkingStart,
+    StateUpdate
+)
 from composer.io.protocol import IOHandler
 from composer.io.event_handler import NullEventHandler
 from composer.io.context import with_handler
-from composer.ui.tool_display import ToolDisplayConfig
 
 from composer.spec.util import uniq_thread_id
 
@@ -39,10 +46,29 @@ class ConversationStateEnum(enum.Enum):
     CHAT = 1
     INIT = 2
 
-
 class ConversationState[T](MessagesState):
     state: ConversationStateEnum
     extra_data: T
+
+class _WithStateUpdate[T](WithInjectedId):
+    def _update(
+        self, new_data: T
+    ) -> Command:
+        return tool_state_update(
+            tool_call_id=self.tool_call_id,
+            content="Accepted",
+            extra_data=new_data
+        )
+class AsyncStateUpdateTool[T](WithAsyncImplementation[Command], _WithStateUpdate[T], ABC):
+    @abstractmethod
+    async def run(self) -> Command:
+        ...
+
+
+class SyncStateUpdateTool[T](WithImplementation[Command], _WithStateUpdate[T], ABC):
+    @abstractmethod
+    def run(self) -> Command:
+        ...
 
 async def refinement_loop[T](
     llm: BaseChatModel,
@@ -50,12 +76,14 @@ async def refinement_loop[T](
     init_data: T,
     init_messages: list[AnyMessage],
     tools: list[BaseTool],
-    tool_display: ToolDisplayConfig | None = None
+    *,
+    state_renderer: Callable[[T], RenderableType] | None = None,
+    diff_renderer: Callable[[T, T], RenderableType] | None = None
 ) -> ConversationState[T]:
     graph = StateGraph(
-        state_schema=ConversationState[T],
+        state_schema=ConversationState,
         context_schema=None,
-        input_schema=None,
+        input_schema=ConversationState,
         output_schema=None
     )
     bound_llm = llm.bind_tools(tools)
@@ -79,7 +107,7 @@ async def refinement_loop[T](
 
     tool_node = ToolNode(tools, handle_tool_errors=(ToolInvocationError,))
 
-    def chat_node(
+    async def chat_node(
         state: ConversationState[T]
     ) -> dict[str, list[BaseMessage] | ConversationStateEnum]:
         payload_text = None
@@ -104,6 +132,7 @@ async def refinement_loop[T](
     graph.add_edge("chat_node", "llm_echo")
 
     graph.add_node("tools", tool_node)
+    graph.add_edge("tools", "llm_echo")
 
     def conditional_decider(
         state: ConversationState[T]
@@ -138,7 +167,7 @@ async def refinement_loop[T](
         
         async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
             pass
-
+    curr_state = init_data
     graph_input : ConversationState[T] | Command | None = init_state
     async with with_handler(
         NullHandler(), NullEventHandler()
@@ -162,6 +191,14 @@ async def refinement_loop[T](
                     if not isinstance(interrupt_data, EndConversation):
                         human_question = interrupt_data.ai_message
                     break
+                for (_, v) in payload.items():
+                    if "extra_data" in v:
+                        new_data = cast(T, v["extra_data"])
+                        if diff_renderer is not None:
+                            client.progress_update(
+                                StateUpdate(diff_renderer(curr_state, new_data))
+                            )
+                        curr_state = new_data
                 if "tools" in payload and "messages" in payload["tools"]:
                     for m in payload["tools"]["messages"]:
                         if isinstance(m, ToolMessage):
@@ -171,7 +208,13 @@ async def refinement_loop[T](
                                 )
                             )
             if human_question is not False:
-                res = await client.human_turn(ai_response=human_question)
+                while True:
+                    res = await client.human_turn(ai_response=human_question)
+                    if res.strip() == "/list" and state_renderer is not None:
+                        client.progress_update(StateUpdate(state_renderer(curr_state)))
+                        human_question = None
+                    else:
+                        break
                 graph_input = Command(resume=res)
 
     to_res = await runner.aget_state({

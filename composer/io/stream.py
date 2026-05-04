@@ -10,7 +10,7 @@ The queue never blocks writers — ``push()`` is synchronous.  The
 consumer blocks on an ``asyncio.Event`` until new items arrive.
 """
 
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable, Awaitable
 from dataclasses import dataclass
 from composer.io.events import AllEvents
 import asyncio
@@ -44,3 +44,36 @@ class AsyncDataQueue[T]:
 
 
 EventQueue = AsyncDataQueue[AllEvents]
+
+@dataclass
+class EndConversation:
+    """
+    Internal sentinel pushed to the progress queue to stop the reader.
+    """
+    pass
+
+
+@dataclass
+class Checkpoint:
+    """
+    Internal sentinel that signals an event when the reader reaches it.
+    """
+    done: asyncio.Event
+
+type ManagedQueue[T] = AsyncDataQueue[T | Checkpoint | EndConversation]
+
+def managed_streamer[T](
+    queue: ManagedQueue[T],
+    impl: Callable[[T], Awaitable[None]]
+) -> asyncio.Task[None]:
+    async def drainer():
+        async for a in queue.stream_events():
+            if isinstance(a, EndConversation):
+                return
+            elif isinstance(a, Checkpoint):
+                a.done.set()
+            else:
+                await impl(a)
+    return asyncio.create_task(
+        drainer()
+    )

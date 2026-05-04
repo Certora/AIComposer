@@ -14,7 +14,7 @@ import asyncio
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from composer.ui.multi_job_app import (
+from composer.io.multi_job import (
     TaskInfo, HandlerFactory, run_task,
 )
 from composer.ui.autoprove_app import AutoProvePhase
@@ -140,5 +140,7 @@ async def run_autoprove_pipeline(
         prover_tool=prover_tool,
         resources=resources,
         semaphore=semaphore,
-        summary=harnessed_app
+        summary=harnessed_app,
+        interactive=False,
+        threat_model=None
     )
