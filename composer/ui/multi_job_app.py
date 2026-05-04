@@ -18,7 +18,8 @@ import traceback
 from collections.abc import Callable, Coroutine, Awaitable
 from contextlib import asynccontextmanager, AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, AsyncIterator
+import asyncio
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -39,6 +40,8 @@ from composer.ui.ide_bridge import IDEBridge
 from composer.ui.ide_content import IDEContentMixin
 from composer.ui.log_screen import LogViewerMixin
 from composer.io.context import with_handler
+from composer.io.conversation import ConversationClient, AIYapping, ToolComplete, ThinkingStart, ToolStart, ProgressPayload
+from composer.io.stream import AsyncDataQueue
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +218,48 @@ class MultiJobTaskHandler[H]:
         error_text.append(f"\n{type(exc).__name__}: {exc}\n\n", style="bold red")
         error_text.append(tb, style="red dim")
         await self._mount_to(self._panel, Static(error_text))
+
+    @asynccontextmanager
+    async def start_conversation(
+        self, opening: str
+    ) -> AsyncIterator[ConversationClient]:
+        outer = self
+        class _Conversation:
+            def __init__(self):
+                self.ready_event = asyncio.Event()
+                self.queue = AsyncDataQueue[ProgressPayload](_ready=self.ready_event, _event_stream=[])
+
+            async def _progress_reader(
+                self
+            ):
+                async for ev in self.queue.stream_events():
+                    ...
+
+            async def __aenter__(self):
+                self.render_task = asyncio.create_task(
+                    self._progress_reader()
+                )
+
+            async def __aexit__(self, exc_type, exc, tb):
+                self.render_task.cancel()
+                try:
+                    await self.render_task
+                except asyncio.CancelledError:
+                    pass
+
+            def progress_update(
+                self, progress: ProgressPayload
+            ):
+                self.queue.push(progress)
+
+            async def human_turn(
+                self, ai_response: str | None
+            ) -> str:
+                ...
+
+        conv = _Conversation()
+        async with conv:
+            yield conv
 
     # ── Mounting helpers ──────────────────────────────────────
 

@@ -141,6 +141,7 @@ async def run_bug_analysis(
 
     async with refinement("Entering refinement loop") as client:
         res = await refinement_loop(
+            llm=env.llm,
             client=client,
             init_messages=edited_history,
             init_data=agent_attempt.items,

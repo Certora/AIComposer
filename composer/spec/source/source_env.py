@@ -44,7 +44,8 @@ def build_source_tools(
         builder=llm.builder,
         has_source=llm.has_source,
         base_source_tools=s.base_source_tools,
-        index=ind
+        index=ind,
+        llm=llm.llm
     ))
 
     return _SourceTools(
@@ -97,5 +98,6 @@ def build_source_env(
         builder=rag_env.builder,
         has_source=True,
         rag_tools=rag_env.rag_tools,
-        source_tools=full_source.source_tools
+        source_tools=full_source.source_tools,
+        llm=rag_env.llm
     )
