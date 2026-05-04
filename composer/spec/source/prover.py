@@ -25,7 +25,8 @@ from composer.prover.ptypes import RuleResult
 from graphcore.graph import LLM
 
 from composer.prover.core import (
-    CloudConfig, ProverOptions, ProverCallbacks, run_prover, SummarizedReport, DefaultCexHandler
+    CloudConfig, ProverOptions, ProverCallbacks, run_prover, ProverReport,
+    DefaultCexHandler,
 )
 from composer.ui.tool_display import tool_display
 from composer.diagnostics.stream import (
@@ -215,8 +216,7 @@ def get_prover_tool(
 
             if isinstance(result, str):
                 return result
-            if isinstance(result, SummarizedReport):
-                return result.todo_list
+            assert isinstance(result, ProverReport)
             all_verified = True
             for (r, stat) in result.rule_status.items():
                 if r in state["rule_skips"]:
@@ -225,7 +225,11 @@ def get_prover_tool(
                     all_verified = False
                     break
             if rules is None and all_verified:
-                return tool_state_update(tool_call_id=tool_call_id, content=result.report, validations=stamper(state))
-            return result.report
+                return tool_state_update(
+                    tool_call_id=tool_call_id,
+                    content=result.result_str,
+                    validations=stamper(state),
+                )
+            return result.result_str
 
     return verify_spec

@@ -24,6 +24,9 @@ from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
 from composer.core.state import AIComposerState
 from composer.prover.core import CloudConfig
+from composer.prover.agentic_analyzer import AgenticCexHandler
+from composer.prover.report_store import ReportStore
+from composer.spec.proposal_store import ProposalStore
 from composer.core.validation import Validation, REQS_VALIDATION, prover_validation
 from composer.rag.db import rag_context, ComposerRAGDB
 from composer.rag.models import get_model as get_rag_model
@@ -384,12 +387,17 @@ async def _requirements_setup(
         reqs_list, extra_tools, extra_prompt, [REQS_VALIDATION]
     )
 
-def _get_codegen_tools() -> list[BaseTool]:
+def _get_codegen_tools(proposals: ProposalStore) -> list[BaseTool]:
     from composer.tools.prover import certora_prover
     from composer.tools.proposal import propose_spec_change
     from composer.tools.question import human_in_the_loop
     from composer.tools.result import code_result
-    from composer.tools.working_spec import CommitWorkingSpec, ReadWorkingSpec, WriteWorkingSpec
+    from composer.tools.working_spec import (
+        ApplyRemediationProposal,
+        CommitWorkingSpec,
+        ReadWorkingSpec,
+        WriteWorkingSpec,
+    )
 
     return [
         certora_prover,
@@ -398,6 +406,7 @@ def _get_codegen_tools() -> list[BaseTool]:
         code_result,
         ReadWorkingSpec.as_tool("read_working_spec"),
         WriteWorkingSpec.as_tool("write_working_spec"),
+        ApplyRemediationProposal.bind(proposals).as_tool("apply_remediation_proposal"),
         CommitWorkingSpec.as_tool("commit_working_spec")
     ]
 
@@ -572,6 +581,9 @@ async def _execute_ai_composer_workflow(
 
     extra_tools = [*req_tools]
 
+    report_store = ReportStore(store=resources.store)
+    proposal_store = ProposalStore(store=resources.store)
+
     if "context-management-2025-06-27" in getattr(llm, "betas"):
         memory = async_memory_tool(mem(get_memory_ns(mem_root, "composer")))
         extra_tools.append(memory)
@@ -594,7 +606,9 @@ async def _execute_ai_composer_workflow(
         ]),
         materializer,
         system_doc,
-        resources.memory(get_memory_ns(mem_root, "cex-remediation"))
+        resources.memory(get_memory_ns(mem_root, "cex-remediation")),
+        proposal_store,
+        report_store
     )
     extra_tools.append(cex_remediator)
 
@@ -603,7 +617,7 @@ async def _execute_ai_composer_workflow(
         .with_tools(all_cvl_tools)
         .with_tools(vfs_tools)
         .with_tools(extra_tools)
-        .with_tools(_get_codegen_tools())
+        .with_tools(_get_codegen_tools(proposal_store))
         .with_state(AIComposerState)
         .with_input(AIComposerInput)
         .with_context(AIComposerContext)
@@ -677,10 +691,24 @@ async def _execute_ai_composer_workflow(
     # canonical channel from CLI ``--prover-conf`` (resolved to dict at
     # parse time) or assistant ``CommonCodeGen.prover_conf``. No
     # input-side ride-along.
+    # The analyzer needs CVL research / manual / KB tools so it can ask
+    # CVL-language questions during analysis (e.g. "what does this summary
+    # construct produce in this case?"); the document-ref protocol partial
+    # in its system prompt teaches it to cite refs in its output, so
+    # downstream remediation picks up the same evidence trail without
+    # re-querying. Source-side reads are scoped per call to the prover's
+    # report folder via fs_tools — that's added inside analyze, not
+    # baked into the builder.
+    cex_handler = AgenticCexHandler(
+        builder=basic_builder.with_tools(all_cvl_tools),
+        report_store=report_store,
+    )
+
     work_context = AIComposerContext(
         llm=llm, rag_db=rag, prover_opts=prover_opts,
         vfs_materializer=materializer, required_validations=required_validations,
         prover_conf_overrides=workflow_options.prover_conf,
+        cex_handler=cex_handler
     )
 
     audit_sink = AuditStoreSink(audit_store, thread_id)

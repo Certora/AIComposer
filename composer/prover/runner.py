@@ -5,24 +5,19 @@ from pathlib import Path
 from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 
-from langgraph.config import get_store
-from langgraph.store.base import BaseStore
-
-from graphcore.graph import LLM
-
 from composer.diagnostics.stream import (
-    AuditUpdate, ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysisStart,
-    ProverOutputEvent, CloudPollingEvent, RuleAuditResult
+    ProverRun, ProverResult, RuleAnalysisResult, CEXAnalysisStart,
+    ProverOutputEvent, CloudPollingEvent,
 )
 from composer.prover.ptypes import RuleResult
 from composer.prover.core import (
-    RawReport, SummarizedReport, ProverOptions as CoreProverOptions,
-    ProverCallbacks, run_prover, DefaultCexHandler
+    ProverReport, ProverOptions as CoreProverOptions,
+    ProverCallbacks, run_prover,
 )
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
 
-type _ProverEvents = ProverOutputEvent | CloudPollingEvent | ProverRun | ProverResult | RuleAnalysisResult | CEXAnalysisStart | RuleAuditResult
+type _ProverEvents = ProverOutputEvent | CloudPollingEvent | ProverRun | ProverResult | RuleAnalysisResult | CEXAnalysisStart
 
 
 _COMPOSER_CONF_NAME = "_composer_run.conf"
@@ -124,37 +119,6 @@ class _AuditCallbacks(ProverCallbacks):
         }
         self._writer(evt)
 
-    @override
-    async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None:
-        evt: AuditUpdate = {
-            "analysis": analysis,
-            "rule": rule.name,
-            "status": rule.status,
-            "type": "rule_result",
-            "tool_id": self._tool_call_id,
-        }
-        self._writer(evt)
-
-class _CachingCEXAnalyzer(DefaultCexHandler):
-    def __init__(
-        self,
-        state: AIComposerState,
-        llm: LLM,
-        store: BaseStore
-    ):
-        super().__init__(llm=llm, state=state, summarization_threshold=10)
-        self._store = store
-    
-    @override
-    async def analyze_cex(self, rule: RuleResult, tid: str) -> str | None:
-        d = await self._store.aget(("cex", tid), rule.path.pprint())
-        if d is not None:
-            return d.value["analysis"]
-        res = await super().analyze_cex(rule, tid)
-        if res is not None:
-            await self._store.aput(("cex", tid), rule.path.pprint(), {"analysis": res})
-        return res
-
 async def certora_prover(
     source_files: List[str],
     target_contract: str,
@@ -165,7 +129,7 @@ async def certora_prover(
     tool_call_id: str,
     use_working_spec: bool,
     target_spec: Optional[str],
-) -> SummarizedReport | RawReport | str:
+) -> ProverReport | str:
     if use_working_spec:
         ws = state["working_spec"]
         if not ws:
@@ -220,18 +184,14 @@ async def certora_prover(
                 if rule is not None:
                     args.extend(["--rule", rule])
 
-            store = get_store()
-
-            result = await run_prover(
+            return await run_prover(
                 Path(temp_dir),
                 args,
                 tool_call_id,
                 CoreProverOptions(cloud=ctxt.prover_opts.cloud),
                 _AuditCallbacks(writer, tool_call_id),
-                _CachingCEXAnalyzer(state, ctxt.llm, store)
+                ctxt.cex_handler,
             )
-
-            return result
         except Exception as e:
             print(e)
             import traceback

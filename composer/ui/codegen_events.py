@@ -29,13 +29,6 @@ class CodeGenEventHandler(EventHandler):
             await self._io.progress_update(path, notice)
         elif is_audit_update(d) and self._audit is not None:
             match d["type"]:
-                case "rule_result":
-                    await self._audit.on_rule_result(
-                        rule=d["rule"],
-                        status=d["status"],
-                        analysis=d["analysis"],
-                        tool_id=d["tool_id"]
-                    )
                 case "manual_search":
                     await self._audit.on_manual_search(
                         tool_id=d["tool_id"],

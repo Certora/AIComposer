@@ -153,6 +153,13 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         self._rule_analyses: dict[str, str] = {}
         self._tool_output_panes: dict[str, VerticalScroll] = {}
         self._tool_spinners: dict[str, _ProverSpinner] = {}
+        # Analysis Agents collapsible per prover tool_call_id. Mounted on
+        # ``prover_run`` (safe ordering — the prover's await-loop pumps
+        # the queue), retracted on an all-verified ``prover_result``.
+        # See AgenticCexHandler.analyze: ``prover_result`` is itself
+        # too-late-to-mount because the sub-agent ``Start`` events are
+        # pushed to the queue synchronously before it flushes.
+        self._analysis_agents_panels: dict[str, Collapsible] = {}
         self.workflow_threads: dict[WorkflowPurpose, str] = {}
         self.result: WorkflowResult | None = None
 
@@ -205,9 +212,7 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         match upd["type"]:
             case "prover_run":
                 tool_call_id = upd["tool_call_id"]
-                logger.info("Prover run info")
                 anchor = self._renderer.get_tool_call_anchor(tool_call_id)
-                logger.info(f"Anchor is non-null? {anchor is not None}")
                 if anchor is not None:
                     inner = VerticalScroll()
                     coll = Collapsible(inner, title="Prover output", collapsed=False, classes="prover-scroll")
@@ -216,6 +221,23 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                     await parent.mount(coll, after=anchor)
                     await self._auto_scroll()
                     self._tool_output_panes[tool_call_id] = inner
+                # Pre-mount the Analysis Agents collapsible and install
+                # the within_tool override now. This MUST happen before
+                # any sub-agent Start events arrive on the queue —
+                # ``prover_run`` is the only safe arm for this because
+                # the prover's subprocess/poll await-loop yields long
+                # enough for the parent astream to drain. Mounting on
+                # ``prover_result`` would race: sub-agent Starts are
+                # pushed to the queue synchronously inside the same tool
+                # coroutine before the buffered prover_result flushes.
+                agents_inner = VerticalScroll(classes="analysis-agents-inner")
+                agents_coll = Collapsible(
+                    agents_inner, title="Analysis Agents",
+                    collapsed=False, classes="analysis-agents",
+                )
+                await self._mount_to(target, agents_coll)
+                self._analysis_agents_panels[tool_call_id] = agents_coll
+                self._renderer.install_within_tool_override(tool_call_id, agents_inner)
             case "prover_output":
                 pane = self._tool_output_panes.get(upd["tool_call_id"])
                 if pane is not None:
@@ -259,6 +281,14 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                     self._rule_row_keys[rule] = row_key
                 self._prover_table = table
                 await self._mount_to(target, table)
+                # Retract the empty Analysis Agents collapsible if no
+                # rule failed (the override and any pre-mounted panel
+                # are useless in that case).
+                if all(s == "VERIFIED" for s in upd["status"].values()):
+                    panel = self._analysis_agents_panels.pop(tool_call_id, None)
+                    if panel is not None:
+                        await panel.remove()
+                    self._renderer.clear_within_tool_override(tool_call_id)
             case "cex_analysis":
                 rule_name = upd["rule_name"]
                 row_key = self._rule_row_keys.get(rule_name)
@@ -299,10 +329,12 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         title = Text.assemble((label, "bold "), ("  ", ""), (filename, "dim"))
         self.push_screen(_ContentScreen(title, Static(syntax)))
 
-    async def render_state_extras(self, target: VerticalScroll, node_name: str, node_data: dict) -> None:
+    async def render_state_extras(
+        self, target: VerticalScroll, path: list[str], node_name: str, node_data: dict,
+    ) -> None:
         if "vfs" not in node_data:
             return
-        self._reset_tool_collapsing()
+        self._reset_tool_collapsing_for(path)
         count = len(node_data["vfs"])
         names = list(node_data["vfs"].keys())
         contents = {

@@ -3,9 +3,12 @@ A counterexample on the named rule has been diagnosed. Use the
 (Cache key passages in your memory rather than re-reading every round, but the full
 document is available for reference).
 
-## Rule under repair
+## Rule(s) under repair
 
-`{{ rule_name }}`
+The diagnosis below covers the following rule(s):
+{% for r in attributed_rules %}
+- `{{ r }}`
+{% endfor %}
 
 ## Target spec VFS path
 

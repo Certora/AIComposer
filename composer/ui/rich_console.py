@@ -131,9 +131,15 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
         await target.mount_all(widgets)
         await self._auto_scroll()
 
-    def _reset_tool_collapsing(self):
-        """Reset consecutive tool call collapsing state."""
-        self._renderer.reset_tool_collapsing()
+    def _reset_tool_collapsing_for(self, path: list[str]) -> None:
+        """Reset consecutive tool-call collapsing for the thread on
+        ``path``. Used by subclasses that mount non-tool widgets and
+        want to break the current group (e.g. a VFS-change line)."""
+        if not path:
+            return
+        state = self._renderer.threads.get(path[-1])
+        if state is not None:
+            state.tool_group.reset()
 
     # ── Abstract / overridable methods ────────────────────────
 
@@ -154,8 +160,14 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
         """Render a progress update into the target container."""
         ...
 
-    async def render_state_extras(self, target: VerticalScroll, node_name: str, node_data: dict) -> None:
-        """Handle non-message state data (e.g. VFS changes). Override in subclasses."""
+    async def render_state_extras(
+        self, target: VerticalScroll, path: list[str], node_name: str, node_data: dict,
+    ) -> None:
+        """Handle non-message state data (e.g. VFS changes). Override in subclasses.
+
+        ``path`` is the thread path so subclasses can scope tool-group
+        reset to the thread that produced this update.
+        """
         pass
 
     # ── IOHandler protocol ────────────────────────────────────
@@ -178,7 +190,9 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
     async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
         await self._mounted.wait()
         root = self.query_one("#event-log", VerticalScroll)
-        await self._renderer.render_start(root, path=path, description=description)
+        await self._renderer.render_start(
+            root, path=path, description=description, tool_id=tool_id,
+        )
 
     async def log_end(self, path: list[str]):
         await self._mounted.wait()
@@ -193,8 +207,8 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
             if node_name not in KNOWN_NODES:
                 continue
             if "messages" in v:
-                await self._renderer.render_messages(target, v["messages"])
-            await self.render_state_extras(target, node_name, v)
+                await self._renderer.render_messages(path, v["messages"])
+            await self.render_state_extras(target, path, node_name, v)
 
     async def progress_update(self, path: list[str], upd: P):
         await self._mounted.wait()

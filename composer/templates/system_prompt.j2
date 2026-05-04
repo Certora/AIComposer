@@ -131,10 +131,12 @@ question: is this a code bug or a spec-side issue?
 
 - **Spec-side issue** (HAVOC from an unresolved external call, missing structural
   invariant, ghost mismodeling, etc.) — invoke the **`cex_remediation`** sub-agent.
-  Pass the rule name, the spec path, and the diagnosis for the failing rule; it
-  returns a proposed full-spec replacement + rationale (and an optional `addendum`
-  for non-spec artifacts like stubs + validation rules). Stage the returned CVL via
-  the working-spec flow described below.
+  Pass the `report_key` printed alongside the diagnosis in the prover's report
+  (the section labelled "Diagnoses") plus the `target_spec_path`; the remediator
+  looks up the original diagnosis itself. The remediator returns a proposed full-spec replacement + rationale
+  (and an optional `addendum` for non-spec artifacts like stubs, validation
+  rules, or suggested Solidity side changes).
+  Stage the returned CVL via the working-spec flow described below.
 
 - **Spec is genuinely incorrect** — if the remediator concludes (or you do) that the
   rule asserts something the design doesn't actually require, propose the change via
@@ -198,13 +200,19 @@ runs. Further, any changes to the code requires all specs to be restamped.
 The flow from a remediator proposal to a stamped spec is mechanical:
 
 ```
-# cex_remediation returned a proposed_cvl + rationale (and maybe an addendum)
-write_working_spec(new_cvl=<proposed_cvl from cex_remediation>)
+# cex_remediation returned a diff + rationale + proposal_key (and maybe addendum)
+apply_remediation_proposal(proposal_key=<key from remediator's "Apply via" line>)
   → certora_prover(use_working_spec=True, ...)         # verify; does NOT stamp
   → if it surfaces a new CEX, go back to cex_remediation with the updated diagnosis
   → commit_working_spec(target_path=<spec VFS path>, explanation=<from rationale>)
   → certora_prover(target_spec=<same path>, use_working_spec=False)   # stamp
 ```
+
+`apply_remediation_proposal` is the default path: it fetches the remediator's full
+proposed CVL by key and stages it as your working draft, no need to re-emit the text
+yourself. Reach for `write_working_spec(new_cvl=...)` only when you need to tweak the
+proposal — typecheck error in the proposed CVL, small adjustment after the verify
+loop surfaces an issue, etc.
 
 There's only one working-spec slot; it's a scratch file, not bound to any particular
 spec until commit. Iteration runs (`use_working_spec=True`) do NOT stamp. Only the

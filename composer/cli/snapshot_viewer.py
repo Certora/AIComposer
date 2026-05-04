@@ -162,7 +162,7 @@ async def _load_messages(
         prev_ids: set[str] = set()
 
         for cid, msgs in history:
-            curr_ids = {m.id for m in msgs if getattr(m, "id", None) is not None}
+            curr_ids = {m_id for m in msgs if (m_id := getattr(m, "id", None)) is not None}
 
             # Summarization signature: prev was non-empty, curr is
             # non-empty, the two id-sets are disjoint. The intersection

@@ -28,6 +28,7 @@ from typing import NotRequired, override
 from typing_extensions import TypedDict
 from dataclasses import dataclass
 import difflib
+import uuid
 
 from pydantic import BaseModel, Field
 
@@ -45,7 +46,8 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.util import uniq_thread_id
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.ui.tool_display import tool_display
-
+from composer.prover.report_store import ReportStore
+from .proposal_store import ProposalStore
 
 class _CommonRemediationExtra(TypedDict):
     vfs: dict[str, str]
@@ -230,20 +232,61 @@ class CEXRemediationResult(BaseModel):
     )
 
 
-def _render_remediation(r: CEXRemediationResult) -> str:
-    """Render the remediator's proposal for the calling LLM. Tools must
-    return strings; the proposed CVL is delivered as plain text after the
-    rationale so the calling agent can lift it into the working-spec
-    flow. The optional ``addendum`` rides at the end so it doesn't get
-    confused with the spec text."""
+def _render_remediation(
+    r: CEXRemediationResult,
+    *,
+    diff_against: str,
+    proposal_key: str,
+    target_spec_path: str,
+) -> str:
+    """Render the remediator's proposal for the calling LLM.
+
+    The proposed CVL is delivered as a unified diff against the version
+    the remediator drafted from (working_version if present, else the
+    committed ground truth). The full text is retrievable via
+    ``proposal_key`` — ``write_working_spec(proposal_key=<key>)`` looks
+    it up.
+
+    Why a diff instead of the full text: when the full proposed spec is
+    inlined, by the time the codegen author finishes reading it,
+    attention has shifted away from the rationale and (importantly) the
+    addendum's Solidity-side instructions. A diff is much shorter, so
+    the rationale and addendum stay in the agent's active attention
+    window. The working-spec flow doesn't suffer because the agent
+    doesn't re-emit the full text — it passes the key.
+    """
+    diff_lines = list(difflib.unified_diff(
+        diff_against.splitlines(keepends=True),
+        r.proposed_cvl.splitlines(keepends=True),
+        fromfile="prior.spec",
+        tofile="proposed.spec",
+        n=3,
+    ))
+    diff_text = (
+        "".join(diff_lines)
+        if diff_lines
+        else "(no diff — proposal is byte-identical to the prior spec; "
+             "this is almost always a remediator bug — surface it in your turn)"
+    )
     parts = [
         "## Rationale",
         "",
         r.rationale,
         "",
-        "## Proposed spec contents",
+        "## Proposed change (diff against prior spec)",
         "",
-        r.proposed_cvl,
+        f"```diff\n{diff_text}```",
+        "",
+        "## Apply via",
+        "",
+        f"`apply_remediation_proposal(proposal_key=\"{proposal_key}\")`",
+        "",
+        f"Then verify with `certora_prover(use_working_spec=True, target_spec=\"{target_spec_path}\", ...)`. "
+        "The full proposed spec text is stored under the key; "
+        "`apply_remediation_proposal` fetches it and stages it as your "
+        "working draft. If the proposed CVL fails to typecheck or you need "
+        "a small tweak, fall through to `write_working_spec` with the "
+        "modified text.",
     ]
     if r.addendum is not None:
         parts.extend([
@@ -276,6 +319,8 @@ class _CEXRemediationDeps:
     # since ``_get_summarizer_pure`` rebuilds the post-summary message list
     # from the rendered initial prompt template alone.
     builder: Builder[_RemediationState, None, _RemediationInput]
+    reports: ReportStore
+    proposals: ProposalStore
 
 
 @tool_display("Drafting CEX remediation plan", "CEX remediation plan")
@@ -287,31 +332,42 @@ class CEXRemediator(
     """Delegate spec-side remediation of a (single) counterexample to a sub-agent.
 
     Use when a `certora_prover` run returned a CEX you've decided needs
-    a CVL-side fix (summary, ghost model, invariant) rather than a
-    code change. The sub-agent reads the diagnosis, explores via the
-    VFS and CVL research tools, drafts a candidate, runs the summary
-    critic for soundness review, and returns a proposed full-spec
-    replacement + rationale. You stay in charge of the working-spec
-    flow: stage the proposal via `write_working_spec`, verify with
+    a CVL-side fix (summary, ghost model, invariant, etc.) rather than a
+    code change. Pass the `report_key` printed alongside the failing
+    rule in the prover's reportit. The agent returns a proposed full-spec replacement +
+    rationale. You stay in charge of the working-spec flow: stage the
+    proposal via `write_working_spec`/`apply_remediation_proposal`, verify with
     `certora_prover(use_working_spec=True)`, then commit.
-
-    Call this tool with ONE counter example. Do *NOT* ask for remediations
-    of multiple counterexamples with unrelated root causes in the same tool call;
-    make multiple, distinct tool calls.
 
     Do NOT use for: code-side bug fixes, spec corrections that weaken
     the property (use `propose_spec_change` for genuine spec bugs,
-    with user review), or counterexamples whose root cause is an
-    impossible starting state (handle inline with invariants /
-    justification rules)."""
+    with user review)."""
 
-    rule_name: str = Field(description="The rule that failed.")
-    target_spec_path: str = Field(description="VFS path to the spec file under repair.")
-    cex_diagnosis: str = Field(description="The literal text of CEX analyzer's diagnosis for a SINGLE counterexample root cause.")
+    report_key: str = Field(
+        description=(
+            "The opaque report_key printed in the prover's report under "
+            "'Diagnoses'. Identifies the analyzed root cause; the remediator "
+            "looks up the diagnosis text itself."
+        ),
+    )
+    target_spec_path: str = Field(
+        description="VFS path to the spec file under repair.",
+    )
 
     @override
     async def run(self) -> str:
         with self.tool_deps() as deps:
+            # Look up the analyzer's diagnosis by report_key. Stale keys
+            # (from a prior prover run that's been superseded, or from a
+            # different thread) return None — surface as a recoverable
+            # error so the agent can re-run the prover for fresh keys.
+
+            diagnosis_record = await deps.reports.lookup(self.report_key)
+            if diagnosis_record is None:
+                return (
+                    f"No report found for report_key {self.report_key!r}."
+                )
+
             # Ground truth — the committed spec on the VFS. Authoritative
             # baseline; the codegen author cannot mutate this except via
             # `commit_working_spec` (an observable event the remediator's
@@ -343,9 +399,9 @@ class CEXRemediator(
             # it on demand via the `read_system_document` tool.
             graph = deps.builder.with_initial_prompt_template(
                 "cex_remediation_initial.j2",
-                rule_name=self.rule_name,
+                attributed_rules=diagnosis_record.attributed_rules,
                 target_spec_path=self.target_spec_path,
-                cex_diagnosis=self.cex_diagnosis,
+                cex_diagnosis=diagnosis_record.diagnosis,
                 ground_truth=ground_truth,
                 working_version=working_version,
             ).compile_async()
@@ -363,7 +419,20 @@ class CEXRemediator(
                 recursion_limit=300,
             )
             assert "result" in st
-            return _render_remediation(st["result"])
+            result: CEXRemediationResult = st["result"]
+
+            # Persist the full proposed_cvl under an opaque key so
+            # apply_remediation_proposal can fetch it without the
+            # codegen author having to re-emit (or paraphrase) the spec
+            # text. The codegen author only ever sees the diff + the key.
+            proposal_key = uuid.uuid4().hex
+            await deps.proposals.record(proposal_key, result.proposed_cvl)
+            return _render_remediation(
+                result,
+                diff_against=draft_against,
+                proposal_key=proposal_key,
+                target_spec_path=self.target_spec_path,
+            )
 
 
 def cex_remediation_tool(
@@ -371,6 +440,8 @@ def cex_remediation_tool(
     mat: VFSAccessor[VFSState],
     system_doc: InputFileLike,
     mem: AsyncMemoryBackend,
+    proposals: ProposalStore,
+    reports: ReportStore
 ) -> BaseTool:
     """Build the CEX-remediation sub-agent as a tool.
 
@@ -419,5 +490,5 @@ def cex_remediation_tool(
     )
 
     return CEXRemediator.bind(_CEXRemediationDeps(
-        mat=mat, builder=prebuilt
+        mat=mat, builder=prebuilt, proposals=proposals, reports=reports
     )).as_tool("cex_remediation")

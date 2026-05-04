@@ -130,8 +130,64 @@ review).
    iterating again rather than retrying the same draft.
 
 5. Deliver via the result tool: full proposed spec text + a one-paragraph rationale citing
-   the root-cause category (A/B/C/D) and the specific strategy you applied within it + a
+   the root-cause category (A/B/C/D/E) and the specific strategy you applied within it + a
    free form `addendum` field. The addendum field should be used to communicate any
    additional, non-spec artifacts that your remediation requires (e.g., proposed rules to
    add for other code, sound stubs, etc.). It can be left null if there is no extra
    artifacts needed.
+
+#### Root cause E — Other spec-side issues
+
+The CEX is reachable in the Prover's model but only because some part of the spec
+machinery is misconfigured or under-specified — not the starting state (A) and not an
+external call's HAVOC (B). Diagnostic signals: ghosts move in ways the implementation
+shouldn't allow, hook-tracked storage diverges from the Solidity-side state, an axiom
+the spec assumes is implicit but never declared.
+
+A non-exhaustive list of subcategories with their fixes:
+
+a. **Missing ghost axiom relating ghosts to each other or to storage.** Ghosts
+   without axioms are unconstrained — the Prover starts them at arbitrary values and
+   the trace will show them inconsistent with reality. Diagnostic: ghost values
+   appear in the CEX in combinations the implementation never produces.
+
+   Strategy: add `axiom` declarations expressing the relationship the ghost is
+   supposed to track. For state-tracking ghosts updated through hooks, prefer
+   `init_state` axioms that pin the initial value plus invariants over hook
+   transitions.
+
+b. **Missing or incorrect storage hook.** A hook is supposed to mirror Solidity-side
+   writes into a ghost (or invoke ghost-update logic), but either the hook isn't
+   declared, the hook pattern doesn't match the actual storage access, or the hook
+   body updates the wrong ghost variable. Diagnostic: a storage variable changes in
+   the trace but the corresponding ghost stays stale, or a ghost updates without a
+   corresponding storage write.
+
+   Strategy: declare or correct the hook. Match the hook pattern carefully —
+   `Sstore X[KEY] uint256 v` vs `Sstore X.field v` matter at the slot level. For
+   nested mappings, hooks must walk the slot path correctly. If a hook is firing
+   for the wrong storage slot, the fix is on the hook pattern, not the ghost.
+
+c. **`init_state` axiom missing or wrong.** The Prover starts every run from an
+   uninitialized state unless `init_state` axioms pin specific values. Without them,
+   structural-invariant rules can fail because the initial state doesn't satisfy the
+   invariant. Diagnostic: the rule's `assert` fires on the very first reachable
+   state, no method calls in between.
+
+   Strategy: declare the missing `init_state` axiom. Cite the constructor or
+   initializer that establishes the corresponding storage value in the
+   implementation; don't pin a value the actual deployment wouldn't produce.
+
+d. **Persistent ghost used to escape HAVOC but the persistence is unsound.**
+   `persistent ghost` survives unresolved-external-call HAVOC, but only when the
+   ghost's value genuinely cannot be modified by an external call. Using it as
+   armor against HAVOC for ghosts that real external calls *can* touch is unsound.
+
+   Strategy: remove `persistent`; if the underlying need is "external calls won't
+   touch this state", model the precise conditions via a summary on the call,
+   not via persistence.
+
+This category overlaps with B around ghost summaries — the question is whether the
+ghost is being mismodeled (E) or the call to which it relates is unresolved (B). When
+in doubt, the symptom of B is "external call → ghost havoc'd"; the symptom of E is
+"no external call in the trace, ghost still wrong from the start".
