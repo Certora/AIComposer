@@ -124,12 +124,17 @@ class IDEBridge:
 
     async def show_diff(
         self, original: str, modified: str, title: str | None = None
-    ) -> None:
-        """Open a diff view comparing *original* and *modified* text."""
+    ) -> "DiffHandle":
+        """Open a diff view comparing *original* and *modified* text.
+
+        Returns a :class:`DiffHandle` whose ``close()`` method dismisses the
+        diff tab.
+        """
         params: dict = {"originalContent": original, "modifiedContent": modified}
         if title is not None:
             params["title"] = title
-        await self._call("editor/showDiff", params)
+        result = await self._call("editor/showDiff", params)
+        return DiffHandle(self, result["diffId"])
 
     async def show_webview(
         self,
@@ -166,3 +171,19 @@ class IDEBridge:
     async def reject_results(self, preview_id: str) -> None:
         """Reject and discard a preview."""
         await self._call("results/reject", {"previewId": preview_id})
+
+
+class DiffHandle:
+    """Handle to a diff view opened via :meth:`IDEBridge.show_diff`."""
+
+    def __init__(self, bridge: IDEBridge, diff_id: str):
+        self._bridge = bridge
+        self._diff_id = diff_id
+        self._closed = False
+
+    async def close(self) -> None:
+        """Close the diff tab. Idempotent."""
+        if self._closed:
+            return
+        self._closed = True
+        await self._bridge._call("editor/closeDiff", {"diffId": self._diff_id})
