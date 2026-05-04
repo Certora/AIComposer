@@ -34,6 +34,7 @@ accordingly.
 from typing import Any, override, Sequence, Callable
 from langchain_core.tools import BaseTool
 import uuid
+from langchain_core.messages.tool import ToolCall
 
 from langchain_core.language_models.fake_chat_models import (
     FakeMessagesListChatModel,
@@ -76,7 +77,7 @@ class _CodegenFakeLLM(FakeMessagesListChatModel):
         return self
 
 
-def _tc(name: str, **args: Any) -> dict[str, Any]:
+def _tc(name: str, **args: Any) -> ToolCall:
     """Construct a tool_call dict. The ``id`` is generated per call so
     every tape entry has a unique id (LangGraph requires this to bind
     tool responses back to their calls)."""
@@ -88,11 +89,20 @@ def _tc(name: str, **args: Any) -> dict[str, Any]:
     }
 
 
-def _ai(text: str = "", *tool_calls: dict[str, Any]) -> AIMessage:
+def _ai(text: str = "", *tool_calls: ToolCall) -> AIMessage:
     """Helper for authoring a tape entry: optional text + zero or more
     tool_calls. LangGraph's ReAct loop transitions to the tools node when
     ``tool_calls`` is non-empty, and to END otherwise."""
-    return AIMessage(content=text, tool_calls=list(tool_calls))
+    res : list[str | dict] = []
+    if text:
+        res.append(text)
+    res.extend([ { 
+        "type": "tool_use",
+        "id": t["id"],
+        "name": t["name"],
+        "input": t["args"]
+     } for t in tool_calls])
+    return AIMessage(content=res, tool_calls=list(tool_calls))
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +647,10 @@ _VAULT_TAPE: list[BaseMessage] = [
         ),
     ),
 
+    _ai(
+        "The doubling error persists in your implementation"
+    ),
+
     # G.3 — ask to commit. Expected human response is a rejection string.
     # commit_working_spec treats anything not starting with "ACCEPTED" as
     # returned-to-LLM feedback, so the working spec stays in state.
@@ -664,7 +678,11 @@ _VAULT_TAPE: list[BaseMessage] = [
         _tc(
             "write_working_spec",
             new_cvl=WORKING_SPEC_DRAFT_V2,
-        ),
+        )
+    ),
+
+    _ai(
+        "",
         _tc(
             "commit_working_spec",
             explanation=(
