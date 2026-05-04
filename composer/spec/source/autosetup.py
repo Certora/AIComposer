@@ -90,7 +90,7 @@ async def run_autosetup(
     with tempfile.NamedTemporaryFile("r") as f:
         main_contract_path = f"{relative_path}:{contract_name}"
         args = [
-            sys.executable, "-m", "orchestrator",
+            sys.executable, "-m", "certora_autosetup.autosetup",
             "--composer-setup", f.name,
             "--skip-hashing-bound-detection", "1024",
             "--use-local-runner",
