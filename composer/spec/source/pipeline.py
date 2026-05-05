@@ -125,12 +125,12 @@ async def run_autoprove_pipeline(
         components=comp
     )
 
-    # Build initial resources from PreAudit-generated summaries
+    # Build initial resources from AutoSetup-generated summaries
     resources: list[CVLResource] = [
         CVLResource(
             import_path=str(setup.config.summaries_path),
             required=True,
-            description="PreAudit-generated summaries",
+            description="AutoSetup-generated summaries",
             sort="import",
         ),
     ]

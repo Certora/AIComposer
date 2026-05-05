@@ -5,7 +5,7 @@ import asyncio
 import composer.bind as _
 
 from composer.ui.autoprove_console import AutoProveConsoleHandler
-from composer.spec.source.autoprove_common import _entry_point, Executor
+from composer.spec.source.autoprove_common import _entry_point
 
 
 # ---------------------------------------------------------------------------
@@ -13,10 +13,8 @@ from composer.spec.source.autoprove_common import _entry_point, Executor
 # ---------------------------------------------------------------------------
 
 async def _main() -> int:
-    async def run(
-        ex: Executor
-    ) -> int:
-        result = await ex(AutoProveConsoleHandler().make_handler)
+    async with _entry_point() as run:
+        result = await run(AutoProveConsoleHandler().make_handler)
         print(f"\n{'=' * 60}")
         print("Auto-prove complete")
         print(f"  Components:  {result.n_components}")
@@ -27,7 +25,6 @@ async def _main() -> int:
                 print(f"    - {f}")
         print(f"{'=' * 60}")
         return 0
-    return await _entry_point(run)
 
 
 def main() -> int:

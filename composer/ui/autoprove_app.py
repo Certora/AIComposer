@@ -20,7 +20,7 @@ from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo, TaskHost,
 )
 from composer.spec.source.prover import ProverOutputEvent, CloudPollingEvent
-from composer.spec.source.preaudit_setup import PreAuditEvents
+from composer.spec.source.autosetup import AutoSetupEvents
 
 
 # ---------------------------------------------------------------------------
@@ -188,19 +188,19 @@ class AutoProveTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
 
     @override
     async def handle_progress_event(self, payload: dict) -> None:
-        evt = cast(PreAuditEvents, payload)
+        evt = cast(AutoSetupEvents, payload)
         _logger.error(str(payload))
         match evt["type"]:
-            case "pre_audit_complete":
-                log = await self._ensure_prover_log("_preaudit_setup", "PreAudit Agent")
+            case "auto_setup_complete":
+                log = await self._ensure_prover_log("_autosetup", "AutoSetup Agent")
                 p : Collapsible = log.parent #type: ignore
                 p.collapsed = True
-            case "pre_audit_start":
-                log = await self._ensure_prover_log("_preaudit_setup", "PreAudit Agent")
+            case "auto_setup_start":
+                log = await self._ensure_prover_log("_autosetup", "AutoSetup Agent")
                 p : Collapsible = log.parent #type: ignore
                 p.collapsed = False
-            case "pre_audit_output":
-                log = await self._ensure_prover_log("_preaudit_setup", "PreAudit Agent")
+            case "auto_setup_output":
+                log = await self._ensure_prover_log("_autosetup", "AutoSetup Agent")
                 log.write(evt["line"])
 
 

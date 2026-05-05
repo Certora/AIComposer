@@ -4,7 +4,8 @@ import argparse
 import hashlib
 import pathlib
 import uuid
-from typing import cast, Protocol, Callable, Awaitable
+from contextlib import asynccontextmanager
+from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
 from graphcore.tools.memory import async_memory_tool
 
@@ -62,9 +63,9 @@ def _root_cache_key(
 # ---------------------------------------------------------------------------
 
 type Executor = Callable[[HandlerFactory[AutoProvePhase, None]], Awaitable[AutoProveResult]]
-type ExecutorCB = Callable[[Executor], Awaitable[int]]
 
-async def _entry_point(cb: ExecutorCB) -> int:
+@asynccontextmanager
+async def _entry_point() -> AsyncIterator[Executor]:
     parser = argparse.ArgumentParser(
         description="Auto-prove multi-agent pipeline TUI"
     )
@@ -86,8 +87,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
 
     full_contract_path = pathlib.Path(main_contract_path).resolve()
     if not full_contract_path.is_relative_to(project_root):
-        print(f"Invalid path: {full_contract_path} doesn't appear in project root {project_root}")
-        return 1
+        parser.error(f"Invalid path: {full_contract_path} doesn't appear in project root {project_root}")
 
     relative_path = str(full_contract_path.relative_to(project_root))
 
@@ -95,8 +95,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
     sys_path = pathlib.Path(args.system_doc)
     content = get_system_doc(sys_path)
     if content is None:
-        print(f"Error: cannot read {sys_path}")
-        return 1
+        parser.error(f"cannot read {sys_path}")
 
     system_doc = SourceCode(
         content=content,
@@ -157,4 +156,5 @@ async def _entry_point(cb: ExecutorCB) -> int:
                     cloud=CloudConfig() if args.cloud else None,
                     max_concurrent=args.max_concurrent,
                 )
-        return await cb(runner)
+
+        yield runner
