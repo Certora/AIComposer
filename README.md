@@ -44,7 +44,7 @@ variable is configured to point to the output of this build (`CertoraProver/targ
 
 ## AI Composer Requirements
 
-First, log in to the Certora CodeArtifact PyPI registry via `make login`. Then install the
+First, install the certora-cloud CLI: `uv tool install "git+ssh://git@github.com/Certora/certora-cloud-cli.git"`. Then log in to the Certora CodeArtifact PyPI registry via `make login`. Then install the
 requirements for AI Composer via `uv sync --group ml`. You may do this in
 a virtual environment, and in such case you also need to install the dependencies for the `certora-cli`:
 `uv pip install -r certora_cli_requirements.txt` from the `CertoraProver/scripts` folder, and optionally the Solidity compiler, if none is
