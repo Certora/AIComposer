@@ -160,6 +160,7 @@ class UploadPaths(Protocol):
     interface_file: Optional[str]
     system_doc: Optional[str]
     source_root: Optional[str]
+    output_folder: Optional[str]
     contract_name: Optional[str]
     implementation_path: Optional[str]
 

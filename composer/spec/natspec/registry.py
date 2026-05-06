@@ -476,7 +476,8 @@ class StubRegistry:
                 )
             )
             purpose: str = PydanticField(
-                description="Natural language description of what the field should track"
+                description="Natural language description of what the field should track, along with its " \
+                "expected shape/type (address, signed int, unsigned int, etc.)"
             )
 
             @override

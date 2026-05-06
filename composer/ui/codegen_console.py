@@ -25,8 +25,15 @@ class CodegenConsoleHandler(ConsoleHandler):
     instead of per-line stdout streaming.
     """
 
-    def __init__(self, capture_prover_output: bool = False) -> None:
-        super().__init__(capture_prover_output=capture_prover_output)
+    def __init__(
+        self,
+        capture_prover_output: bool = False,
+        output_folder: str | None = None,
+    ) -> None:
+        super().__init__(
+            capture_prover_output=capture_prover_output,
+            output_folder=output_folder,
+        )
         self._descriptions: dict[str, str] = {}
 
     def _label(self, path: list[str]) -> str:

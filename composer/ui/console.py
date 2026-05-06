@@ -1,6 +1,7 @@
 from typing import Callable
 
 import difflib
+import pathlib
 
 from rich.console import Console
 
@@ -37,8 +38,17 @@ class BaseConsoleHandler[H, P]:
 
 
 class ConsoleHandler(BaseConsoleHandler[HumanInteractionType, ProgressUpdate]):
-    def __init__(self, capture_prover_output: bool = False):
+    def __init__(
+        self,
+        capture_prover_output: bool = False,
+        output_folder: str | None = None,
+    ):
         self._capture_prover_output = capture_prover_output
+        # Pre-resolved by the CLI entry point: ``--output-folder`` if
+        # explicitly given, else ``--source-root`` if set, else ``None``.
+        # ``None`` triggers an interactive prompt at output time;
+        # blank input there skips the disk write.
+        self._output_folder = output_folder
 
     async def log_workflow_thread(self, purpose: WorkflowPurpose, thread_id: str) -> None:
         print(f"[{purpose.value}] thread: {thread_id}")
@@ -154,7 +164,48 @@ class ConsoleHandler(BaseConsoleHandler[HumanInteractionType, ProgressUpdate]):
             print(f"\n--- {path} ---")
             file_contents = mat.get(st, path)
             assert file_contents is not None
-            content = file_contents.decode("utf-8")
-            print(content)
+            print(file_contents.decode("utf-8"))
 
         print(f"\nComments: {res.comments}")
+
+        target = self._resolve_output_folder()
+        if target is None:
+            print("\nNo output folder configured; skipping disk write.")
+            return
+        # Iterate the VFS dirty layer rather than ``res.source``: the
+        # layer holds everything that needs to be persisted (agent-
+        # generated sources plus mutated/new specs). The upload step
+        # drops specs whose contents already match the source_root
+        # underlay (see ``executor.get_fresh_input``), so iterating
+        # ``state["vfs"]`` writes exactly the diff that's not already
+        # on disk.
+        self._write_sources(target, list(st["vfs"].items()))
+
+    def _resolve_output_folder(self) -> pathlib.Path | None:
+        """Return the target directory for the disk write, or ``None``
+        when the user opts out at the prompt.
+
+        Constructor argument wins; otherwise we ask interactively. Blank
+        input at the prompt means "don't write anything".
+        """
+        if self._output_folder is not None:
+            return pathlib.Path(self._output_folder).expanduser().resolve()
+        raw = input(
+            "Enter a directory to write the generated files to "
+            "(blank to skip): "
+        ).strip()
+        if not raw:
+            return None
+        return pathlib.Path(raw).expanduser().resolve()
+
+    def _write_sources(
+        self, target: pathlib.Path, sources: list[tuple[str, str]],
+    ) -> None:
+        """Write each ``(vfs_path, content)`` pair to ``target / vfs_path``."""
+        target.mkdir(parents=True, exist_ok=True)
+        print(f"\nWriting {len(sources)} file(s) to {target}:")
+        for vfs_path, content in sources:
+            dest = target / vfs_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content)
+            print(f"  {dest}")

@@ -248,6 +248,12 @@ def fresh_workflow_argument_parser(argv: list[str]) -> TypedArgumentParser[Comma
                         help="Path to an existing codebase to use as the VFS underlay. "
                              "When set, agents see existing files read-only and can layer new files on top. "
                              "In JSON mode, this overrides the JSON's source_root field instead")
+    parser.add_argument("--output-folder", dest="output_folder", default=None,
+                        help="Directory to write the generated source files into on success. "
+                             "VFS paths land underneath this directory (e.g. a VFS path of "
+                             "``certora/MyContract.sol`` becomes ``<output-folder>/certora/MyContract.sol``). "
+                             "Defaults to ``--source-root`` when that is set; otherwise the console handler "
+                             "prompts for a target at the end of the run.")
     _common_options(parser)
 
     return cast(TypedArgumentParser[CommandLineArgs], parser)

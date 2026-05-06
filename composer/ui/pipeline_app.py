@@ -32,6 +32,7 @@ from composer.spec.natspec.codegen_export import (
     plan_preview_files,
     plan_to_json,
 )
+from composer.spec.natspec.report import export_report, report_from_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +193,12 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
                 Static(Text(f"Plan: {plan_json_path}", style="bold cyan"))
             )
 
+        report_path = self._write_report(result)
+        if report_path is not None:
+            await summary.mount(
+                Static(Text(f"Report: {report_path}", style="bold cyan"))
+            )
+
         if self._ide is not None:
             preview_id: str | None = None
             try:
@@ -290,6 +297,18 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         path = out / "implementation_plan.json"
         path.write_text(json.dumps(plan_to_json(plan), indent=2, default=str))
         return path
+
+    def _write_report(self, result: PipelineResult) -> pathlib.Path | None:
+        """Write ``natspec_report.md`` under ``--output-root`` if set.
+
+        The report is the human-readable counterpart to the codegen
+        plan: per-contract properties, generated specs, skipped /
+        failed properties with reasons.
+        """
+        if self._output_root is None:
+            return None
+        report = report_from_pipeline(result)
+        return export_report(report, self._output_root)
 
     def _write_files_under_output_root(
         self, files: dict[str, str]

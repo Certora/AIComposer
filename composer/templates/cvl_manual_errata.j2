@@ -57,4 +57,9 @@ The manual states that user defined types cannot be used as keys into ghost mapp
 As an exception, a user defined VALUE type (e.g. `type MyType is bytes32;`) CAN be used
 as a key.
 
+## Zero Address Literals
+
+The literal `0` is a *valid* instance of `address`. You do not need `address(0)`, `to_address(0)`
+or any other such casting. The literal `0` is acceptable anywhere a value of type `address` is expected.
+
 END ERRATA

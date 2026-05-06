@@ -33,10 +33,17 @@ async def _main() -> int:
     print("Reading input files...")
     input_data = await upload_input(args)
 
+    # Effective output folder for the disk write at end-of-run:
+    # explicit ``--output-folder`` wins; otherwise fall back to
+    # ``--source-root`` (the from-source workspace is the natural target);
+    # otherwise ``None`` and the handler prompts.
+    output_folder = args.output_folder or input_data.source_root
+
     print("Starting AI Composer workflow...")
     result = await execute_ai_composer_workflow(
         handler=CodegenConsoleHandler(
-            capture_prover_output=args.prover_capture_output
+            capture_prover_output=args.prover_capture_output,
+            output_folder=output_folder,
         ),
         llm=llm,
         input=input_data,

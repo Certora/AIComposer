@@ -66,6 +66,7 @@ tui-codegen = "composer.cli.tui_codegen:main"
 tui-natspec = "composer.cli.tui_pipeline:main"
 cache-autoprove = "composer.cli.cache_autoprove:main"
 cache-natspec = "composer.cli.cache_natspec:main"
+natspec-report = "composer.cli.natspec_report:main"
 snapshot-viewer = "composer.cli.snapshot_viewer:main"
 ai-compose = "composer.cli.compose:main"
 
