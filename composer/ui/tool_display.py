@@ -163,6 +163,11 @@ class CommonTools:
         lambda p: ", ".join(p.get("files", {}).keys()),
         lambda items: f"Wrote: {', '.join(items)}",
     )
+    edit_file = GroupedTool(
+        "edit",
+        lambda p: ", ".join(p.get("files", {}).keys()),
+        lambda items: f"Edited: {', '.join(items)}"
+    )
     list_files = ToolDisplay("Listing files", "File listing")
     grep_files = ToolDisplay(
         lambda p: f"Searching files for: {p.get('search_string', '?')}",
@@ -349,7 +354,8 @@ _graphcore_global_tools = {
     "list_files": CommonTools.list_files,
     "grep_files": CommonTools.grep_files,
     "result": CommonTools.result,
-    "memory": CommonTools.memory
+    "memory": CommonTools.memory,
+    "edit_file": CommonTools.edit_file
 }
 
 _ns_global_tools = {}
