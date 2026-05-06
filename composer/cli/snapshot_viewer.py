@@ -29,6 +29,7 @@ from textual.binding import Binding
 from rich.text import Text
 from rich.syntax import Syntax
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -107,7 +108,7 @@ async def _load_messages(
     resume); the disjoint-id signature is exact.
     """
     async with checkpointer_context() as checkpointer:
-        anchor_config: dict = {"configurable": {"thread_id": thread_id}}
+        anchor_config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
         if checkpoint_id is not None:
             anchor_config["configurable"]["checkpoint_id"] = checkpoint_id
         anchor = await checkpointer.aget_tuple(anchor_config)
@@ -132,9 +133,11 @@ async def _load_messages(
         #
         # Pre-fetch the whole forest by id so the parent walk is in-memory
         # rather than one DB round trip per hop.
-        list_config = {"configurable": {"thread_id": thread_id}}
+        list_config : RunnableConfig = {"configurable": {"thread_id": thread_id}}
         by_id: dict[str, CheckpointTuple] = {}
         async for ct in checkpointer.alist(list_config):
+            if "configurable" not in ct.config:
+                continue
             cid = ct.config["configurable"].get("checkpoint_id")
             if cid is not None:
                 by_id[cid] = ct
@@ -142,7 +145,7 @@ async def _load_messages(
         history: list[tuple[str, list[BaseMessage]]] = []
         current_ct = anchor
         while current_ct is not None:
-            cid = current_ct.config["configurable"].get("checkpoint_id")
+            cid = current_ct.config.get("configurable", {}).get("checkpoint_id")
             if cid is None:
                 break
             ckpt_msgs = current_ct.checkpoint["channel_values"].get("messages", [])
