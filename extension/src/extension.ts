@@ -36,6 +36,17 @@ export function activate(context: vscode.ExtensionContext): void {
   registerResultsHandlers(proposedTree, virtualDocProvider);
   context.subscriptions.push(...registerResultsCommands(proposedTree, virtualDocProvider));
 
+  // Window-scoped only. Without this the collection persists across
+  // VS Code restarts, which means terminals opened during the next
+  // session's activation gap (or restored from the prior session)
+  // capture STALE port/token values from the prior server. New
+  // terminals opened post-activation got the right values, but
+  // pre-activation terminals silently held a port the new server
+  // wasn't listening on. Setting persistent = false clears the
+  // collection between sessions; pre-activation terminals see the
+  // env vars unset (clean failure) rather than wrong (silent failure).
+  context.environmentVariableCollection.persistent = false;
+
   startServer({
     onReady: (info) => {
       const env = context.environmentVariableCollection;

@@ -163,90 +163,10 @@ class ConfigurationBuilder:
             yield path / "certora" / basename
 
 
-@contextlib.asynccontextmanager
-async def _project_directory(
-    source_root: pathlib.Path | None,
-    populate: Callable[[pathlib.Path], None],
-) -> AsyncIterator[pathlib.Path]:
-    """Create a tmpdir, mirror ``source_root`` into it if set, run ``populate``, yield the tmpdir."""
-    with tempfile.TemporaryDirectory() as td:
-        tmpdir = pathlib.Path(td)
-        if source_root is not None:
-            for entry in source_root.iterdir():
-                target = tmpdir / entry.name
-                if entry.is_dir():
-                    await asyncio.to_thread(shutil.copytree, entry, target)
-                else:
-                    shutil.copy(entry, target)
-        populate(tmpdir)
-        yield tmpdir
-
-
 class Assembler(ABC):
     @abstractmethod
     def project_directory(self) -> AsyncContextManager[pathlib.Path]:
         ...
-
-
-@dataclass
-class InterfaceGenAssembler(Assembler):
-    """Lays out interfaces for solc compilation. No stubs.
-
-    Used by the interface-gen agent's ``validate_interface``.
-    """
-    interface: InterfaceResult
-    source_root: pathlib.Path | None = None
-
-    def project_directory(self) -> AsyncContextManager[pathlib.Path]:
-        def populate(tmpdir: pathlib.Path) -> None:
-            self.interface.dump_to_path(tmpdir)
-        return _project_directory(self.source_root, populate)
-
-
-def _write_stub(tmpdir: pathlib.Path, stub: StubDeclarationModel) -> None:
-    """Write a stub to its agent-chosen ``stub.path`` under ``tmpdir``."""
-    target = tmpdir / stub.path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(stub.content)
-
-
-@dataclass
-class StubGenAssembler(Assembler):
-    """Lays out interfaces + a single candidate stub.
-
-    Used by the stub-gen agent's ``validate_stub``. The stub is placed at
-    its agent-chosen ``stub.path`` (project-relative).
-    """
-    interface: InterfaceResult
-    stub: StubDeclarationModel
-    source_root: pathlib.Path | None = None
-
-    def project_directory(self) -> AsyncContextManager[pathlib.Path]:
-        def populate(tmpdir: pathlib.Path) -> None:
-            self.interface.dump_to_path(tmpdir)
-            _write_stub(tmpdir, self.stub)
-        return _project_directory(self.source_root, populate)
-
-
-@dataclass
-class SpecCheckAssembler(Assembler):
-    """Lays out interfaces + all current stubs. The spec is layered in by the
-    caller via ``temp_certora_file`` after ``project_directory()`` yields.
-
-    Used by ``typecheck_spec`` (merge typecheck + advisory typecheck). Each
-    stub is written to its own agent-chosen ``stub.path``.
-    """
-    interface: InterfaceResult
-    stubs: dict[str, StubDeclarationModel] = field(default_factory=dict)
-    source_root: pathlib.Path | None = None
-
-    def project_directory(self) -> AsyncContextManager[pathlib.Path]:
-        def populate(tmpdir: pathlib.Path) -> None:
-            self.interface.dump_to_path(tmpdir)
-            for stub in self.stubs.values():
-                _write_stub(tmpdir, stub)
-        return _project_directory(self.source_root, populate)
-
 
 @dataclass
 class MentalModel[A: NatspecApplication, I: InterfaceDeclModel, S: StubDeclarationModel]:
@@ -272,19 +192,3 @@ class MentalModel[A: NatspecApplication, I: InterfaceDeclModel, S: StubDeclarati
     def config_builder(self) -> ConfigurationBuilder:
         """Fresh ``ConfigurationBuilder`` seeded with the user's ``prover_conf``."""
         return ConfigurationBuilder(self.config_init)
-
-    def assembler_for_interface_gen(self, interface: InterfaceResult[I]) -> Assembler:
-        """Assembler for validating a candidate interface (no stubs)."""
-        return InterfaceGenAssembler(interface=interface, source_root=self.source_root)
-
-    def assembler_for_stub_gen(
-        self, interface: InterfaceResult[I], stub: S
-    ) -> Assembler:
-        """Assembler for validating a candidate stub against the interfaces."""
-        return StubGenAssembler(interface=interface, stub=stub, source_root=self.source_root)
-
-    def assembler_for_spec_check(
-        self, interface: InterfaceResult[I], stubs: dict[str, S]
-    ) -> Assembler:
-        """Assembler for spec typecheck (merge + advisory) — interfaces + all current stubs."""
-        return SpecCheckAssembler(interface=interface, stubs={ **stubs }, source_root=self.source_root)

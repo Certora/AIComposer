@@ -317,9 +317,8 @@ def _decode_text_files(items: Iterable[tuple[str, bytes]]) -> dict[str, str]:
     """Decode VFS bytes as UTF-8, dropping anything binary.
 
     The audit store's ``StoredVFS`` is a flat ``{path: str}`` dict — it
-    has no place for binary blobs. NEST source roots routinely contain
-    PDFs / images / fonts; rather than crash the run on the first
-    ``UnicodeDecodeError``, skip them with a log line and keep going.
+    has no place for binary blobs. Sources routingly contain binary files
+    (images, pdf, git blobs); skip them with a log line and keep going.
     Resume from this snapshot won't restore those binaries, but they
     weren't going to round-trip through a JSONB string column anyway."""
     import logging

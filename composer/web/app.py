@@ -254,7 +254,7 @@ async def create_run(
         # Build the RunRequest at submit time so retry has a stable
         # handle on cache_ns / root_thread_id (the two values needed
         # to differentiate soft vs hard retry semantics).
-        request = RunRequest(
+        run_request = RunRequest(
             project_id=project_id,
             main_contract_raw=main_contract,
             model=model,
@@ -266,9 +266,9 @@ async def create_run(
             memory_ns=None,
             root_thread_id=f"autoprove_{uuid.uuid4().hex[:12]}",
         )
-        run.request = request
+        run.request = run_request
         asyncio.create_task(run_real_pipeline(
-            run, project_root=project.project_root, request=request,
+            run, project_root=project.project_root, request=run_request,
         ))
 
     return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
