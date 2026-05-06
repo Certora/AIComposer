@@ -46,7 +46,7 @@ from composer.io.conversation import (
     ConversationClient, AIYapping, ToolComplete, ThinkingStart, ToolBatch, ProgressPayload,
     StateUpdate
 )
-from composer.io.stream import AsyncDataQueue
+from composer.io.stream import AsyncDataQueue, ManagedQueue, managed_streamer, EndConversation, Checkpoint
 from composer.io.multi_job import TaskHandle, TaskInfo
 
 
@@ -116,21 +116,6 @@ class _ThinkingSpinner(Static):
             self._timer = None
 
 
-@dataclass
-class _EndConversation:
-    """Internal sentinel pushed to the progress queue to stop the reader."""
-    pass
-
-
-@dataclass
-class _Checkpoint:
-    """Internal sentinel that signals an event when the reader reaches it.
-
-    Used to wait for the reader to drain all prior progress events
-    before mounting widgets inline (e.g. the human-input row).
-    """
-    done: asyncio.Event
-
 class _ConversationSession(ToolCallRenderer):
     """Runs one refinement conversation inside a task panel.
 
@@ -165,7 +150,7 @@ class _ConversationSession(ToolCallRenderer):
         self._set_status = set_status
         self._opening = opening
 
-        self._queue: AsyncDataQueue[ProgressPayload | _EndConversation | _Checkpoint] = AsyncDataQueue(
+        self._queue: ManagedQueue[ProgressPayload] = AsyncDataQueue(
             _ready=asyncio.Event(), _event_stream=[]
         )
         self._render_task: asyncio.Task | None = None
@@ -174,19 +159,10 @@ class _ConversationSession(ToolCallRenderer):
 
     # ── Progress handling ───────────────────────────────────────
 
-    async def _progress_reader(self) -> None:
-        async for ev in self._queue.stream_events():
-            if isinstance(ev, _EndConversation):
-                return
-            if isinstance(ev, _Checkpoint):
-                ev.done.set()
-                continue
-            await self._handle_event(ev)
-
     async def _drain(self) -> None:
         """Wait for the reader to process every event queued so far."""
         done = asyncio.Event()
-        self._queue.push(_Checkpoint(done))
+        self._queue.push(Checkpoint(done))
         await done.wait()
     
     def render_ai_yapping(self, text: str) -> Static:
@@ -283,14 +259,14 @@ class _ConversationSession(ToolCallRenderer):
             self._panel,
             Static(self._opening),
         )
-        self._render_task = asyncio.create_task(self._progress_reader())
+        self._render_task = managed_streamer(self._queue, self._handle_event)
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         if self._render_task is not None:
             if exc is None:
                 # Drain any pending events, then stop cleanly.
-                self._queue.push(_EndConversation())
+                self._queue.push(EndConversation())
                 await self._render_task
             else:
                 # Abort on exception — don't try to render further events.
