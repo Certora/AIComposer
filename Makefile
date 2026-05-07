@@ -17,3 +17,11 @@ update-deps: login
 .PHONY: build
 build:
 	uv build
+
+.PHONY: pytest
+pytest:
+	uv run pytest tests/
+
+.PHONY: pyright
+pyright:
+	uv run pyright composer/ analyzer sanity_analyzer

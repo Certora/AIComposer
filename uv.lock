@@ -43,6 +43,7 @@ prover = [
 [package.dev-dependencies]
 ci = [
     { name = "pyright" },
+    { name = "sentence-transformers" },
 ]
 ragbuild = [
     { name = "beautifulsoup4" },
@@ -83,7 +84,10 @@ requires-dist = [
 provides-extras = ["ml", "pou", "prover"]
 
 [package.metadata.requires-dev]
-ci = [{ name = "pyright" }]
+ci = [
+    { name = "pyright" },
+    { name = "sentence-transformers", specifier = ">=5.1" },
+]
 ragbuild = [
     { name = "beautifulsoup4", specifier = "==4.13.5" },
     { name = "einops" },
