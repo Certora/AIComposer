@@ -26,7 +26,7 @@ from langgraph.graph import MessagesState
 from langgraph.store.base import BaseStore
 
 from graphcore.graph import FlowInput
-from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 from graphcore.tools.vfs import Materializer
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
@@ -142,6 +142,8 @@ async def run_registry_agent(
     solc_version: str,
     builder: PlainBuilder,
     assembler: Assembler,
+    *,
+    within_tool: str,
 ) -> RegistryResult:
     """Spawn a fresh registry agent to handle a single field request.
 
@@ -209,6 +211,7 @@ async def run_registry_agent(
         thread_id=uniq_thread_id("stub-registrar"),
         recursion_limit=20,
         description="Stub update",
+        within_tool=within_tool,
     )
     assert "result" in res
     return res["result"]
@@ -392,7 +395,9 @@ class StubRegistry:
         )
         await self._store.aput(self._namespace, STUB_STORE_KEY, to_put)
 
-    async def request_field(self, nm: str, purpose: str) -> str:
+    async def request_field(
+        self, nm: str, purpose: str, *, within_tool: str ,
+    ) -> str:
         """Request a stub field for a given purpose. Serialized via lock.
 
         Spawns a fresh registry agent. If a new field is added, the agent
@@ -414,6 +419,7 @@ class StubRegistry:
                 solc_version=self._solc_version,
                 builder=self._builder,
                 assembler=self._assembler,
+                within_tool=within_tool,
             )
 
             if result.rejected:
@@ -453,7 +459,7 @@ class StubRegistry:
             lambda d: f"Requesting stub field in {d['contract_name']}: {d['purpose']}",
             "Stub field result",
         )
-        class RequestStubField(WithAsyncImplementation[str]):
+        class RequestStubField(WithAsyncImplementation[str], WithInjectedId):
             """Request a storage variable in a contract's verification stub.
 
             Describe what you need the field for (e.g., "a mapping to track
@@ -482,7 +488,10 @@ class StubRegistry:
 
             @override
             async def run(self) -> str:
-                return await registry.request_field(self.contract_name, self.purpose)
+                return await registry.request_field(
+                    self.contract_name, self.purpose,
+                    within_tool=self.tool_call_id,
+                )
 
         return [
             RequestStubField.as_tool("request_stub_field"),

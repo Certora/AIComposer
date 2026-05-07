@@ -178,9 +178,13 @@ LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 DESCRIPTION = "CVL generation"
 
 type FeedbackToolImpl = Callable[
-    [str, list[SkippedProperty], list[Rebuttal]],
+    [str, list[SkippedProperty], list[Rebuttal], str],
     Awaitable[PropertyFeedbackProtocol],
 ]
+"""``(cvl, skipped, rebuttals, within_tool) -> PropertyFeedback``. ``within_tool``
+is the calling ``_FeedbackSchema``'s ``tool_call_id``, plumbed through to the
+sub-graph's ``run_to_completion`` so its UI panel anchors under the parent
+tool widget."""
 
 @dataclass
 class FeedbackToolContext:
@@ -221,7 +225,7 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
         if spec is None:
             return tool_return(self.tool_call_id, "No spec put yet")
         skipped = st["skipped"]
-        t = await feedback(spec, skipped, self.rebuttals)
+        t = await feedback(spec, skipped, self.rebuttals, self.tool_call_id)
         msg = f"Good? {t.good}\nFeedback {t.feedback}"
         if t.good:
             digest = _compute_digest(spec, skipped)

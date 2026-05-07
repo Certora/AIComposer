@@ -104,6 +104,7 @@ def property_feedback_judge(
         cvl: str,
         skipped: Sequence[SkippedProperty],
         rebuttals: Sequence[Rebuttal],
+        within_tool: str,
     ) -> PropertyFeedback:
         input_parts: list[str | dict] = []
         if extra_inputs:
@@ -141,6 +142,7 @@ def property_feedback_judge(
             SpecJudgeInput(input=input_parts, curr_spec=cvl, memory=None, did_read=False),
             thread_id=uniq_thread_id("feedback"),
             description="Property feedback judge",
+            within_tool=within_tool,
         )
         assert "result" in res
         return res["result"]
