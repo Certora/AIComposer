@@ -11,7 +11,7 @@ from composer.spec.source.prover import (
     StateWithSkips, VALIDATION_KEY,
 )
 from composer.spec.cvl_generation import check_completion
-from composer.prover.core import RawReport, SummarizedReport
+from composer.prover.core import ProverReport
 
 from graphcore.testing import Scenario, tool_call_raw, ToolCallDict
 from graphcore.tools.results import result_tool_generator
@@ -61,12 +61,8 @@ def _result(commentary: str) -> ToolCallDict:
 # ---------------------------------------------------------------------------
 
 
-def _raw_report(**rule_status: bool) -> RawReport:
-    return RawReport(rule_status=rule_status, report="Prover report output")
-
-
-def _summarized_report(todo: str, **rule_status: bool) -> SummarizedReport:
-    return SummarizedReport(rule_status=rule_status, report="(truncated)", todo_list=todo)
+def _raw_report(**rule_status: bool) -> ProverReport:
+    return ProverReport(rule_status=rule_status, result_str="Prover report output")
 
 
 # ---------------------------------------------------------------------------
@@ -147,15 +143,6 @@ class TestProverReportHandling:
             _verify()
         ).run_last_single_tool(_PROVER)
         assert "out of memory" in msg
-
-    async def test_summarized_report_returns_todo(self, certora_prover: ProverMock):
-        msg = await _scenario(
-            certora_prover,
-            _summarized_report("1. Fix rule foo\n2. Fix rule bar", foo=False, bar=False),
-        ).turn(
-            _verify()
-        ).run_last_single_tool(_PROVER)
-        assert "Fix rule foo" in msg
 
     async def test_raw_report_failures_no_stamp(self, certora_prover: ProverMock):
         assert await _scenario(
