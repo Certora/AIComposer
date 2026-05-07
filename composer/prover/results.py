@@ -62,6 +62,18 @@ def flatten_tree_view_root(context: Path, r: RuleNodeModel) -> Iterable[RuleResu
     assert r.nodeType == "ROOT"
     return flatten_tree_view(context, r, RulePath(rule=r.name), None)
 
+def _collect_child_errors(
+    r: RuleNodeModel, err_messages: set[str], sev_filter: Callable[[str], bool]
+):
+    if _to_status_string(r.status) != "ERROR":
+        return
+    for m in r.errors:
+        if not sev_filter(m.severity):
+            continue
+        err_messages.add(m.message)
+    for c in r.children:
+        _collect_child_errors(c, err_messages, sev_filter)
+
 def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath, parent_type: str | None = None) -> Iterable[RuleResult]:
     stat = _to_status_string(r.status)
     effective_path = path
@@ -82,14 +94,13 @@ def flatten_tree_view(context: Path, r: RuleNodeModel, path: RulePath, parent_ty
             effective_path = effective_path.copy(method=r.name)
 
     if stat == "ERROR":
-        err_message = [
-            i.message for i in r.errors if i.severity == "error"
-        ]
+        messages : set[str] = set()
+        _collect_child_errors(r, messages, lambda sev: sev == "error")
         return [RuleResult(
             path=effective_path,
             cex_dump=None,
             status=stat,
-            error_messages=err_message
+            error_messages=list(messages)
         )]
     elif stat == "SKIPPED":
         warning_message = [
