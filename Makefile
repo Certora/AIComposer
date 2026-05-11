@@ -7,12 +7,16 @@ login:
 
 .PHONY: install
 install: login
-	uv sync --group ml
+	uv sync --all-extras
+
+.PHONY: lock
+lock: login
+	uv lock
 
 .PHONY: update-deps
 update-deps: login
 	uv lock --upgrade
-	uv sync --group ml
+	uv sync --all-extras
 
 .PHONY: build
 build:
