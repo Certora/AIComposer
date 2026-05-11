@@ -33,7 +33,7 @@ NETRC="${NETRC:-$HOME/.netrc}"
 
 if [[ -f "$NETRC" ]]; then
     TMP=$(mktemp)
-    grep -v "$HOST" "$NETRC" > "$TMP" || true
+    grep -vF "$HOST" "$NETRC" > "$TMP" || true
     mv "$TMP" "$NETRC"
 fi
 
