@@ -233,16 +233,18 @@ class TrivialFanoutCexHandler(CexHandler):
         }
 
         # Render every rule (verified + violated) so the agent sees the
-        # full picture, not just failures. Tuple shape preserved for the
-        # j2 template; ``diag`` is None for verified rules and stays
-        # None for violated rules in the trivial-fanout case (no key
-        # minting since downstream remediation isn't wired).
-        rule_entries = zip_results(
+        # full picture, not just failures. Trivial fanout uses
+        # ``flat_rule_feedback.j2`` — explanations inline under each
+        # violated rule, no diagnosis-key indirection. The keyed-
+        # diagnosis ``rule_feedback.j2`` belongs to the agentic path,
+        # which mints opaque ``report_key``s for ``cex_remediation``
+        # to look up.
+        results_for_template = zip_results(
             all_results, lambda r: to_cex_explanation.get(r.name)
         )
         report = load_jinja_template(
-            "rule_feedback.j2",
-            rule_entries=rule_entries,
+            "flat_rule_feedback.j2",
+            results=results_for_template,
         )
 
         failed_count = sum(

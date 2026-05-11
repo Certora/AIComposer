@@ -2,7 +2,7 @@
 The rule {{ rule_res.name }} result was: {{ rule_res.status }}
 {% if rule_res.status == "VIOLATED" %}
 {% if diag_key %}
-This violation is covered by diagnosis `diag_key` (see "Diagnoses" below).
+This violation is covered by diagnosis `{{ diag_key }}` (see "Diagnoses" below).
 {% else %}
 Analyzing the counterexample yielded no results.
 {% endif %}
