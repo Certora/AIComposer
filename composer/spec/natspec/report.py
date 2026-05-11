@@ -19,8 +19,6 @@ commentary, no source paths, no failures, no external actors — those
 all live elsewhere (implementation plan, cache explorer).
 """
 
-from __future__ import annotations
-
 import pathlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING

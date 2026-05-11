@@ -110,7 +110,7 @@ class ImplementationPlan:
     contracts: list[ContractPlan] = field(default_factory=list)
     # Dependency cycles detected during topological sort. Each entry is a
     # list of contract names forming one cycle. Empty in the DAG case (the
-    # expected case for NEST-shaped apps). Non-empty entries indicate the
+    # expected case for most apps). Non-empty entries indicate the
     # driver must decide how to break the cycle (e.g., by processing one
     # contract against its neighbours' stubs and backfilling later).
     cycles: list[list[str]] = field(default_factory=list)

@@ -102,10 +102,6 @@ If the above interface references are necessary, you will need to *import* the r
 By convention, the interface for the solidity identifier `ISomething` should be imported from `interfaces/ISomething.sol`.
 Remember that `ISomething` is the solidity identifier you chose for the contract.
 
-If an interface you are generating must reference an **existing contract** (from the "Existing contracts" section
-above), use that contract's real name and import it directly from its source path — do not invent an `I<Name>`
-interface for it.
-
 ### Choosing the file path for each interface
 
 {% if agent_chooses_path %}
@@ -131,6 +127,9 @@ The output is a mapping from the contract name to an interface description; incl
 target contract listed above. Each interface description contains:
 * The Solidity identifier of the interface declared in the interface file
 * The source code of the interface declaration you authored
+{% if agent_chooses_path %}
+* The path you chose for the generated interface
+{% endif %}
 </task>
 
 <guidance>

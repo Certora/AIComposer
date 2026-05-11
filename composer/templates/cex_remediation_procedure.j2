@@ -121,21 +121,6 @@ propose a remediation that weakens the rule on this basis without naming the cit
 codegen author may then escalate to `propose_spec_change` (which goes through user
 review).
 
-3. Draft the change as a full replacement of the spec file's contents (not a diff). The
-   whole file goes in `proposed_cvl`, including unmodified content; the codegen author
-   needs the entire text to stage it through the working-spec flow.
-
-4. Validate with `summary_critic`. If it returns `sound: false`, revise and re-check. The
-   critic looks specifically for the anti-patterns below; address its issues before
-   iterating again rather than retrying the same draft.
-
-5. Deliver via the result tool: full proposed spec text + a one-paragraph rationale citing
-   the root-cause category (A/B/C/D/E) and the specific strategy you applied within it + a
-   free form `addendum` field. The addendum field should be used to communicate any
-   additional, non-spec artifacts that your remediation requires (e.g., proposed rules to
-   add for other code, sound stubs, etc.). It can be left null if there is no extra
-   artifacts needed.
-
 #### Root cause E — Other spec-side issues
 
 The CEX is reachable in the Prover's model but only because some part of the spec
@@ -191,3 +176,18 @@ This category overlaps with B around ghost summaries — the question is whether
 ghost is being mismodeled (E) or the call to which it relates is unresolved (B). When
 in doubt, the symptom of B is "external call → ghost havoc'd"; the symptom of E is
 "no external call in the trace, ghost still wrong from the start".
+
+3. Draft the change as a full replacement of the spec file's contents (not a diff). The
+   whole file goes in `proposed_cvl`, including unmodified content; the codegen author
+   needs the entire text to stage it through the working-spec flow.
+
+4. Validate with `summary_critic`. If it returns `sound: false`, revise and re-check. The
+   critic looks specifically for the anti-patterns below; address its issues before
+   iterating again rather than retrying the same draft.
+
+5. Deliver via the result tool: full proposed spec text + a one-paragraph rationale citing
+   the root-cause category (A/B/C/D/E) and the specific strategy you applied within it + a
+   free form `addendum` field. The addendum field should be used to communicate any
+   additional, non-spec artifacts that your remediation requires (e.g., proposed rules to
+   add for other code, sound stubs, etc.). It can be left null if there is no extra
+   artifacts needed.

@@ -537,11 +537,8 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
             continue
         assert c.name in name_to_stub
         stub = name_to_stub[c.name]
-        import logging
-        logging.getLogger(__name__).debug("%s %s", c.name, stub.path)
         # Cached pre-validation runs may have produced stubs whose path stem
-        # diverges from the declared Solidity identifier (e.g.
-        # NESTControllerStub.sol declaring contract NESTController). Pin the
+        # diverges from the declared Solidity identifier. Pin the
         # identifier explicitly when that's the case so Certora compiles the
         # right type instead of guessing from the stem.
         stub_stem = Path(stub.path).stem

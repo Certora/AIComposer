@@ -106,7 +106,7 @@ When you do need summaries or ghost state, carefully consider whether the applic
 instances of the implementation of the interface (`dynamic` or `multiple` sorts) or a single instance.
 In the former case, your ghost state will need to account for the receiver contract.
 
-If you need to model the state/behavior of an external actor (*not* one of the other explicit contracts in the system)
+{#If you need to model the state/behavior of an external actor (*not* one of the other explicit contracts in the system)
 use the following decision procedure:
 1. If the external actor is a permissioned role in the system, you can likely use permission accounting internal
    to your contract. For example, if the external actor is a singular admin role, you can request a stub field
@@ -115,7 +115,7 @@ use the following decision procedure:
    the property should be skipped
 3. If the external actor is another contract not part of the application, you should use the summary/ghost approach
    described above. However, as there is no explicit interface provided for these external actor contracts you will
-   need to make reasonable decisions about the summary signature to use.
+   need to make reasonable decisions about the summary signature to use.#}
 
 To reference another contract's state variables within your specification or call its functions,
 you must explicitly register that contract's source as an input to the Prover. Use the `register_verification_file` tool to register
@@ -162,7 +162,7 @@ You must attempt to formalize ALL properties before considering any skips.
 </skipping>
 
 <state>
-Maintain these memory files. Make the writes you intend to make before invoking the
+Maintain these memory files. Perform any writes you intend to make before invoking the
 result tool, which ends the task.
 
 - `/memories/status.md` — your live state for this run. Records which step of the above

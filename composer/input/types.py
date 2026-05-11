@@ -109,7 +109,7 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
 
     # Free-form human-readable label persisted on the audit ``run_meta``
     # slot, so a run can be located later by description (e.g. "the most
-    # recent NESTController codegen") rather than only by thread id.
+    # recent Vault codegen") rather than only by thread id.
     description: Optional[str]
 
 

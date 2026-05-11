@@ -19,38 +19,16 @@ from composer.ui.tool_display import tool_display
 
 class SpecChangeProposalArgs(WithToolCallId):
     """
-    Propose a change to one of the specification files. There are two
-    legitimate use cases for calling this tool.
+    Propose a change to one of the specification files. Use this tool ONLY for
+    changes when the specification is deficient: it states the wrong property,
+    or the formalization of a property as a CVL rule admits no implementation.
+    Do NOT use this for spec side changes to "fix" spurious counterexamples; use
+    the CEX remediation flow for that.
 
-    You may use this tool to propose the addition of *summaries*, by updating
-    (or adding) the `methods` block, and adding any ancilliary definitions.
-
-    Summaries are used to (effectively) replace the body of a function with
-    the given "summary". This summary may be a declaration that the return
-    value of the function should be treated as nondeterministic, a havoc, or a
-    CVL expression.
-
-    Summaries are typically used when a function is too difficult to reason
-    about directly; this complexity may come from non-linear operations,
-    complex inter-contract interactions, or bitwise operations.
-
-    When possible, the summary should be *sound*, that is, the behavior that
-    replaces the function should *over-approximate* the function
-    implementation. For example of an *unsound* summary, summarizing a
-    function called `mulDiv(uint,uint)` to simply return 0 is unsound. A
-    *sound* summary for `mulDiv(uint,uint)` would be to return a
-    non-deterministic number, as this admits "more" behaviors than the exact
-    `mulDiv` implementation.
-
-    However, there may be cases where a summary *can* be used to elide
-    behavior that is not relevant to the properties being proven. For example,
-    if the property being verified relates to interest fee calculation, and a
-    function simply emits logs, it may be appropriate to "summarize away" the
-    log emission function.
-
-    The other use case is when the user has approved any other change
-    discussed via the human_in_the_loop tool. For example, if the human agrees
-    that the spec is ambiguous, or needs changing, use this tool to propose
+    As a rule of thumb you should only use this tool after discussing the changes
+    you want to make with the user via the `human_in_the_loop` tool.
+    For example, if the human agrees that the spec is ambiguous,
+    or needs changing, use this tool to propose
     the minimal necessary change to the spec file.
 
     A human will review this request, and either respond with `ACCEPTED`,

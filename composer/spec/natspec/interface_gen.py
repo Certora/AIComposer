@@ -161,7 +161,7 @@ async def generate_interface[I: InterfaceDeclModel](
     workflow = (
         env.builder
         .with_state(ST)
-        .with_tools([ResultTool.as_tool("result"), *(env.source_tools if env.sort != "env" else [])])
+        .with_tools([ResultTool.as_tool("result"), *(env.source_tools if env.sort != "greenfield" else [])])
         .with_output_key("result")
         .with_default_summarizer(max_messages=50)
         .with_input(FlowInput)
