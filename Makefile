@@ -1,0 +1,31 @@
+# Requires: uv (https://docs.astral.sh/uv/getting-started/installation/)
+#           certora-cloud CLI: uv tool install certora-cloud
+
+.PHONY: login
+login:
+	certora-cloud codeartifacts login
+
+.PHONY: install
+install: login
+	uv sync --all-extras
+
+.PHONY: lock
+lock: login
+	uv lock
+
+.PHONY: update-deps
+update-deps: login
+	uv lock --upgrade
+	uv sync --all-extras
+
+.PHONY: build
+build:
+	uv build
+
+.PHONY: pytest
+pytest:
+	uv run pytest tests/
+
+.PHONY: pyright
+pyright:
+	uv run pyright composer/ analyzer sanity_analyzer
