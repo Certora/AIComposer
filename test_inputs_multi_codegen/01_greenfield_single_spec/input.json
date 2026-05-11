@@ -1,8 +1,0 @@
-{
-  "_description": "Baseline: one spec, greenfield. Spec lands in the VFS at certora/Counter.spec. One prover stamp required: prover:certora/Counter.spec.",
-  "name": "Counter",
-  "interface": "ICounter.sol",
-  "implementation_path": "Counter.sol",
-  "specs": ["Counter.spec"],
-  "system_doc": "design.md"
-}
