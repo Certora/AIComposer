@@ -1,0 +1,169 @@
+# syntax=docker/dockerfile:1.7
+#
+# Container for the AI Composer auto-prove (console mode) execution path.
+#
+# Build (BuildKit required — uses --mount=type=ssh to clone private Certora repos):
+#   DOCKER_BUILDKIT=1 docker buildx build --ssh default \
+#       -t aicomposer-autoprove -f scripts/Dockerfile.autoprove .
+#
+# Or via compose:
+#   docker compose -f scripts/docker-compose.yml --profile autoprove build
+#
+# Cloud prover only — the container does not bundle a local prover build.
+# CERTORAKEY must be supplied at runtime.
+
+# ---- Stage 1: build prover documentation HTML for the RAG DB ----
+FROM python:3.12-slim AS docs-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates openssh-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p -m 0700 /root/.ssh \
+ && ssh-keyscan github.com >> /root/.ssh/known_hosts
+
+WORKDIR /build
+RUN --mount=type=ssh \
+    git clone --depth 1 git@github.com:Certora/Documentation.git docs
+
+RUN python -m venv /venv \
+ && /venv/bin/pip install --no-cache-dir -r /build/docs/requirements.txt
+
+RUN set -eux; \
+    mkdir -p /out; \
+    for target in /build/docs/docs/cvl /build/docs/docs/solana /build/docs/docs/prover /build/docs/docs/user-guide; do \
+      cp /build/docs/conf.py "$target/"; \
+      ( cd "$target" && /venv/bin/sphinx-build -M singlehtml . tmp ); \
+      cp "$target/tmp/singlehtml/index.html" "/out/$(basename "$target").html"; \
+    done
+
+# ---- Stage 2: final runtime image ----
+FROM python:3.12-slim AS final
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    AUTOPROVE_HOME=/opt/autoprove \
+    VIRTUAL_ENV=/opt/autoprove/venv \
+    PATH=/opt/autoprove/venv/bin:/usr/local/bin:/usr/bin:/bin
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git ca-certificates openssh-client \
+      build-essential libffi-dev \
+      curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p -m 0700 /root/.ssh \
+ && ssh-keyscan github.com >> /root/.ssh/known_hosts
+
+# uv is needed by populate_rag.sh (uv run --group ragbuild) and the README's
+# kb_populate.py invocation. Install it once into a stable location.
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
+# Java 21 (Temurin JRE) — certora_cli uses it for local CVL spec syntax
+# checking before uploading to the cloud. Without it the prover prints
+# "WARNING: `java` is not installed". Debian Bookworm only ships openjdk-17,
+# and we need >= 19, so install via the Adoptium apt repo.
+# python:3.12-slim does not include gnupg by default — install it transiently
+# alongside the key import, then remove.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gnupg \
+ && mkdir -p /etc/apt/keyrings \
+ && curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public \
+      | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg \
+ && echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo $VERSION_CODENAME) main" \
+      > /etc/apt/sources.list.d/adoptium.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends temurin-21-jre \
+ && apt-get purge -y gnupg \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR $AUTOPROVE_HOME
+
+# Clone the private companion repos via the forwarded SSH agent. PreAudit
+# is left at its default tip here on purpose — see the install step below.
+ARG PREAUDIT_COMMIT=b941b4147d30fa460e2f9a593b1c8517e7e62eee
+RUN --mount=type=ssh \
+    git clone --depth 1 git@github.com:Certora/Autosetup.git Autosetup \
+ && git clone git@github.com:Certora/PreAudit.git PreAudit
+
+# Bake the AI Composer source (build context = repo root).
+COPY . $AUTOPROVE_HOME/AIComposer
+
+# Build the venv. Install ai-composer FIRST from the baked source so the
+# subsequent autosetup/preaudit installs see it satisfied and don't pull a
+# different version. The [pou] extra pulls a git+ssh dependency, so the SSH
+# agent must be available for this layer too.
+RUN python -m venv $VIRTUAL_ENV \
+ && pip install --upgrade pip wheel setuptools
+
+RUN --mount=type=ssh \
+    pip install -e "$AUTOPROVE_HOME/AIComposer[ml,prover,pou]"
+
+RUN --mount=type=ssh \
+    pip install -e "$AUTOPROVE_HOME/Autosetup" \
+ && pip install -e "$AUTOPROVE_HOME/PreAudit" \
+ && ( cd "$AUTOPROVE_HOME/PreAudit" && git checkout "$PREAUDIT_COMMIT" )
+# PreAudit must be installed at the freshly cloned tip and only then checked
+# out to the pinned commit. Doing the checkout first triggers a flaky
+# `ssh: Could not resolve hostname github.com-pou` failure during pip install.
+# Matches the order in scripts/autoprover-setup.sh.
+
+# Re-install ai-composer editably AFTER Autosetup/PreAudit. Both list
+# ai-composer as a dependency, and their `pip install -e` resolves and
+# installs a non-editable copy into site-packages, silently overwriting the
+# earlier editable install. Without this final step, our baked source under
+# /opt/autoprove/AIComposer is shadowed by the site-packages copy and source
+# changes never take effect. --no-deps keeps us from re-fetching the
+# git+ssh `pou` extra (already installed in the first AIComposer step).
+RUN pip install --no-deps -e "$AUTOPROVE_HOME/AIComposer"
+
+# Force-install prover-output-utility at Autosetup's pinned commit. Pip's
+# resolver identifies packages by name+version, not URL+commit, so without
+# --force-reinstall a stray earlier install (e.g. e340bfb2 dragged in by
+# ai-composer's `[pou]` extra) survives as "already satisfied" even though
+# autosetup's transitive request was for the newer 30548f3. The newer commit
+# is the one that exposes `JobReport`, which autosetup imports at module
+# load. PreAudit's pyproject pins yet another commit via a `github.com-pou`
+# SSH alias the container does not have configured; on a working host install
+# pip sees prover-output-utility already satisfied by Autosetup and skips the
+# PreAudit URL — we mirror that here by anchoring the version explicitly.
+RUN --mount=type=ssh \
+    pip install --force-reinstall --no-deps \
+      "prover-output-utility @ git+ssh://git@github.com/Certora/ProverOutputUtility.git@30548f3a46242c03bf2a74464d73731816136904"
+
+# Pre-download the sentence-transformers embedding model so containers can
+# start offline-fast. Without this every run re-fetches ~500MB into the
+# ephemeral container's HF cache. trust_remote_code is required because
+# nomic-embed-text-v1.5 ships custom modeling code in its HF repo.
+# Cache lands at /root/.cache/huggingface and is part of the image.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)"
+
+# Solidity compiler. The pipeline currently uses 0.8.29; install just that one.
+RUN pip install solc-select \
+ && solc-select install 0.8.29 \
+ && solc-select use 0.8.29
+
+# Pre-built CVL/prover HTML — populate_rag.sh looks here.
+COPY --from=docs-builder /out/ $AUTOPROVE_HOME/AIComposer/scripts/prover-docs/
+
+# Trim build tooling now that wheels are installed.
+RUN apt-get purge -y build-essential libffi-dev curl \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
+# These match autoprover-setup.sh exports. Database host/port assume the
+# compose-managed postgres service; override per-run if needed.
+ENV AUTOSETUP_PATH=$AUTOPROVE_HOME/Autosetup \
+    PREAUDIT_PATH=$AUTOPROVE_HOME/PreAudit \
+    CERTORA_AI_COMPOSER_PGHOST=postgres \
+    CERTORA_AI_COMPOSER_PGPORT=5432
+
+COPY scripts/autoprove-entrypoint.sh /usr/local/bin/autoprove-entrypoint
+RUN chmod +x /usr/local/bin/autoprove-entrypoint
+
+WORKDIR /work
+
+ENTRYPOINT ["/usr/local/bin/autoprove-entrypoint"]
+CMD ["console-autoprove", "--help"]
