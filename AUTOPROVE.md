@@ -253,6 +253,8 @@ export ANTHROPIC_API_KEY=...
 export CERTORAKEY=...
 # HOST_WORK_DIR defaults to $PWD; everything under it is visible at /work in the container.
 export HOST_WORK_DIR=/path/to/your/projects
+# Run as your host user so /work outputs aren't owned by root. Defaults to 1000:1000.
+export HOST_UID=$(id -u) HOST_GID=$(id -g)
 
 docker compose -f scripts/docker-compose.yml --profile autoprove \
     run --rm autoprove \

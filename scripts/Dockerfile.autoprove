@@ -45,7 +45,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     AUTOPROVE_HOME=/opt/autoprove \
     VIRTUAL_ENV=/opt/autoprove/venv \
-    PATH=/opt/autoprove/venv/bin:/usr/local/bin:/usr/bin:/bin
+    PATH=/opt/autoprove/venv/bin:/usr/local/bin:/usr/bin:/bin \
+    HOME=/opt/autoprove/home \
+    HF_HOME=/opt/autoprove/home/.cache/huggingface \
+    UV_CACHE_DIR=/tmp/uv-cache
+
+# Pre-create a shared HOME under /opt/autoprove. The compose service runs the
+# container as the host user (so bind-mounted /work files are owned by the
+# host user, not root), but the image still bakes caches like the HF model
+# and solc-select. HOME and its read-only caches stay at 0755 (world-readable,
+# not world-writable) — SSH client rejects a world-writable HOME and would
+# refuse to use ~/.ssh during git clones below. Anything that needs writing
+# at runtime (uv's cache) is redirected to /tmp via UV_CACHE_DIR.
+RUN mkdir -p $HOME/.cache/huggingface $HOME/.solc-select \
+ && chmod -R go+rX $HOME
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -55,6 +68,11 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p -m 0700 /root/.ssh \
  && ssh-keyscan github.com >> /root/.ssh/known_hosts
+# known_hosts intentionally goes to /root/.ssh, NOT $HOME/.ssh: openssh's
+# ssh client ignores HOME and uses getpwuid() to find the home dir, so it
+# looks at /root/.ssh during the root-owned build regardless of our
+# ENV HOME=/opt/autoprove/home setting. SSH is build-time only — at runtime
+# (as the host user) we never need ~/.ssh/known_hosts.
 
 # uv is needed by populate_rag.sh (uv run --group ragbuild) and the README's
 # kb_populate.py invocation. Install it once into a stable location.
@@ -137,8 +155,13 @@ RUN --mount=type=ssh \
 # start offline-fast. Without this every run re-fetches ~500MB into the
 # ephemeral container's HF cache. trust_remote_code is required because
 # nomic-embed-text-v1.5 ships custom modeling code in its HF repo.
-# Cache lands at /root/.cache/huggingface and is part of the image.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)"
+# HF_HOME points the cache at /opt/autoprove/home/.cache/huggingface (set in
+# the ENV block above), which is world-readable so any UID at runtime can
+# load it. Then chmod the cache subtree world-writable so the HF library
+# can drop `.no_exist` marker files at runtime (it logs noisy "Permission
+# denied" warnings if it can't — non-fatal, but ugly).
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)" \
+ && chmod -R go+rwX $HF_HOME
 
 # Solidity compiler. The pipeline currently uses 0.8.29; install just that one.
 RUN pip install solc-select \
@@ -162,6 +185,20 @@ ENV AUTOSETUP_PATH=$AUTOPROVE_HOME/Autosetup \
 
 COPY scripts/autoprove-entrypoint.sh /usr/local/bin/autoprove-entrypoint
 RUN chmod +x /usr/local/bin/autoprove-entrypoint
+
+# Make every baked thing under /opt/autoprove world-readable so the runtime
+# user (host UID supplied by compose) can read source, venv, solc-select
+# binaries, and the HF model cache.
+#
+# Also make /etc/passwd and /etc/group world-writable so the entrypoint can
+# append a synthetic entry for whatever host UID the container runs as.
+# Without that entry, libraries that call pwd.getpwuid() (e.g. torch's
+# cache_dir_utils via getpass.getuser()) crash on `KeyError: 'getpwuid(): uid
+# not found: <UID>'`. This chmod is done LAST because earlier apt-get
+# operations (notably the Temurin JRE install, which creates a system group)
+# rewrite /etc/passwd or /etc/group and reset their permissions to 0644.
+RUN chmod -R go+rX $AUTOPROVE_HOME \
+ && chmod 0666 /etc/passwd /etc/group
 
 WORKDIR /work
 
