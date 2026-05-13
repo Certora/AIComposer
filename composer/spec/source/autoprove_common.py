@@ -26,7 +26,7 @@ from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
 
-from composer.spec.util import FS_FORBIDDEN_READ
+from composer.spec.util import FS_FORBIDDEN_READ, find_files
 from composer.io.multi_job import HandlerFactory
 
 
@@ -115,7 +115,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
                 return 1
         args.config_paths = [str((project_root / p).resolve()) for p in args.config_paths]
     else:
-        args.config_paths = [str(p) for p in sorted(project_root.rglob("*.conf"))]
+        args.config_paths = find_files(project_root, ".conf")
 
     relative_path = str(full_contract_path.relative_to(project_root))
 
