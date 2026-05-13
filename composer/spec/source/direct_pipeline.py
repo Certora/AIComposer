@@ -7,9 +7,10 @@ Certora `.conf` files together with plain-English properties and an optional
 threat model.
 
 Phases:
-1. For each conf, formulate user properties as `list[PropertyFormulation]`
-   scoped to the contracts referenced by that conf.
-2. For each conf, run `batch_cvl_generation` over the formulated properties
+1. In a single LLM call that sees every conf at once, map every user
+   property to exactly one conf, producing
+   `dict[conf_path, list[PropertyFormulation]]`.
+2. For each conf, run `batch_cvl_generation` over its formulated properties
    to produce a CVL spec.
 """
 
@@ -37,7 +38,7 @@ from composer.spec.source.prover import CloudConfig, get_prover_tool
 from composer.spec.source.common_pipeline import AutoProveResult
 from composer.spec.source.author import batch_cvl_generation
 from composer.spec.source.direct_property import (
-    run_direct_property_formulation, main_contract_from_config,
+    run_direct_property_formulation_all, main_contract_from_config,
 )
 
 
@@ -107,8 +108,9 @@ async def run_autoprove_pipeline(
     prop_context = ctx.child(PROPERTIES_KEY)
 
     # ------------------------------------------------------------------
-    # Phase 1: Take all properties, the threat_model and all conf files
-    # and generate a mapping of conf => list[PropertyFormulation]
+    # Phase 1: A single LLM call sees every conf file at once and produces
+    # a mapping conf_path => list[PropertyFormulation], so every user
+    # property is assigned to exactly one conf with full coverage.
     # ------------------------------------------------------------------
 
     @dataclass
@@ -120,15 +122,41 @@ async def run_autoprove_pipeline(
         conf_ctx: WorkflowContext[ComponentGroup]
         source: SourceCode
 
-    async def _formulate_for_conf(conf_path_str: str) -> _ConfBatch | None:
-        conf_path = pathlib.Path(conf_path_str)
-        config = json.loads(conf_path.read_text())
-
+    parsed_confs: list[tuple[str, dict, str]] = []  # (conf_path, config, contract_name)
+    for conf_path_str in config_paths:
+        config = json.loads(pathlib.Path(conf_path_str).read_text())
         contract_name = main_contract_from_config(config)
-
         if not contract_name:
-            return None
-        
+            continue
+        parsed_confs.append((conf_path_str, config, contract_name))
+
+    if not parsed_confs:
+        raise ValueError(
+            "Could not determine a main contract from any of the provided conf files."
+        )
+
+    mapping = await run_task(
+        handler_factory,
+        TaskInfo(
+            "props-all",
+            f"Property formulation across {len(parsed_confs)} conf(s)",
+            AutoProvePhase.BUG_ANALYSIS,
+        ),
+        lambda: run_direct_property_formulation_all(
+            ctx=prop_context,
+            env=env,
+            confs=[(p, cfg) for p, cfg, _ in parsed_confs],
+            properties=properties,
+            threat_model=threat_model,
+        ),
+        semaphore,
+    )
+
+    conf_batches: list[_ConfBatch] = []
+    for conf_path_str, config, contract_name in parsed_confs:
+        props = mapping.get(conf_path_str, [])
+        if not props:
+            continue
         conf_ctx = await prop_context.child(
             _conf_cache_key(conf_path_str, config),
             {
@@ -136,24 +164,6 @@ async def run_autoprove_pipeline(
                 "contract_name": contract_name,
             },
         )
-
-        label = f"{conf_path.stem}: {contract_name}"
-        props = await run_task(
-            handler_factory,
-            TaskInfo(f"props-{conf_path.stem}", label, AutoProvePhase.BUG_ANALYSIS),
-            lambda: run_direct_property_formulation(
-                ctx=conf_ctx,
-                env=env,
-                config=config,
-                conf_path=conf_path_str,
-                properties=properties,
-                threat_model=threat_model,
-            ),
-            semaphore,
-        )
-        if not props:
-            return None
-
         per_conf_source = SourceCode(
             content=source_input.content,
             project_root=source_input.project_root,
@@ -161,19 +171,14 @@ async def run_autoprove_pipeline(
             relative_path=source_input.relative_path,
             forbidden_read=source_input.forbidden_read,
         )
-        return _ConfBatch(
+        conf_batches.append(_ConfBatch(
             conf_path=conf_path_str,
             config=config,
             contract_name=contract_name,
             props=props,
             conf_ctx=conf_ctx,
             source=per_conf_source,
-        )
-
-    extraction_results = await asyncio.gather(*[
-        _formulate_for_conf(p) for p in config_paths
-    ])
-    conf_batches = [b for b in extraction_results if b is not None]
+        ))
 
     if not conf_batches:
         raise ValueError("No properties were formulated for any conf file.")
