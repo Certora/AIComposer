@@ -5,7 +5,7 @@
 
 set -eaux
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AUTOSETUP_REPO="git@github.com:Certora/Autosetup.git"
 PREAUDIT_REPO="git@github.com:Certora/PreAudit.git"
 PREAUDIT_COMMIT="b941b4147d30fa460e2f9a593b1c8517e7e62eee"
