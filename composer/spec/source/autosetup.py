@@ -92,6 +92,7 @@ async def run_autosetup(
         args = [
             sys.executable, "-m", "certora_autosetup.autosetup",
             "--composer-setup", f.name,
+            "--no-cache",
             "--skip-hashing-bound-detection", "1024",
             "--use-local-runner",
             "--no-strip-contracts",
@@ -139,7 +140,9 @@ async def run_autosetup(
 
         data = json.load(f)
 
-    summary_path = Path(data["contract_to_summary"][main_contract])
+    # composer-setup.json emits paths relative to project_root; the
+    # `is_relative_to` check needs both sides to be in the same frame.
+    summary_path = project_root / data["contract_to_summary"][main_contract]
     if not summary_path.is_relative_to(certora_dir):
         return SetupFailure(error="Summary not in project relative path")
 
