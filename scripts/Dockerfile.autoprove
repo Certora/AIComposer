@@ -192,7 +192,12 @@ RUN chmod +x /usr/local/bin/autoprove-entrypoint
 # operations (notably the Temurin JRE install, which creates a system group)
 # rewrite /etc/passwd or /etc/group and reset their permissions to 0644.
 RUN chmod -R go+rX $AUTOPROVE_HOME \
+ && chmod -R go+w $AUTOPROVE_HOME/AIComposer \
  && chmod 0666 /etc/passwd /etc/group
+# The go+w on AIComposer lets `setup-db`'s `uv run` (running as the host UID)
+# update ai_composer.egg-info timestamps when it builds ai-composer in its
+# isolated env. Without it: "Cannot update time stamp of directory
+# 'ai_composer.egg-info'".
 
 WORKDIR /work
 
