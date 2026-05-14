@@ -1,7 +1,6 @@
 
-from typing import Callable, NotRequired, Protocol, Sequence, Any, Awaitable
+from typing import Callable, NotRequired, Protocol, Sequence, Any
 from typing_extensions import TypedDict
-import inspect
 
 from pydantic import BaseModel, Field
 

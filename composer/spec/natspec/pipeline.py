@@ -35,7 +35,7 @@ from composer.spec.context import (
     Contract
 )
 from composer.spec.util import string_hash
-from composer.spec.bug import run_bug_analysis
+from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
 from composer.spec.natspec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC, InterfaceResult, InterfaceDecl
 from composer.spec.natspec.stub_gen import generate_stub, StubDeclaration
@@ -191,7 +191,7 @@ async def analyze_single_contract(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{summary.contract.name}-{component_idx}", name, "bug_analysis"),
-            lambda: run_bug_analysis(feat_ctx, services.env, feat),
+            lambda: run_property_inference(feat_ctx, services.env, feat),
             semaphore,
         )
 

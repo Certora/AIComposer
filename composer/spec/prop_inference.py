@@ -213,7 +213,7 @@ async def _run_bug_analysis_inner(
 
     if threat_model is not None:
         extra_input = [
-            "In addition, a coworker has already written a 'threat model' for this application, which may include vulnerabilities/issues that"
+            "In addition, a coworker has already written a 'threat model' for this application, which may include vulnerabilities/issues that "
             "are common in this type of application. This threat model is written for the entire application (not just the component you are analyzing) "
             "so some of the issues/vulnerabilities/attacks may not be relevant to your analysis. Do *NOT* overfit to this threat model; carefully "
             "analyze what content of the provided threat model is worth considering vs out of scope. Further, this threat model is just a starting point, "
@@ -236,7 +236,7 @@ async def _run_bug_analysis_inner(
     await agent_component_analysis.cache_put(to_ret)
     return to_ret
 
-async def run_bug_analysis(
+async def run_property_inference(
     ctx: WorkflowContext[ComponentGroup],
     env: BugEnvironment,
     component: ContractComponentInstance,

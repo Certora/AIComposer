@@ -54,7 +54,7 @@ class ExpectRuleFailure(WithAsyncImplementation[Command], WithInjectedId):
             }
         )
 @tool_display(
-    lambda p: f"Expecting rule `{p["rule_name"]} to pass", None
+    lambda p: f"Expecting rule `{p["rule_name"]}` to pass", None
 )
 class ExpectRulePassage(WithAsyncImplementation[Command], WithInjectedId):
     """

@@ -57,6 +57,10 @@ async def run_task[P, T, H](
 ) -> T:
     """Create a handler via *factory* and run *fn* in its ``with_handler`` scope.
 
+    P - Type of phase markers
+    T - return type of the task
+    H - Type of human interaction request (routed through the handler from factory)
+
     Manages lifecycle callbacks (on_start/on_done/on_error).  If
     *semaphore* is provided, the task waits for acquisition before
     transitioning to RUNNING.

@@ -14,7 +14,7 @@ from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
 from composer.spec.util import string_hash
-from composer.spec.bug import run_bug_analysis
+from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
 from composer.spec.source.source_env import SourceEnvironment
@@ -96,7 +96,7 @@ async def run_generation_pipeline(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{component_idx}", name, AutoProvePhase.BUG_ANALYSIS),
-            lambda conv: run_bug_analysis(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model),
+            lambda conv: run_property_inference(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model),
             semaphore,
         )
 

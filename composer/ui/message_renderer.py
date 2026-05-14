@@ -31,10 +31,6 @@ logger = logging.getLogger(__name__)
 
 _DOT = "\u25cf "  # ● filled circle
 
-from logging import getLogger
-
-_logger = getLogger(__name__)
-
 def dot(style: str, text: Text | str) -> Text:
     """Prepend a colored dot to a Text or string for visual structure."""
     if isinstance(text, str):

@@ -204,7 +204,7 @@ async def refinement_loop[T](
                         if isinstance(m, ToolMessage):
                             client.progress_update(
                                 ToolComplete(
-                                    tid=m.tool_call_id
+                                    thread_id=m.tool_call_id
                                 )
                             )
             if human_question is not False:
