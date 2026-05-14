@@ -17,6 +17,7 @@ jobs:
         with:
           submodules: false   # gitlinks alone are enough
           fetch-depth: 1
+      - uses: astral-sh/setup-uv@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
