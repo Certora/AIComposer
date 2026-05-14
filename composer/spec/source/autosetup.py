@@ -10,9 +10,9 @@ import os
 import sys
 import tempfile
 from pydantic import BaseModel
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, Literal, Annotated
+from contextvars import ContextVar
+from typing import Any, TypedDict, Literal, Annotated, Protocol
 from pydantic import Discriminator
 import asyncio
 
@@ -44,6 +44,31 @@ type AutoSetupEvents = Annotated[
     AutoSetupComplete | AutoSetupStart | AutoSetupStdout, Discriminator("type")
 ]
 
+class SetupLifecycleCallbacks(Protocol):
+    def log_start(self) -> None:
+        ...
+
+    def log_stdout(self, line: str) -> None:
+        ...
+
+    def log_complete(self, returncode: int) -> None:
+        ...
+    
+
+class SetupImpl(Protocol):
+    async def __call__(
+        self,
+        callbacks: SetupLifecycleCallbacks,
+        project_root: Path,
+        relative_path: str,
+        main_contract: str,
+        *extra_files
+    ) -> SetupResult:
+        ...
+        
+
+_setup_impl : ContextVar[SetupImpl | None] = ContextVar("_setup_impl", default=None)
+
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -65,6 +90,41 @@ async def run_autosetup(
     Returns:
         SetupResult with compilation config and summaries path
     """
+
+    def emitter(
+        s: AutoSetupEvents
+    ):
+        emit_custom_event(s)
+
+    class CB():
+        def log_start(self):
+            emitter({
+                "type": "auto_setup_start"
+            })
+        
+        def log_stdout(self, line: str):
+            emitter({
+                "line": line,
+                "type": "auto_setup_output"
+            })
+
+        def log_complete(self, returncode: int):
+            emitter({
+                "return_code": returncode,
+                "type": "auto_setup_complete"
+            })
+    
+    _impl = _setup_impl.get()
+    if _impl is None:
+        raise RuntimeError("No implementation of autosetup; failing")
+    
+    return await _impl(
+        CB(),
+        project_root,
+        relative_path,
+        main_contract,
+        *extra_files
+    )
 
     # Path to AutoSetup source directory
     AUTOSETUP_PATH = os.environ.get("AUTOSETUP_PATH")

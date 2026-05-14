@@ -53,8 +53,6 @@ graphcore = { path = "./graphcore", editable = true }
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
-console-autoprove = "composer.cli.console_autoprove:main"
-tui-autoprove = "composer.cli.tui_autoprove:main"
 
 [tool.setuptools.packages.find]
 include = ["composer*", "sanity_analyzer*", "analyzer*"]
