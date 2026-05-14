@@ -109,47 +109,35 @@ RUN --mount=type=ssh \
 # Bake the AI Composer source (build context = repo root).
 COPY . $AUTOPROVE_HOME/AIComposer
 
-# Build the venv. Install ai-composer FIRST from the baked source so the
-# subsequent autosetup/preaudit installs see it satisfied and don't pull a
-# different version. The [pou] extra pulls a git+ssh dependency, so the SSH
-# agent must be available for this layer too.
+# Build the venv. The install order mirrors scripts/autoprover-setup.sh:
+# Autosetup first, then PreAudit. Autosetup's pyproject pins everything we
+# need at compatible versions — ai-composer (with [ml]), prover-output-utility
+# at the commit that exposes JobReport, certora dependencies — so we lean on
+# its dep resolution rather than fighting pip with manual pins.
 RUN python -m venv $VIRTUAL_ENV \
  && pip install --upgrade pip wheel setuptools
 
 RUN --mount=type=ssh \
-    pip install -e "$AUTOPROVE_HOME/AIComposer[ml,prover,pou]"
+    pip install -e "$AUTOPROVE_HOME/Autosetup"
 
+# Install PreAudit at the freshly cloned tip and only THEN check out the
+# pinned commit. The pinned tree's pyproject references prover-output-utility
+# via a `github.com-pou` SSH alias the container doesn't have, which causes
+# a flaky `ssh: Could not resolve hostname github.com-pou` during pip install;
+# at tip pip sees the package already satisfied by Autosetup and skips it.
+# Same order as scripts/autoprover-setup.sh.
 RUN --mount=type=ssh \
-    pip install -e "$AUTOPROVE_HOME/Autosetup" \
- && pip install -e "$AUTOPROVE_HOME/PreAudit" \
+    pip install -e "$AUTOPROVE_HOME/PreAudit" \
  && ( cd "$AUTOPROVE_HOME/PreAudit" && git checkout "$PREAUDIT_COMMIT" )
-# PreAudit must be installed at the freshly cloned tip and only then checked
-# out to the pinned commit. Doing the checkout first triggers a flaky
-# `ssh: Could not resolve hostname github.com-pou` failure during pip install.
-# Matches the order in scripts/autoprover-setup.sh.
 
-# Re-install ai-composer editably AFTER Autosetup/PreAudit. Both list
-# ai-composer as a dependency, and their `pip install -e` resolves and
-# installs a non-editable copy into site-packages, silently overwriting the
-# earlier editable install. Without this final step, our baked source under
-# /opt/autoprove/AIComposer is shadowed by the site-packages copy and source
-# changes never take effect. --no-deps keeps us from re-fetching the
-# git+ssh `pou` extra (already installed in the first AIComposer step).
+# Autosetup pulls `ai-composer[ml]` transitively, which covers sentence-
+# transformers / einops, but not the [prover] extra (certora_cli). Add it.
+RUN pip install certora_cli
+
+# Replace the transitively-installed ai-composer (from autosetup's URL pin)
+# with our baked editable source so local source changes take effect.
+# --no-deps so pip doesn't re-resolve and churn prover-output-utility.
 RUN pip install --no-deps -e "$AUTOPROVE_HOME/AIComposer"
-
-# Force-install prover-output-utility at Autosetup's pinned commit. Pip's
-# resolver identifies packages by name+version, not URL+commit, so without
-# --force-reinstall a stray earlier install (e.g. e340bfb2 dragged in by
-# ai-composer's `[pou]` extra) survives as "already satisfied" even though
-# autosetup's transitive request was for the newer 30548f3. The newer commit
-# is the one that exposes `JobReport`, which autosetup imports at module
-# load. PreAudit's pyproject pins yet another commit via a `github.com-pou`
-# SSH alias the container does not have configured; on a working host install
-# pip sees prover-output-utility already satisfied by Autosetup and skips the
-# PreAudit URL — we mirror that here by anchoring the version explicitly.
-RUN --mount=type=ssh \
-    pip install --force-reinstall --no-deps \
-      "prover-output-utility @ git+ssh://git@github.com/Certora/ProverOutputUtility.git@30548f3a46242c03bf2a74464d73731816136904"
 
 # Pre-download the sentence-transformers embedding model so containers can
 # start offline-fast. Without this every run re-fetches ~500MB into the
