@@ -1,0 +1,23 @@
+name: Pin sync
+
+on:
+  pull_request:
+    paths:
+      - pyproject.toml
+      - .gitmodules
+      - scripts/check_submodule_pins.py
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false   # gitlinks alone are enough
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: ./scripts/check_submodule_pins.py
