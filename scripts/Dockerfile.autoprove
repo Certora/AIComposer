@@ -151,10 +151,16 @@ RUN pip install --no-deps -e "$AUTOPROVE_HOME/AIComposer"
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)" \
  && chmod -R go+rwX $HF_HOME
 
-# Solidity compiler. The pipeline currently uses 0.8.29; install just that one.
-RUN pip install solc-select \
- && solc-select install 0.8.29 \
- && solc-select use 0.8.29
+# Solidity compiler. The pipeline (and the LLM prompts) call solc by the
+# `solcX.Y` naming convention. Skip solc-select entirely — its install
+# location is governed by pwd.getpwuid(uid).pw_dir rather than $HOME, which
+# makes its state invisible to non-root runtime users. Just download the
+# static linux binary and drop it on PATH under the expected name. (Also
+# expose it as plain `solc` for tools that look for that.)
+RUN curl -fsSL https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux \
+        -o /usr/local/bin/solc8.29 \
+ && chmod 0755 /usr/local/bin/solc8.29 \
+ && ln -sf /usr/local/bin/solc8.29 /usr/local/bin/solc
 
 # Pre-built CVL/prover HTML — populate_rag.sh looks here.
 COPY --from=docs-builder /out/ $AUTOPROVE_HOME/AIComposer/scripts/prover-docs/
