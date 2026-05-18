@@ -15,7 +15,7 @@ Phases:
 """
 
 import asyncio
-import json
+import json5 as json
 import pathlib
 from dataclasses import dataclass
 
