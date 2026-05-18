@@ -184,7 +184,7 @@ class MessageRenderer(ToolCallRenderer):
         """Render a workflow start banner or nested collapsible."""
         target = self.get_flow_target(root, path)
         if len(path) == 1:
-            _logger.debug("Starting top level workflow: %s", description)
+            logger.debug("Starting top level workflow: %s", description)
             banner = Static(Text(f"━━ {description} ━━", style="bold"))
             await self._mount_to(target, banner)
         else:

@@ -40,11 +40,15 @@ class _AgentHistory(_BugAnalysisCache):
     agent_conversation: list[AnyMessage]
 
 def bug_analysis_key(
-    threat_model: dict | str | None
+    threat_model: dict | str | None,
+    with_refinement: bool
 ) -> CacheKey[ComponentGroup, _BugAnalysisCache]:
+    base_key = "bug_analysis"
+    if with_refinement:
+        base_key += "|refine"
     if threat_model is None:
-        return CacheKey[ComponentGroup, _BugAnalysisCache]("bug_analysis")
-    return CacheKey[ComponentGroup, _BugAnalysisCache]("bug_analysis-tm-" + string_hash(str(threat_model)))
+        return CacheKey[ComponentGroup, _BugAnalysisCache](base_key)
+    return CacheKey[ComponentGroup, _BugAnalysisCache](base_key + "-tm-" + string_hash(str(threat_model)))
 
 AGENT_RESULT_KEY = CacheKey[_BugAnalysisCache, _AgentHistory]("agent_bug_analysis")
 
@@ -247,7 +251,7 @@ async def run_property_inference(
     Extract security properties for a component.
     """
 
-    component_analysis = ctx.child(bug_analysis_key(threat_model))
+    component_analysis = ctx.child(bug_analysis_key(threat_model, refinement is not None))
     if (cached := await component_analysis.cache_get(_BugAnalysisCache)) is not None:
         return cached.items
     
