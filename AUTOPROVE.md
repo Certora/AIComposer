@@ -77,7 +77,7 @@ The RAG database must be populated before running auto-prove. This is a two-step
 Run the knowledge base population script to load common CVL pitfall articles into the LangGraph store:
 
 ```bash
-uv run --extra ml -s scripts/kb_populate.py
+uv run --extra ml python -m composer.scripts.kb_populate
 ```
 
 This inserts ~30 curated articles (summary misapplication, vacuity traps, ghost semantics, etc.) that agents consult during spec generation.
@@ -200,76 +200,3 @@ This should load up a TUI frame that lets you inspect the currently cached value
 ### Debugging Agents
 
 In headless mode, the CVL Generation agents will produce a mnemonic name. You can pass this mnemonic into the `snapshot_viewer.py` to view the conversation history of that agent.
-
-## Containerized Execution (console mode)
-
-The `console-autoprove` entry point can be run in a container. The container is **ephemeral** — drop it any time, build a fresh one — while the PostgreSQL databases live in a named volume (`postgres_data`) managed by the same compose project and survive across container drops. Only **cloud prover mode** is supported in the image; you must supply `CERTORAKEY`.
-
-The image bakes in: the AI Composer source, the Autosetup and PreAudit companion repos (cloned at build time via your SSH agent), `solc-select` with `solc 0.8.29`, and the prover documentation HTML used to populate `rag_db`.
-
-### Build
-
-The build clones private Certora repos and a `git+ssh` Python dep, so it needs your SSH agent forwarded via BuildKit:
-
-```bash
-# make sure your SSH agent is loaded with a key authorized for the Certora org
-eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519  # or whichever key
-
-docker compose -f scripts/docker-compose.yml --profile autoprove build
-```
-
-If `docker compose build` does not forward SSH on your installation, fall back to a direct buildx invocation:
-
-```bash
-DOCKER_BUILDKIT=1 docker buildx build --ssh default \
-    -t aicomposer-autoprove:latest \
-    -f scripts/Dockerfile.autoprove .
-```
-
-### Start the database (once per host reboot)
-
-```bash
-docker compose -f scripts/docker-compose.yml up -d postgres
-```
-
-This brings up only the postgres service. The `autoprove` service is profile-gated and is intended for one-shot `run --rm` invocations, not `up`.
-
-### One-time DB population
-
-After the database is up and the image is built:
-
-```bash
-ANTHROPIC_API_KEY=... \
-docker compose -f scripts/docker-compose.yml --profile autoprove \
-    run --rm autoprove setup-db
-```
-
-This populates `rag_db` from the baked-in CVL HTML and seeds the knowledge base.
-
-### Running auto-prove
-
-```bash
-export ANTHROPIC_API_KEY=...
-export CERTORAKEY=...
-# HOST_WORK_DIR defaults to $PWD; everything under it is visible at /work in the container.
-export HOST_WORK_DIR=/path/to/your/projects
-# Run as your host user so /work outputs aren't owned by root. Defaults to 1000:1000.
-export HOST_UID=$(id -u) HOST_GID=$(id -g)
-
-docker compose -f scripts/docker-compose.yml --profile autoprove \
-    run --rm autoprove \
-    console-autoprove --cloud \
-    /work/my-defi-protocol \
-    /work/my-defi-protocol/src/Vault.sol:Vault \
-    /work/my-defi-protocol/docs/vault-design.pdf
-```
-
-The entrypoint injects `--rag-db postgresql://rag_user:rag_password@postgres:5432/rag_db` automatically; pass your own `--rag-db` to override. Outputs under `<project_root>/certora/` land back on your host because `HOST_WORK_DIR` is a bind mount.
-
-### What persists across container drops
-
-| Lives in | Survives `--rm`? |
-|---|---|
-| `postgres_data` named volume (all five DBs) | yes |
-| Files under `HOST_WORK_DIR` on the host (project, `certora/` outputs) | yes |
-| Anything else inside the container (logs, tmp) | no |

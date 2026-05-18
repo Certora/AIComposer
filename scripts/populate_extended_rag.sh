@@ -22,7 +22,7 @@ python3 -m venv "$venv_dir"
 source "$venv_dir/bin/activate"
 pip install -r "$script_dir/rag_build_requirements.txt"
 
-python3 "$script_dir/ragbuild.py" \
+python3 -m composer.scripts.ragbuild \
     --output "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db" \
     "$docs_dir/cvl.html" \
     "$docs_dir/prover.html" \

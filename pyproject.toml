@@ -60,4 +60,4 @@ include = ["composer*", "sanity_analyzer*", "analyzer*"]
 "" = "."
 
 [tool.setuptools.package-data]
-composer = ["templates/*.j2"]
+composer = ["templates/*.j2", "scripts/init-db.sql"]

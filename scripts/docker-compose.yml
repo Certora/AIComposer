@@ -24,7 +24,7 @@ services:
       -c max_connections=50
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ../composer/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
       - "5432:5432"
     deploy:
@@ -39,43 +39,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-
-  # Auto-prove (console mode) runner. Gated by the `autoprove` profile so it
-  # does NOT come up with `docker compose up`. Invoke with:
-  #
-  #   docker compose --profile autoprove run --rm autoprove \
-  #       console-autoprove --cloud /work/<project> /work/<project>/src/X.sol:X /work/<project>/docs/design.md
-  #
-  # The container is ephemeral (--rm); database state lives in the
-  # postgres_data volume above and persists across container drops.
-  autoprove:
-    profiles: ["autoprove"]
-    image: aicomposer-autoprove:latest
-    build:
-      context: ..
-      dockerfile: scripts/Dockerfile.autoprove
-      ssh:
-        - default
-    depends_on:
-      postgres:
-        condition: service_healthy
-    # Run as the host user so files produced under /work (the `certora/`
-    # outputs especially) are owned by the host user, not root. Docker bind
-    # mounts pass UIDs through directly, so anything else leaves root-owned
-    # files on the host. HOST_UID/HOST_GID default to 1000:1000; override
-    # with: export HOST_UID=$(id -u) HOST_GID=$(id -g)
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
-    environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY must be set in your shell}
-      CERTORAKEY: ${CERTORAKEY:-}
-      CERTORA_AI_COMPOSER_PGHOST: postgres
-      CERTORA_AI_COMPOSER_PGPORT: "5432"
-    volumes:
-      # Mount the host directory containing your Solidity project(s) and
-      # system docs into /work. Defaults to the directory from which you
-      # invoke `docker compose`; override with HOST_WORK_DIR.
-      - ${HOST_WORK_DIR:-${PWD}}:/work
-    working_dir: /work
 
 volumes:
   postgres_data:
