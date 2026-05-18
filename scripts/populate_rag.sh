@@ -11,4 +11,4 @@ fi
 
 parent=$(realpath "$script_dir/..")
 
-(cd $parent; uv run --isolated --group ragbuild -s $script_dir/ragbuild.py "$docs_dir/cvl.html")
+(cd $parent; uv run --isolated --group ragbuild python -m composer.scripts.ragbuild "$docs_dir/cvl.html")

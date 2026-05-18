@@ -48,8 +48,10 @@ import threading
 from tqdm import tqdm as _tqdm_cls
 _tqdm_cls.set_lock(threading.RLock())
 
-DEFAULT_CONNECTION: str = "postgresql://rag_user:rag_password@localhost:5432/rag_db"
-SANITY_DEFAULT_CONNECTION: str = "postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db"
+_RAG_HOST = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
+_RAG_PORT = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
+DEFAULT_CONNECTION: str = f"postgresql://rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/rag_db"
+SANITY_DEFAULT_CONNECTION: str = f"postgresql://extended_rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/extended_rag_db"
 
 
 type _RagHeader = str | None
