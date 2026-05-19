@@ -11,7 +11,7 @@ from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.context import (
-    WorkflowContext, SystemDoc, get_system_doc,
+    WorkflowContext, SystemDoc, get_document_input,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline, PipelineResult
 from composer.spec.util import string_hash
@@ -24,7 +24,7 @@ async def launch_natspec_workflow(
     ctx: OrchestratorContext,
 ) -> str:
     input_path = ctx.workspace / args.input_file
-    content = get_system_doc(input_path)
+    content = get_document_input(input_path)
     if content is None:
         return f"Error: cannot read {input_path}"
     system_doc = SystemDoc(content=content)

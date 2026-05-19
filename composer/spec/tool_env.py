@@ -1,8 +1,13 @@
 from typing import Protocol
 from langchain_core.tools import BaseTool
+from langchain_core.language_models.chat_models import BaseChatModel
 from graphcore.graph import Builder
 
 class BasicAgentTools(Protocol):
+    @property
+    def llm(self) -> BaseChatModel:
+        ...
+    
     @property
     def builder(self) -> Builder[None, None, None]:
         ...

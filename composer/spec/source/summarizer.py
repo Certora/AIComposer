@@ -30,6 +30,7 @@ from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.harness import ContractSetup, ExternalInterface, HarnessDef
 from composer.spec.system_model import HarnessedApplication, ExternalActor
 from composer.spec.gen_types import TypedTemplate
+from composer.ui.tool_display import tool_display, suppress_ack
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,7 @@ class SummaryContext:
     config: dict
     source: SourceCode
 
+@tool_display("Type checking", "Typecheck result")
 class _TypeChecker(
     WithImplementation[Command | str], WithInjectedState[ST], WithInjectedId
 ):
@@ -128,6 +130,7 @@ class _TypeChecker(
                 else:
                     return f"Typechecking failed:\nstdout:\n{res.stdout}\n{res.stderr}"
 
+@tool_display("Writing Plan", None)
 class _PlanWrite(WithInjectedId, WithImplementation[Command]):
     """
     Write your summarization plan.
@@ -142,6 +145,7 @@ class _PlanWrite(WithInjectedId, WithImplementation[Command]):
             plan=self.plan,
         )
 
+@tool_display("Reading plan", "Summarization Plan")
 class _PlanReader(WithInjectedState[ST], WithImplementation[str]):
     """
     Read your summarization plan

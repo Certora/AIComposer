@@ -36,6 +36,7 @@ from composer.spec.cvl_generation import CVLGenerationExtra, check_completion
 from composer.spec.natspec.interface_gen import InterfaceResult
 from composer.spec.tool_env import BasicAgentTools, RAGTools
 from composer.spec.util import uniq_thread_id
+from composer.ui.tool_display import tool_display, suppress_ack
 
 
 class PublishEnv(BasicAgentTools, RAGTools, Protocol):
@@ -191,6 +192,7 @@ def make_advisory_typecheck_tool(
 ) -> BaseTool:
     """Create an advisory typecheck tool for property agents."""
 
+    @tool_display("Type-checking spec", "Type-check result")
     class AdvisoryTypecheck(WithInjectedState[CVLGenerationExtra], WithAsyncImplementation[str]):
         """Run the CVL typechecker on your current working specification against the shared stub.
         This is advisory — use it to catch issues before attempting to publish.
@@ -237,6 +239,7 @@ def make_publish_tools(
     import logging
     logging.getLogger(__name__).debug(contract_id)
 
+    @tool_display("Publishing to master spec", suppress_ack("Publish result"))
     class PublishSpec(WithInjectedState[CVLGenerationExtra], WithInjectedId, WithAsyncImplementation[Command]):
         """Publish your working CVL to the master spec. This spawns a merge agent that
         combines your working copy with the current master spec. If the merge succeeds
@@ -288,6 +291,7 @@ def make_publish_tools(
                     res={"result": self.commentary},
                 )
 
+    @tool_display("Giving up on property", suppress_ack("Give up result"))
     class GiveUp(WithInjectedId, WithAsyncImplementation[Command]):
         """Call this if you cannot formalize *any* of the properties after multiple merge attempts.
         This will end this task with a failure record.

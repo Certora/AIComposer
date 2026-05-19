@@ -88,8 +88,6 @@ def property_feedback_judge(
         lambda b: final_prompt.render_to(b.with_initial_prompt_template)
     ).inject(
         lambda g: system_prompt.render_to(g.with_sys_prompt_template)
-    ).with_sys_prompt_template(
-        "cvl_system_prompt.j2"
     ).with_tools([*rough_draft_tools, mem, get_cvl(ST), ]).compile_async()
 
     async def the_tool(

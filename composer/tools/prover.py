@@ -14,8 +14,16 @@ from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext, compute_state_digest
 from composer.core.validation import prover as prover_key
 from composer.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
+from composer.ui.tool_display import tool_display
 
 
+@tool_display(
+    lambda p: (
+        "Running prover: " + p.get("target_contract", "")
+        + (f" — rule {p['rule']}" if p.get("rule") else "")
+    ),
+    None,
+)
 class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
     """
     Invoke the Certora Prover, a powerful symbolic reasoning tool for verifying the correctness of smart contracts.

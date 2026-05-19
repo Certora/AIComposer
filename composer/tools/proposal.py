@@ -13,6 +13,7 @@ from graphcore.graph import WithToolCallId, tool_return
 from composer.human.types import ProposalType
 from composer.core.state import AIComposerState
 from composer.core.context import AIComposerContext
+from composer.ui.tool_display import tool_display
 
 
 
@@ -61,6 +62,13 @@ class SpecChangeProposalArgs(WithToolCallId):
     state: Annotated[AIComposerState, InjectedState]
 
 
+@tool_display(
+    lambda p: (
+        f"Proposing spec change: {p['explanation']}"
+        if p.get("explanation") else "Proposing spec change"
+    ),
+    None,
+)
 @tool(args_schema=SpecChangeProposalArgs)
 def propose_spec_change(
     proposed_spec: str,

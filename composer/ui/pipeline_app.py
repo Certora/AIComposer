@@ -15,7 +15,7 @@ from textual.widgets import Static, Input, Collapsible, ContentSwitcher
 from rich.syntax import Syntax
 from rich.text import Text
 
-from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, _suppress_ack
+from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay, CommonTools, suppress_ack
 from composer.io.event_handler import EventHandler, NullEventHandler
 from composer.ui.ide_bridge import IDEBridge
 from composer.ui.multi_job_app import (
@@ -66,9 +66,9 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
             return ToolDisplayConfig(tool_display={
                 **CommonTools.cvl_research_displays(),
                 **CommonTools.cvl_manipulation(),
-                "publish_spec": ToolDisplay("Publishing to master spec", _suppress_ack("Publish result")),
-                "give_up": ToolDisplay("Giving up on property", _suppress_ack("Give up result")),
-                "record_skip": ToolDisplay(lambda d: f"Skipping Property #{d['property_index']}: {d['reason']}", _suppress_ack("Skip Request Result", ("Recorded skip", ))),
+                "publish_spec": ToolDisplay("Publishing to master spec", suppress_ack("Publish result")),
+                "give_up": ToolDisplay("Giving up on property", suppress_ack("Give up result")),
+                "record_skip": ToolDisplay(lambda d: f"Skipping Property #{d['property_index']}: {d['reason']}", suppress_ack("Skip Request Result", ("Recorded skip", ))),
                 "read_stub": ToolDisplay("Reading verification stub", None),
                 "request_stub_field": ToolDisplay(lambda d: f"Requesting stub field: {d["purpose"]}", "Stub field result"),
                 "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),

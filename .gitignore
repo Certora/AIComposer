@@ -10,4 +10,7 @@ scripts/cvl_manual.html
 .venv/
 build/
 *.egg-info/
+emv-*
+.certora-*
+composer/testing/**/certora/
 local/

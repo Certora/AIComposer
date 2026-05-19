@@ -29,6 +29,7 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.natspec.pipeline_events import StubUpdate
 from composer.spec.natspec.interface_gen import InterfaceResult
 from composer.spec.util import uniq_thread_id
+from composer.ui.tool_display import tool_display
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +315,7 @@ class StubRegistry:
         """Return tools for injection into property agents."""
         registry = self
 
+        @tool_display("Reading verification stub", None)
         class ReadStubTool(WithAsyncImplementation[str]):
             """Read the current shared verification stub source code for the given contract."""
 
@@ -321,6 +323,10 @@ class StubRegistry:
             async def run(self) -> str:
                 return registry.read_stub(nm)
 
+        @tool_display(
+            lambda d: f"Requesting stub field: {d['purpose']}",
+            "Stub field result",
+        )
         class RequestStubField(WithAsyncImplementation[str]):
             """Request a storage variable in the shared verification stub.
             Describe what you need the field for (e.g., "a mapping to track per-user
