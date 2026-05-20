@@ -15,7 +15,8 @@ Phases:
 """
 
 import asyncio
-import json
+from typing import cast
+import json5 as json
 import pathlib
 from dataclasses import dataclass
 
@@ -124,7 +125,7 @@ async def run_autoprove_pipeline(
 
     parsed_confs: list[tuple[str, dict, str]] = []  # (conf_path, config, contract_name)
     for conf_path_str in config_paths:
-        config = json.loads(pathlib.Path(conf_path_str).read_text())
+        config = cast(dict, json.loads(pathlib.Path(conf_path_str).read_text()))
         contract_name = main_contract_from_config(config)
         if not contract_name:
             continue
