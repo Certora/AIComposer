@@ -2,7 +2,9 @@
 
 import argparse
 import hashlib
+import logging
 import pathlib
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
@@ -28,7 +30,9 @@ from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
 
 from composer.spec.util import FS_FORBIDDEN_READ, find_files
-from composer.io.multi_job import HandlerFactory
+from composer.io.multi_job import HandlerFactory, phase_summary, reset_phase_stats
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -178,31 +182,42 @@ async def _entry_point() -> AsyncIterator[Executor]:
         )
 
         async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
-            if args.skip_setup:
-                return await run_direct_autoprove_pipeline(
+            reset_phase_stats()
+            pipeline_t0 = time.perf_counter()
+            logger.info("[pipeline] start skip_setup=%s cloud=%s max_concurrent=%d",
+                        args.skip_setup, args.cloud, args.max_concurrent)
+            try:
+                if args.skip_setup:
+                    return await run_direct_autoprove_pipeline(
+                            llm=llm,
+                            ctx=ctx,
+                            source_input=system_doc,
+                            config_paths=args.config_paths,
+                            env=source_env,
+                            handler_factory=handler,
+                            custom_summary_path=args.custom_summary_path,
+                            standard_summary_path=args.standard_summary_path,
+                            cloud=CloudConfig() if args.cloud else None,
+                            max_concurrent=args.max_concurrent,
+                            interactive=args.interactive,
+                            properties=properties
+                        )
+                return await run_autoprove_pipeline(
                         llm=llm,
                         ctx=ctx,
                         source_input=system_doc,
-                        config_paths=args.config_paths,
                         env=source_env,
                         handler_factory=handler,
-                        custom_summary_path=args.custom_summary_path,
-                        standard_summary_path=args.standard_summary_path,
                         cloud=CloudConfig() if args.cloud else None,
                         max_concurrent=args.max_concurrent,
                         interactive=args.interactive,
-                        properties=properties
+                        threat_model=threat_model
                     )
-            return await run_autoprove_pipeline(
-                    llm=llm,
-                    ctx=ctx,
-                    source_input=system_doc,
-                    env=source_env,
-                    handler_factory=handler,
-                    cloud=CloudConfig() if args.cloud else None,
-                    max_concurrent=args.max_concurrent,
-                    interactive=args.interactive,
-                    threat_model=threat_model
+            finally:
+                logger.info(
+                    "[pipeline] done in %.2fs\n%s",
+                    time.perf_counter() - pipeline_t0,
+                    phase_summary(),
                 )
 
         yield runner

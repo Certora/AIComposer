@@ -9,6 +9,7 @@ import asyncio
 import logging
 import tarfile
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,15 +134,18 @@ async def cloud_results(
     directory is cleaned up on exit.
     """
     cloud_job = parse_cloud_link(run_result_link)
+    poll_t0 = time.perf_counter()
 
     logger.info("Cloud job submitted: %s/%s", cloud_job.user_id, cloud_job.job_id)
 
     async def on_status(status: str) -> None:
-        logger.info("Cloud job %s status: %s", cloud_job.job_id[:8], status)
+        elapsed = time.perf_counter() - poll_t0
+        logger.info("Cloud job %s status: %s (%.0fs elapsed)", cloud_job.job_id[:8], status, elapsed)
         if poll_callback:
-            await poll_callback(status, f"Cloud job {cloud_job.job_id[:8]}: {status}")
+            await poll_callback(status, f"Cloud job {cloud_job.job_id[:8]}: {status} ({elapsed:.0f}s)")
 
     job_data = await poll_job(cloud_job, on_status=on_status)
+    logger.info("Cloud job %s polling finished in %.0fs", cloud_job.job_id[:8], time.perf_counter() - poll_t0)
 
     status = job_data.get("jobStatus", "UNKNOWN")
     if status != "SUCCEEDED":
