@@ -96,8 +96,8 @@ async def _poll_job_inner(
 async def poll_job(
     job: CloudJob,
     *,
+    timeout: float,
     interval: float = 10.0,
-    timeout: float = 1800.0,
     on_status: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict:
     """Poll /jobData until the job reaches a terminal status.
@@ -125,6 +125,8 @@ def find_results_root(dest: Path) -> Path:
 @asynccontextmanager
 async def cloud_results(
     run_result_link: str,
+    *,
+    poll_timeout: float,
     poll_callback: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> AsyncIterator[Path]:
     """Async context manager: poll cloud job, download results, yield path, clean up.
@@ -144,7 +146,7 @@ async def cloud_results(
         if poll_callback:
             await poll_callback(status, f"Cloud job {cloud_job.job_id[:8]}: {status} ({elapsed:.0f}s)")
 
-    job_data = await poll_job(cloud_job, on_status=on_status)
+    job_data = await poll_job(cloud_job, timeout=poll_timeout, on_status=on_status)
     logger.info("Cloud job %s polling finished in %.0fs", cloud_job.job_id[:8], time.perf_counter() - poll_t0)
 
     status = job_data.get("jobStatus", "UNKNOWN")
