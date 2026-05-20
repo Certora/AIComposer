@@ -1,6 +1,15 @@
 import argparse
+import json
+import pathlib
 from typing import TypeVar, Protocol, cast, Annotated, get_type_hints, get_origin, Any, get_args, Union
 from composer.audit.db import DEFAULT_CONNECTION as AUDITDB_DEFAULT_CONNECTION
+
+
+def _parse_prover_conf(path: str) -> dict:
+    """argparse ``type=`` callback for ``--prover-conf``: resolve the
+    given path to the loaded JSON dict at parse time so downstream
+    consumers see a dict everywhere, never a path string."""
+    return json.loads(pathlib.Path(path).read_text())
 from composer.input.types import CommandLineArgs, ResumeArgs, Arg, OptionalArg, RAGDBOptions, ModelOptions, LanggraphOptions
 
 ArgNS = TypeVar("ArgNS", covariant=True)

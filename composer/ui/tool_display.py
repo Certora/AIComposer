@@ -1,3 +1,4 @@
+from enum import Enum
 from langchain_core.messages import ToolMessage
 from dataclasses import dataclass, field
 from typing import Callable
@@ -9,14 +10,41 @@ from contextlib import contextmanager, asynccontextmanager
 type DisplayLabelTy = Callable[[dict], str] | str
 type ResultOutputTy = str | Callable[[str, ToolMessage], str | None | tuple[str, str]] | None
 
+
+class ToolDisplayClassifier(Enum):
+    """Display-shape classifier for tool calls in TUI handlers.
+
+    Pure-console handlers ignore this — it only affects rendering in
+    ``MessageRenderer`` (BaseRichConsoleApp / MultiJobTaskHandler).
+    """
+
+    DEFAULT = "default"
+    """Synchronous-feeling tool. Result anchors under the call when it
+    lands; no spinner."""
+
+    LONG_RUNNING = "long_running"
+    """Tool whose execution takes long enough that the user benefits from
+    a "still working" indicator. A spinner is mounted under the call
+    widget at call time and replaced by the result when it lands."""
+
+    LONG_RUNNING_AGENT = "long_running_agent"
+    """Tool that spawns a sub-agent with its own UI lifecycle (e.g.
+    ``cvl_research``, ``code_explorer``). The sub-agent renders activity
+    in its own panel, so a spinner here would be redundant — the result
+    just anchors under the call when it lands."""
+
+
 @dataclass
 class ToolDisplay:
     """Declarative display config for a single tool."""
 
     display_name: DisplayLabelTy
     """
-    Label shown when the tool is called.  ``str`` for a static name, callable
-    ``(input) -> str`` to vary based on the concrete arguments.
+    The "long" label shown when the tool is called — used when the renderer
+    has the budget for verbose detail (e.g. an expanded line in a transcript).
+    ``str`` for a static name, callable ``(input) -> str`` to vary based on
+    the concrete arguments. Free to inline argument fields verbatim; if the
+    renderer needs a length-bounded variant it should ask for ``short``.
     """
 
     result: ResultOutputTy
@@ -28,6 +56,20 @@ class ToolDisplay:
     * ``callable(name, msg)`` — dynamic.  Return ``None`` to suppress,
       ``str`` for a label (message content as body), or ``(label, body)``
       to override both.
+    """
+
+    classifier: ToolDisplayClassifier = ToolDisplayClassifier.DEFAULT
+    """Display-shape classifier — see ``ToolDisplayClassifier``."""
+
+    short_display_name: DisplayLabelTy | None = None
+    """
+    Optional length-bounded variant of ``display_name``. Renderers that
+    need a compact line (status bar, collapsed group header, single-line
+    progress indicator) request this via ``format_tool_call(..., short=True)``.
+    When ``None`` (the default), ``format_tool_call`` falls back to
+    ``display_name`` — preserving prior behavior. Provide this whenever
+    ``display_name`` inlines free-text argument fields (research questions,
+    explanations, reasons) that can blow up a single line.
     """
 
 
@@ -123,7 +165,11 @@ class CommonTools:
     )
     result = ToolDisplay("Delivering result", suppress_ack("Result"))
 
-    code_explorer = ToolDisplay(lambda q: f"Code Exploration Request: {q["question"]}", "Code Explorer Answer")
+    code_explorer = ToolDisplay(
+        lambda q: f"Code Exploration Request: {q["question"]}",
+        "Code Explorer Answer",
+        short_display_name="Code exploration",
+    )
 
     get_file = GroupedTool(
         "read",
@@ -134,6 +180,11 @@ class CommonTools:
         "write",
         lambda p: ", ".join(p.get("files", {}).keys()),
         lambda items: f"Wrote: {', '.join(items)}",
+    )
+    edit_file = GroupedTool(
+        "edit",
+        lambda p: ", ".join(p.get("files", {}).keys()),
+        lambda items: f"Edited: {', '.join(items)}"
     )
     list_files = ToolDisplay("Listing files", "File listing")
     grep_files = ToolDisplay(
@@ -150,6 +201,7 @@ class CommonTools:
     )
     cvl_research = ToolDisplay(
         lambda p: f"Researching CVL: {p.get('question', '?')}", "Research result",
+        short_display_name="CVL research",
     )
     scan_knowledge_base = ToolDisplay("Scanning knowledge base", "KB scan results")
     get_knowledge_base_article = ToolDisplay("Reading KB article", "KB article")
@@ -254,12 +306,18 @@ class ToolDisplayConfig:
             return _graphcore_global_tools[name]
         return None
 
-    def format_tool_call(self, name: str, input: dict) -> str:
-        """Return a user-friendly label for a tool invocation."""
+    def format_tool_call(self, name: str, input: dict, *, short: bool = False) -> str:
+        """Return a user-friendly label for a tool invocation.
+
+        When ``short=True``, the entry's ``short_display_name`` is used if
+        provided, otherwise we fall back to ``display_name``. The decision
+        of which variant to use lives with the renderer — annotations
+        declare both shapes and let the caller pick.
+        """
         entry = self._find_formatter(name)
         if entry is None or isinstance(entry, GroupedTool):
             return f"Tool: {name}"
-        nm = entry.display_name
+        nm = entry.short_display_name if short and entry.short_display_name is not None else entry.display_name
         if isinstance(nm, str):
             return nm
         return nm(input)
@@ -270,6 +328,17 @@ class ToolDisplayConfig:
         """Return the ``GroupedTool`` entry for *name*, or ``None``."""
         entry = self._find_formatter(name)
         return entry if isinstance(entry, GroupedTool) else None
+
+    def get_classifier(self, name: str) -> ToolDisplayClassifier:
+        """Return the display-shape classifier for *name*.
+
+        Defaults to ``DEFAULT`` for unknown tools and grouped tools (the
+        latter doesn't anchor results under individual calls, so the
+        classifier is moot)."""
+        entry = self._find_formatter(name)
+        if isinstance(entry, ToolDisplay):
+            return entry.classifier
+        return ToolDisplayClassifier.DEFAULT
 
     # -- result formatting ---------------------------------------------------
 
@@ -310,7 +379,8 @@ _graphcore_global_tools = {
     "list_files": CommonTools.list_files,
     "grep_files": CommonTools.grep_files,
     "result": CommonTools.result,
-    "memory": CommonTools.memory
+    "memory": CommonTools.memory,
+    "edit_file": CommonTools.edit_file
 }
 
 _ns_global_tools = {}
@@ -397,6 +467,15 @@ def tool_display_of(
 
 def tool_display(
     label: DisplayLabelTy,
-    result: ResultOutputTy
+    result: ResultOutputTy,
+    classifier: ToolDisplayClassifier = ToolDisplayClassifier.DEFAULT,
+    short_label: DisplayLabelTy | None = None,
 ) -> Callable[[T_VAR], T_VAR]:
-    return tool_display_of(ToolDisplay(display_name=label, result=result))
+    return tool_display_of(
+        ToolDisplay(
+            display_name=label,
+            result=result,
+            classifier=classifier,
+            short_display_name=short_label,
+        )
+    )

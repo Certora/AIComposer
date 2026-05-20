@@ -1,11 +1,11 @@
-from typing import Protocol, Unpack
+from typing import Protocol, TypedDict, Unpack
 from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool
 from langgraph.store.base import BaseStore
 
 from composer.spec.tool_env import ToolEnvironment, SourceTools, BaseSourceTools, BasicAgentTools
-from composer.spec.services import build_rag_tool_env, _BaseTools, RAGInputs
+from composer.spec._env_common import build_rag_tool_env, _BaseTools, RAGInputs
 from graphcore.tools.vfs import fs_tools
 from composer.spec.code_explorer import indexed_code_explorer_tool
 from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
@@ -42,7 +42,6 @@ def build_source_tools(
 
     explorer_tool = indexed_code_explorer_tool(_ExplorerEnv(
         builder=llm.builder,
-        has_source=llm.has_source,
         base_source_tools=s.base_source_tools,
         index=ind,
         llm=llm.llm
@@ -56,11 +55,16 @@ class SourceEnvironment(ToolEnvironment, SourceTools, Protocol):
     pass
 
 
-class SourceParams(RAGInputs):
+class SourceOnlyParams(TypedDict):
+    """Source-specific params for ``build_source_env`` that aren't already in ``RAGInputs``."""
     root: str
     forbidden_read: str
-
     source_question_ns: tuple[str, ...]
+
+
+class SourceParams(RAGInputs, SourceOnlyParams):
+    """Full kwargs for ``build_source_env`` — RAG inputs + source-specific inputs."""
+    pass
 
 def build_source_env(
     **params: Unpack[SourceParams]
@@ -81,22 +85,21 @@ def build_source_env(
         @property
         def cvl_authorship_tools(self) -> tuple[BaseTool, ...]:
             return self.source_tools + self.rag_tools
-    
+
         @property
         def feedback_tools(self) -> tuple[BaseTool, ...]:
             return self.cvl_authorship_tools
-        
+
         @property
         def bug_analysis_tools(self) -> tuple[BaseTool, ...]:
             return self.source_tools
-        
+
         @property
         def system_analysis_tools(self) -> tuple[BaseTool, ...]:
             return self.source_tools
 
     return ToRet(
         builder=rag_env.builder,
-        has_source=True,
         rag_tools=rag_env.rag_tools,
         source_tools=full_source.source_tools,
         llm=rag_env.llm

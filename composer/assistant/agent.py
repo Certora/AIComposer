@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,10 @@ def build_orchestrator(
     """Build and compile the orchestrator agent graph."""
     tools = build_tools(workspace)
 
-    sys_prompt = load_jinja_template("orchestrator_system.j2")
+    sys_prompt = load_jinja_template(
+        "orchestrator_system.j2",
+        god_mode=bool(os.environ.get("COMPOSER_GOD_MODE")),
+    )
     initial_prompt = load_jinja_template(
         "orchestrator_prompt.j2",
         workspace=str(workspace),

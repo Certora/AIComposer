@@ -36,7 +36,7 @@ from textual.timer import Timer
 from langchain_core.messages import AIMessage
 
 from composer.ui.message_renderer import MessageRenderer, MountFn, TokenStats, dot, KNOWN_NODES
-from composer.ui.tool_call_renderer import ToolCallRenderer
+from composer.ui.tool_call_renderer import ToolGroupState, render_tool_call
 from composer.ui.tool_display import ToolDisplayConfig
 from composer.io.event_handler import EventHandler, NullEventHandler
 from composer.ui.ide_bridge import IDEBridge
@@ -48,6 +48,7 @@ from composer.io.conversation import (
 )
 from composer.io.stream import AsyncDataQueue, ManagedQueue, managed_streamer, EndConversation, Checkpoint
 from composer.io.multi_job import TaskHandle, TaskInfo
+from rich.traceback import Traceback
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +117,7 @@ class _ThinkingSpinner(Static):
             self._timer = None
 
 
-class _ConversationSession(ToolCallRenderer):
+class _ConversationSession:
     """Runs one refinement conversation inside a task panel.
 
     Lifecycle:
@@ -142,13 +143,20 @@ class _ConversationSession(ToolCallRenderer):
         set_status: Callable[[TaskStatus], None],
         opening: RenderableType,
     ):
-        super().__init__(tool_config)
+        self._tool_config = tool_config
         self._task_id = task_id
         self._panel = panel
         self._host = host
         self._mount = mount_to
         self._set_status = set_status
         self._opening = opening
+
+        # Session-local consecutive-collapsing state. Single-stream, no
+        # nesting in refinement conversations.
+        self._tool_group = ToolGroupState()
+        # Refinement doesn't anchor live output panes under tool calls,
+        # but render_tool_call still expects an anchors dict.
+        self._anchors: dict[str, Static] = {}
 
         self._queue: ManagedQueue[ProgressPayload] = AsyncDataQueue(
             _ready=asyncio.Event(), _event_stream=[]
@@ -175,15 +183,18 @@ class _ConversationSession(ToolCallRenderer):
                 await self._mount_spinner()
             case AIYapping(yap_content=text):
                 await self._remove_spinner()
-                self.reset_tool_collapsing()
+                self._tool_group.reset()
                 await self._mount(self._panel, self.render_ai_yapping(text))
             case ToolBatch(calls=calls):
                 await self._remove_spinner()
                 for call in calls:
-                    w = self.render_tool_call(
+                    w = render_tool_call(
+                        self._tool_config,
+                        self._tool_group,
                         name=call["name"],
                         input_args=call.get("args") or {},
                         tool_call_id=call.get("id"),
+                        anchors=self._anchors,
                     )
                     if w is not None:
                         await self._mount(self._panel, w)
@@ -222,7 +233,7 @@ class _ConversationSession(ToolCallRenderer):
 
         await self._remove_spinner()
 
-        self.reset_tool_collapsing()
+        self._tool_group.reset()
 
         if ai_response:
             await self._mount(
@@ -411,19 +422,19 @@ class MultiJobTaskHandler[H]:
         pass
 
     async def log_start(self, *, path: list[str], description: str, tool_id: str | None) -> None:
-        await self._renderer.render_start(self._panel, path=path, description=description)
+        await self._renderer.render_start(
+            self._panel, path=path, description=description, tool_id=tool_id,
+        )
 
     async def log_end(self, path: list[str]) -> None:
         await self._renderer.render_end(self._panel, path=path)
 
     async def log_state_update(self, path: list[str], st: dict) -> None:
-        target = self._renderer.get_mount_target(self._panel, path)
-
         for node_name, v in st.items():
             if node_name not in KNOWN_NODES:
                 continue
             if "messages" in v:
-                await self._renderer.render_messages(target, v["messages"])
+                await self._renderer.render_messages(path, v["messages"])
             await self.on_node_state(path, node_name, v)
 
     async def human_interaction(
@@ -487,7 +498,30 @@ class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, Ap
     .interaction-hint { color: $text-muted; padding: 0 1; }
     Collapsible { background: transparent; border: none; padding: 0; }
     CollapsibleTitle { padding: 0 1; }
-    Collapsible Contents { padding: 0 0 0 3; }
+    Collapsible Contents {
+        padding: 0 0 0 3;
+        overflow-y: auto;
+    }
+
+    /* Tool-call block: see BaseRichConsoleApp.CSS for the contract. */
+    .tool-call-block { height: auto; }
+    .tool-call-block > * { margin-bottom: 0; }
+    .tool-call-attachment {
+        margin-left: 2;
+        margin-top: 0;
+        margin-bottom: 0;
+        height: auto;
+    }
+    .attachment-row { height: auto; width: 1fr; }
+    .attachment-corner {
+        width: 3;
+        color: $text-muted;
+        padding: 0;
+    }
+    .attachment-pending {
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     BINDINGS = [
@@ -576,6 +610,12 @@ class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, Ap
             self._hitl_inputs.pop(task_id, None)
 
     # ── Key bindings ──────────────────────────────────────────
+
+    async def mount_error(self, exc: Exception):
+        summary_pane = self.query_one("#summary", VerticalScroll)
+        summary_pane.mount(
+            Static(Traceback())
+        )
 
     def action_go_back(self) -> None:
         switcher = self.query_one("#switcher", ContentSwitcher)

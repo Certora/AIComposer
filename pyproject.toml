@@ -52,6 +52,12 @@ graphcore = { path = "./graphcore", editable = true }
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
+tui-natspec = "composer.cli.tui_pipeline:main"
+cache-autoprove = "composer.cli.cache_autoprove:main"
+cache-natspec = "composer.cli.cache_natspec:main"
+natspec-report = "composer.cli.natspec_report:main"
+snapshot-viewer = "composer.cli.snapshot_viewer:main"
+ai-compose = "composer.cli.compose:main"
 
 [tool.setuptools.packages.find]
 include = ["composer*", "sanity_analyzer*", "analyzer*"]
@@ -60,4 +66,11 @@ include = ["composer*", "sanity_analyzer*", "analyzer*"]
 "" = "."
 
 [tool.setuptools.package-data]
-composer = ["templates/*.j2", "scripts/init-db.sql"]
+composer = [
+    "templates/*.j2",
+    "web/templates/*.html",
+    "web/templates/**/*.j2",
+    "web/static/*.css",
+    "web/static/*.js",
+    "scripts/init-db.sql"
+]

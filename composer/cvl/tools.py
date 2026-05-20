@@ -117,7 +117,7 @@ stderr:
 """
     except Exception:
         return "Syntax checker failed"
-    update = {}
+    update: dict = {}
     update[spec_key] = pp
     if reset_read:
         update[reset_read] = False

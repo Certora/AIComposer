@@ -1,0 +1,18 @@
+### Document references — share research, don't redo it
+
+The `cvl_research` tool caches its answers in a shared index. Every answer
+comes back tagged with a `Document-Ref: <hash>` line that uniquely identifies the
+Q&A in this cache.
+
+**When you write output that other agents will read** — include the
+`CVL-Document-Ref` for any CVL claim that came from a `cvl_research`
+answer. Others can then fetch the original Q&A to understand the justification
+for your work without re-querying the `cvl_research` tool. This saves time and money,
+and ensures all agents are working from a shared baseline of knowledge.
+
+**When you see a `CVL-Document-Ref` in some output**, fetch the original
+answer via the `cvl_document_ref(ref=<hash>)`. Trust cached answers — they were
+produced by the exact same `cvl_research` tool to which you have access.
+Treat these results as verified facts; do NOT re-ask the underlying question to "verify" or "double-check";
+the cache is the verified answer.
+

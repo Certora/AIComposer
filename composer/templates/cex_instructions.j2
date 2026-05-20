@@ -1,14 +1,61 @@
-Please analyze the previous counterexample. When analyzing the counterexample, be sure to keep the original specification 
-for {{ rule_name }} in mind. When possible, summarize the root cause of the failure
-in the original implementation. If you are uncertain as the exact cause, indicate this. If you have multiple theories,
-list those theories.
+Analyze the previous counterexample against the original specification for {{ rule_name }}.
 
-Based off of this analysis, identify any code changes that need to be performed to address the underlying defects
-identified by the Certora Prover.
+Your goal is to extract the **core problem** — the concrete scenario the prover found that
+violates the rule, the parts of the counterexample relevant to that violation, and
+(when possible) a high-level characterization of the failure (e.g. "unexpected self
+transfer", "front-running window between deposit and oracle update", "rounding loss
+accumulates per call"). The counterexample contains as much information as possible about
+the concrete scenario; many of those details are irrelevant. Distinguishing the relevant
+state and inputs from the noise is the most valuable part of your analysis.
 
-IMPORTANT: Respond to this message with a natural language response. Do NOT use any tools. Phrase your analysis
-in the second person, e.g., "You learned that the original implementation had the defect ..." and "You must make the following
-changes ... "
+**IMPORTANT**: The output of your analysis should be as high-signal as possible; if
+a detail from the counterexample is not important to understanding the counterexample,
+do not mention it. In particular, do not list what you judged to be irrelevant; this is
+simply noise.
 
-IMPORTANT: If the failure is due to ghosts being HAVOCed due to an unresolved call, *NEVER* suggest making the ghosts
-persistent as a fix. Instead, suggest alternative ways to address the unresolved call from summarization, linking changes, etc.
+When you summarize the root cause, hedge appropriately:
+
+- If you're certain about the cause, state it directly.
+- If you have several plausible theories, **list them individually** rather than
+  speculating on a single one. Multiple grounded theories are more useful than one
+  confident-sounding wrong answer.
+- If the trace is ambiguous and you're not sure, say so explicitly. Spurious explanations
+  are worse than admitted uncertainty — the agent reading this analysis will trust your
+  word and act on it.
+
+There are two important caveats to remember during your analysis:
+
+**Spec might be the bug, not the code.** Specification files are authored by humans and
+can themselves contain mistakes. A verification failure is *not* automatically an
+implementation defect. If your analysis suggests the spec's stated property doesn't match
+the design intent, or that the rule's preconditions are too weak / too strong, name that
+possibility — don't reflexively assume the implementation is wrong.
+
+**Starting state might not be reasonable.** The prover considers *all* potential starting
+states; not all of them correspond to states reachable in a "reasonable" environment.
+Counterexamples that depend on, say, a {{ token_example }} contract violating its own
+representational invariants are typically infeasible in production. Consider whether the
+starting state in the trace is actually reachable. If you suspect it isn't, hedge:
+
+> "If it is possible for contract A to reach this state, then ..."
+
+If the starting state is clearly illegitimate, say so — that's a useful diagnosis on its
+own, since the right remediation (a `requireInvariant`, a justification rule, or a
+revisited spec precondition) follows from that fact.
+
+**Stop at analysis.** Do NOT propose code changes, summary additions, spec edits, or any
+other remediation. Your job is to extract the core problem, not to fix it. The agent that
+called the prover has the broader context (other specs, prior attempts, accumulated
+memory, the orchestrator's briefing) and is in a far better position to decide what to do
+with your diagnosis. A well-stated root cause is the most useful deliverable; a half-baked
+"you must change X to Y" suggestion is actively worse than silence because the calling
+agent may take it at face value.
+
+IMPORTANT: respond in natural language. Do NOT use any tools. Phrase the analysis in the
+second person — "You learned that ...", "The trace shows that you ..." — but stop short
+of "You must do X" or "You should change Y" framing. The calling agent decides what to do
+next.
+
+IMPORTANT: if the failure is due to ghosts being HAVOCed by an unresolved external call,
+identify that as the root cause explicitly. Do not speculate on whether to mark ghosts
+persistent, add summaries, link contracts, or any other fix — just name the diagnosis.

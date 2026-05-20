@@ -5,11 +5,14 @@ contract that implements the interface and compiles.
 </background>
 
 <interface>
-The interface to implement is:
+The interface to implement is `{{ interface_name }}`, laid out in the project at `{{ interface_path }}`.
+Its source is:
 
 ```solidity
 {{ the_interface }}
 ```
+
+You may also read it directly via your source tools (`get_file("{{ interface_path }}")`) if needed.
 </interface>
 
 <task>
@@ -17,11 +20,45 @@ Given the interface file, generate a minimal stub implementation.
 
 Requirements:
 - Use pragma solidity ^0.{{ solc_version }};
-- Do *NOT* inline the interface, import it from "interfaces/{{interface_name}}.sol"
-- Declare a suitably named contract that implements the interface
+- Do *NOT* inline the interface, import it from `"{{ interface_path }}"` (use that exact path in
+  your import statement, resolved relative to the stub's own location as Solidity requires).
 - Implement all interface functions with empty bodies (return default values as needed)
 - Use parameter names in all function signatures, even if unused
 - Do NOT add any storage variables — those will be added later by the verification pipeline
+
+### Choosing the contract identifier
+
+The contract you declare in the stub MUST be named **exactly `{{ contract_name }}`** — the same
+identifier as the component in the design document (and the same identifier as the interface
+you're implementing).
+
+Do **NOT** append decorations like `Stub`, `Impl`, `Implementation`, `Mock`, `Fake`, `Base`, or
+any other suffix or prefix. Do **NOT** rename it to anything else "for clarity". The downstream
+formal-verification pipeline binds to the exact identifier `{{ contract_name }}`; any deviation
+silently breaks every spec that targets this contract.
+
+Correct: `contract {{ contract_name }} is {{ interface_name }} { ... }`
+Wrong:   `contract {{ contract_name }}Stub is {{ interface_name }} { ... }`
+Wrong:   `contract {{ contract_name }}Impl is {{ interface_name }} { ... }`
+
+This is non-negotiable. There is no situation in which decorating the identifier is the right
+call. If you feel tempted to add a suffix, you are wrong — use `{{ contract_name }}` verbatim.
+
+### Choosing the stub file path
+
+{% if agent_chooses_path %}
+You must choose a project-relative path for the stub file. Before deciding, use your source tools
+(`list_files`, `get_file`, `grep_files`) to inspect the existing project layout and follow
+whatever convention the codebase already uses for contract implementations — for example an
+existing `src/`, `contracts/`, or `src/contracts/` directory. The path must end in `.sol` and the
+basename MUST be `{{ contract_name }}.sol` (matching the mandated identifier above — no decoration
+on the filename either). If the project has no existing convention, place the stub at
+`src/contracts/{{ contract_name }}.sol`.
+{% else %}
+The stub file location is assigned automatically — you do not need to choose a path. Focus on
+the stub content; the path will be populated from the mandated contract identifier
+(`{{ contract_name }}`).
+{% endif %}
 
 ## Deliver
 

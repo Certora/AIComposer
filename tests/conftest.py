@@ -22,7 +22,7 @@ from psycopg.connection_async import AsyncConnection
 from psycopg.sql import SQL, Identifier
 from psycopg_pool.pool_async import AsyncConnectionPool as PGAsyncPool
 
-from composer.prover.core import SummarizedReport, RawReport
+from composer.prover.core import ProverReport
 from composer.spec.source.prover import get_prover_tool, LLM
 
 if TYPE_CHECKING:
@@ -176,7 +176,7 @@ async def pg_database(pg_database_opt: PGAsyncPool | None) -> AsyncIterator[PGAs
     assert pg_database_opt is not None
     yield pg_database_opt
 
-type ProverToolResponse = SummarizedReport | RawReport | str
+type ProverToolResponse = ProverReport | str
 type ProverMock = Callable[[Iterable[ProverToolResponse]], BaseTool]
 
 @pytest.fixture

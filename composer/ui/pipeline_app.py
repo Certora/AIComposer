@@ -6,9 +6,11 @@ task handlers, event routing, tool configs, and completion behavior.
 """
 
 import asyncio
+import json
 import pathlib
 from typing import cast, override
 
+from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Static, Input, Collapsible, ContentSwitcher
 
@@ -23,6 +25,14 @@ from composer.ui.multi_job_app import (
 )
 from composer.spec.natspec.pipeline import Phase, PipelineResult
 from composer.spec.natspec.pipeline_events import NatspecEvent
+from composer.spec.natspec.codegen_export import (
+    ImplementationPlan,
+    build_implementation_plan,
+    plan_as_markdown,
+    plan_preview_files,
+    plan_to_json,
+)
+from composer.spec.natspec.report import export_report, report_from_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +78,17 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
                 **CommonTools.cvl_manipulation(),
                 "publish_spec": ToolDisplay("Publishing to master spec", suppress_ack("Publish result")),
                 "give_up": ToolDisplay("Giving up on property", suppress_ack("Give up result")),
-                "record_skip": ToolDisplay(lambda d: f"Skipping Property #{d['property_index']}: {d['reason']}", suppress_ack("Skip Request Result", ("Recorded skip", ))),
+                "record_skip": ToolDisplay(
+                    lambda d: f"Skipping Property #{d['property_index']}: {d['reason']}",
+                    suppress_ack("Skip Request Result", ("Recorded skip", )),
+                    short_display_name="Property skip",
+                ),
                 "read_stub": ToolDisplay("Reading verification stub", None),
-                "request_stub_field": ToolDisplay(lambda d: f"Requesting stub field: {d["purpose"]}", "Stub field result"),
+                "request_stub_field": ToolDisplay(
+                    lambda d: f"Requesting stub field: {d["purpose"]}",
+                    "Stub field result",
+                    short_display_name="Stub field request",
+                ),
                 "advisory_typecheck": ToolDisplay("Type-checking spec", "Type-check result"),
                 **CommonTools.cvl_research_displays(),
                 "result": CommonTools.result,
@@ -105,8 +123,9 @@ class NatspecTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
                     "Master spec updated", evt["spec"], "input.spec",
                 )
             case "stub_update":
+                contract_id = evt.get("contract_id", "stub")
                 await self.render_content_link(
-                    "Stub updated", evt["stub"], "Impl.sol",
+                    f"Stub updated: {contract_id}", evt["stub"], f"{contract_id}.sol",
                 )
 
 
@@ -118,13 +137,31 @@ class NatspecTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
 class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
     """Textual TUI for the NatSpec multi-agent pipeline."""
 
-    def __init__(self, ide: IDEBridge | None = None):
+    BINDINGS = [
+        *MultiJobApp.BINDINGS,
+        Binding("p", "show_plan_webview", "Plan webview", show=True),
+    ]
+
+    def __init__(
+        self,
+        ide: IDEBridge | None = None,
+        *,
+        system_doc_path: pathlib.Path | None = None,
+        source_root: pathlib.Path | None = None,
+        prover_conf: dict | None = None,
+        output_root: pathlib.Path | None = None,
+    ):
         super().__init__(
             phase_labels=PHASE_LABELS,
             section_order=_SECTION_ORDER,
-            header_text="NatSpec Pipeline | ESC: summary | q: quit (when done)",
+            header_text="NatSpec Pipeline | ESC: summary | p: plan webview | q: quit (when done)",
             ide=ide,
         )
+        self._system_doc_path = system_doc_path
+        self._source_root = source_root
+        self._prover_conf = prover_conf
+        self._output_root = output_root
+        self._plan: ImplementationPlan | None = None
 
     def create_task_handler(self, panel: VerticalScroll, info: TaskInfo[Phase]) -> NatspecTaskHandler:
         tc = tool_config_for_phase(info.phase)
@@ -136,31 +173,39 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
     # ── Pipeline completion ───────────────────────────────────
 
     async def on_pipeline_done(self, result: PipelineResult) -> None:
-        """Show completion banner, preview results, and enable quit."""
+        """Build the implementation plan, render a summary, and drive the
+        review loop (IDE preview if connected; otherwise file-write under
+        ``--output-root`` or a message if neither is available).
+        """
         self._pipeline_done = True
 
         summary = self.query_one("#summary", VerticalScroll)
         switcher = self.query_one("#switcher", ContentSwitcher)
         switcher.current = "summary"
 
-        banner_text = Text()
-        banner_text.append("\n━━ Pipeline Complete ━━\n", style="bold green")
+        plan = build_implementation_plan(
+            result,
+            system_doc_path=self._system_doc_path or pathlib.Path("<unknown>"),
+            source_root=self._source_root,
+            prover_conf=self._prover_conf,
+        )
+        self._plan = plan
 
-        files: dict[str, str] = {}
+        await summary.mount(Static(self._render_completion_banner(plan, result)))
 
-        for c in result.contracts:
-            n_fail = len(c.failures)
-            banner_text.append(f"Contract: {c.name}\n")
-            banner_text.append(f"  Interface: {c.interface.path}")
-            banner_text.append(f"  Failures: {n_fail}\n" if n_fail else "All properties succeeded\n")
-            if n_fail:
-                for f in c.failures:
-                    banner_text.append(f"    \u2717 {f.prop.description}: {f.reason}\n", style="red")
-            files[f"certora/{c.stub.solidity_identifier}.spec"] = c.spec
-            files[f"interfaces/{c.interface.path}"] = c.interface.content
-            files[f"stubs/{c.stub.path}"] = c.stub.content
+        files = plan_preview_files(plan)
 
-        await summary.mount(Static(banner_text))
+        plan_json_path = self._write_plan_json(plan)
+        if plan_json_path is not None:
+            await summary.mount(
+                Static(Text(f"Plan: {plan_json_path}", style="bold cyan"))
+            )
+
+        report_path = self._write_report(result)
+        if report_path is not None:
+            await summary.mount(
+                Static(Text(f"Report: {report_path}", style="bold cyan"))
+            )
 
         if self._ide is not None:
             preview_id: str | None = None
@@ -170,24 +215,150 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
                 self.notify("Failed to preview results in VS Code", severity="warning")
 
             if preview_id is not None:
+                await summary.mount(Static(Text(
+                    "Review the proposed files in the VS Code Explorer. "
+                    "Press p to open a plan summary webview.",
+                    style="dim",
+                )))
                 await self._show_accept_reject_prompt(summary, preview_id)
             else:
                 await summary.mount(
                     Static(Text("Preview unavailable.", style="dim"))
                 )
-        else:
-            out_dir = pathlib.Path.cwd()
-            for path, content in files.items():
-                (out_dir / path).write_text(content)
+        elif self._output_root is not None:
+            written = self._write_files_under_output_root(files)
+            for path, content in sorted(written.items()):
                 lexer = self._guess_lang(path) or "text"
                 syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
-                coll = Collapsible(Static(syntax), title=path, collapsed=False)
+                coll = Collapsible(Static(syntax), title=path, collapsed=True)
                 await summary.mount(coll)
-            await summary.mount(
-                Static(Text(f"Wrote {len(files)} file(s) to {out_dir}", style="bold green"))
-            )
+            await summary.mount(Static(Text(
+                f"Wrote {len(written)} file(s) under {self._output_root}",
+                style="bold green",
+            )))
+        else:
+            await summary.mount(Static(Text(
+                "No IDE bridge and no --output-root set. No files written.\n"
+                "Rerun with --output-root <dir> to persist, or connect the VS "
+                "Code extension to review interactively.",
+                style="bold yellow",
+            )))
 
         await summary.mount(Static(Text("Press q to quit.", style="dim")))
+
+    def _render_completion_banner(
+        self,
+        plan: ImplementationPlan,
+        result: PipelineResult,
+    ) -> Text:
+        """Rich summary of the plan for the completion banner."""
+        banner = Text()
+        banner.append("\n━━ Pipeline Complete ━━\n", style="bold green")
+
+        if plan.cycles:
+            banner.append(
+                f"\n! {len(plan.cycles)} dependency cycle(s) detected - "
+                "those contracts are omitted from the plan order.\n",
+                style="bold yellow",
+            )
+            for cyc in plan.cycles:
+                banner.append(
+                    f"  cycle: {' -> '.join(cyc)} -> {cyc[0]}\n",
+                    style="yellow",
+                )
+
+        banner.append(f"\nApp: {plan.application_type}\n", style="bold")
+        banner.append(f"Contracts in dep order: {len(plan.contracts)}\n")
+
+        failures_by_name = {
+            c.name: len(c.spec_results.failures) for c in result.contracts
+        }
+
+        for i, c in enumerate(plan.contracts, 1):
+            n_fail = failures_by_name.get(c.name, 0)
+            banner.append(f"\n  {i}. ")
+            banner.append(c.name, style="bold")
+            if c.tag:
+                banner.append(f"  [{c.tag}]", style="dim")
+            if c.depends_on:
+                banner.append(f"  <- {', '.join(c.depends_on)}", style="dim")
+            banner.append("\n")
+            banner.append(
+                f"     specs: {len(c.specs)}   "
+                f"stub fields: {len(c.required_stub_fields)}   "
+                f"failures: {n_fail}\n",
+                style="red" if n_fail else "dim",
+            )
+
+        return banner
+
+    def _write_plan_json(self, plan: ImplementationPlan) -> pathlib.Path | None:
+        """Write ``implementation_plan.json`` under ``--output-root`` if set.
+
+        Returns the absolute path written, or ``None`` if no output_root was
+        configured on this app.
+        """
+        if self._output_root is None:
+            return None
+        out = self._output_root.resolve()
+        out.mkdir(parents=True, exist_ok=True)
+        path = out / "implementation_plan.json"
+        path.write_text(json.dumps(plan_to_json(plan), indent=2, default=str))
+        return path
+
+    def _write_report(self, result: PipelineResult) -> pathlib.Path | None:
+        """Write ``natspec_report.md`` under ``--output-root`` if set.
+
+        The report is the human-readable counterpart to the codegen
+        plan: per-contract properties, generated specs, skipped /
+        failed properties with reasons.
+        """
+        if self._output_root is None:
+            return None
+        report = report_from_pipeline(result)
+        return export_report(report, self._output_root)
+
+    def _write_files_under_output_root(
+        self, files: dict[str, str]
+    ) -> dict[str, str]:
+        """Persist every file in the preview map under ``--output-root``.
+
+        Called only when no IDE bridge is available. Returns the files that
+        were actually written (all of them; kept as a map for symmetry with
+        the preview flow).
+        """
+        assert self._output_root is not None
+        root = self._output_root.resolve()
+        for path, content in files.items():
+            tgt = root / path
+            tgt.parent.mkdir(parents=True, exist_ok=True)
+            tgt.write_text(content)
+        return files
+
+    def action_show_plan_webview(self) -> None:
+        """Bound to ``p``: open the plan as a rendered Markdown webview in
+        VS Code. Toasts (non-fatal) if no IDE bridge or no plan yet.
+        """
+        if self._plan is None:
+            self.notify("No plan available yet.", severity="warning")
+            return
+        if self._ide is None:
+            self.notify(
+                "Plan webview requires the VS Code extension.", severity="warning"
+            )
+            return
+        asyncio.create_task(self._open_plan_webview(self._plan))
+
+    async def _open_plan_webview(self, plan: ImplementationPlan) -> None:
+        assert self._ide is not None
+        try:
+            await self._ide.show_webview(
+                plan_as_markdown(plan),
+                title="NatSpec Implementation Plan",
+                id="natspec-plan",
+            )
+        except Exception:
+            self.notify("Failed to open plan webview in VS Code", severity="warning")
 
     async def _show_accept_reject_prompt(
         self,

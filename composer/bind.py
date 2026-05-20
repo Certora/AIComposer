@@ -16,3 +16,6 @@ import logging
 logging.getLogger("huggingface_hub.utils._http").addFilter(
     lambda r: "You are sending unauthenticated requests to the HF Hub." not in r.getMessage()
 )
+
+import warnings
+warnings.filterwarnings("ignore", message=r"CUDA initialization", category=UserWarning)

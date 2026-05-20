@@ -1,11 +1,22 @@
-"""Entry point for the auto-prove multi-agent pipeline TUI."""
+"""Entry point for the auto-prove multi-agent pipeline TUI.
+
+Two public surfaces:
+
+  - :func:`run_autoprove` opens the service contexts (Postgres, rag,
+    tool-display scope) and runs the pipeline against a supplied
+    handler factory. CLI and non-CLI callers (web frontend) both go
+    through this; the CLI layer just builds the inputs from argparse.
+  - :func:`_entry_point` is the CLI plumbing — argparse + build inputs +
+    call ``run_autoprove`` via the existing ``cb`` callback pattern.
+"""
 
 import argparse
 import hashlib
 import pathlib
 import uuid
 from contextlib import asynccontextmanager
-from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
+from dataclasses import dataclass
+from typing import cast, Protocol, Callable, Awaitable, AsyncIterator
 
 from graphcore.tools.memory import async_memory_tool
 
@@ -44,6 +55,42 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cloud: bool
     interactive: bool
     threat_model: str
+    max_bug_rounds: int
+
+
+@dataclass
+class AutoProveInputs:
+    """Resolved inputs for an autoprove run.
+
+    Built from CLI argparse for ``tui-autoprove`` / ``console-autoprove``,
+    or from form data for the web frontend. Flat by design — satisfies
+    :class:`ModelOptions` / :class:`RAGDBOptions` Protocols by attribute
+    shape so ``create_llm(inputs)`` can use it directly.
+    """
+    # Resolved paths — caller is expected to have validated existence
+    # and that ``main_contract_path`` is inside ``project_root``.
+    project_root: pathlib.Path
+    main_contract_path: pathlib.Path
+    contract_name: str
+    system_doc_path: pathlib.Path
+    threat_model_path: pathlib.Path | None = None
+
+    # Run config
+    max_concurrent: int = 4
+    cloud: bool = False
+    interactive: bool = False
+    cache_ns: str | None = None
+    memory_ns: str | None = None
+    max_bug_rounds: int = 3
+
+    # ModelOptions + RAGDBOptions (consumed by ``create_llm``)
+    rag_db: str = ""
+    model: str = "claude-opus-4-6"
+    tokens: int = 10_000
+    thinking_tokens: int = 2048
+    memory_tool: bool = True
+    interleaved_thinking: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Cache
@@ -62,7 +109,96 @@ def _root_cache_key(
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Reusable entry point
+# ---------------------------------------------------------------------------
+
+async def run_autoprove(
+    inputs: AutoProveInputs,
+    *,
+    handler_factory: HandlerFactory[AutoProvePhase, None],
+    thread_id: str | None = None,
+) -> AutoProveResult:
+    """Open service contexts and run the autoprove pipeline.
+
+    *thread_id* is the langgraph root thread id for this run. Pass
+    ``None`` (the default) for a fresh UUID. Pass an existing thread
+    id to resume from its checkpoints — Phase 5's "soft retry" uses
+    this to re-enter a failing run with the same agent state, while
+    "hard retry" passes ``None`` (or a fresh id) so cached phases
+    skip but the failing phase gets a clean conversation.
+    """
+    relative_path = str(inputs.main_contract_path.relative_to(inputs.project_root))
+    content = get_document_input(inputs.system_doc_path)
+    if content is None:
+        raise ValueError(f"cannot read system doc at {inputs.system_doc_path}")
+
+    system_doc = SourceCode(
+        content=content,
+        project_root=str(inputs.project_root),
+        contract_name=inputs.contract_name,
+        relative_path=relative_path,
+        forbidden_read=FS_FORBIDDEN_READ,
+    )
+
+    llm = create_llm(inputs)
+    model = get_model()
+
+    root_key = _root_cache_key(
+        str(inputs.project_root), inputs.system_doc_path, relative_path, inputs.contract_name,
+    )
+    cache_root: tuple[str, str] | None = (
+        (inputs.cache_ns, root_key) if inputs.cache_ns is not None else None
+    )
+
+    if thread_id is None:
+        thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
+
+    threat_model = (
+        get_document_input(inputs.threat_model_path)
+        if inputs.threat_model_path is not None else None
+    )
+
+    async with (
+        standard_connections(
+            embedder=DefaultEmbedder(model)
+        ) as conns,
+        PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
+        async_tool_context()
+    ):
+        source_env = build_source_env(
+            llm=llm,
+            db=rag_db,
+            checkpoint=conns.checkpointer,
+            forbidden_read=FS_FORBIDDEN_READ,
+            kb_ns=("cvl",),
+            root=str(inputs.project_root),
+            store=conns.indexed_store,
+            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
+            source_question_ns=("source_agent", "cache", root_key)
+        )
+        ctx = WorkflowContext.create(
+            services=lambda namespace: async_memory_tool(conns.memory(namespace)),
+            thread_id=thread_id,
+            store=conns.store,
+            cache_namespace=cache_root,
+            memory_namespace=inputs.memory_ns,
+        )
+        return await run_autoprove_pipeline(
+            llm=llm,
+            ctx=ctx,
+            source_input=system_doc,
+            env=source_env,
+            handler_factory=handler_factory,
+            cloud=CloudConfig() if inputs.cloud else None,
+            max_concurrent=inputs.max_concurrent,
+            interactive=inputs.interactive,
+            threat_model=threat_model,
+            max_bug_rounds=inputs.max_bug_rounds,
+        )
+
+
+# ---------------------------------------------------------------------------
+# CLI plumbing
 # ---------------------------------------------------------------------------
 
 type Executor = Callable[[HandlerFactory[AutoProvePhase, None]], Awaitable[AutoProveResult]]
@@ -83,88 +219,44 @@ async def _entry_point() -> AsyncIterator[Executor]:
     parser.add_argument("--cloud", action="store_true", help="Run prover jobs in the cloud")
     parser.add_argument("--interactive", action="store_true", help="Interactively refine the security properties after extraction")
     parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'thread' model (text or pdf) with which to seed the property extraction process")
+    parser.add_argument("--max-bug-rounds", type=int, default=3, help="Maximum number of bug-extraction rounds run per component during property analysis (default: 3)")
 
     args = cast(AutoProveArgs, parser.parse_args())
 
-    # Parse main_contract (path:ContractName)
     project_root = pathlib.Path(args.project_root).resolve()
-    main_contract_path, contract_name = args.main_contract.split(":", 1)
+    main_contract_path_str, contract_name = args.main_contract.split(":", 1)
+    main_contract_path = pathlib.Path(main_contract_path_str).resolve()
+    if not main_contract_path.is_relative_to(project_root):
+        parser.error(f"Invalid path: {main_contract_path} doesn't appear in project root {project_root}")
 
-    full_contract_path = pathlib.Path(main_contract_path).resolve()
-    if not full_contract_path.is_relative_to(project_root):
-        parser.error(f"Invalid path: {full_contract_path} doesn't appear in project root {project_root}")
-
-    relative_path = str(full_contract_path.relative_to(project_root))
-
-    # Read input document
     sys_path = pathlib.Path(args.system_doc)
     content = get_document_input(sys_path)
     if content is None:
         parser.error(f"cannot read {sys_path}")
 
-    system_doc = SourceCode(
-        content=content,
-        project_root=str(project_root),
+    inputs = AutoProveInputs(
+        project_root=project_root,
+        main_contract_path=main_contract_path,
         contract_name=contract_name,
-        relative_path=relative_path,
-        forbidden_read=FS_FORBIDDEN_READ,
+        system_doc_path=sys_path,
+        threat_model_path=(
+            pathlib.Path(args.threat_model) if args.threat_model is not None else None
+        ),
+        max_concurrent=args.max_concurrent,
+        cloud=args.cloud,
+        interactive=args.interactive,
+        cache_ns=args.cache_ns,
+        memory_ns=args.memory_ns,
+        max_bug_rounds=args.max_bug_rounds,
+        rag_db=args.rag_db,
+        model=args.model,
+        tokens=args.tokens,
+        thinking_tokens=args.thinking_tokens,
+        memory_tool=args.memory_tool,
+        interleaved_thinking=args.interleaved_thinking,
     )
 
-    # Set up services
-    llm = create_llm(args)
-    model = get_model()
-
-
-    cache_root: tuple[str, str] | None = None
-
-    root_key = _root_cache_key(
-            args.project_root, sys_path, relative_path, contract_name,
-        )
-
-    if args.cache_ns is not None:
-        cache_root = (args.cache_ns, root_key)
-
-    thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
-
-    threat_model = get_document_input(pathlib.Path(threat_path)) if (threat_path := args.threat_model) is not None else None
-
-    async with (
-        standard_connections(
-            embedder=DefaultEmbedder(model)
-        ) as conns,
-        PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
-        async_tool_context()
-    ):
-        source_env = build_source_env(
-            llm=llm,
-            db=rag_db,
-            checkpoint=conns.checkpointer,
-            forbidden_read=FS_FORBIDDEN_READ,
-            kb_ns=("cvl",),
-            root=args.project_root,
-            store=conns.indexed_store,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
-            source_question_ns=("source_agent", "cache", root_key)
-        )
-        ctx = WorkflowContext.create(
-            services=lambda namespace: async_memory_tool(conns.memory(namespace)),
-            thread_id=thread_id,
-            store=conns.store,
-            cache_namespace=cache_root,
-            memory_namespace=args.memory_ns,
-        )
-
-        async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
-            return await run_autoprove_pipeline(
-                    llm=llm,
-                    ctx=ctx,
-                    source_input=system_doc,
-                    env=source_env,
-                    handler_factory=handler,
-                    cloud=CloudConfig() if args.cloud else None,
-                    max_concurrent=args.max_concurrent,
-                    interactive=args.interactive,
-                    threat_model=threat_model
-                )
-
-        yield runner
+    async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
+        return await run_autoprove(inputs, handler_factory=handler)
+    yield runner
+    

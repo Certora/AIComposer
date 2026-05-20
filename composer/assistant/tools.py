@@ -1,4 +1,8 @@
+import base64
+import re
 from pathlib import Path
+
+from pydantic import Field
 
 from langchain_core.tools import BaseTool
 from langgraph.runtime import get_runtime
@@ -18,6 +22,30 @@ from composer.assistant.launch_args import (
 from composer.assistant.codegen_launch import launch_codegen_workflow, launch_resume_workflow
 from composer.assistant.natspec_launch import launch_natspec_workflow
 from composer.assistant.post_mortem import PostMortemTool
+from composer.input.models import CmdlineCodegenConfiguration, CodegenConfiguration
+from composer.workflow.recovery import recovery_from_thread
+from composer.workflow.services import checkpointer_context, store_context
+
+
+# ---------------------------------------------------------------------------
+# Workspace path safety
+# ---------------------------------------------------------------------------
+
+# Same forbidden-read pattern fs_tools uses on the workspace, applied to the
+# PDF tool too so the two surfaces stay consistent.
+_FORBIDDEN_WORKSPACE_READ = re.compile(r"^\.composer/.+$")
+
+
+def _resolve_workspace_path(workspace: Path, rel: str) -> Path | str:
+    """Return the absolute path under ``workspace`` for ``rel``, or an error
+    string if the path escapes the workspace, is absolute, or is forbidden."""
+    if rel.startswith("/"):
+        return f"Absolute paths are not allowed: {rel}"
+    if ".." in Path(rel).parts:
+        return f"Path traversal (..) is not allowed: {rel}"
+    if _FORBIDDEN_WORKSPACE_READ.fullmatch(rel):
+        return f"Path is forbidden: {rel}"
+    return (workspace / rel).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +91,44 @@ class LaunchResumeTool(LaunchResumeArgs, WithAsyncImplementation[str]):
         return await launch_resume_workflow(self, ctx)
 
 
+class GetPDFTool(WithAsyncImplementation[list[str | dict]]):
+    """Read a PDF from the workspace and return its contents to the model.
+
+    `get_file` is text-only and cannot read PDFs. Use this tool when the
+    project has a `.pdf` system/design document, audit report, or other PDF
+    you need to read. The result is delivered to you as a multimodal
+    document content block — you can then reason about its contents the
+    same way you would any other document.
+
+    Path is workspace-relative; absolute paths, `..` traversal, and the
+    forbidden-read pattern from your normal file tools are all rejected.
+    """
+
+    path: str = Field(description="Workspace-relative path to the PDF file (must end in `.pdf`).")
+
+    async def run(self) -> list[str | dict]:
+        ctx = get_runtime(OrchestratorContext).context
+        resolved = _resolve_workspace_path(ctx.workspace, self.path)
+        if isinstance(resolved, str):
+            return [resolved]
+        if not resolved.is_file():
+            return [f"File not found: {self.path}"]
+        if resolved.suffix.lower() != ".pdf":
+            return [f"Not a PDF (suffix must be .pdf): {self.path}"]
+        data = base64.standard_b64encode(resolved.read_bytes()).decode("utf-8")
+        return [
+            f"PDF contents of {self.path}:",
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": data,
+                },
+            },
+        ]
+
+
 class LaunchNatSpecTool(LaunchNatSpecArgs, WithAsyncImplementation[str]):
     """Launch the NatSpec multi-agent pipeline. The user will be asked to confirm before proceeding."""
 
@@ -72,7 +138,12 @@ class LaunchNatSpecTool(LaunchNatSpecArgs, WithAsyncImplementation[str]):
             input_file=self.input_file,
             solc_version=self.solc_version,
             cache_namespace=self.cache_namespace,
-            memory_namespace=self.memory_namespace
+            memory_namespace=self.memory_namespace,
+            forbidden_read=self.forbidden_read,
+            prover_conf=self.prover_conf,
+            source_root=self.source_root,
+            output_root=self.output_root,
+            interactive=self.interactive,
         ))
         if (r := _check_confirmation(response)) is not None:
             return r
@@ -97,6 +168,7 @@ def build_tools(workspace: Path) -> list[BaseTool]:
     return [
         *project_tools,
         mem,
+        GetPDFTool.as_tool("get_pdf"),
         LaunchCodegenTool.as_tool("launch_codegen"),
         LaunchResumeTool.as_tool("launch_resume"),
         LaunchNatSpecTool.as_tool("launch_natspec"),

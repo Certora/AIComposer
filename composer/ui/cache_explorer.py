@@ -5,7 +5,8 @@ Provides a generic two-pane Textual app for browsing WorkflowContext cache
 hierarchies and memory filesystems. Workflow-specific scripts supply the
 tree builder and value formatter.
 
-See scripts/cache_explorer.py for the NatSpec pipeline entry point.
+See composer/cli/cache_natspec.py and composer/cli/cache_autoprove.py for
+pipeline-specific entry points.
 """
 
 from typing import Callable, Awaitable
@@ -47,20 +48,68 @@ class OrgNode(Generic[CACHE_V]):
     label: str
     children: list["CacheTreeNode[CACHE_V]"] = field(default_factory=list)
 
+
+# A storage slot in the langgraph store: ``(namespace_tuple, key)``.
+type StoreSlot = tuple[tuple[str, ...], str]
+
+
 @dataclass
 class CacheNode(Generic[CACHE_V]):
+    """A node in the typed cache hierarchy — its slot and memory namespace
+    are derived from the ``WorkflowContext`` it carries. Use this for
+    anything reachable via ``WorkflowContext.child(...)`` chains."""
     label: str
     ctx: WorkflowContext
     value: CACHE_V | None = None
     children: list["CacheTreeNode[CACHE_V]"] = field(default_factory=list)
 
-type CacheTreeNode[V] = CacheNode[V] | OrgNode[V]
+
+@dataclass
+class StoreNode(Generic[CACHE_V]):
+    """A node pointing at a raw langgraph-store slot that doesn't live in
+    the typed cache hierarchy — e.g. the StubRegistry / FileRegistry KV
+    entries, which the pipeline writes via ``store.aput`` directly rather
+    than through a ``WorkflowContext`` chain. Carries the slot explicitly
+    instead of synthesizing a fake context just to smuggle it through."""
+    label: str
+    slot: StoreSlot
+    value: CACHE_V | None = None
+    children: list["CacheTreeNode[CACHE_V]"] = field(default_factory=list)
+
+
+type CacheTreeNode[V] = CacheNode[V] | StoreNode[V] | OrgNode[V]
+
+
+def node_slot[V](node: CacheTreeNode[V]) -> StoreSlot | None:
+    """The ``(namespace, key)`` storage slot a node points at, if any.
+    ``OrgNode`` returns ``None``; ``CacheNode`` projects from its
+    ``WorkflowContext``; ``StoreNode`` returns its explicit slot."""
+    match node:
+        case OrgNode():
+            return None
+        case StoreNode(slot=slot):
+            return slot
+        case CacheNode(ctx=ctx):
+            ns = ctx.cache_namespace
+            if ns is None or len(ns) < 1:
+                return None
+            return (ns[:-1], ns[-1])
+
+
+def node_memory_ns[V](node: CacheTreeNode[V]) -> str | None:
+    """The memory namespace a node is associated with, if any. Only
+    ``CacheNode`` carries one (via its ``WorkflowContext``)."""
+    match node:
+        case CacheNode(ctx=ctx):
+            return ctx.memory_namespace
+        case _:
+            return None
 
 def icon[V](node: CacheTreeNode[V]) -> str:
     match node:
         case OrgNode():
             return "\u25B7"
-        case CacheNode():
+        case CacheNode() | StoreNode():
             return "\u2713" if node.value is not None else "\u25cb"
 
 
@@ -176,7 +225,7 @@ class CacheExplorerApp[V](App):
         self._status = status
         self._cache_root = build_tree()
         self._showing_memory = False
-        self._selected_node: CacheNode[V] | None = None
+        self._selected_node: CacheNode[V] | StoreNode[V] | None = None
         self._editing = False
         self._editing_file: str | None = None
         self._editing_ns: str | None = None
@@ -212,17 +261,25 @@ class CacheExplorerApp[V](App):
 
     def _populate_children(self, tree_node: TreeNode[CacheTreeNode[V]], cache_node: CacheTreeNode[V]) -> None:
         for child in cache_node.children:
-            as_node_data = child if isinstance(child, CacheNode) else None
+            as_node_data = child if isinstance(child, (CacheNode, StoreNode)) else None
             if child.children:
                 branch = tree_node.add(node_label(child), data=as_node_data)
                 self._populate_children(branch, child)
             else:
                 tree_node.add_leaf(node_label(child), data=as_node_data)
 
-    def _format_detail(self, node: CacheNode[V]) -> str:
+    def _format_detail(self, node: CacheNode[V] | StoreNode[V]) -> str:
         lines = [f"[{node.label}]"]
-        lines.append(f"Namespace: {node.ctx.cache_namespace}")
-        lines.append(f"Memory NS: {node.ctx.memory_namespace}")
+        slot = node_slot(node)
+        if slot is not None:
+            ns, key = slot
+            lines.append(f"Namespace: {ns}")
+            lines.append(f"Key: {key}")
+        else:
+            lines.append("Namespace: (no backing slot)")
+        mem_ns = node_memory_ns(node)
+        if mem_ns:
+            lines.append(f"Memory NS: {mem_ns}")
         lines.append("")
 
         val_raw = node.value
@@ -236,12 +293,12 @@ class CacheExplorerApp[V](App):
         lines.extend(self._format_value(val))
         return "\n".join(lines)
 
-    def _show_detail(self, node: CacheNode[V]) -> None:
+    def _show_detail(self, node: CacheNode[V] | StoreNode[V]) -> None:
         self.query_one("#detail-content", Static).update(self._format_detail(node))
 
-    def _show_memory(self, node: CacheNode[V]) -> None:
+    def _show_memory(self, node: CacheNode[V] | StoreNode[V]) -> None:
         self._cancel_edit_mode()
-        mem_ns = node.ctx.memory_namespace
+        mem_ns = node_memory_ns(node)
         content_widget = self.query_one("#memory-content", Static)
         mem_tree = self.query_one("#memory-tree", Tree)
         mem_tree.clear()
@@ -271,7 +328,7 @@ class CacheExplorerApp[V](App):
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         tree_id = event.node.tree.id
         if tree_id == "cache-tree":
-            node: CacheNode[V] | None = event.node.data
+            node: CacheNode[V] | StoreNode[V] | None = event.node.data
             self._selected_node = node
             if node is None:
                 return
@@ -292,7 +349,7 @@ class CacheExplorerApp[V](App):
         self._cancel_edit_mode()
         self._editing_file = entry.path
         if self._selected_node:
-            self._editing_ns = self._selected_node.ctx.memory_namespace
+            self._editing_ns = node_memory_ns(self._selected_node)
         backend = _get_memory_backend(self._editing_ns) if self._editing_ns else None
         if backend is None:
             return
@@ -326,11 +383,12 @@ class CacheExplorerApp[V](App):
             self.notify("No cached value to delete", severity="warning")
             return
 
-        ns = node.ctx.cache_namespace
-        if ns is None or len(ns) < 1:
-            self.notify("Cannot determine namespace", severity="error")
+        slot = node_slot(node)
+        if slot is None:
+            self.notify("Node has no backing slot to delete", severity="error")
             return
-        self._store.delete(ns[:-1], ns[-1])
+        ns, key = slot
+        self._store.delete(ns, key)
         node.value = None
         self.notify(f"Deleted: {node.label}")
 
@@ -338,7 +396,7 @@ class CacheExplorerApp[V](App):
         self._update_tree_node_label(tree.root, node)
         self._show_detail(node)
 
-    def _update_tree_node_label(self, tree_node: TreeNode, target: CacheNode[V]) -> bool:
+    def _update_tree_node_label(self, tree_node: TreeNode, target: CacheNode[V] | StoreNode[V]) -> bool:
         if tree_node.data is target:
             tree_node.set_label(node_label(target))
             return True

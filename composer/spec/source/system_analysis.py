@@ -5,19 +5,14 @@ from composer.spec.tool_env import SourceTools, BasicAgentTools
 from composer.spec.system_model import SourceApplication
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.system_analysis import run_component_analysis as wrapped_analysis
-
-
-class AnalysisEnv(BasicAgentTools, Protocol):
-    @property
-    def system_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
+from composer.spec.service_host import ServiceHost
 
 SOURCE_ANALYSIS_KEY = CacheKey[None, SourceApplication]("source-analysis")
 
 async def run_component_analysis(
     context: WorkflowContext[None],
     input: SourceCode,
-    env: AnalysisEnv
+    env: ServiceHost
 ) -> SourceApplication | None:
     child_ctx = context.child(SOURCE_ANALYSIS_KEY)
     return await wrapped_analysis(

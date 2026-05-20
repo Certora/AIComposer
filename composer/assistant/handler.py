@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.status import Status
 from rich.table import Table
+from rich.markdown import Markdown
 
 from composer.assistant.launch_args import (
     LaunchCodegenArgs,
@@ -51,7 +52,10 @@ class OrchestratorHandler:
         self._thinking: Status | None = None
 
     async def _prompt(self, message: str = "> ", multiline: bool = False) -> str:
-        return await self._session.prompt_async(message, multiline=multiline)
+        to_ret : str | None = None
+        while not to_ret:
+            to_ret = await self._session.prompt_async(message, multiline=multiline)
+        return to_ret
 
     # ------------------------------------------------------------------
     # SinkProtocol
@@ -86,7 +90,7 @@ class OrchestratorHandler:
                     self._stop_thinking()
                     text = msg.text
                     if text:
-                        self._console.print(text)
+                        self._console.print(Markdown(text))
                     for tc in msg.tool_calls:
                         self._render_tool_call(tc)
 
@@ -138,7 +142,7 @@ class OrchestratorHandler:
             case LaunchCodegenArgs() | LaunchNatSpecArgs() | LaunchResumeArgs():
                 return await self._confirm_launch(payload)
             case _:
-                self._console.print(Panel(str(payload), title="Agent Message"))
+                self._console.print(Panel(Markdown(payload), title="Agent Message"))
                 return await self._prompt(multiline=True)
 
     async def _confirm_launch(self, payload: ConfirmLaunch) -> str:
@@ -196,8 +200,11 @@ class OrchestratorHandler:
             case "yes":
                 return "yes"
             case "no":
+                self._start_thinking()
                 return "no"
             case "feedback":
-                return await self._prompt("Feedback: ")
+                to_ret = await self._prompt("Feedback: ")
+                self._start_thinking()
+                return to_ret
             case _:
                 return "no"

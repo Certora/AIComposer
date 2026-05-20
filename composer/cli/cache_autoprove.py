@@ -1,24 +1,26 @@
-"""
-Cache & Memory Explorer for the Auto-Prove pipeline.
+"""Cache & Memory Explorer for the Auto-Prove pipeline.
 
-Usage:
-    python scripts/autoprove_cache_explorer.py <project_root> <main_contract> <system_doc> --cache-ns <ns> [--memory-ns <ns>]
+Browses the cache + memory namespaces produced by ``tui-autoprove`` /
+``console-autoprove``. Wired as ``cache-autoprove`` in ``pyproject.toml``.
+
+Usage::
+
+    cache-autoprove <project_root> <main_contract> <system_doc> \\
+        --cache-ns <ns> [--memory-ns <ns>] [--threat-model <path>]
 """
 
 import argparse
-import hashlib
 import pathlib
 import sys
 from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
 from typing import AsyncIterator, AsyncGenerator
 
-_repo_root = str(pathlib.Path(__file__).parent.parent.absolute())
-if _repo_root not in sys.path:
-    sys.path.append(_repo_root)
-
 from composer.ui.cache_explorer import CacheNode, OrgNode, CacheTreeNode, CacheExplorerApp, DummyServices
-from composer.spec.context import WorkflowContext, SourceCode, CacheKey, CacheTypes, get_system_doc, CVLGeneration, Marker, CVLJudge
+from composer.spec.context import (
+    WorkflowContext, SourceCode, CacheKey, CacheTypes, get_document_input,
+    CVLGeneration, Marker, CVLJudge, InvJudge,
+)
 from composer.spec.source.system_analysis import SOURCE_ANALYSIS_KEY
 from composer.spec.source.harness import (
     config_key,
@@ -32,9 +34,12 @@ from composer.spec.source.harness import (
 )
 from composer.spec.source.autoprove_common import _root_cache_key
 from composer.spec.source.summarizer import _summary_key, _SummaryCache
-from composer.spec.source.struct_invariant import STRUCTURAL_INV_KEY, Invariants
+from composer.spec.source.struct_invariant import STRUCTURAL_INV_KEY, INV_JUDGE_KEY, Invariants
 from composer.spec.source.common_pipeline import PROPERTIES_KEY, INV_CVL_KEY, _component_cache_key, _batch_cache_key
-from composer.spec.bug import _BugAnalysisCache, BUG_ANALYSIS_KEY
+from composer.spec.bug import (
+    _BugAnalysisCache, _AgentResult, _AgentRoundWithHistory,
+    bug_analysis_key, AGENT_RESULT_KEY, agent_round_key,
+)
 from composer.spec.cvl_generation import GeneratedCVL, _LastAttemptCache, LAST_ATTEMPT_KEY, CVL_JUDGE_KEY
 from composer.spec.system_model import (
     SourceApplication, SourceExplicitContract, SourceExternalActor,
@@ -58,7 +63,10 @@ type AutoProveCachedValue = (
     | GeneratedCVL
     | _LastAttemptCache
     | _BugAnalysisCache
+    | _AgentResult
+    | _AgentRoundWithHistory
     | CVLJudge
+    | InvJudge
 )
 
 
@@ -156,14 +164,34 @@ async def _build_cvl_gen_nodes(
 async def _build_component_nodes(
     prop_ctx: WorkflowContext,
     feat: ContractComponentInstance,
+    threat_model: str | None,
 ) -> AsyncGenerator[CacheTreeNode[AutoProveCachedValue], None]:
     comp_key = _component_cache_key(feat)
     async with node_for(prop_ctx, comp_key, feat.component.name) as (feat_ctx, _):
-        bug_leaf = await leaf(feat_ctx, BUG_ANALYSIS_KEY, "Bug Analysis", _BugAnalysisCache)
-        yield bug_leaf
-        if bug_leaf.value is None:
+        # Bug analysis: aggregate (_BugAnalysisCache.items) → agent result
+        # (_AgentResult, full final history) → per-round (_AgentRoundWithHistory).
+        # Key is parameterized on the threat model — mirror the live binding.
+        bug_key = bug_analysis_key(threat_model)
+        async with node_for(feat_ctx, bug_key, "Bug Analysis", _BugAnalysisCache) as (bug_ctx, bug_val):
+            async with node_for(
+                bug_ctx, AGENT_RESULT_KEY, "Agent result", _AgentResult,
+            ) as (agent_ctx, _):
+                # Probe rounds 0..N until first miss. Round indices are dense
+                # (no holes) by construction in _run_bug_analysis_inner.
+                i = 0
+                while True:
+                    round_node = await leaf(
+                        agent_ctx, agent_round_key(i),
+                        f"Round {i + 1}", _AgentRoundWithHistory,
+                    )
+                    if round_node.value is None:
+                        break
+                    yield round_node
+                    i += 1
+
+        if bug_val is None:
             return
-        batch_key = _batch_cache_key(bug_leaf.value.items)
+        batch_key = _batch_cache_key(bug_val.items)
         async with node_for(feat_ctx, batch_key, "CVL Generation", GeneratedCVL) as (cvl_ctx, _):
             async for n in _build_cvl_gen_nodes(cvl_ctx.abstract(CVLGeneration)):
                 yield n
@@ -172,6 +200,7 @@ async def _build_component_nodes(
 async def build_tree_inner(
     root_ctx: WorkflowContext[None],
     contract_name: str,
+    threat_model: str | None,
 ) -> AsyncGenerator[CacheTreeNode[AutoProveCachedValue], None]:
     sa_leaf = await leaf(root_ctx, SOURCE_ANALYSIS_KEY, "source-analysis", SourceApplication)
     yield sa_leaf
@@ -196,15 +225,11 @@ async def build_tree_inner(
     if config_val is not None:
         yield await leaf(root_ctx, _summary_key(config_val), "summary", _SummaryCache)
 
-    yield await leaf(root_ctx, STRUCTURAL_INV_KEY, "structural-inv", Invariants)
+    async with node_for(root_ctx, STRUCTURAL_INV_KEY, "structural-inv", Invariants) as (inv_ctx, _):
+        yield memory(inv_ctx, child=INV_JUDGE_KEY, label="Feedback")
     async with node_for(root_ctx, INV_CVL_KEY, "invariant-cvl", GeneratedCVL) as (inv_cvl_ctx, _):
-        gen_ctx = inv_cvl_ctx.abstract(CVLGeneration)
-        yield await leaf(
-            gen_ctx, LAST_ATTEMPT_KEY, "Last Attempt", _LastAttemptCache
-        )
-        yield memory(
-            gen_ctx, child=CVL_JUDGE_KEY, label="Feedback"
-        )
+        async for n in _build_cvl_gen_nodes(inv_cvl_ctx.abstract(CVLGeneration)):
+            yield n
 
     # Properties — per-component bug analysis + CVL generation
     if sa_leaf.value is None:
@@ -232,14 +257,18 @@ async def build_tree_inner(
     with node(OrgNode(label="properties")):
         for comp_idx in range(len(contract_instance.contract.components)):
             feat = ContractComponentInstance(_contract=contract_instance, ind=comp_idx)
-            async for n in _build_component_nodes(prop_ctx, feat):
+            async for n in _build_component_nodes(prop_ctx, feat, threat_model):
                 yield n
 
 
-async def build_tree(root_ctx: WorkflowContext[None], contract_name: str) -> CacheNode[AutoProveCachedValue]:
+async def build_tree(
+    root_ctx: WorkflowContext[None],
+    contract_name: str,
+    threat_model: str | None,
+) -> CacheNode[AutoProveCachedValue]:
     root: CacheNode[AutoProveCachedValue] = CacheNode(label="root", ctx=root_ctx)
     with node(root):
-        async for n in build_tree_inner(root_ctx, contract_name):
+        async for n in build_tree_inner(root_ctx, contract_name, threat_model):
             curr = _node_context.get()
             assert curr is not None
             curr.children.append(n) #type: ignore
@@ -346,6 +375,24 @@ def format_value(val: AutoProveCachedValue) -> list[str]:
             if len(cvl.splitlines()) > 40:
                 lines.append(f"... ({len(cvl.splitlines()) - 40} more lines)")
         
+        # Subclass-of-_BugAnalysisCache cases first — match order matters.
+        case _AgentRoundWithHistory(items=items, reasoning=reasoning, agent_conversation=history):
+            lines.append(f"Properties this round ({len(items)}):")
+            for p in items:
+                lines.append(f"  - [{p.sort}] {p.description}")
+            lines.append("")
+            lines.append("--- Reasoning ---")
+            lines.append(reasoning)
+            lines.append("")
+            lines.append(f"Agent history: {len(history)} message(s)")
+
+        case _AgentResult(items=items, final_history=history):
+            lines.append(f"Cumulative properties ({len(items)}):")
+            for p in items:
+                lines.append(f"  - [{p.sort}] {p.description}")
+            lines.append("")
+            lines.append(f"Final-round history: {len(history)} message(s)")
+
         case _BugAnalysisCache(items=items):
             lines.append(f"Properties ({len(items)}):")
             for p in items:
@@ -375,9 +422,13 @@ def main() -> int:
     parser.add_argument("main_contract", help="Main contract as path:ContractName")
     parser.add_argument("system_doc", help="Path to the design document (text or PDF)")
     parser.add_argument("--cache-ns", required=True, dest="cache_ns",
-                        help="Cache namespace (same as passed to tui_autoprove.py)")
+                        help="Cache namespace (same as passed to tui-autoprove)")
     parser.add_argument("--memory-ns", dest="memory_ns", default=None,
                         help="Memory namespace (enables memory browsing)")
+    parser.add_argument("--threat-model", dest="threat_model", default=None,
+                        help="Path to the threat model (text or PDF) used for the original "
+                             "run. Required to resolve the bug-analysis cache key, which is "
+                             "parameterized on the threat model. Omit for runs without one.")
 
     args = parser.parse_args()
 
@@ -387,16 +438,30 @@ def main() -> int:
     relative_path = str(full_contract_path.relative_to(project_root))
 
     sys_path = pathlib.Path(args.system_doc)
-    content = get_system_doc(sys_path)
+    content = get_document_input(sys_path)
     if content is None:
         print(f"Error: cannot read {sys_path}")
         return 1
 
+    threat_model_for_key: str | None = None
+    if args.threat_model is not None:
+        tm_content = get_document_input(pathlib.Path(args.threat_model))
+        if tm_content is None:
+            print(f"Error: cannot read threat model {args.threat_model}")
+            return 1
+        # bug_analysis_key only consults ``str(threat_model)`` to derive the
+        # suffix — passing the stringified content reproduces what the live
+        # run wrote, regardless of whether it was a str or a dict.
+        threat_model_for_key = str(tm_content)
+
     from composer.workflow.services import get_store
     store = get_store()
 
+    # ``run_autoprove`` keys the namespace on the resolved project root —
+    # match it here, otherwise relative or ``~``-prefixed inputs would land
+    # under a different cache namespace than the run wrote.
     root_ns = (args.cache_ns, _root_cache_key(
-        args.project_root, sys_path, relative_path, contract_name,
+        str(project_root), sys_path, relative_path, contract_name,
     ))
     print(f"Root namespace: {root_ns}")
 
@@ -413,7 +478,7 @@ def main() -> int:
         status += f"  |  Memory NS: {args.memory_ns}"
 
     app = CacheExplorerApp(
-        build_tree=lambda: build_tree(root_ctx, contract_name),
+        build_tree=lambda: build_tree(root_ctx, contract_name, threat_model_for_key),
         format_value=format_value,
         store=store,
         status=status,

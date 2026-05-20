@@ -36,7 +36,8 @@ from typing import Any, Mapping
 
 from composer.io.events import (
     AllEvents, InnerEvent, Nested, NextCheckpoint,
-    CustomUpdate, StateUpdate, Start, End, GraphEvents, ProgressEvent
+    CustomUpdate, StateUpdate, Start, End, GraphEvents, ProgressEvent,
+    DrainerStop,
 )
 
 from langgraph._internal._typing import StateLike
@@ -79,6 +80,11 @@ async def _queue_drainer(
     peeled off to reconstruct the execution path.
     """
     async for e in q.stream_events():
+        if isinstance(e, DrainerStop):
+            # ``with_handler`` pushes this on exit; everything queued
+            # ahead of it has now been processed. Return cleanly so
+            # the cancel-and-await dance isn't needed.
+            return
         if isinstance(e, ProgressEvent):
             await event_handler.handle_progress_event(e.payload)
             continue
@@ -118,7 +124,15 @@ async def with_handler(
     try:
         yield
     finally:
-        background_task.cancel()
+        # Flush via sentinel rather than cancel. ``run_graph`` emits
+        # ``End`` in a ``finally`` that returns control synchronously
+        # to its caller; the drainer hasn't had a chance to process
+        # that ``End`` yet by the time we get here. A bare cancel
+        # would inject ``CancelledError`` before the drainer's next
+        # iteration, losing every event still queued — most
+        # importantly the final ``End`` that drives ``log_end`` and
+        # removes the agent from the Live region's tree.
+        ev_queue.push(DrainerStop())
         try:
             await background_task
         except asyncio.CancelledError:
@@ -134,7 +148,7 @@ def emit_custom_event(payload: Mapping[str, Any]):
 async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     graph: CompiledStateGraph[S, C, I, Any],
     ctxt: C,
-    input: I,
+    input: I | None,
     run_conf: RunnableConfig,
     description: str,
     within_tool: str | None = None,
@@ -147,6 +161,10 @@ async def run_graph[S: StateLike, C: StateLike | None, I: StateLike](
     the drainer can reconstruct the execution path.
 
     HITL interrupts are bridged to ``IOHandler.human_interaction()``.
+
+    ``input`` may be ``None`` to resume from the last checkpoint on
+    ``thread_id`` (e.g. transient-failure recovery on the same thread).
+    See ``graph_runner.run_graph`` for the rationale.
     """
     curr_io = _io_handler.get()
     if curr_io is None:

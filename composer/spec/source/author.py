@@ -260,10 +260,10 @@ class ConfigEditTool(WithAsyncImplementation[Command | str], WithInjectedId, Wit
 
 _PropertyGenTemplate = TypedTemplate[PropertyGenParams]("property_generation_prompt.j2")
 
-class _HasSourceParams(TypedDict):
-    has_source: bool
+class _JudgeSystemParams(TypedDict):
+    sort: Literal["greenfield", "existing", "update"]
 
-_PropertyJudgeSystemTemplate = TypedTemplate[_HasSourceParams]("property_judge_system_prompt.j2")
+_PropertyJudgeSystemTemplate = TypedTemplate[_JudgeSystemParams]("property_judge_system_prompt.j2")
 
 async def batch_cvl_generation(
     ctx: WorkflowContext[CVLGeneration],
@@ -319,12 +319,14 @@ async def batch_cvl_generation(
         lambda d: bound_template.render_to(d.with_initial_prompt_template)
     ).with_summary_config(PropertyGenerationConfig()).compile_async()
 
+    # Auto-prove / codegen verifies a pre-existing stable codebase as-is —
+    # sort="existing".
     feedback_env = property_feedback_judge(
         ctx.child(CVL_JUDGE_KEY), env, FeedbackTemplate.bind({
-            "has_source": True,
+            "sort": "existing",
             "context": component
         }), props, system_prompt=_PropertyJudgeSystemTemplate.bind({
-            "has_source": True
+            "sort": "existing",
         })
     )
 

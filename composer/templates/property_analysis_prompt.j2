@@ -7,8 +7,39 @@ audit effort.
 {% include "application_context_new.j2" %}
 </inputs>
 
+{% if prior_properties %}
+<prior_properties>
+You are running iteratively. {{ prior_properties | length }} prior round(s) have already
+analyzed this component. Their findings and reasoning are below. The properties listed
+here MUST NOT be re-proposed by you — including reframings of the same underlying claim
+as a different property sort (e.g. an attack-vector restated as an invariant, or vice
+versa). Your task this round is to surface security properties that prior rounds *missed*.
+
+{% for round_result in prior_properties %}
+### Round {{ loop.index }} extracted properties:
+{% for p in round_result.items %}
+- [{{ p.sort }}] {{ p.description }}
+{% endfor %}
+
+### Round {{ loop.index }} reasoning:
+{{ round_result.reasoning }}
+
+{% endfor %}
+
+When deciding what to look at this round, treat the prior rounds' reasoning as the
+authoritative record of what has been considered — not your own assumptions about what
+"a prior agent probably looked at". If a prior round's reasoning is silent on an angle,
+that angle is fair game for you.
+
+The standing rule from your system prompt — return an empty `items` list rather than
+pad with low-value properties — applies in full force here. If the prior rounds have
+already covered the meaningful property surface, returning nothing new is the right
+answer.
+</prior_properties>
+{% endif %}
+
 <task>
-{% if has_source %}
+{% if sort == "existing" %}
 Input: The implementation of the application, and a description of a specific component of that application
 {% else %}
 Input: A design document describing the application, and a description of a specific component of that application
@@ -19,7 +50,7 @@ Follow these steps exactly:
 
 ## Step 1
 
-{% if has_source %}
+{% if sort == "existing" %}
 Analyze the provided implementation and component description and formulate a set of security properties that are PLAUSIBLE
 for this component. Each security property description must be precise and concise.
 {% else %}
@@ -38,7 +69,7 @@ Security properties fall into one of three categories:
     Good example: "A user should not be able to change anyone's balance but their own"
     Bad example: "A user should not be able to hack the protocol" (overly broad)
 3. Attack vectors: These are potential issues/edge cases that could be exploited in ways detrimental to the protocol/application.
-   IMPORTANT: you do *NOT* need to find evidence that these issues actually exists, simply that they are PLAUSIBLE given the {% if has_source %}current implementation{% else %}design{% endif %}.
+   IMPORTANT: you do *NOT* need to find evidence that these issues actually exists, simply that they are PLAUSIBLE given the {% if sort == "existing" %}current implementation{% else %}design{% endif %}.
    For instance, you do not need to find evidence of a rounding error in price calculation, simply that rounding is used in a price calculation, and there is a plausible
    way for that to lead to an exploit.
     Good example: "A malicious actor could manipulate a price oracle to unbalance the pool, allowing free minting"
@@ -65,6 +96,8 @@ reasonable formalized in a symbolic tool.
 
 ## Step 2
 Write a rough draft list of your properties using the provided "write_rough_draft" tool.
+{#The rough-draft tool IS where your property content lives during this task — write the
+actual property text to it. Do not route content through memory.#}
 
 ## Step 3
 Review your rough draft. For each property/invariant in your rough draft, make sure it meets the guidelines and definitions described in step 1. Pay particular
@@ -75,7 +108,7 @@ Output the results of your analysis using the result tool.
 </task>
 
 <guidance>
-  {% if has_source %}
+  {% if sort == "existing" %}
   <hard_requirement>
      Derive your invariants and safety properties from first principles, relying as little as possible on the actual implementation.
      A safety property/invariant should state what the code SHOULD do, not what it CURRENTLY does.
@@ -86,7 +119,7 @@ Output the results of your analysis using the result tool.
     implementation.
   </hard_requirement>
   <reminder>
-     You do not need to find evidence that the attack vectors/issues actually exist in the {% if has_source %}implementation{% else %}design{% endif %},
-     simply that these bugs/attacks/etc. are *plausible* given the feature and its {% if has_source %}implementation{% else %}design{% endif %}.
+     You do not need to find evidence that the attack vectors/issues actually exist in the {% if sort == "existing" %}implementation{% else %}design{% endif %},
+     simply that these bugs/attacks/etc. are *plausible* given the feature and its {% if sort == "existing" %}implementation{% else %}design{% endif %}.
   </reminder>
 </guidance>

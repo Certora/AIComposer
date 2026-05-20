@@ -1,24 +1,20 @@
-from typing import NotRequired, Protocol, Any
+from typing import NotRequired, Any
 
-from langchain_core.tools import BaseTool
 
 from graphcore.graph import MessagesState, FlowInput
 
 
 from composer.spec.context import (
-    WorkflowContext, CacheKey, SystemDoc
+    WorkflowContext, SystemDoc
 )
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.system_model import BaseApplication, ExplicitContract, ExternalActor, ExternalDependency
-from composer.spec.tool_env import BasicAgentTools
+from composer.spec.system_model import (
+    BaseApplication, ExplicitContract, ExternalActor, ExternalDependency,
+)
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
+from composer.spec.service_host import ServiceHost
 
 DESCRIPTION = "Component analysis"
-
-class AnalysisEnv(BasicAgentTools, Protocol):
-    @property
-    def system_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
 
 def _validate_connectivity(
     _: Any, app: BaseApplication
@@ -60,8 +56,8 @@ async def run_component_analysis[T: BaseApplication](
     ty: type[T],
     child_ctxt: WorkflowContext[T],
     input: SystemDoc,
-    env: AnalysisEnv,
-    extra_input: list[str | dict]
+    env: ServiceHost,
+    extra_input: list[str | dict],
 ) -> T | None:
     """Analyze application components from a system doc and optionally source code."""
     if (cached := await child_ctxt.cache_get(ty)) is not None:
@@ -81,12 +77,12 @@ async def run_component_analysis[T: BaseApplication](
         FlowInput
     ).with_sys_prompt_template(
         "application_analysis_system.j2",
-        has_source=env.has_source
+        sort=env.sort,
     ).with_tools(
-        [memory, *get_rough_draft_tools(AnalysisState), *env.system_analysis_tools]
+        [memory, *get_rough_draft_tools(AnalysisState), *(env.source_tools if env.sort != "greenfield" else []) ]
     ).with_initial_prompt_template(
         "application_analysis_prompt.j2",
-        has_source=env.has_source
+        sort=env.sort,
     )
 
     graph = b.compile_async()

@@ -49,6 +49,13 @@ class End:
 class ProgressEvent:
     payload: dict
 
+@dataclass
+class DrainerStop:
+    """Sentinel pushed by ``with_handler`` on exit. The drainer flushes
+    any events queued ahead of it (notably the ``End`` event from
+    ``run_graph``'s finally, which would otherwise race the drainer's
+    cancellation) and then returns cleanly."""
+
 InnerEvent = StateUpdate | NextCheckpoint | CustomUpdate | Start | End
 
 @dataclass
@@ -63,4 +70,4 @@ class Nested:
 
 type GraphEvents = InnerEvent | Nested
 
-type AllEvents = GraphEvents | ProgressEvent
+type AllEvents = GraphEvents | ProgressEvent | DrainerStop

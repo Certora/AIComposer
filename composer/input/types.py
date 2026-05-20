@@ -83,7 +83,7 @@ class LanggraphOptions(Protocol):
     thread_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     recursion_limit: Annotated[int, Arg(
         help="The number of iterations of the graph to allow (default: {default}",
-        default=50
+        default=200
     )]
 
 

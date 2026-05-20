@@ -7,4 +7,5 @@ A previous run of this workflow crashed. The following files were recovered from
 ```
 {% endfor %}
 
-Resume from where the previous run left off, fixing any issues in the recovered files.
+Resume from where the previous run left off, fixing any issues in the recovered files. NB: These files in these versions are NOT yet placed onto the VFS, you will need to emplace
+them yourself via `put_file`. While they may exist in the VFS, their contents do NOT necessarily match the contents shown above.

@@ -25,6 +25,11 @@
       {
         "command": "composer.openProposedFile",
         "title": "Open Proposed File"
+      },
+      {
+        "command": "composer.bridge.status",
+        "title": "Composer Bridge: Show Status",
+        "category": "Composer"
       }
     ]
   },

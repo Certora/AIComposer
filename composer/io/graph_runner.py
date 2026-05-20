@@ -22,6 +22,51 @@ from langgraph.types import Command
 from langchain_core.runnables import RunnableConfig
 
 
+def _normalize_updates_payload(payload: dict) -> dict:
+    """Flatten langgraph's mixed-mode tools-node payload to ``dict[node, dict]``.
+
+    When a ``ToolNode`` batch contains tools whose returns differ in shape
+    (some return raw ``ToolMessage`` / ``str`` / dicts; some return
+    ``Command(update=...)`` with extra state-channel deltas), langgraph's
+    ``_combine_tool_outputs`` emits the node's value as a *list* of separate
+    updates instead of a single merged dict — see
+    ``langgraph/prebuilt/tool_node.py``. Every downstream ``log_state_update``
+    handler in this codebase expects ``dict[node, dict_with_messages]`` and
+    silently drops the list shape (either via ``isinstance(update, dict)``
+    guards or ``"messages" in update`` membership checks, which return
+    ``False`` against a list of dicts/Commands). The result is that any
+    ToolMessage produced by a parallel batch with at least one
+    ``Command``-returning tool never reaches the renderer — the tool widgets
+    stay "pending" until something else forces a redraw.
+
+    Merge here so handlers stay simple. ``messages`` lists are concatenated;
+    other state keys retain last-write-wins semantics (matches what
+    langgraph's reducers would do for non-message channels, which the
+    handlers in this codebase don't introspect for ingest purposes).
+    """
+    out: dict[str, Any] = {}
+    for node_name, value in payload.items():
+        if isinstance(value, dict) or not isinstance(value, list):
+            out[node_name] = value
+            continue
+        merged: dict[str, Any] = {}
+        for item in value:
+            d = item.update if isinstance(item, Command) and isinstance(item.update, dict) else item
+            if not isinstance(d, dict):
+                continue
+            for k, v in d.items():
+                if (
+                    k == "messages"
+                    and isinstance(merged.get(k), list)
+                    and isinstance(v, list)
+                ):
+                    merged[k] = [*merged[k], *v]
+                else:
+                    merged[k] = v
+        out[node_name] = merged
+    return out
+
+
 class SinkProtocol(Protocol):
     """Write-only event sink.  Synchronous — must not block."""
     def __call__(self, event: GraphEvents) -> None:
@@ -34,7 +79,7 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     event_sink: SinkProtocol,
     graph: CompiledStateGraph[S, C, I, Any],
     ctxt: C,
-    input: I,
+    input: I | None,
     run_conf: RunnableConfig,
     description: str,
     human_handler: HumanHandler[H, S] | None = None,
@@ -49,6 +94,12 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     When the graph raises an ``__interrupt__``, calls
     *human_handler* with the interrupt value and current state, then
     resumes with the returned string.
+
+    ``input`` may be ``None`` to resume from the last checkpoint on
+    ``thread_id`` without seeding any new state — the only safe way to
+    reuse a thread_id, since LangGraph treats a non-None input on an
+    existing thread as "merge into checkpoint state and replay from the
+    entry node", which compounds append-style channels.
     """
     config = run_conf.get("configurable", None)
     if config is None or "thread_id" not in config:
@@ -97,7 +148,7 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
                         break
                     event_sink(
                         StateUpdate(
-                            payload, thread_id=tid
+                            _normalize_updates_payload(payload), thread_id=tid
                         )
                     )
             if interrupted:

@@ -24,3 +24,35 @@ class LaunchNatSpecArgs(BaseModel):
     solc_version: str = Field(description="Solidity compiler version (e.g. '8.21')")
     cache_namespace: str = Field(description="Namespace for cross-run caching (e.g. 'mytoken'). Enables reuse of prior agent work.")
     memory_namespace: str = Field(description="Namespace for persistent agent memory (defaults to thread ID if empty)")
+    source_root: str | None = Field(
+        default=None,
+        description="Path to an existing codebase root. When set, natspec runs in source-aware mode.",
+    )
+    forbidden_read: str | None = Field(
+        default=None,
+        description=(
+            "Regex of paths source tools may not read. Defaults to the standard FS_FORBIDDEN_READ "
+            "pattern when source_root is set."
+        ),
+    )
+    prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
+    output_root: str | None = Field(
+        default=None,
+        description=(
+            "Workspace-relative directory under which the natspec run's `implementation_plan.json` "
+            "is written, plus any generated files in no-IDE fallback. When unset, defaults to "
+            "`natspec_output/<cache_namespace>` (or `natspec_output/` if no cache_namespace was "
+            "supplied). The plan path is reported back in the launch result so subsequent "
+            "codegen invocations can locate it."
+        ),
+    )
+    interactive: bool = Field(
+        default=False,
+        description=(
+            "When True, opens a per-component conversation channel during bug analysis so "
+            "the user can refine the extracted property list interactively before CVL "
+            "generation begins. Each component's channel is its own focusable panel in the "
+            "TUI. Set when the user has expressed intent to review properties before "
+            "formalization; leave false for batch / hands-off runs."
+        ),
+    )
