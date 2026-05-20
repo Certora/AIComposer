@@ -1,31 +1,39 @@
-from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.graph import StateGraph
+import pathlib
 
-from graphcore.graph import build_workflow, BoundLLM, Builder
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig, VFSState
 
-from composer.workflow.types import PromptParams
-from composer.core.context import AIComposerContext
-from composer.core.state import AIComposerState, AIComposerInput
+from composer.core.state import AIComposerState
 
-from composer.templates.loader import load_jinja_template
-from composer.workflow.summarization import SummaryGeneration
 
 
 
 def get_memory_ns(thread_id: str, ns: str) -> str:
     return f"ai-composer-{thread_id}-{ns}"
 
-# def get_system_prompt() -> str:
-#     """Load and render the system prompt from Jinja template"""
-#     return load_jinja_template("system_prompt.j2")
+_npm_md_noise = {
+    f"{f}.md" for f in [
+        "license", "security", "changelog", "history", "readme"
+    ]
+}
 
-# def get_initial_prompt(prompt: PromptParams) -> str:
-#     """Load and render the initial prompt from Jinja template"""
-#     return load_jinja_template("synthesis_prompt.j2", **prompt)
+_npm_suff_noise = {
+    f".{ext}" for ext in [
+        "js", "ts", "map", "json", "mjs"
+    ]
+}
+
+def exclude_ts_and_natspec(p: pathlib.PurePath) -> bool:
+    suff = p.suffix
+    lower_last = p.parts[-1].lower()
+    # o7 for our hardhat friends
+    return (suff in _npm_suff_noise or
+            (p.parts[0] == "natspec_output" and suff == ".sol") or
+            lower_last == "package.json" or
+            lower_last in _npm_md_noise or
+            lower_last == "license"
+            )
 
 def get_vfs_tools(
     fs_layer: str | None,
@@ -34,75 +42,26 @@ def get_vfs_tools(
     if immutable:
         return vfs_tools(VFSToolConfig(
             fs_layer=fs_layer,
-            immutable=True
+            immutable=True,
+            global_exclude=exclude_ts_and_natspec
         ), VFSState)
     else:
         return vfs_tools(VFSToolConfig(
             fs_layer=fs_layer,
             immutable=False,
-            forbidden_write="^rules.spec$",
+            # Block writes to ANY spec file. Spec mutations must go through
+            # propose_spec_change (for committed edits) or write_working_spec
+            # + commit_working_spec (for iterative drafts).
+            forbidden_write=r"^.+\.spec$",
+            global_exclude=exclude_ts_and_natspec,
             put_doc_extra= \
     """
     By convention, every Solidity file placed into the virtual filesystem should contain exactly one contract/interface/library definitions.
-    Further, the name of the contract/interface/library defined in that file should name the name of the solidity source file sans extension.
-    For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`"
+    Further, the name of the contract/interface/library defined in that file should match the name of the solidity source file sans extension.
+    For example, src/MyContract.sol should contain an interface/library/contract called `MyContract`.
 
-    IMPORTANT: You may not use this tool to update the specification, nor should you attempt to
-    add new specification files.
+    IMPORTANT: You may not use this tool to update, create, or delete any spec file (any path ending in `.spec`).
+    All spec mutations must go through the propose_spec_change tool (for committed edits) or the
+    write_working_spec / commit_working_spec flow (for iterative drafts).
     """
         ), AIComposerState)
-
-def get_cryptostate_builder(
-    llm: BaseChatModel,
-    fs_layer: str | None,
-    summarization_threshold : int | None,
-) -> tuple[Builder[AIComposerState, AIComposerContext, AIComposerInput], VFSAccessor[VFSState]]:
-    (vfs_tooling, mat) = get_vfs_tools(fs_layer=fs_layer, immutable=False)
-    # import here to avoid loading these for non-composer factory uses
-
-    from composer.tools.prover import certora_prover
-    from composer.tools.proposal import propose_spec_change
-    from composer.tools.question import human_in_the_loop
-    from composer.tools.result import code_result
-    from composer.tools.search import cvl_manual_search
-    from composer.tools.working_spec import CommitWorkingSpec, ReadWorkingSpec, WriteWorkingSpec
-
-    crypto_tools: list[BaseTool] = [
-        certora_prover,
-        propose_spec_change,
-        human_in_the_loop,
-        code_result,
-        cvl_manual_search(AIComposerContext),
-        *vfs_tooling,
-        ReadWorkingSpec.as_tool("read_working_spec"),
-        WriteWorkingSpec.as_tool("write_working_spec"),
-        CommitWorkingSpec.as_tool("commit_working_spec")
-    ]
-
-    builder : Builder[None, None, None] = Builder()
-
-
-    conf : SummaryGeneration | None = SummaryGeneration(
-        max_messages=summarization_threshold
-    ) if summarization_threshold else None
-
-    res = builder.with_context(
-        AIComposerContext
-    ).with_loader(
-        load_jinja_template
-    ).with_input(
-        AIComposerInput
-    ).with_tools(
-        crypto_tools
-    ).with_state(
-        AIComposerState
-    ).with_llm(
-        llm
-    ).with_output_key(
-        "generated_code"
-    )
-
-    if conf is not None:
-        res = res.with_summary_config(conf)
-    
-    return (res, mat)

@@ -1,16 +1,15 @@
-{% for rule_res, explanation in results %}
+{% for rule_res, diag_key in rule_entries %}
 The rule {{ rule_res.name }} result was: {{ rule_res.status }}
 {% if rule_res.status == "VIOLATED" %}
-{% if explanation %}
-Your analysis of the counterxample yielded the following:
-{{explanation}}
-{%else %}
-Analyzing the counterexample yielded no results
-{%endif%}
-{%endif%}
+{% if diag_key %}
+This violation is covered by diagnosis `{{ diag_key }}` (see "Diagnoses" below).
+{% else %}
+Analyzing the counterexample yielded no results.
+{% endif %}
+{% endif %}
 {% if rule_res.status == "ERROR" or rule_res.status == "SKIPPED" %}
 {% if not rule_res.error_messages %}
-There were no error messages reported by the prover
+There were no error messages reported by the prover.
 {% else %}
 The messages reported by the prover were:
 {% for err in rule_res.error_messages %}
@@ -19,3 +18,19 @@ The messages reported by the prover were:
 {% endif %}
 {% endif %}
 {% endfor %}
+{% if diagnoses %}
+
+## Diagnoses
+
+The following root causes were identified for the failing rule(s) above. Each diagnosis
+covers one or more rules; pass the `report_key` to `cex_remediation` when invoking it.
+
+{% for diag in diagnoses %}
+### Diagnosis `{{ diag.report_key }}`
+
+Covers rule(s): {% for r in diag.attributed_rules %}`{{ r.pprint() }}`{{ ", " if not loop.last }}{% endfor %}.
+
+{{ diag.diagnosis }}
+
+{% endfor %}
+{% endif %}

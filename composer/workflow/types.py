@@ -4,6 +4,7 @@ from typing import TypedDict
 
 class PromptParams(TypedDict):
     is_resume: bool
+    has_kickstart: bool
 
 @dataclass(frozen=True)
 class WorkflowSuccess:

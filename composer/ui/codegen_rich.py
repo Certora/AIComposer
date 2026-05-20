@@ -1,9 +1,15 @@
 import difflib
+from contextlib import asynccontextmanager
+from typing import AsyncContextManager, AsyncIterator
 
 from rich.spinner import Spinner
 
+from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.widgets import Static, Input, Collapsible, DataTable
+from textual.screen import Screen
+from textual.widget import Widget
+from textual.widgets import Static, Input, Collapsible, DataTable, Header, Footer, Markdown
 from textual.widgets.data_table import RowKey, ColumnKey
 from textual.validation import Function, Validator
 from textual.timer import Timer
@@ -11,7 +17,7 @@ from textual.timer import Timer
 from rich.syntax import Syntax
 from rich.text import Text
 
-from composer.ui.ide_bridge import IDEBridge
+from composer.ui.ide_bridge import IDEBridge, DiffHandle
 from composer.ui.tool_display import ToolDisplayConfig, ToolDisplay
 from composer.ui.rich_console import BaseRichConsoleApp
 from composer.io.protocol import WorkflowPurpose
@@ -40,6 +46,42 @@ _STATUS_STYLES: dict[StatusCodes, str] = {
 import logging
 logger = logging.getLogger(__name__)
 
+class _ContentScreen(Screen):
+    """Full-screen fallback viewer: Header + title + scrollable body + Footer.
+
+    Used when no IDE bridge is attached — callers push an instance with
+    a title Text and a pre-built body widget (e.g. ``Static(Syntax(...))``
+    for file snapshots, ``Markdown(...)`` for prover CEX analyses).
+    Escape pops the screen.
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_screen", "Back", show=True),
+    ]
+
+    CSS = """
+    _ContentScreen { background: $surface; }
+    #content-body { height: 1fr; }
+    """
+
+    def __init__(self, title: Text, body: Widget):
+        super().__init__()
+        self._title = title
+        self._body = body
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield VerticalScroll(
+            Static(self._title),
+            self._body,
+            id="content-body",
+        )
+        yield Footer()
+
+    def action_dismiss_screen(self) -> None:
+        self.app.pop_screen()
+
+
 class _ProverSpinner(Static):
     """Animated spinner for cloud polling status."""
 
@@ -66,6 +108,12 @@ class _ProverSpinner(Static):
 
 class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
     """Textual TUI for the code generation workflow."""
+
+    DEFAULT_CSS = """
+.prover-scroll {
+   max-height: 15;
+}
+"""
 
     def __init__(self, show_checkpoints: bool = False, ide: IDEBridge | None = None):
         super().__init__(
@@ -105,6 +153,13 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         self._rule_analyses: dict[str, str] = {}
         self._tool_output_panes: dict[str, VerticalScroll] = {}
         self._tool_spinners: dict[str, _ProverSpinner] = {}
+        # Analysis Agents collapsible per prover tool_call_id. Mounted on
+        # ``prover_run`` (safe ordering — the prover's await-loop pumps
+        # the queue), retracted on an all-verified ``prover_result``.
+        # See AgenticCexHandler.analyze: ``prover_result`` is itself
+        # too-late-to-mount because the sub-agent ``Start`` events are
+        # pushed to the queue synchronously before it flushes.
+        self._analysis_agents_panels: dict[str, Collapsible] = {}
         self.workflow_threads: dict[WorkflowPurpose, str] = {}
         self.result: WorkflowResult | None = None
 
@@ -123,7 +178,9 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
     # ── Abstract method implementations ───────────────────────
 
-    def build_interaction(self, ty: HumanInteractionType) -> tuple[Text, str, list[Validator]]:
+    def build_interaction(
+        self, ty: HumanInteractionType
+    ) -> tuple[Text, str, list[Validator], AsyncContextManager[None] | None]:
         _PROPOSAL_VALIDATOR: list[Validator] = [Function(
             lambda x: x.startswith("ACCEPTED") or x.startswith("REJECTED") or x.startswith("REFINE"),
             "Response must begin with ACCEPTED/REJECTED/REFINE",
@@ -135,31 +192,52 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
         match ty["type"]:
             case "proposal":
-                return self._build_proposal(ty), "Response must start with ACCEPTED, REJECTED, or REFINE", _PROPOSAL_VALIDATOR
+                side_effect = self._proposal_diff_cm(ty) if self._ide is not None else None
+                return (
+                    self._build_proposal(ty),
+                    "Response must start with ACCEPTED, REJECTED, or REFINE",
+                    _PROPOSAL_VALIDATOR,
+                    side_effect,
+                )
             case "question":
-                return self._build_question(ty), "Begin response with FOLLOWUP to request clarification", []
+                return self._build_question(ty), "Begin response with FOLLOWUP to request clarification", [], None
             case "extraction_question":
-                return self._build_extraction_question(ty), "Enter your response", []
+                return self._build_extraction_question(ty), "Enter your response", [], None
             case "req_relaxation":
-                return self._build_req_relaxation(ty), "Response must start with ACCEPTED or REJECTED", _REQ_VALIDATOR
+                return self._build_req_relaxation(ty), "Response must start with ACCEPTED or REJECTED", _REQ_VALIDATOR, None
             case _:
-                return Text("Unknown interaction type"), "", []
+                return Text("Unknown interaction type"), "", [], None
 
     async def render_progress(self, target: VerticalScroll, path: list[str], upd: ProgressUpdate) -> None:
         match upd["type"]:
             case "prover_run":
                 tool_call_id = upd["tool_call_id"]
-                logger.info("Prover run info")
                 anchor = self._renderer.get_tool_call_anchor(tool_call_id)
-                logger.info(f"Anchor is non-null? {anchor is not None}")
                 if anchor is not None:
                     inner = VerticalScroll()
-                    coll = Collapsible(inner, title="Prover output", collapsed=False)
+                    coll = Collapsible(inner, title="Prover output", collapsed=False, classes="prover-scroll")
                     parent = anchor.parent
                     assert isinstance(parent, VerticalScroll)
                     await parent.mount(coll, after=anchor)
                     await self._auto_scroll()
                     self._tool_output_panes[tool_call_id] = inner
+                # Pre-mount the Analysis Agents collapsible and install
+                # the within_tool override now. This MUST happen before
+                # any sub-agent Start events arrive on the queue —
+                # ``prover_run`` is the only safe arm for this because
+                # the prover's subprocess/poll await-loop yields long
+                # enough for the parent astream to drain. Mounting on
+                # ``prover_result`` would race: sub-agent Starts are
+                # pushed to the queue synchronously inside the same tool
+                # coroutine before the buffered prover_result flushes.
+                agents_inner = VerticalScroll(classes="analysis-agents-inner")
+                agents_coll = Collapsible(
+                    agents_inner, title="Analysis Agents",
+                    collapsed=False, classes="analysis-agents",
+                )
+                await self._mount_to(target, agents_coll)
+                self._analysis_agents_panels[tool_call_id] = agents_coll
+                self._renderer.install_within_tool_override(tool_call_id, agents_inner)
             case "prover_output":
                 pane = self._tool_output_panes.get(upd["tool_call_id"])
                 if pane is not None:
@@ -203,6 +281,14 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                     self._rule_row_keys[rule] = row_key
                 self._prover_table = table
                 await self._mount_to(target, table)
+                # Retract the empty Analysis Agents collapsible if no
+                # rule failed (the override and any pre-mounted panel
+                # are useless in that case).
+                if all(s == "VERIFIED" for s in upd["status"].values()):
+                    panel = self._analysis_agents_panels.pop(tool_call_id, None)
+                    if panel is not None:
+                        await panel.remove()
+                    self._renderer.clear_within_tool_override(tool_call_id)
             case "cex_analysis":
                 rule_name = upd["rule_name"]
                 row_key = self._rule_row_keys.get(rule_name)
@@ -230,10 +316,25 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
     # ── Overrides ─────────────────────────────────────────────
 
-    async def render_state_extras(self, target: VerticalScroll, node_name: str, node_data: dict) -> None:
+    def _show_content_fallback(
+        self, snap_id: int, label: str, content: str, filename: str
+    ) -> None:
+        """No-IDE fallback: push a full-screen viewer for the snapshot."""
+        lang = self._guess_lang(filename)
+        # Syntax lexer expects a string name; fall back to "text" for unknown.
+        syntax = Syntax(
+            content, lang or "text", theme="monokai",
+            line_numbers=True, word_wrap=False,
+        )
+        title = Text.assemble((label, "bold "), ("  ", ""), (filename, "dim"))
+        self.push_screen(_ContentScreen(title, Static(syntax)))
+
+    async def render_state_extras(
+        self, target: VerticalScroll, path: list[str], node_name: str, node_data: dict,
+    ) -> None:
         if "vfs" not in node_data:
             return
-        self._reset_tool_collapsing()
+        self._reset_tool_collapsing_for(path)
         count = len(node_data["vfs"])
         names = list(node_data["vfs"].keys())
         contents = {
@@ -241,20 +342,12 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
             for k, val in node_data["vfs"].items()
         }
 
-        if self._ide is not None:
-            links = []
-            for name in names:
-                snap_id = self._store_snapshot(name, contents[name], name)
-                links.append(self._make_content_link_markup(snap_id, name))
-            markup = f"[cyan]{_DOT}[/cyan]Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
-            widget = Static(markup, classes="vfs-change")
-        else:
-            file_parts: list[tuple[str, str] | str] = [(_DOT, "cyan"), f"Wrote {count} file{'s' if count != 1 else ''}: "]
-            for i, name in enumerate(names):
-                if i > 0:
-                    file_parts.append(", ")
-                file_parts.append((name, "bold underline cyan"))
-            widget = Static(Text.assemble(*file_parts), classes="vfs-change")
+        links = []
+        for name in names:
+            snap_id = self._store_snapshot(name, contents[name], name)
+            links.append(self._make_content_link_markup(snap_id, name))
+        markup = f"[cyan]{_DOT}[/cyan]Wrote {count} file{'s' if count != 1 else ''}: " + ", ".join(links)
+        widget = Static(markup, classes="vfs-change")
         await self._mount_to(target, widget)
 
     # ── DataTable cell click (analysis view) ──────────────────
@@ -269,7 +362,11 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                     if self._ide is not None:
                         self.run_worker(self._ide_show_analysis(rule_name, text), thread=False)
                     else:
-                        self.notify(text[:200] + "...", title=f"Analysis: {rule_name}", timeout=10)
+                        title = Text.assemble(
+                            ("Analysis: ", "bold "),
+                            (rule_name, "bold cyan"),
+                        )
+                        self.push_screen(_ContentScreen(title, Markdown(text)))
                 return
 
     async def _ide_show_analysis(self, rule_name: str, analysis: str) -> None:
@@ -290,7 +387,6 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
         ]
 
         if self._ide is not None:
-            self.run_worker(self._show_proposal_diff(ty), thread=False)
             parts.append(("Diff opened in VS Code.\n", "dim italic"))
         else:
             current_lines = ty["current_spec"].splitlines(keepends=True)
@@ -318,12 +414,24 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
 
         return Text.assemble(*parts)
 
-    async def _show_proposal_diff(self, ty: ProposalType) -> None:
+    @asynccontextmanager
+    async def _proposal_diff_cm(self, ty: ProposalType) -> AsyncIterator[None]:
+        assert self._ide is not None
+        handle: DiffHandle | None = None
         try:
-            assert self._ide is not None
-            await self._ide.show_diff(ty["current_spec"], ty["proposed_spec"], "Spec Change Proposal")
+            handle = await self._ide.show_diff(
+                ty["current_spec"], ty["proposed_spec"], "Spec Change Proposal"
+            )
         except Exception:
             self.notify("Failed to open diff in VS Code", severity="warning")
+        try:
+            yield
+        finally:
+            if handle is not None:
+                try:
+                    await handle.close()
+                except Exception:
+                    self.notify("Failed to close diff in VS Code", severity="warning")
 
     @staticmethod
     def _build_question(ty: QuestionType) -> Text:

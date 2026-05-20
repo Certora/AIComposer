@@ -179,7 +179,7 @@ Document-Ref: {prior_match['ref_string']}
                 answer=answer
             )
             return f"{answer}\n\nDocument-Ref: {ref_key}"
-        
+
 class RetrieveDocumentTool(WithAsyncDependencies[str, AgentIndex]):
     """
     Retrieve the document associated with the provided document ref

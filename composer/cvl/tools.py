@@ -76,7 +76,7 @@ def maybe_update_cvl(
     pp: str,
     spec_key: str,
     ast_json: dict | None = None,
-    reset_read: str | None = None
+    reset_read: str | None = None,
 ) -> str | Command:
     """
     Validate CVL syntax and update state if valid.

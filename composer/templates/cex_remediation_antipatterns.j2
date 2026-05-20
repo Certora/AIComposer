@@ -1,0 +1,64 @@
+## Anti-patterns — DO NOT DO THIS
+
+The summary critic will reject these; reject them yourself before invoking the critic.
+Each one is a way of making the rule "pass" without addressing the root cause:
+
+- **`NONDET` on a side-effect-bearing call.** `NONDET` summarizes a call as a **no-op
+  body** returning a non-deterministic value. Applied to `transfer`, `transferFrom`,
+  `mint`, `burn`, `swap`, `wrap`, `unwrap`, `deposit`, `withdraw`, `accountFor*`,
+  `update*`, or any function whose semantics IS the side effect, every such call becomes
+  a silent zero-effect call — catastrophically unsound. `NONDET` is appropriate ONLY for
+  pure / view-shaped functions whose return value is the only thing the protocol depends
+  on, AND where you have no constraint to express on that return value.
+
+- **Wildcard scope on contract-specific calls.** `function _.foo(...)` matches *every*
+  contract's `foo`. If the diagnosis names a specific callee
+  (e.g. `IStonksMini.unwrapExcessWstEth()`), target that contract by name, not the global
+  wildcard. Casting a too-wide net poisons unrelated proofs.
+
+- **`persistent` ghosts used as HAVOC armor.** `persistent` is for state that genuinely
+  outlives every external call (a global supply counter, a monotone clock). Marking a
+  ghost `persistent` so it survives a specific unresolved call's HAVOC hides the call's
+  effect from verification rather than modeling it. The right fix is to resolve the call
+  (Strategy B), not to dress the ghost in armor.
+
+- **Mirror ghosts that shadow contract storage.** Don't model `balanceOf` / `totalSupply`
+  / `paused` with a ghost that hooks every storage write to keep a parallel copy. CVL has
+  direct storage access; use it. Ghosts are for state outside the verification scope or
+  for derived values that aren't materialized in storage.
+
+- **Removing the assertion.** "The rule passes if I delete the assert" — yes, and now the
+  rule proves nothing.
+
+- **Adding unrelated `require`s on rule preconditions to dodge the failing path.** If the
+  only way the rule passes is to constrain inputs so the buggy execution is unreachable,
+  the rule has stopped testing its property. The exception is when the constraint is a
+  real protocol invariant — in that case formulate it as such (Strategy A) and
+  `requireInvariant`, do not bury it as an opaque `require`.
+
+- **Bare `require` without justification.** A `require` whose truth you can't justify —
+  by an invariant, a justification rule, or an explicit citation of the system document —
+  is spec weakening with extra steps. Either prove it or call it out explicitly in your
+  rationale as an unproven assumption.
+
+- **HAVOC summaries that don't constrain anything.** A `function _.foo(...) => HAVOC_*`
+  without ghost bindings or hook integration doesn't reduce the Prover's worst-case
+  assumption; it's an explicit no-op disguised as a summary. If you can't write
+  meaningful constraints into the summary body, you don't have a summary — you have
+  prose.
+
+- **Solidity stubs without a paired validation rule.** If you propose a stub via the
+  `addendum` field (Strategy B.b), you MUST pair it with a CVL rule that validates the
+  eventual real implementation matches the stub's behavior. A stub on its own asserts
+  behavior the actual code may not deliver; the validation rule is what makes the
+  stub-as-scaffolding safe. (Remember, the validation rule does NOT belong in the
+  delivered `proposed_cvl` but in `addendum`.)
+
+- **Re-proving things the framework already gives you.** Don't add a `requireInvariant`
+  for an invariant already inherited from the methods block; don't summarize a call the
+  Prover would resolve precisely if you let it. Trust the linking.
+
+- **Contradicting the system document.** A summary or invariant that's locally
+  well-formed CVL but inconsistent with the design described in the system document is
+  wrong. If your remediation contradicts the system doc, re-examine — the diagnosis or
+  your reading of it is probably off.
