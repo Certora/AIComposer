@@ -1,11 +1,4 @@
 from typing import TypedDict, Any
-import pathlib
-import sys
-
-composer_dir = str(pathlib.Path(__file__).parent.parent.absolute())
-
-if composer_dir not in sys.path:
-    sys.path.append(composer_dir)
 
 from composer.workflow.services import get_indexed_store
 from composer.kb.knowledge_base import DefaultEmbedder, KnowledgeBaseArticle

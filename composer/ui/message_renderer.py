@@ -31,10 +31,6 @@ logger = logging.getLogger(__name__)
 
 _DOT = "\u25cf "  # ● filled circle
 
-from logging import getLogger
-
-_logger = getLogger(__name__)
-
 def dot(style: str, text: Text | str) -> Text:
     """Prepend a colored dot to a Text or string for visual structure."""
     if isinstance(text, str):
@@ -188,7 +184,7 @@ class MessageRenderer(ToolCallRenderer):
         """Render a workflow start banner or nested collapsible."""
         target = self.get_flow_target(root, path)
         if len(path) == 1:
-            _logger.debug("Starting top level workflow: %s", description)
+            logger.debug("Starting top level workflow: %s", description)
             banner = Static(Text(f"━━ {description} ━━", style="bold"))
             await self._mount_to(target, banner)
         else:

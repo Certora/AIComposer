@@ -15,7 +15,7 @@ Phases:
 """
 
 import asyncio
-import json5 as json
+import json
 import pathlib
 from dataclasses import dataclass
 
@@ -94,7 +94,7 @@ async def run_autoprove_pipeline(
         resources.append(CVLResource(
             import_path=standard_summary_path,
             required=True,
-            description="PreAudit-generated summaries",
+            description="AutoSetup-generated summaries",
             sort="import",
         ))
     if custom_summary_path:

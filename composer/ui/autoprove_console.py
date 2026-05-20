@@ -119,14 +119,14 @@ class _ConversationClient():
         self.drain_task = managed_streamer(
             self.ev_queue, self._update
         )
-        print("--- Entering refinment conversation (all other output suppressed) ---")
+        print("--- Entering refinement conversation (all other output suppressed) ---")
         self._console.print(self.init_msg)
 
     async def __aexit__(self, exc_type, exc, tb):
         self.ev_queue.push(EndConversation())
         try:
             await self.drain_task
-        except:
+        except Exception:
             print("Conversation cleanup failed")
 
 
@@ -220,9 +220,11 @@ class AutoProveConsoleHandler(NullEventHandler):
             prev = self._suppress_output
             self._suppress_output = True
             to_yield = _ConversationClient(initial)
-            async with to_yield:
-                yield to_yield
-            self._suppress_output = prev
+            try:
+                async with to_yield:
+                    yield to_yield
+            finally:
+                self._suppress_output = prev
 
     # ------------------------------------------------------------------
     # HandlerFactory

@@ -4,7 +4,8 @@ import argparse
 import hashlib
 import pathlib
 import uuid
-from typing import cast, Protocol, Callable, Awaitable
+from contextlib import asynccontextmanager
+from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
 from graphcore.tools.memory import async_memory_tool
 
@@ -71,9 +72,9 @@ def _root_cache_key(
 # ---------------------------------------------------------------------------
 
 type Executor = Callable[[HandlerFactory[AutoProvePhase, None]], Awaitable[AutoProveResult]]
-type ExecutorCB = Callable[[Executor], Awaitable[int]]
 
-async def _entry_point(cb: ExecutorCB) -> int:
+@asynccontextmanager
+async def _entry_point() -> AsyncIterator[Executor]:
     parser = argparse.ArgumentParser(
         description="Auto-prove multi-agent pipeline TUI"
     )
@@ -102,17 +103,14 @@ async def _entry_point(cb: ExecutorCB) -> int:
 
     full_contract_path = pathlib.Path(main_contract_path).resolve()
     if not full_contract_path.is_relative_to(project_root):
-        print(f"Invalid path: {full_contract_path} doesn't appear in project root {project_root}")
-        return 1
+        parser.error(f"Invalid path: {full_contract_path} doesn't appear in project root {project_root}")
     
     if args.config_paths:
         if not args.skip_setup:
-            print(f"Supplying config path is only allowed when the setup has been done (AutoSetup ran before)")
-            return 1
+            parser.error(f"Supplying config path is only allowed when the setup has been done (AutoSetup ran before)")
         for p in args.config_paths:
             if not p.endswith(".conf"):
-                print(f"Invalid config path: {p} is not a .conf file")
-                return 1
+                parser.error(f"Invalid config path: {p} is not a .conf file")
         args.config_paths = [str((project_root / p).resolve()) for p in args.config_paths]
     else:
         args.config_paths = find_files(project_root, ".conf")
@@ -123,8 +121,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
     sys_path = pathlib.Path(args.system_doc)
     content = get_document_input(sys_path)
     if content is None:
-        print(f"Error: cannot read {sys_path}")
-        return 1
+        parser.error(f"cannot read {sys_path}")
 
     system_doc = SourceCode(
         content=content,
@@ -158,7 +155,7 @@ async def _entry_point(cb: ExecutorCB) -> int:
         standard_connections(
             embedder=DefaultEmbedder(model)
         ) as conns,
-        PostgreSQLRAGDatabase.rag_context(model) as rag_db,
+        PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context()
     ):
         source_env = build_source_env(
@@ -208,4 +205,5 @@ async def _entry_point(cb: ExecutorCB) -> int:
                     interactive=args.interactive,
                     threat_model=threat_model
                 )
-        return await cb(runner)
+
+        yield runner

@@ -25,7 +25,7 @@ class ToolBatch:
 
 @dataclass
 class ToolComplete:
-    tid: str
+    thread_id: str
 
 
 @dataclass

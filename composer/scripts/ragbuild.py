@@ -21,13 +21,6 @@ import logging
 import argparse
 import contextvars
 import pathlib
-import sys
-
-composer_dir = str(pathlib.Path(__file__).parent.parent.absolute())
-
-if composer_dir not in sys.path:
-    sys.path.append(composer_dir)
-
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 import spacy #type: ignore

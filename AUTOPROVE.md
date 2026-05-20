@@ -12,12 +12,12 @@ You need everything from the main [README](README.md) setup:
 - RAG database populated
 - Solidity compiler(s) on `$PATH` (naming convention `solcX.Y`, e.g. `solc8.29`)
 
-### PreAudit
+### AutoSetup
 
-Auto-prove depends on PreAudit for compilation analysis and harness generation. PreAudit is a separate internal repository. Clone it and set the `PREAUDIT_PATH` environment variable to its root directory:
+Auto-prove depends on AutoSetup for compilation analysis and harness generation. AutoSetup is a separate internal repository. Clone it and set the `AUTOSETUP_PATH` environment variable to its root directory:
 
 ```bash
-export PREAUDIT_PATH=/path/to/preaudit
+export AUTOSETUP_PATH=/path/to/autosetup
 ```
 
 The pipeline will fail at import time if this is not set.
@@ -77,7 +77,7 @@ The RAG database must be populated before running auto-prove. This is a two-step
 Run the knowledge base population script to load common CVL pitfall articles into the LangGraph store:
 
 ```bash
-uv run --extra ml -s scripts/kb_populate.py
+uv run --extra ml python -m composer.scripts.kb_populate
 ```
 
 This inserts ~30 curated articles (summary misapplication, vacuity traps, ghost semantics, etc.) that agents consult during spec generation.
@@ -91,7 +91,7 @@ uv tool install '.[ml,prover,pou]'
 ```
 
 The `ml` group includes `sentence-transformers` and `einops`, required for the embedding model (`nomic-embed-text-v1.5`) used by RAG and the indexed store. `prover` includes all of the dependencies
-for running the prover scripts (in local mode), and the certoraRun scripts themselves (cloud mode), and pou is required by the pre audit component.
+for running the prover scripts (in local mode), and the certoraRun scripts themselves (cloud mode), and pou is required by the auto setup component.
 
 ## Usage
 
@@ -158,7 +158,7 @@ Analyzes the source code to identify the system's components, contracts, and ext
 
 ### Phase 1: Harness Setup
 
-Runs PreAudit to analyze compilation and classify external contracts (ERC20s, interfaces, etc.). Generates harness contracts and a prover configuration (`compilation_config.conf`). Also produces summaries for known external contracts.
+Runs AutoSetup to analyze compilation and classify external contracts (ERC20s, interfaces, etc.). Generates harness contracts and a prover configuration (`compilation_config.conf`). Also produces summaries for known external contracts.
 
 ### Phase 2: Custom Summaries
 

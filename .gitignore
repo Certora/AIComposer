@@ -13,3 +13,4 @@ build/
 emv-*
 .certora-*
 composer/testing/**/certora/
+local/

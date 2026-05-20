@@ -1,9 +1,5 @@
 import composer.bind as _
 
-from composer.testing.ui_harness import install_vault_tape
-
-install_vault_tape()
-
 import asyncio
 
 from composer.input.parsing import fresh_workflow_argument_parser
