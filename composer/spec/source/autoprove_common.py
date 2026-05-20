@@ -88,7 +88,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
     parser.add_argument("--cloud", action="store_true", help="Run prover jobs in the cloud")
     parser.add_argument("--interactive", action="store_true", help="Interactively refine the security properties after extraction")
-    parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'thread' model (text or pdf) with which to seed the property extraction process")
+    parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'threat' model (text or pdf) with which to seed the property extraction process")
     parser.add_argument("--custom-summary-path", type=str, default=None, help="Path to a custom CVL summaries file specific to the contract")
     parser.add_argument("--standard-summary-path", type=str, default=None, help="Path to the standard PreAudit-generated CVL summaries file")
     parser.add_argument("--config-paths", type=lambda s: [p.strip() for p in s.split(",") if p.strip()], default=[], help="Comma-separated list of .conf paths, relative to project_root. If empty, all configs in the folders are used.",)
