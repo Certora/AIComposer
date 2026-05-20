@@ -52,11 +52,9 @@ class _DirectPropResult(BaseModel):
 def direct_property_key(
     conf_paths: list[str],
     properties: str | dict,
-    threat_model: str | dict | None,
+    system_doc: str | dict,
 ) -> CacheKey[Properties, _DirectPropResult]:
-    parts = list(conf_paths) + [str(properties)]
-    if threat_model is not None:
-        parts.append(str(threat_model))
+    parts = [*conf_paths, str(properties), str(system_doc)]
     return CacheKey[Properties, _DirectPropResult](
         "direct_props-" + string_hash("|".join(parts))
     )
@@ -83,7 +81,7 @@ async def run_direct_property_formulation_all(
     env: SourceEnvironment,
     confs: list[tuple[str, dict]],
     properties: str | dict,
-    threat_model: str | dict | None,
+    system_doc: str | dict,
 ) -> dict[str, list[PropertyFormulation]]:
     """Reformulate user-supplied properties across all confs in a single prompt.
 
@@ -93,7 +91,7 @@ async def run_direct_property_formulation_all(
     no property was assigned have an empty list.
     """
     conf_paths = [p for p, _ in confs]
-    key_ctx = ctx.child(direct_property_key(conf_paths, properties, threat_model))
+    key_ctx = ctx.child(direct_property_key(conf_paths, properties, system_doc))
 
     cached = await key_ctx.cache_get(_DirectPropResult)
     if cached is not None:
@@ -148,21 +146,9 @@ async def run_direct_property_formulation_all(
         "contracts the property is about). Do not duplicate a property across confs, "
         "and do not drop properties that fit at least one conf.",
         properties,
+        "In addition, a coworker has written a 'system document' for this application. ",
+        system_doc,
     ]
-
-    if threat_model is not None:
-        extra_input += [
-            "In addition, a coworker has written a 'threat model' for this application, "
-            "which may include vulnerabilities/issues that are common in this type of "
-            "application. This threat model is written for the entire application (not "
-            "just one conf) so some of the issues/vulnerabilities/attacks may not be "
-            "relevant. Do *NOT* overfit to this threat model; only add "
-            "PropertyFormulation entries motivated by it when clearly applicable to the "
-            "in-scope contracts of some conf and clearly not already covered by the "
-            "user's list. Mark any such entries with a `[from threat model]` prefix in "
-            "the description and assign them to the conf whose contracts they relate to.",
-            threat_model,
-        ]
 
     r = await run_to_completion(
         d,

@@ -73,7 +73,6 @@ async def run_autoprove_pipeline(
     custom_summary_path: str | None,
     standard_summary_path: str | None,
     config_paths: list[str],
-    threat_model: str | dict | None = None,
     properties: str | dict | None = None,
     *,
     cloud: CloudConfig | None = None,
@@ -148,7 +147,7 @@ async def run_autoprove_pipeline(
             env=env,
             confs=[(p, cfg) for p, cfg, _ in parsed_confs],
             properties=properties,
-            threat_model=threat_model,
+            system_doc=source_input.content,
         ),
         semaphore,
     )

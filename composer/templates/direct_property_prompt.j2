@@ -27,13 +27,13 @@ above (and their dependencies) to better understand which conf each property bel
 </inputs>
 
 <task>
-Input: A plain-English list of properties the user wishes to formalize, an optional
-plain-English threat model for the broader application, and the conf files above.
+Input: A plain-English list of properties the user wishes to formalize, an system
+document describing the broader application, and the conf files above.
 
 Output: A list of `ConfPropertyMapping` entries — one per conf — that re-package the
-user's properties (grouped by which conf they belong to) for the downstream CVL-author
-agent. Every conf path listed in the inputs must appear in your output, even if its
-property list is empty.
+user's properties (grouped by which conf they belong to). Someone later in the pipeline 
+will translate these into formal verification rules. Every conf path listed in the
+inputs must appear in your output, even if its property list is empty.
 
 This is **not** a property-discovery task. The user has already decided which properties
 they want verified. Your job is to faithfully relay each of their properties to the
@@ -58,7 +58,8 @@ weaken, or "rewrite for clarity". The downstream agent must see the user's own w
 A property's conf assignment is determined by which conf's `files` field contains the
 contracts the property actually references. When a property plausibly fits several confs,
 prefer the conf whose main contract is most central to the property's statement; use the
-source tools to break ties when needed.
+system documentation to better understand the application's architecture and find the 
+best fit. Use the source tools to break ties when needed.
 
 Rules for the `description` field:
 
@@ -74,13 +75,7 @@ Rules for the `description` field:
    directly to a property, include them in the same `description`, on the lines
    immediately following the main statement, prefixed in a stable way (e.g., as additional
    indented bullets). Do not drop them.
-4. If a single user-written property genuinely describes several independent statements
-   that must each become their own CVL rule, you may split it into multiple
-   `PropertyFormulation` entries. Each split entry must preserve the user's label *and*
-   make the relationship explicit (e.g., `P4 (a): <user wording>`, `P4 (b): <user wording>`).
-   All splits of one property must be assigned to the same conf. Splitting should be the
-   exception, not the default.
-5. Properties you discard (because they apply to no conf, or because they are
+4. Properties you discard (because they apply to no conf, or because they are
    impossible/uninteresting to express in the Certora Prover — see below) simply do not
    appear in any conf's output. Do not add a placeholder entry for them.
 
@@ -124,27 +119,12 @@ The user wrote them on purpose. **Total coverage across all confs is critical**:
 of all confs' property lists must contain every user property exactly once (except for the
 narrow discard cases above).
 
-## Step 2 — Threat model (only if provided)
-
-If a threat model was provided, you may add a *small* number of additional
-`PropertyFormulation` entries for threats from the threat model that are clearly applicable
-to one of the confs' in-scope contracts and clearly not already covered by the user's
-list. For these added entries:
-
-- The `description` must say so explicitly, e.g. start with `[from threat model] ...`.
-- Each added entry must be assigned to the conf whose contracts the threat is most
-  relevant to (same single-assignment rule as user properties).
-- Be conservative: do NOT overfit to the threat model. If a threat is speculative or
-  already covered, skip it.
-
-If no threat model is provided, this step produces no entries.
-
-## Step 3 — Rough draft
+## Step 2 — Rough draft
 
 Write your full per-conf mapping as a rough draft using the provided `write_rough_draft`
 tool.
 
-## Step 4 — Self-review
+## Step 3 — Self-review
 
 Re-read the user's original input alongside your rough draft. Verify:
 
@@ -162,7 +142,7 @@ Re-read the user's original input alongside your rough draft. Verify:
 
 Fix any deviations.
 
-## Step 5 — Deliver
+## Step 4 — Deliver
 
 Output the final per-conf mapping using the result tool.
 </task>
@@ -187,11 +167,10 @@ Output the final per-conf mapping using the result tool.
   </hard_requirement>
   <hard_requirement>
     Only emit `PropertyFormulation` entries that correspond to a property the user
-    actually wrote (or, in Step 2, to a clearly applicable threat-model threat marked as
-    such). Do not invent properties of your own.
+    actually wrote. Do not invent properties of your own.
   </hard_requirement>
   <reminder>
-    You do not need to find evidence that the properties actually hold, simply relay them
-    faithfully to the downstream CVL author.
+    You do not need to find evidence that the properties actually hold, later 
+    someone will translate these properties into formal verification rules.
   </reminder>
 </guidance>

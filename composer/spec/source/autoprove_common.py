@@ -190,7 +190,6 @@ async def _entry_point() -> AsyncIterator[Executor]:
                         standard_summary_path=args.standard_summary_path,
                         cloud=CloudConfig() if args.cloud else None,
                         max_concurrent=args.max_concurrent,
-                        threat_model=threat_model,
                         interactive=args.interactive,
                         properties=properties
                     )
