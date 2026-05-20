@@ -1,14 +1,53 @@
 from pydantic import BaseModel, Field
 
+from composer.input.models import CodegenConfiguration
+
+
+_PROVER_CONF_DESC = (
+    "Certora config object (the JSON shape of certora.conf) whose keys — packages, "
+    "link, solc_args, solc_via_ir, optimistic_loop, rule_sanity, etc. — are merged "
+    "into every prover / typecheck invocation. Dynamic keys (`files`, `verify`, "
+    "`solc`) are always set by the pipeline and override whatever is in this object. "
+    "Pass inline as a dict; null means no overrides."
+)
+
+
 class CommonCodeGen(BaseModel):
     prompt_addition: str | None = Field(description="Extra instructions for the codegen agent.", default=None)
+    prover_conf: dict | None = Field(default=None, description=_PROVER_CONF_DESC)
+    cache_namespace: str | None = Field(
+        default=None,
+        description=(
+            "Namespace for cross-run caching of derived artifacts (currently the "
+            "natural-language requirements extraction). Combined with a content "
+            "hash of the run's inputs, so changing the spec / interface / system-doc "
+            "/ oracle / set-reqs invalidates the cache automatically. Leave unset "
+            "to disable caching entirely; setting it enables reuse across thread IDs "
+            "for runs that share inputs."
+        ),
+    )
+    run_description: str | None = Field(
+        default=None,
+        description=(
+            "Free-form human-readable label persisted on the audit run_meta slot. "
+            "Use a short, recognizable phrase identifying what this run is about — "
+            "the contract under verification, the property being targeted, or both. "
+            "Lets the run be located later by description rather than only by thread id."
+        ),
+    )
 
 class LaunchCodegenArgs(CommonCodeGen):
-    spec_file: str = Field(description="Relative path to CVL spec file (.spec)")
-    interface_file: str = Field(description="Relative path to Solidity interface file (.sol)")
-    system_doc: str = Field(description="Relative path to system/design document")
+    launch_config: CodegenConfiguration = Field(description="The input configuration for the code generation")
     memory_namespace: str | None = Field(description="Namespace for persistent agent memory. When set, memory persists across thread changes (including crashes and relaunches).", default=None)
     resume_work_key: str | None = Field(description="Key to recover in-progress work from a crashed run. Provided in the crash result of a previous launch.", default=None)
+    source_root: str = Field(
+        description=(
+            "Path to an existing codebase to use as the VFS underlay. When set, agents see "
+            "existing files read-only and can layer new files on top."
+        ),
+    )
+
+    thread_id: str | None = Field(description="The thread id from which to resume a workflow. ONLY use to resume workflows due to transient API failures.")
 
 
 class LaunchResumeArgs(CommonCodeGen):

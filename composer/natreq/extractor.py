@@ -1,37 +1,29 @@
-from typing import NotRequired, Callable, Any
+from typing import NotRequired, Callable
 from dataclasses import dataclass
-import uuid
-import pathlib
 
 from pydantic import BaseModel, Field
 
-from graphcore.graph import FlowInput, build_async_workflow
+from graphcore.graph import Builder, FlowInput
 from graphcore.tools.results import result_tool_generator
-from graphcore.tools.memory import memory_tool, MemoryBackend
+from graphcore.tools.memory import async_memory_tool, AsyncMemoryBackend
 
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from langchain_core.language_models.chat_models import BaseChatModel
 
 from langgraph.graph import MessagesState
-from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
-from composer.audit.types import InputFileLike
-from composer.audit.db import ResumeArtifact
-from composer.input.types import RAGDBOptions
-from composer.rag.db import ComposerRAGDB, rag_context
-from composer.rag.models import get_model
-from composer.workflow.services import checkpointer_context
-from composer.tools.search import cvl_manual_search
+from composer.input.types import InputFileLike, TextInputFile
+from composer.audit.store import ResumeArtifact
+from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
-from composer.natreq.automation import requirements_oracle
 from composer.human.types import HumanInteractionType
 from composer.io.protocol import IOHandler
 from composer.io.context import with_handler, run_graph
 from composer.io.event_handler import NullEventHandler
 from composer.ui.tool_display import tool_display
+from composer.spec.util import uniq_thread_id
 
 
 @dataclass
@@ -46,10 +38,6 @@ class ExtractionState(MessagesState, RoughDraftState):
 
 class ExtractionInput(FlowInput, RoughDraftState):
     pass
-
-@dataclass
-class ExtractionContext:
-    rag_db: ComposerRAGDB
 
 class HumanClarificationArgs(BaseModel):
     """
@@ -74,6 +62,7 @@ class HumanClarificationArgs(BaseModel):
         if p.get("question") else "Asking for input"
     ),
     None,
+    short_label="User clarification",
 )
 @tool(args_schema=HumanClarificationArgs)
 def human_in_the_loop(
@@ -113,97 +102,83 @@ system_prompt = load_jinja_template("req_role_prompt.j2")
 initial_prompt = load_jinja_template("req_extraction_prompt.j2")
 
 
-class OracleHandler:
-    """Delegation-based wrapper around any IOHandler.
-
-    Forwards all methods except human_interaction, where extraction_question
-    interrupts are routed to the oracle (if available).
-    """
-
-    def __init__(self, inner: IOHandler, oracle: Callable[[tuple[str, str]], str] | None):
-        self._inner = inner
-        self._oracle = oracle
-
-    def __getattr__(self, name: str):
-        return getattr(self._inner, name)
-
-    async def human_interaction(self, ty: HumanInteractionType, debug_thunk: Callable[[], None]) -> str:
-        if ty["type"] == "extraction_question" and self._oracle is not None:
-            print(f"Calling oracle...\nQuestion: {ty['question']}\nContext: {ty['context']}")
-            resp = self._oracle((ty["context"], ty["question"]))
-            print(f"Oracle response: {resp}")
-            return resp
-        return await self._inner.human_interaction(ty, debug_thunk)
-
-
 async def get_requirements(
     io: IOHandler,
-    options: RAGDBOptions,
-    llm: BaseChatModel,
+    cvl_builder: Builder[None, None, None],
+
     sys_doc: InputFileLike,
-    spec_file: InputFileLike,
-    mem_backend: MemoryBackend,
+    specs: list[tuple[str, TextInputFile]],
+    mem_backend: AsyncMemoryBackend,
     resume_artifact: ResumeArtifact | None,
-    oracle: list[str]
 ) -> ExtractionResult:
+    """Extract natural-language requirements that the spec leaves implicit.
+
+    ``rag_db`` / ``indexed_store`` / ``checkpointer`` are passed in by the
+    executor (which already owns those connections for the main codegen
+    graph) instead of being opened privately here — saves a duplicate set
+    of pool connections per run and lets the CVL research sub-agent share
+    the parent's checkpointer for its own thread state."""
+
     tools = [
-        memory_tool(mem_backend),
+        async_memory_tool(mem_backend),
         results_tool,
         human_in_the_loop,
-        cvl_manual_search(ExtractionContext),
         *get_rough_draft_tools(ExtractionState),
     ]
-    async with (
-        checkpointer_context() as check,
-        rag_context(options.rag_db, get_model()) as db
-    ):
-        built : CompiledStateGraph[ExtractionState, ExtractionContext, ExtractionInput, Any] = build_async_workflow(
-            state_class=ExtractionState,
-            context_schema=ExtractionContext,
-            input_type=ExtractionInput,
-            output_key="reqs",
-            tools_list=tools,
-            unbound_llm=llm,
-            summary_config=None,
-            sys_prompt=system_prompt,
-            initial_prompt=initial_prompt
-        )[0].compile(checkpointer=check)
 
-        thread_id = uuid.uuid1().hex
+    built = (
+        cvl_builder
+        .with_state(ExtractionState)
+        .with_input(ExtractionInput)
+        .with_tools(tools)
+        .with_output_key("reqs")
+        .with_initial_prompt_template("req_extraction_prompt.j2")
+        .with_sys_prompt_template("req_role_prompt.j2")
+    ).compile_async()
 
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    thread_id = uniq_thread_id("extraction")
 
-        input_text : list[str | dict] = [
-            "The system document is as follows:",
-            sys_doc.string_contents,
-            "The spec file is as follows:",
-            spec_file.string_contents
-        ]
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
-        if resume_artifact is not None:
-            input_text.append("""
-    You have previously performed this analysis on a prior version of the spec file. You have access to the
-    memories you generated during that prior analysis. Be sure to consult those memories to inform your analysis
-    of the system document. In addition, be sure to analyze the difference between the two specification files,
-    being sure to determine which natural language requirements are no longer needed (as they are now covered by the
-    spec).
-    """)
+    # ``sys_doc`` is ``InputFileLike`` (may be PDF). Use the
+    # universal document-block path so the LLM ingests text and
+    # binary system docs identically.
+    input_text : list[str | dict] = [
+        "The system document is as follows:",
+        sys_doc.to_document_dict(),
+    ]
+    if len(specs) == 1:
+        input_text.append("The spec file is as follows:")
+        input_text.append(specs[0][1].string_contents)
+    else:
+        input_text.append(
+            f"The contract has {len(specs)} spec files describing its behavior. "
+            f"Consider them collectively as the formal specification; requirements "
+            f"you extract should cover the contract as a whole."
+        )
+        for (vfs_path, f) in specs:
+            input_text.append(f"Spec file at `{vfs_path}`:")
+            input_text.append(f.string_contents)
+
+    if resume_artifact is not None:
+        input_text.append("""
+You have previously performed this analysis on a prior version of the spec file(s). You have access to the
+memories you generated during that prior analysis. Be sure to consult those memories to inform your analysis
+of the system document. In addition, be sure to analyze the difference between the old and new versions of
+each spec file, being sure to determine which natural language requirements are no longer needed (as they
+are now covered by the spec).
+""")
+        if len(resume_artifact.specs) == 1:
             input_text.append("The OLD spec file is as follows:")
-            input_text.append(
-                resume_artifact.spec_file
-            )
+            input_text.append(resume_artifact.specs[0].string_contents)
+        else:
+            for entry in resume_artifact.specs:
+                input_text.append(f"OLD spec file at `{entry.vfs_path}`:")
+                input_text.append(entry.string_contents)
 
-        req_oracle : Callable[[tuple[str, str]], str] | None = None
-        if oracle is not None and len(oracle):
-            req_oracle = requirements_oracle(
-                llm,
-                [ pathlib.Path(p) for p in oracle ]
-            )
+    graph_input = ExtractionInput(input=input_text, memory=None, did_read=False)
 
-        graph_input = ExtractionInput(input=input_text, memory=None, did_read=False)
-
-        handler = OracleHandler(io, req_oracle)
-        async with with_handler(handler, NullEventHandler()):  # type: ignore[arg-type]
-            final_state = await run_graph(built, ExtractionContext(rag_db=db), graph_input, config, description="Requirements extraction")
-        assert "reqs" in final_state
-        return ExtractionResult(reqs=final_state["reqs"], thread_id=thread_id)
+    async with with_handler(io, NullEventHandler()):  # type: ignore[arg-type]
+        final_state = await run_graph(built, None, graph_input, config, description="Requirements extraction")
+    assert "reqs" in final_state
+    return ExtractionResult(reqs=final_state["reqs"], thread_id=thread_id)

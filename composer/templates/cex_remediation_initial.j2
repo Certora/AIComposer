@@ -1,0 +1,41 @@
+A counterexample on the named rule has been diagnosed. Use the
+`read_system_document` tool to fetch the protocol's design document on demand.
+(Cache key passages in your memory rather than re-reading every round, but the full
+document is available for reference).
+
+## Rule(s) under repair
+
+The diagnosis below covers the following rule(s):
+{% for r in attributed_rules %}
+- `{{ r }}`
+{% endfor %}
+
+## Target spec VFS path
+
+`{{ target_spec_path }}`
+
+## CEX diagnosis
+
+{{ cex_diagnosis }}
+
+## Original version of the specification
+
+```cvl
+{{ ground_truth }}
+```
+
+{% if working_version is not none -%}
+## Working version
+
+```cvl
+{{ working_version }}
+```
+{% else -%}
+## Working version
+
+None — the prover ran against the original version above. This is round one for
+this spec.
+{%- endif %}
+
+Read all of the above, decide a remediation per your procedure, draft the change,
+validate it with the summary critic, and deliver.

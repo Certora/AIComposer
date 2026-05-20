@@ -17,60 +17,51 @@ class OptionalArg(BasicArg):
     pass
 
 
-@dataclass
-class UploadedFile:
+# ---------------------------------------------------------------------------
+# File-content Protocols
+# ---------------------------------------------------------------------------
+
+
+class InputFileLike(Protocol):
+    """A file that may or may not be representable as a text string.
+
+    ``string_contents`` returns ``None`` for files whose bytes aren't
+    text (e.g. PDF system documents). Callers that need a guaranteed
+    string body should narrow to ``TextInputFile`` at the type level
+    rather than testing for ``None`` at every call site.
+
+    For LLM ingestion, ``to_document_dict`` is the universal mechanism —
+    a content block of whatever shape the implementation has access to
+    (Files-API reference, inline text, inline base64). The caller
+    doesn't care which.
     """
-    Represents a file uploaded with claude's file API
-    """
-    file_id: str
-    basename: str
 
-    path: str
-
-    def to_document_dict(self) -> dict:
-        """Convert to document dictionary format for LangGraph"""
-        return {
-            "type": "document",
-            "source": {
-                "type": "file",
-                "file_id": self.file_id
-            }
-        }
-
-    def read(self) -> str:
-        with open(self.path, 'r') as f:
-            return f.read()
-        
-    @property
-    def string_contents(self) -> str:
-        return self.read()
-
-    @property
-    def bytes_contents(self) -> bytes:
-        with open(self.path, 'rb') as f:
-            return f.read()
-
-class InMemoryFile:
-    def __init__(self, name: str, contents: str | bytes):
-        self.basname = name
-        self.bytes_contents = contents if isinstance(contents, bytes) else contents.encode("utf-8")
-
-class NativeFS:
-    def __init__(self, p: pathlib.Path):
-        self.where = p
-
-    @property
-    def bytes_contents(self) -> bytes:
-        return self.where.read_bytes()
-    
     @property
     def basename(self) -> str:
-        return self.where.name
-    
+        ...
+
+    @property
+    def bytes_contents(self) -> bytes:
+        ...
+
+    @property
+    def string_contents(self) -> Optional[str]:
+        """The file's text body, or ``None`` if the file is binary."""
+        ...
+
+    def to_document_dict(self) -> dict:
+        ...
+
+
+class TextInputFile(InputFileLike, Protocol):
+    """An ``InputFileLike`` known statically to be text — ``string_contents``
+    is guaranteed non-None. Use this parameter type for specs, interfaces,
+    and other places where binary input would be a programming error."""
+
     @property
     def string_contents(self) -> str:
-        return self.where.read_text()
-    
+        ...
+
 class RAGDBOptions(Protocol):
     # database options
     rag_db: Annotated[str, Arg(
@@ -95,12 +86,30 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     debug_prompt_override: Optional[str]
 
     recursion_limit: int
-    audit_db: str
     summarization_threshold: Optional[int]
 
     requirements_oracle: list[str]
     set_reqs: Optional[str]
     skip_reqs: bool
+
+    # Pre-parsed at the CLI boundary: ``--prover-conf <path>`` resolves
+    # to a dict at argparse-time (``type=`` callback in
+    # ``input/parsing.py``), so consumers always see the merged dict
+    # form here, never a path string. ``None`` means no overrides.
+    prover_conf: Optional[dict]
+
+    # Namespace for cross-run caching of derived artifacts (requirements
+    # extraction, today). Cache key inside this namespace is a content
+    # hash of the inputs that determine the artifact, so spec / interface
+    # / system-doc edits invalidate automatically. ``None`` disables
+    # caching — every run recomputes from scratch.
+    cache_namespace: Optional[str]
+
+
+    # Free-form human-readable label persisted on the audit ``run_meta``
+    # slot, so a run can be located later by description (e.g. "the most
+    # recent Vault codegen") rather than only by thread id.
+    description: Optional[str]
 
 
 class ModelOptionsBase(Protocol):
@@ -142,15 +151,31 @@ class ModelOptions(Protocol):
     )]
 
 class UploadPaths(Protocol):
-    spec_file: str
-    interface_file: str
-    system_doc: str
+    """Legacy CLI triad (optional, single-spec): one spec, one interface, one
+    system doc. All fields may be ``None`` when ``--input-json`` is supplied
+    via ``InputJSONPath``.
+    """
+    spec_file: Optional[str]
+    interface_file: Optional[str]
+    system_doc: Optional[str]
+    source_root: Optional[str]
+    output_folder: Optional[str]
+    contract_name: Optional[str]
+    implementation_path: Optional[str]
 
 
-class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, Protocol):
+class InputJSONPath(Protocol):
+    """Alternative CLI shape: a single JSON file describing the contract task.
+    Mutually exclusive with the legacy triad."""
+    input_json: Optional[str]
+
+
+class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, InputJSONPath, Protocol):
     debug_fs: str
-
     debug: bool
+    resume_work_key: str
+    memory_namespace: Optional[str]
+
 
 class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
     # common
@@ -164,21 +189,53 @@ class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
     commentary: Optional[str]
     updated_system: Optional[str]
 
-    # resume-id
-    new_spec: str
+    # resume-id: list of new spec entries. Bare path → mapped to the prior
+    # run's single registered spec (error if the prior run had multiple).
+    # ``<vfs_path>=<local_file>`` → explicitly targets a specific spec.
+    new_spec: list[str]
 
     # resume-fs
     working_dir: str
 
 
 @dataclass
+class SpecInput:
+    """A single spec file paired with the VFS path at which it should be
+    materialized inside the workflow's virtual filesystem."""
+    file: TextInputFile
+    vfs_path: str
+
+
+@dataclass
 class InputData:
+    """Normalized codegen workflow input for a single contract task.
+
+    Carries one or more specs (all describing the same contract), the contract's
+    interface, the surrounding system document, and optional metadata (contract
+    name, expected implementation path, per-task prover config). The VFS path
+    for each spec is resolved at ``upload_input`` time so downstream code
+    (executor, prover tool, propose_spec_change) can key off a stable location.
+
+    Greenfield inputs land at ``certora/<basename>``; inputs given with a
+    ``source_root`` land at their workspace-relative path.
     """
-    Represents all of the file inputs provided by the user after uploading
-    """
-    spec: UploadedFile
-    system_doc: UploadedFile
-    intf: UploadedFile
+    specs: list[SpecInput]
+    # ``system_doc`` may be binary (e.g. PDF); ``intf`` is always text
+    # (Solidity interface).
+    system_doc: InputFileLike
+    intf: TextInputFile
+    kickstart_context: str | None
+    source_root: Optional[str] = None
+    contract_name: Optional[str] = None
+    implementation_path: Optional[str] = None
+    # ``prover_conf`` is *not* on ``InputData`` — prover overrides are
+    # an orthogonal runtime concern and travel via the workflow-options
+    # channel (CLI ``--prover-conf`` / ``CommonCodeGen.prover_conf``)
+    # straight to the executor, not on the input bundle.
+
+    @property
+    def spec_vfs_paths(self) -> list[str]:
+        return [s.vfs_path for s in self.specs]
 
 
 class ResumeInput(Protocol):
@@ -187,7 +244,7 @@ class ResumeInput(Protocol):
         ...
 
     @property
-    def new_system(self) -> Optional[NativeFS]:
+    def new_system(self) -> Optional[InputFileLike]:
         ...
 
     @property
@@ -197,13 +254,19 @@ class ResumeInput(Protocol):
 @dataclass
 class ResumeIdData:
     thread_id: str
-    new_spec: NativeFS
+    # Mapping from VFS path → new spec content. Only paths present here are
+    # updated on resume; other specs keep their prior state. For single-spec
+    # resumes from legacy CLI callers, this dict carries one entry. Specs
+    # are guaranteed text — the construction site uploads via
+    # ``FileUploader.upload_text_file_if_needed`` so the type system
+    # carries the guarantee.
+    new_specs: dict[str, TextInputFile]
     comments: Optional[str]
-    new_system: Optional[NativeFS]
+    new_system: Optional[InputFileLike]
 
 @dataclass
 class ResumeFSData:
     thread_id: str
     file_path: str
     comments: Optional[str]
-    new_system: Optional[NativeFS]
+    new_system: Optional[InputFileLike]

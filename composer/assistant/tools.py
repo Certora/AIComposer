@@ -148,6 +148,67 @@ class LaunchNatSpecTool(LaunchNatSpecArgs, WithAsyncImplementation[str]):
         if (r := _check_confirmation(response)) is not None:
             return r
         return await launch_natspec_workflow(self, ctx)
+    
+class WriteLaunchConfigTool(WithAsyncImplementation[str]):
+    """Serialize a code-generation launch configuration to a JSON file
+    that the main pipeline accepts via ``--input-json``.
+
+    Useful for debugging: skips the orchestrator confirmation flow and
+    produces a file the user can re-run directly without going through
+    the assistant. Field shape mirrors ``launch_codegen``'s
+    ``launch_config`` + ``source_root`` — copy whatever you would have
+    passed there. Run-time-only concerns (prover_conf, cache_namespace,
+    memory_namespace, run_description, prompt_addition) are not part of
+    the JSON; the user supplies them as CLI flags at invocation.
+    """
+
+    launch_config: CodegenConfiguration = Field(
+        description="Same shape as the `launch_config` field on `launch_codegen`.",
+    )
+    source_root: str = Field(
+        description="Absolute path to the codebase root the JSON should reference.",
+    )
+    output_path: str = Field(
+        description="Workspace-relative path to write the JSON file to (e.g. `debug-run.json`).",
+    )
+
+    async def run(self) -> str:
+        ctx = get_runtime(OrchestratorContext).context
+        resolved = _resolve_workspace_path(ctx.workspace, self.output_path)
+        if isinstance(resolved, str):
+            return resolved
+        cmdline_conf = CmdlineCodegenConfiguration(
+            **self.launch_config.model_dump(),
+            source_root=self.source_root,
+        )
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(cmdline_conf.model_dump_json(indent=2))
+        return (
+            f"Wrote launch config to {self.output_path}. Run with "
+            f"`python tui_main.py --input-json {self.output_path}` (plus any "
+            f"--prover-conf / --description / cache flags as needed)."
+        )
+
+
+class RecoverVFS(WithAsyncImplementation[str]):
+    """
+    Call this tool to create a resume key for a thread id if the workflow failed to create one.
+    """
+    thread_id : str = Field(description="The thread id of the run to create a recovery key from")
+
+    async def run(self) -> str:
+        async with (
+            store_context() as store,
+            checkpointer_context() as checkpointer
+        ):
+            recovery = await recovery_from_thread(
+                thread_id=self.thread_id,
+                checkpointer=checkpointer,
+                store=store
+            )
+            if recovery is None:
+                return "Recovery failed; is the thread id correct?"
+            return f"Resume key: {recovery}"
 
 
 # ---------------------------------------------------------------------------
@@ -173,5 +234,7 @@ def build_tools(workspace: Path) -> list[BaseTool]:
         LaunchResumeTool.as_tool("launch_resume"),
         LaunchNatSpecTool.as_tool("launch_natspec"),
         PostMortemTool.as_tool("post_mortem"),
+        WriteLaunchConfigTool.as_tool("write_launch_config"),
         done,
+        RecoverVFS.as_tool("recover_vfs")
     ]

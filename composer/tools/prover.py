@@ -2,19 +2,60 @@ from typing import Annotated, Optional
 
 from pydantic import Field
 
-from graphcore.graph import tool_return
+from graphcore.graph import tool_return, tool_state_update
 from graphcore.tools.schemas import WithInjectedId, WithAsyncImplementation
 
-from langchain_core.messages import ToolMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
-from langgraph.runtime import get_runtime
 
 from composer.core.state import AIComposerState
-from composer.core.context import AIComposerContext, compute_state_digest
-from composer.core.validation import prover as prover_key
-from composer.prover.runner import certora_prover as prover_impl, RawReport, SummarizedReport
+from composer.core.context import compute_state_digest
+from composer.core.validation import prover_validation
+from composer.prover.core import ProverReport
+from composer.prover.runner import certora_prover as prover_impl
 from composer.ui.tool_display import tool_display
+
+
+def _routing_reminder(
+    failing_rules: list[str], spec_label: str
+) -> HumanMessage:
+    """Build the system-reminder HumanMessage that rides on a prover result
+    with violations.
+
+    Lands at the head of recent context — the only place the model's
+    attention budget actually fights recency bias. Restates the routing
+    rule (spec-side fix → ``cex_remediation``; code-side bug → fix the
+    code) and points the agent at the report's diagnoses section for
+    the actual ``report_key`` to pass.
+
+    Safe to emit alongside the prover's ``ToolMessage`` only because the
+    parallel-prover guard in ``CertoraProverTool.run`` rejects any turn
+    that issues the prover with sibling tool calls; a single ``tool_use``
+    pairs with a single ``tool_result``, after which the API permits any
+    user-role content.
+    """
+    bullets = "\n".join(f"  - `{r}`" for r in failing_rules)
+    body = (
+        f"The prover run on {spec_label} produced violations on the "
+        f"following rule(s):\n{bullets}\n\n"
+        "The full per-rule analyses and diagnoses (with their report_keys) "
+        "are in the prover-tool result above. For EACH failing rule, "
+        "decide root cause:\n"
+        "- **Code-side bug** → fix the implementation directly.\n"
+        "- **Spec-side issue** (HAVOC from an unresolved external call, missing "
+        "structural invariant, ghost mismodeling, summary needed, etc.) → call "
+        "`cex_remediation(report_key=<key from diagnoses section>, "
+        "target_spec_path=<spec>)`"
+        "Stage the returned CVL via the working-spec flow.\n\n"
+        "Do NOT try to add `require`, summaries, invariant changes, add `persistent` to"
+        "ghosts, or any other non-trivial change into the "
+        "working spec yourself — `cex_remediation` owns drafting."
+    )
+    return HumanMessage(
+        content=f"<system-reminder>\n{body}\n</system-reminder>",
+        display_tag="prover_routing_reminder",
+    )
 
 
 @tool_display(
@@ -24,7 +65,7 @@ from composer.ui.tool_display import tool_display
     ),
     None,
 )
-class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
+class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command | str]):
     """
     Invoke the Certora Prover, a powerful symbolic reasoning tool for verifying the correctness of smart contracts.
 
@@ -80,16 +121,40 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
               "should be avoided whenever possible.")
 
     rule: Optional[str] = \
-        Field(description="The specific rule to check from the `spec_file`. If unspecified,"
+        Field(description="The specific rule to check from the target spec file. If unspecified,"
               "all rules are run. Before delivering the finished code to the user, ensure that all rules pass on the most"
               "up to date version of the code. However, when iteratively developing code, it may be useful to focus on a"
               "single, 'problematic' rule.")
-    
-    use_working_spec : bool = Field(description="Use the working copy of the spec instead of the master copy.")
+
+    target_spec: Optional[str] = Field(description=(
+        "The VFS path of the committed spec file to verify against. Required "
+        "when ``use_working_spec`` is false; the prover reads this spec from "
+        "the VFS and records a stamp at ``validation[\"prover:<target_spec>\"]`` "
+        "on success. Ignored when ``use_working_spec`` is true (the transient "
+        "working draft has no target until committed; runs against it do not "
+        "produce a stamp)."
+    ))
+
+    use_working_spec : bool = Field(description=(
+        "If true, verify against the current working spec draft instead of a "
+        "committed spec file. The draft is transient and has no VFS path, so "
+        "``target_spec`` is ignored in this mode and no prover stamp is "
+        "produced. Use this mode to iterate on a draft before committing it."
+    ))
 
     state: Annotated[AIComposerState, InjectedState]
 
-    async def run(self) -> Command:
+    async def run(self) -> Command | str:
+        if not self.use_working_spec and not self.target_spec:
+            return (
+                "target_spec is required when use_working_spec is false. "
+                "Pass the VFS path of one of the registered spec files."
+            )
+        last = self.state["messages"][-1]
+        if isinstance(last, AIMessage):
+            tcs = last.tool_calls
+            if any(tc["id"] == self.tool_call_id for tc in tcs) and len(tcs) > 1:
+                return "Error: certora_prover must be the only tool call in its turn. Re-issue this call alone."
         result = await prover_impl(
             self.source_files,
             self.target_contract,
@@ -98,46 +163,58 @@ class CertoraProverTool(WithInjectedId, WithAsyncImplementation[Command]):
             self.rule,
             self.state,
             self.tool_call_id,
-            self.use_working_spec
+            self.use_working_spec,
+            self.target_spec,
         )
+        spec_label = (
+            "the working spec draft"
+            if self.use_working_spec
+            else f"`{self.target_spec}`"
+        )
+
         match result:
             case str():
-                return tool_return(tool_call_id=self.tool_call_id, content=result)
-            case RawReport():
-                if result.all_verified and not self.use_working_spec and not self.rule:
-                    ctxt = get_runtime(AIComposerContext).context
-                    state_digest = compute_state_digest(c=ctxt, state=self.state)
-                    return Command(
-                        update={
-                            "messages": [
-                                ToolMessage(
-                                    tool_call_id=self.tool_call_id,
-                                    content=result.report
-                                )
-                            ],
-                            "validation": {
-                                prover_key: state_digest
-                            }
+                return result
+            case ProverReport():
+                # Stamp only on: a full (non-ruled) run against a committed
+                # spec that verified. Working-spec runs never stamp.
+                if (
+                    result.all_verified
+                    and not self.use_working_spec
+                    and not self.rule
+                    and self.target_spec is not None
+                ):
+                    state_digest = compute_state_digest(state=self.state)
+                    return tool_state_update(
+                        self.tool_call_id, result.result_str, validation={
+                            # One stamp per spec — the overall task is
+                            # complete when every registered spec has its
+                            # own stamped entry. ``str(...)`` because state
+                            # holds ``dict[str, str]``; see validation.py
+                            # module docstring for why.
+                            str(prover_validation(self.target_spec)): state_digest
                         }
                     )
-                return tool_return(tool_call_id=self.tool_call_id, content=result.report)
-            case SummarizedReport():
-                return Command(
-                    update={
+                # Violation case — append a routing reminder alongside the
+                # ToolMessage so the cex_remediation rule + failing-rule
+                # names land at the head of recent context. The
+                # diagnoses section in result_str carries the report_keys
+                # the agent will actually pass.
+                failing_rules = [
+                    name for name, ok in result.rule_status.items() if not ok
+                ]
+                if failing_rules:
+                    return Command(update={
                         "messages": [
                             ToolMessage(
                                 tool_call_id=self.tool_call_id,
-                                content="... Output truncated ..."
+                                content=result.result_str,
                             ),
-                            HumanMessage(
-                                content=[
-                                    "The prover output was too large for the context window. A TODO list extracted from its output is as follows",
-                                    result.todo_list
-                                ],
-                                display_tag="prover_summary"
-                            )
+                            _routing_reminder(failing_rules, spec_label),
                         ]
-                    }
+                    })
+                return tool_return(
+                    tool_call_id=self.tool_call_id, content=result.result_str
                 )
 
 

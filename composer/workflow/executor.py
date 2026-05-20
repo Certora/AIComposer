@@ -1,77 +1,104 @@
-from typing import Optional, cast, Any
+from typing import Optional, Any, Callable
 import logging
 import uuid
 from dataclasses import dataclass
 import pathlib
-import psycopg
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from langgraph.store.base import BaseStore
-from langgraph.graph.state import CompiledStateGraph
-from langgraph._internal._typing import StateLike
-from langgraph.types import Checkpointer
 
 from graphcore.graph import Builder
-from graphcore.tools.memory import memory_tool
-from graphcore.tools.vfs import VFSState
+from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
-from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools
-from composer.workflow.factories import get_cryptostate_builder, get_vfs_tools, get_memory_ns
-from composer.workflow.services import get_checkpointer, get_store, get_memory, get_indexed_store
+from composer.input.types import (
+    WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput,
+    TextInputFile,
+)
+from composer.input.files import FileUploader
+from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools, DEFAULT_KB_NS
+from composer.workflow.factories import get_vfs_tools, get_memory_ns
 from composer.workflow.types import PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
 from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
+from composer.core.state import AIComposerState
 from composer.prover.core import CloudConfig
-from composer.core.validation import ValidationType, prover, reqs as req_type
-from composer.rag.db import PostgreSQLRAGDatabase
+from composer.prover.agentic_analyzer import AgenticCexHandler
+from composer.prover.report_store import ReportStore
+from composer.spec.proposal_store import ProposalStore
+from composer.core.validation import Validation, REQS_VALIDATION, prover_validation
+from composer.rag.db import rag_context, ComposerRAGDB
 from composer.rag.models import get_model as get_rag_model
-from composer.audit.db import AuditDB, AuditDBSink, ResumeArtifact, InputFileLike
+from composer.audit.store import AuditStore, AuditStoreSink, ResumeArtifact
+from composer.input.types import InputFileLike
 from composer.natreq.extractor import get_requirements
 from composer.natreq.judge import get_judge_tool
-from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, _build_research_tool
+from composer.spec.cvl_research import CVL_RESEARCH_BASE_DOC, indexed_cvl_research_tool, DEFAULT_CVL_AGENT_INDEX_NS
+from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
+from composer.spec.cex_remediation import cex_remediation_tool, summary_critic_tool
+from composer.spec.guidance import ERC20TokenGuidance
 from composer.tools.relaxation import requirements_relaxation
-from composer.tools.search import cvl_manual_tools
+from composer.tools.search import cvl_manual_tools as get_cvl_manual_tools
 from composer.templates.loader import load_jinja_template
 from composer.io.protocol import CodeGenIOHandler, WorkflowPurpose
 from composer.io.context import with_handler, run_graph
 from composer.ui.codegen_events import CodeGenEventHandler
 from composer.core.state import AIComposerInput, AIComposerExtra
-from composer.ui.tool_display import tool_context
-from composer.workflow.services import checkpointer_context, memory_backend_context, store_context, indexed_store_context
+from composer.workflow.services import IndexedConnections, standard_connections
+from composer.ui.tool_display import async_tool_context
+from composer.workflow.recovery import recover_vfs, recovery_from_thread
 
+def _reqs_cache_location(
+    options: WorkflowOptions,
+    system_doc: 'InputFileLike',
+    interface_file: 'InputFileLike',
+    specs: list[tuple[str, 'TextInputFile']],
+) -> tuple[tuple[str, ...], str] | None:
+    """Compute ``(namespace_tuple, key)`` for the requirements cache.
 
-_KB_NS = ("cvl",)
-
-
-@dataclass
-class _CodegenResearchContext:
-    """Satisfies ResearchContext protocol for the CVL research sub-agent."""
-    _store: BaseStore
-    _kb_ns: tuple[str, ...]
-    _checkpointer: Checkpointer
-    _thread_prefix: str
-
-    def kb_tools(self, read_only: bool) -> list[BaseTool]:
-        return make_kb_tools(self._store, self._kb_ns, read_only)
-
-    @property
-    def checkpointer(self) -> Checkpointer:
-        return self._checkpointer
-
-    def uniq_thread_id(self) -> str:
-        return f"{self._thread_prefix}-{uuid.uuid4().hex[:16]}"
-
+    Returns ``(None, None)`` when ``options.cache_namespace`` is unset —
+    callers should treat that as "skip cache reads/writes entirely". When
+    set, the namespace is ``(cache_namespace, "reqs")`` and the key is a
+    short hash of every input that influences the extracted requirements:
+    system doc bytes, interface text, sorted spec contents (by VFS path),
+    sorted oracle file paths, and the ``set_reqs`` / ``skip_reqs``
+    overrides. Any change to those invalidates the cache automatically;
+    cache_namespace gives the user a coarser switch on top of that
+    (e.g. "fresh extraction this week, please")."""
+    import hashlib
+    if options.cache_namespace is None:
+        return None
+    h = hashlib.sha256()
+    h.update(system_doc.bytes_contents)
+    h.update(b"\x00intf\x00")
+    h.update(interface_file.bytes_contents)
+    for vfs_path, spec in sorted(specs, key=lambda s: s[0]):
+        h.update(b"\x00spec\x00")
+        h.update(vfs_path.encode("utf-8"))
+        h.update(b"\x00")
+        h.update(spec.string_contents.encode("utf-8"))
+    for path in sorted(options.requirements_oracle or []):
+        h.update(b"\x00oracle\x00")
+        h.update(path.encode("utf-8"))
+    if options.set_reqs is not None:
+        h.update(b"\x00set_reqs\x00")
+        h.update(options.set_reqs.encode("utf-8"))
+    if options.skip_reqs:
+        h.update(b"\x00skip_reqs\x00")
+    return (options.cache_namespace, "reqs"), h.hexdigest()[:16]
 
 def get_reference_input(input_data: InputData, debug_prompt: Optional[str]) -> str:
     return load_jinja_template(
         "workflow_info.j2",
-        spec_filename=input_data.spec.basename,
+        spec_entries=[
+            {"vfs_path": s.vfs_path, "basename": s.file.basename}
+            for s in input_data.specs
+        ],
         interface_filename=input_data.intf.basename,
         system_doc_filename=input_data.system_doc.basename,
+        contract_name=input_data.contract_name,
+        implementation_path=input_data.implementation_path,
         debug_prompt=debug_prompt)
 
 def _get_empty_extra() -> AIComposerExtra:
@@ -81,15 +108,23 @@ def _get_empty_extra() -> AIComposerExtra:
 
 
 def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> AIComposerInput:
-    return AIComposerInput(input=[
-                input.intf.to_document_dict(),
-                input.spec.to_document_dict(),
-                input.system_doc.to_document_dict(),
-                {
-                    "type": "text",
-                    "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
-                }
-            ], vfs={"rules.spec": input.spec.read()}, **_get_empty_extra())
+    vfs: dict[str, str] = {}
+    for s in input.specs:
+        if input.source_root is not None and (file := pathlib.Path(input.source_root) / s.vfs_path).exists() and \
+          file.read_text() == s.file.string_contents:
+            # don't bother mounting, matches FS layer
+            continue
+        vfs[s.vfs_path] = s.file.string_contents
+
+    messages: list[str | dict] = [input.intf.to_document_dict()]
+    for s in input.specs:
+        messages.append(s.file.to_document_dict())
+    messages.append(input.system_doc.to_document_dict())
+    messages.append({
+        "type": "text",
+        "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
+    })
+    return AIComposerInput(input=messages, vfs=vfs, **_get_empty_extra())
 
 @dataclass
 class InputChangeDesc:
@@ -101,10 +136,17 @@ class InputChangeDesc:
 
     vfs_note: Optional[str]
 
+@dataclass
+class SpecDelta:
+    """Per-spec before/after pair for resume prompt rendering."""
+    vfs_path: str
+    orig_text: str
+    updated_text: str
+
 def get_resume_prompt_common(
         art: ResumeArtifact,
         res: ResumeInput,
-        updated_spec: str,
+        spec_deltas: list[SpecDelta],
         other_changes: list[InputChangeDesc] | None = None
         ) -> list[str | dict]:
     changes = []
@@ -112,49 +154,109 @@ def get_resume_prompt_common(
         changes.extend(other_changes)
 
     if res.new_system is not None:
-        changes.append(InputChangeDesc(
-            orig_text=art.system_doc,
-            updated_text=res.new_system.string_contents,
-            plural="system documents",
-            single_form="system document",
-            vfs_note=None
-        ))
+        # ``string_contents`` is now ``str | None`` — None for binaries
+        # (e.g. PDF). Fall through to a textual diff when both sides
+        # have a string body; otherwise emit a "doc was replaced"
+        # notice (the LLM gets the actual content via the document
+        # block ingestion path elsewhere).
+        prior = art.system_vfs_handle.string_contents
+        new = res.new_system.string_contents
+        if prior is not None and new is not None:
+            changes.append(InputChangeDesc(
+                orig_text=prior,
+                updated_text=new,
+                plural="system documents",
+                single_form="system document",
+                vfs_note=None
+            ))
+        else:
+            changes.append(InputChangeDesc(
+                orig_text=f"[prior {art.system_vfs_handle.basename}]",
+                updated_text=f"[updated {res.new_system.basename}]",
+                plural="system documents",
+                single_form="system document",
+                vfs_note=(
+                    "Binary system document was replaced; see the document "
+                    "content block in the conversation history for the "
+                    "current contents."
+                )
+            ))
 
     return [load_jinja_template(
         "resume_prompt.j2",
         commentary=art.commentary,
         spec_change_commentary=res.comments,
-        orig_spec=art.spec_file,
-        new_spec=updated_spec,
+        spec_deltas=[
+            {
+                "vfs_path": d.vfs_path,
+                "orig_text": d.orig_text,
+                "updated_text": d.updated_text,
+            }
+            for d in spec_deltas
+        ],
         other_changes=changes
     )]
 
 def get_resume_id_input(input: ResumeIdData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> AIComposerInput:
+    spec_deltas: list[SpecDelta] = []
+    for vfs_path, new_file in input.new_specs.items():
+        orig = resume_art.spec_at(vfs_path)
+        spec_deltas.append(SpecDelta(
+            vfs_path=vfs_path,
+            orig_text=orig,
+            updated_text=new_file.string_contents,
+        ))
 
     input_messages : list[str | dict] = get_resume_prompt_common(
         art=resume_art,
         res=input,
-        updated_spec=input.new_spec.string_contents
+        spec_deltas=spec_deltas,
     )
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
 
     vfs_materialize = resume_art.vfs.to_dict()
     new_vfs = { k: v.decode("utf-8") for (k, v) in vfs_materialize.items() }
-    new_vfs["rules.spec"] = input.new_spec.string_contents
+    for vfs_path, new_file in input.new_specs.items():
+        new_vfs[vfs_path] = new_file.string_contents
     return AIComposerInput(
         input=input_messages,
         vfs=new_vfs,
         **_get_empty_extra()
     )
 
-def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[AIComposerInput, InputFileLike, InputFileLike]:
-    path = pathlib.Path(input.file_path)
+async def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflow_options: WorkflowOptions) -> tuple[AIComposerInput, TextInputFile, list[tuple[str, TextInputFile]]]:
+    """Resume from a file-system directory that mirrors the last run's VFS.
 
-    spec_p = path / "rules.spec"
-    if not spec_p.is_file():
-        raise RuntimeError("Specification file is apparently missing")
-    new_spec = spec_p.read_text()
+    Every spec VFS path registered with the run at its original start is
+    expected to exist at ``<input.file_path>/<vfs_path>``. Specs whose
+    contents have changed relative to the resume artifact are recorded as
+    deltas for the resume prompt. Returns the flow input plus handles to
+    the interface and all specs (for re-registration in the audit store).
+    Specs and interface are uploaded via the Files API as
+    ``UploadedTextFile`` so the type system carries the text guarantee
+    through to audit registration.
+    """
+    path = pathlib.Path(input.file_path)
+    uploader = await FileUploader.fresh()
+
+    spec_deltas: list[SpecDelta] = []
+    spec_handles: list[tuple[str, TextInputFile]] = []
+    for vfs_path in resume_art.spec_vfs_paths:
+        spec_p = path / vfs_path
+        if not spec_p.is_file():
+            raise RuntimeError(
+                f"Spec file missing on resume: expected {spec_p} to exist"
+            )
+        new_spec_content = spec_p.read_text()
+        orig = resume_art.spec_at(vfs_path)
+        if new_spec_content != orig:
+            spec_deltas.append(SpecDelta(
+                vfs_path=vfs_path,
+                orig_text=orig,
+                updated_text=new_spec_content,
+            ))
+        spec_handles.append((vfs_path, await uploader.upload_text_file_if_needed(spec_p)))
 
     intf_p = path / resume_art.interface_path
     if not intf_p.is_file():
@@ -172,7 +274,7 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
         art=resume_art,
         res=input,
         other_changes=changes,
-        updated_spec=new_spec
+        spec_deltas=spec_deltas,
     )
     input_messages.append("In addition to the explicit changes mentioned above, the contents of the VFS may have been arbitrarily changed since your last work. " \
     "Some of these changes may cause the current implementation to no longer compile. Thus, analyze the current implementation and consider what changes are necessary to " \
@@ -181,24 +283,209 @@ def get_resume_fs_input(input: ResumeFSData, resume_art: ResumeArtifact, workflo
     if workflow_options.debug_prompt_override is not None:
         input_messages.append(workflow_options.debug_prompt_override)
 
-    return (AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()), NativeFS(intf_p), NativeFS(spec_p))
+    return (
+        AIComposerInput(input=input_messages, vfs={}, **_get_empty_extra()),
+        await uploader.upload_text_file_if_needed(intf_p),
+        spec_handles,
+    )
 
+@dataclass
+class ResolvedInputs:
+    system_doc: InputFileLike
+    interface_file: TextInputFile
+    specs: list[tuple[str, TextInputFile]]
 
-async def execute_ai_composer_workflow(
+_REQS_CACHE_NS = ("extracted_reqs",)
+
+async def _requirements_setup(
+    handler: CodeGenIOHandler,
+    cvl_only_builder: Builder[None, None, None],
+    immut_source_only_builder: Builder[None, None, None],
+
+    workflow_options: WorkflowOptions,
+    resources: IndexedConnections,
+    mem_root: str,
+    inputs: ResolvedInputs,
+    this_tid: str,
+    resume_art: ResumeArtifact | None
+) -> tuple[
+    list[str] | None, # the actual reqs
+    list[BaseTool], # tools to add
+    list[str | dict], # prompt extra
+    list[Validation] # validations
+]:
+    if workflow_options.skip_reqs:
+        return (None, [], [], [])
+
+    req_memories = resources.memory(
+        get_memory_ns(mem_root, "natreq")
+    )
+
+    req_cache_keys = _reqs_cache_location(
+        workflow_options, inputs.system_doc, inputs.interface_file, inputs.specs
+    )
+
+    cached = (
+        await resources.store.aget(req_cache_keys[0], req_cache_keys[1])
+        if req_cache_keys is not None else None
+    )
+    reqs_list : list[str]
+    if cached is not None:
+        assert req_cache_keys is not None
+        reqs_list = cached.value["reqs"]
+    else:
+        if workflow_options.set_reqs is not None:
+            if workflow_options.set_reqs.startswith("@"):
+                # Pull reqs from a prior run by thread id — looked up in
+                # the audit store, where ``register_run`` persists every
+                # run's reqs alongside its other state. Independent of the
+                # cache namespace.
+                other_tid = workflow_options.set_reqs[1:]
+                other_reqs = await resources.store.aget(_REQS_CACHE_NS, other_tid)
+                assert other_reqs is not None, (
+                    f"--set-reqs @{other_tid} found no requirements in "
+                    f"the audit store; check the thread id."
+                )
+                reqs_list = other_reqs.value["reqs"]
+            else:
+                reqs_list = [ v for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if (v := l.strip()) ]
+        else:
+            extraction = await get_requirements(
+                handler,
+                cvl_builder=cvl_only_builder,
+                sys_doc=inputs.system_doc,
+                specs=inputs.specs,
+                mem_backend=req_memories,
+                resume_artifact=resume_art,
+            )
+            reqs_list = extraction.reqs
+            await handler.log_workflow_thread(WorkflowPurpose.NATREQ, extraction.thread_id)
+        to_cache = {"reqs": reqs_list}
+        if req_cache_keys is not None:
+            await resources.store.aput(req_cache_keys[0], req_cache_keys[1], to_cache)
+
+    await resources.store.aput(
+        _REQS_CACHE_NS, this_tid, {"reqs": reqs_list}
+    )
+    extra_tools : list[BaseTool] = []
+
+    judge_tool = get_judge_tool(
+        immut_source_only_builder,
+        reqs_list,
+        mem=req_memories
+    )
+    extra_tools.append(judge_tool)
+    extra_tools.append(requirements_relaxation)
+
+    extra_prompt : list[str | dict] = [f"""
+    Additionally, the implementation MUST satisfy the following requirements:
+    {"\n".join(f"{i}. {r}" for (i, r) in enumerate(reqs_list, start = 1))}
+    """
+    ]
+
+    return (
+        reqs_list, extra_tools, extra_prompt, [REQS_VALIDATION]
+    )
+
+def _get_codegen_tools(proposals: ProposalStore) -> list[BaseTool]:
+    from composer.tools.prover import certora_prover
+    from composer.tools.proposal import propose_spec_change
+    from composer.tools.question import human_in_the_loop
+    from composer.tools.result import code_result
+    from composer.tools.working_spec import (
+        ApplyRemediationProposal,
+        CommitWorkingSpec,
+        ReadWorkingSpec,
+        WriteWorkingSpec,
+    )
+
+    return [
+        certora_prover,
+        propose_spec_change,
+        human_in_the_loop,
+        code_result,
+        ReadWorkingSpec.as_tool("read_working_spec"),
+        WriteWorkingSpec.as_tool("write_working_spec"),
+        ApplyRemediationProposal.bind(proposals).as_tool("apply_remediation_proposal"),
+        CommitWorkingSpec.as_tool("commit_working_spec")
+    ]
+
+type _CodegenBuilder = Builder[AIComposerState, AIComposerContext, AIComposerInput]
+
+def _get_summary_injector(summarization_threshold: int | None) -> Callable[[_CodegenBuilder], _CodegenBuilder]:
+    if summarization_threshold is None:
+        return lambda x: x
+    from composer.workflow.summarization import SummaryGeneration
+    return lambda g: g.with_summary_config(SummaryGeneration(max_messages=summarization_threshold))
+
+async def _execute_ai_composer_workflow(
     handler: CodeGenIOHandler,
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
     workflow_options: WorkflowOptions,
-    memory_namespace: str | None = None,
-    resume_work_key: str | None = None,
+    memory_namespace: str | None,
+    resume_work_key: str | None,
+
+    resources: IndexedConnections,
+    rag: ComposerRAGDB,
 ) -> WorkflowResult:
-    """Execute the AI Composer workflow with interrupt handling."""
+    store = resources.store
+    checkpointer = resources.checkpointer
+    mem = resources.memory
+    indexed_store = resources.indexed_store
+
+    basic_builder = (
+        Builder()
+        .with_llm(llm)
+        .with_loader(load_jinja_template)
+        .with_checkpointer(resources.checkpointer)
+    )
+
+    cvl_manual_tools = get_cvl_manual_tools(rag)
+
+    kb_tools = make_kb_tools(
+        indexed_store, DEFAULT_KB_NS, True
+    )
+
+    # Indexed CVL researcher: a single AgentIndex backs every researcher
+    # call across this codegen session (and across sessions, since the
+    # default namespace is shared). When the codegen author, the
+    # remediator, and the summary critic all need to look up the same
+    # CVL question, the second and third hits return cached answers
+    # plus a Document-Ref the agent can echo — no re-asking, no
+    # re-deriving. The companion `cvl_document_ref` tool resolves a
+    # ref-string back to the cached Q&A so an agent that sees the ref
+    # in a peer's output can fetch it without re-querying.
+    cvl_agent_index = AgentIndex(
+        store=indexed_store, cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
+    )
+
+    @dataclass(frozen=True)
+    class _IndexedResearchEnv:
+        builder: Builder
+        llm: BaseChatModel
+        base_rag_tools: tuple[BaseTool, ...]
+        agent_index: AgentIndex
+
+    cvl_researcher = indexed_cvl_research_tool(
+        _IndexedResearchEnv(
+            builder=basic_builder,
+            llm=llm,
+            base_rag_tools=tuple(kb_tools) + tuple(cvl_manual_tools),
+            agent_index=cvl_agent_index,
+        ),
+        CVL_RESEARCH_BASE_DOC,
+    )
+    cvl_document_ref = RetrieveDocumentTool.bind(cvl_agent_index).as_tool("cvl_document_ref")
+
+    all_cvl_tools = [
+        cvl_researcher,
+        cvl_document_ref,
+        *kb_tools,
+        *cvl_manual_tools,
+    ]
+
     logger = logging.getLogger(__name__)
-
-    checkpointer = get_checkpointer()
-
-    audit_conn = psycopg.connect(workflow_options.audit_db)
-    audit_db = AuditDB(audit_conn)
 
     thread_id = workflow_options.thread_id
 
@@ -215,164 +502,162 @@ async def execute_ai_composer_workflow(
 
     system_doc: InputFileLike
     interface_file: InputFileLike
-    spec_file: InputFileLike
+    # (vfs_path, file) pairs — always at least one entry.
+    specs_for_audit: list[tuple[str, TextInputFile]]
     resume_art : None | ResumeArtifact = None
+
+    audit_store = AuditStore(store)
+
+    kickstart_context = input.kickstart_context if isinstance(input, InputData) else None
+
+    has_kickstart = bool(kickstart_context and kickstart_context.strip())
 
     match input:
         case InputData():
-            prompt_params = PromptParams(is_resume=False)
+            prompt_params = PromptParams(is_resume=False, has_kickstart=has_kickstart)
             flow_input = get_fresh_input(input, workflow_options)
             system_doc = input.system_doc
             interface_file = input.intf
-            spec_file = input.spec
+            specs_for_audit = [(s.vfs_path, s.file) for s in input.specs]
+            fs_layer = input.source_root
 
         case ResumeIdData() | ResumeFSData():
-            prompt_params = PromptParams(is_resume=True)
+            prompt_params = PromptParams(is_resume=True, has_kickstart=has_kickstart)
 
-            resume_art = audit_db.get_resume_artifact(thread_id=input.thread_id)
+            resume_art = await audit_store.get_resume_artifact(thread_id=input.thread_id)
             if input.new_system is None:
                 system_doc = resume_art.system_vfs_handle
             else:
                 system_doc = input.new_system
             match input:
                 case ResumeFSData():
-                    (flow_input, interface_file, spec_file) = get_resume_fs_input(input, resume_art, workflow_options)
+                    (flow_input, interface_file, specs_for_audit) = await get_resume_fs_input(input, resume_art, workflow_options)
                     fs_layer = input.file_path
                 case ResumeIdData():
                     interface_file = resume_art.intf_vfs_handle
                     flow_input = get_resume_id_input(input, resume_art, workflow_options)
-                    spec_file = input.new_spec
-
-    store = get_store()
-
-    from_previous_ns : str | None = None
-    match input:
-        case ResumeFSData(thread_id=src_id) | ResumeIdData(thread_id=src_id):
-            from_previous_ns = get_memory_ns(memory_namespace or src_id, "natreq")
-        case InputData():
-            pass
-
-    req_memories = get_memory(
-        get_memory_ns(mem_root, "natreq"),
-        from_previous_ns
+                    # Re-register every spec. Any updates from input.new_specs
+                    # have already been overlaid into flow_input.vfs; for the
+                    # audit store we want the content that will be in play.
+                    specs_for_audit = []
+                    for vfs_path in resume_art.spec_vfs_paths:
+                        if vfs_path in input.new_specs:
+                            specs_for_audit.append((vfs_path, input.new_specs[vfs_path]))
+                        else:
+                            # Unchanged spec: reuse the stored entry as a
+                            # lightweight InputFileLike via the resume artifact.
+                            for entry in resume_art.specs:
+                                if entry.vfs_path == vfs_path:
+                                    specs_for_audit.append((vfs_path, entry))
+                                    break
+    
+    immut_vfs_tools, _ = get_vfs_tools(
+        fs_layer, immutable=True
     )
 
-    extra_reqs = store.get((thread_id,), "requirements")
-    reqs_list : list[str] | None
-    if extra_reqs is None:
-        if workflow_options.skip_reqs:
-            reqs_list = None
-        elif workflow_options.set_reqs is not None:
-            if workflow_options.set_reqs.startswith("@"):
-                other_reqs = store.get((workflow_options.set_reqs[1:],), "requirements")
-                assert other_reqs is not None
-                reqs_list = other_reqs.value["reqs"]
-            else:
-                reqs_list = [ v for l in pathlib.Path(workflow_options.set_reqs).read_text().splitlines() if (v := l.strip()) ]
-        else:
-            print("Analyzing requirements...")
-            extraction = await get_requirements(
-                handler,
-                workflow_options,
-                llm,
-                system_doc,
-                spec_file,
-                req_memories,
-                resume_art,
-                workflow_options.requirements_oracle
-            )
-            reqs_list = extraction.reqs
-            await handler.log_workflow_thread(WorkflowPurpose.NATREQ, extraction.thread_id)
-        store.put((thread_id,), "requirements", {"reqs": reqs_list})
-    else:
-        print("Read requirements from store")
-        reqs_list = extra_reqs.value["reqs"]
-    extra_tools = []
+    vfs_tools, materializer = get_vfs_tools(
+        fs_layer, immutable=False
+    )
 
-    if reqs_list is not None:
-        judge_tool = get_judge_tool(
-            reqs=reqs_list,
-            mem=req_memories,
-            unbound=llm,
-            vfs_tools=get_vfs_tools(
-                fs_layer=fs_layer, immutable=True
-            )[0]
-        )
-        extra_tools.append(judge_tool)
-        extra_tools.append(requirements_relaxation)
+    build_with_cvl = basic_builder.with_tools(all_cvl_tools)
+    build_with_source = basic_builder.with_tools(immut_vfs_tools)
+
+    reqs_list, req_tools, req_input, req_validation = await _requirements_setup(
+        handler=handler,
+        cvl_only_builder=build_with_cvl,
+        immut_source_only_builder=build_with_source,
+
+        workflow_options=workflow_options,
+        inputs=ResolvedInputs(
+            interface_file=interface_file,
+            specs=specs_for_audit,
+            system_doc=system_doc
+        ),
+        mem_root=mem_root,
+        resources=resources,
+        resume_art=resume_art,
+        this_tid=thread_id
+    )
+
+    extra_tools = [*req_tools]
+
+    report_store = ReportStore(store=resources.store)
+    proposal_store = ProposalStore(store=resources.store)
 
     if "context-management-2025-06-27" in getattr(llm, "betas"):
-        memory = memory_tool(get_memory(get_memory_ns(mem_root, "composer"), "composer"))
+        memory = async_memory_tool(mem(get_memory_ns(mem_root, "composer")))
         extra_tools.append(memory)
 
-    # CVL research sub-agent — KB needs indexed store for semantic search
-    rag_db = PostgreSQLRAGDatabase(workflow_options.rag_db, get_rag_model())
-    indexed_store = get_indexed_store(DefaultEmbedder())
-    cvl_builder = Builder().with_llm(
-        llm
-    ).with_loader(
-        load_jinja_template
-    ).with_tools(
-        cvl_manual_tools(rag_db)
-    ).with_checkpointer(
-        checkpointer
-    ).with_tools(
-        make_kb_tools(indexed_store, _KB_NS, read_only=True)
+    # CEX remediation sub-agent + its summary critic. The remediator drafts
+    # CVL spec changes for the codegen author when a CEX needs a spec-side
+    # fix; the critic gates those drafts against soundness footguns
+    # (NONDET on side-effect-bearing calls, naked DISPATCHER on ERC20s,
+    # persistent-as-HAVOC-armor) and faithfulness to the system document.
+    summary_critic = summary_critic_tool(
+        basic_builder.with_tools([*all_cvl_tools, *immut_vfs_tools]),
+        system_doc,
+    )
+    cex_remediator = cex_remediation_tool(
+        basic_builder.with_tools([
+            *all_cvl_tools,
+            *immut_vfs_tools,
+            summary_critic,
+            ERC20TokenGuidance.as_tool("erc20_guidance"),
+        ]),
+        materializer,
+        system_doc,
+        resources.memory(get_memory_ns(mem_root, "cex-remediation")),
+        proposal_store,
+        report_store
+    )
+    extra_tools.append(cex_remediator)
+
+    workflow_exec = (
+        basic_builder
+        .with_tools(all_cvl_tools)
+        .with_tools(vfs_tools)
+        .with_tools(extra_tools)
+        .with_tools(_get_codegen_tools(proposal_store))
+        .with_state(AIComposerState)
+        .with_input(AIComposerInput)
+        .with_context(AIComposerContext)
+        .with_initial_prompt_template("synthesis_prompt.j2")
+        .with_sys_prompt_template("system_prompt.j2", **prompt_params)
+        .with_output_key("generated_code")
+        .inject(_get_summary_injector(workflow_options.summarization_threshold))
+    ).build()[0].compile(
+        checkpointer=resources.checkpointer,
+        store=resources.store
     )
 
-    research_doc = CVL_RESEARCH_BASE_DOC + " Do NOT use this for source code questions — use the VFS tools for that."
-    async def runner[S: StateLike, I: StateLike](
-        graph: CompiledStateGraph[S, Any, I, Any],
-        i: I,
-    ) -> S:
-        return await run_graph(
-            ctxt=None,
-            description="CVL Researcher",
-            graph=graph,
-            input=i,
-            run_conf={
-                "recursion_limit": 100,
-                "configurable": {
-                    "thread_id": "research-" + uuid.uuid4().hex[:16]
-                }
-            }
-        )
-    extra_tools.append(_build_research_tool(cvl_builder, runner, research_doc))
-
-    (workflow_builder, materializer) = get_cryptostate_builder(
-        llm=llm,
-        fs_layer=fs_layer,
-        summarization_threshold=workflow_options.summarization_threshold,
-    )
-
-    workflow_graph = workflow_builder.with_tools(extra_tools).with_sys_prompt_template(
-        "system_prompt.j2"
-    ).with_initial_prompt_template(
-        "synthesis_prompt.j2", **prompt_params
-    ).build_async()[0]
-
-    audit_db.register_run(
+    await audit_store.register_run(
         thread_id=thread_id,
         system_doc=system_doc,
         interface_file=interface_file,
-        spec_file=spec_file,
+        specs=specs_for_audit,
         vfs_init=materializer.iterate(flow_input),
-        reqs=reqs_list
+        reqs=reqs_list,
+        description=workflow_options.description,
     )
 
-    workflow_exec = workflow_graph.compile(checkpointer=checkpointer, store=store)
-    if reqs_list is not None:
-        flow_input["input"].append(f"""
-    Additionally, the implementation MUST satisfy the following requirements:
-    {"\n".join(f"{i}. {r}" for (i, r) in enumerate(reqs_list, start = 1))}
-    """)
+    flow_input["input"].extend(req_input)
 
-    if resume_work_key is not None:
-        snapshot = store.get(("crash_recovery",), resume_work_key)
-        if snapshot is not None:
-            vfs_files = list(snapshot.value["vfs"].items())
-            recovery_msg = load_jinja_template("crash_recovery_context.j2", vfs_files=vfs_files)
-            flow_input["input"].insert(0, recovery_msg)
+    if resume_work_key is not None and (snapshot := await recover_vfs(store, resume_work_key)) is not None:
+        flow_input["working_spec"] = snapshot["working_spec"]
+        for (k, v) in snapshot["vfs"].items():
+            flow_input["vfs"][k] = v
+
+    if has_kickstart:
+        flow_input["input"].append(
+            "<kickstart_context>\n"
+            "The following briefing was supplied by the orchestrator that launched "
+            "this run. Treat it as authoritative context — it may include required "
+            "implementation paths, scaffold source code, storage-field requirements, "
+            "and other framing the orchestrator has decided you need. Path constraints "
+            "stated here OVERRIDE any default behavior.\n\n"
+            f"{kickstart_context}\n"
+            "</kickstart_context>"
+        )
 
     try:
         import grandalf # type: ignore
@@ -393,24 +678,61 @@ async def execute_ai_composer_workflow(
         cloud=None if workflow_options.local_prover else CloudConfig(),
     )
 
-    required_validations : list[ValidationType] = [prover]
-    if reqs_list is not None:
-        required_validations.append(req_type)
+    # One prover stamp per registered spec — the task isn't done until every
+    # spec has been verified on its own. The prover tool writes
+    # ``validation[str(prover_validation(spec_vfs_path))] = digest``;
+    # completion check iterates this same list and stringifies on lookup.
+    required_validations : list[Validation] = [
+        prover_validation(vfs_path) for (vfs_path, _) in specs_for_audit
+    ]
+    required_validations.extend(req_validation)
 
-    work_context = AIComposerContext(llm=llm, rag_db=rag_db, prover_opts=prover_opts, vfs_materializer=materializer, required_validations=required_validations)
+    # Prover-conf overrides ride on ``workflow_options`` — a single
+    # canonical channel from CLI ``--prover-conf`` (resolved to dict at
+    # parse time) or assistant ``CommonCodeGen.prover_conf``. No
+    # input-side ride-along.
+    # The analyzer needs CVL research / manual / KB tools so it can ask
+    # CVL-language questions during analysis (e.g. "what does this summary
+    # construct produce in this case?"); the document-ref protocol partial
+    # in its system prompt teaches it to cite refs in its output, so
+    # downstream remediation picks up the same evidence trail without
+    # re-querying. Source-side reads are scoped per call to the prover's
+    # report folder via fs_tools — that's added inside analyze, not
+    # baked into the builder.
+    cex_handler = AgenticCexHandler(
+        builder=basic_builder.with_tools(all_cvl_tools),
+        report_store=report_store,
+    )
 
-    audit_sink = AuditDBSink(audit_db, thread_id)
+    work_context = AIComposerContext(
+        llm=llm, rag_db=rag, prover_opts=prover_opts,
+        vfs_materializer=materializer, required_validations=required_validations,
+        prover_conf_overrides=workflow_options.prover_conf,
+        cex_handler=cex_handler
+    )
+
+    audit_sink = AuditStoreSink(audit_store, thread_id)
+
+    # When the caller hands us an existing thread_id, it's a resume request
+    # (transient-failure retry, CLI ``--thread-id``, etc.) — pass ``None`` so
+    # LangGraph picks up at the checkpoint instead of merging the freshly-
+    # built flow_input into the leftover state and replaying from START (the
+    # merge-and-replay trap; see test_langgraph_resume.py). The input-
+    # construction work above is wasted on this path but harmless.
+    graph_input: AIComposerInput | None = (
+        None if workflow_options.thread_id is not None else flow_input
+    )
 
     try:
         async with with_handler(handler, CodeGenEventHandler(handler, audit_sink)):
-            final_state = await run_graph(workflow_exec, work_context, flow_input, config, description="Code generation")
+            final_state = await run_graph(workflow_exec, work_context, graph_input, config, description="Code generation")
 
         result = final_state.get("generated_code", None)
         if result is None:
             return WorkflowFailure()
 
         res_commentary = await create_resume_commentary(final_state, llm=llm)
-        audit_db.register_complete(
+        await audit_store.register_complete(
             thread_id, materializer.iterate(final_state), res_commentary.interface_path, res_commentary.commentary
         )
 
@@ -421,13 +743,33 @@ async def execute_ai_composer_workflow(
         # Attempt to capture VFS from last checkpoint
         resume_key: str | None = None
         try:
-            ct = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
-            if ct is not None:
-                channel_values = cast(VFSState, ct.checkpoint["channel_values"])
-                vfs_snapshot = {path: content.decode("utf-8") for path, content in materializer.iterate(channel_values)}
-                resume_key = f"crash_{thread_id}_{uuid.uuid4().hex[:8]}"
-                store.put(("crash_recovery",), resume_key, {"vfs": vfs_snapshot})
-                logger.info(f"Saved crash recovery snapshot: {resume_key}")
+            resume_key = await recovery_from_thread(checkpointer=checkpointer, store=store, thread_id=thread_id)
         except Exception as snapshot_exc:
             logger.warning(f"Failed to capture crash snapshot: {snapshot_exc}")
         return WorkflowCrash(resume_work_key=resume_key, error=exc)
+
+
+async def execute_ai_composer_workflow(
+    handler: CodeGenIOHandler,
+    llm: BaseChatModel,
+    input: InputData | ResumeFSData | ResumeIdData,
+    workflow_options: WorkflowOptions,
+    memory_namespace: str | None = None,
+    resume_work_key: str | None = None,
+) -> WorkflowResult:
+    """Execute the AI Composer workflow with interrupt handling.
+
+    Prover-config overrides come exclusively via
+    ``workflow_options.prover_conf`` (already a dict — CLI callers
+    resolved the ``--prover-conf`` path at argparse time; assistant
+    callers supplied a dict directly via ``CommonCodeGen.prover_conf``)."""
+    model = get_rag_model()
+    async with (
+        async_tool_context(),
+        standard_connections(embedder=DefaultEmbedder(model)) as conn,
+        rag_context(workflow_options.rag_db, model) as rag_db
+    ):
+        return await _execute_ai_composer_workflow(
+            handler, llm, input, workflow_options, memory_namespace, resume_work_key,
+            resources=conn, rag=rag_db
+        )

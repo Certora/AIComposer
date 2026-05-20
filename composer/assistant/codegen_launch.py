@@ -1,11 +1,11 @@
 import traceback
 from dataclasses import dataclass, field
+import pathlib
 from typing import Optional
 
 from composer.assistant.launch_args import LaunchCodegenArgs, LaunchResumeArgs, CommonCodeGen
 from composer.assistant.types import OrchestratorContext
-from composer.audit.db import DEFAULT_CONNECTION as AUDIT_DEFAULT
-from composer.input.files import upload_input
+from composer.input.files import upload_configuration
 from composer.input.types import ResumeFSData
 from composer.ui.codegen_rich import CodeGenRichApp
 from composer.io.protocol import WorkflowPurpose
@@ -19,23 +19,15 @@ from composer.workflow.services import create_llm
 # ---------------------------------------------------------------------------
 
 @dataclass
-class _CodegenUploadPaths:
-    spec_file: str
-    interface_file: str
-    system_doc: str
-
-
-@dataclass
 class CodegenWorkflowArgs:
     """Satisfies WorkflowOptions protocol for programmatic invocation."""
-    audit_db: str
     rag_db: str
     prover_capture_output: bool = True
     prover_keep_folders: bool = False
     local_prover: bool = False
     debug_prompt_override: Optional[str] = None
     recursion_limit: int = 100
-    summarization_threshold: Optional[int] = 50
+    summarization_threshold: Optional[int] = 75
     requirements_oracle: list[str] = field(default_factory=list)
     set_reqs: Optional[str] = None
     skip_reqs: bool = False
@@ -46,18 +38,27 @@ class CodegenWorkflowArgs:
     thinking_tokens: int = 2048
     memory_tool: bool = True
     interleaved_thinking: bool = False
+    # ``prover_conf`` matches ``WorkflowOptions.prover_conf`` shape:
+    # an inline dict resolved at the agent boundary (or ``None``).
+    # Forwarded straight to the executor — no path-loading inline.
+    prover_conf: Optional[dict] = None
+    cache_namespace: Optional[str] = None
+    description: Optional[str] = None
 
 
-def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflowArgs:
+def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen, thread_id: str | None = None) -> CodegenWorkflowArgs:
     return CodegenWorkflowArgs(
-        audit_db=AUDIT_DEFAULT,
         rag_db=ctx.config.rag_db,
         model=ctx.config.model,
         tokens=ctx.config.tokens,
         thinking_tokens=ctx.config.thinking_tokens,
         memory_tool=ctx.config.memory_tool,
         recursion_limit=200,
-        debug_prompt_override=cg.prompt_addition
+        debug_prompt_override=cg.prompt_addition,
+        prover_conf=cg.prover_conf,
+        cache_namespace=cg.cache_namespace,
+        description=cg.run_description,
+        thread_id=thread_id,
     )
 
 
@@ -95,12 +96,7 @@ async def launch_codegen_workflow(
     args: LaunchCodegenArgs,
     ctx: OrchestratorContext,
 ) -> str:
-    paths = _CodegenUploadPaths(
-        spec_file=str(ctx.workspace / args.spec_file),
-        interface_file=str(ctx.workspace / args.interface_file),
-        system_doc=str(ctx.workspace / args.system_doc),
-    )
-    input_data = upload_input(paths)
+    input_data = await upload_configuration(args.launch_config, pathlib.Path(args.source_root))
 
     wf_args = _codegen_args(ctx, args)
     llm = create_llm(wf_args)

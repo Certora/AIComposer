@@ -1,26 +1,37 @@
-The workflow you are resuming was started using the following spec file:
-
-```
-{{ orig_spec }}
-```
-
-When the initial workflow was completed, you summarized your progress as follows:
+The workflow you are resuming was started with one or more specification files. When the initial
+workflow was completed, you summarized your progress as follows:
 
 ```
 {{ commentary }}
 ```
 
-However, the specification file has since been updated to the following:
+{% if spec_deltas %}
+{% if spec_deltas|length == 1 %}
+One specification file has since been updated. Carefully analyze the diff below and consider
+what, if anything, in the current version of the implementation has been changed in response.
+{% else %}
+The following {{ spec_deltas|length }} specification files have since been updated. Carefully
+analyze each diff and consider what, if anything, in the current version of the implementation
+has been changed in response. Remember: every spec file must pass its own prover run.
+{% endif %}
 
+{% for d in spec_deltas %}
+## Spec file at `{{ d.vfs_path }}`
+
+**Original version:**
 ```
-{{ new_spec }}
+{{ d.orig_text }}
 ```
 
-This NEW version of the specification has already been changed in the VFS at the path `rules.spec`.
+**Updated version (currently in the VFS at `{{ d.vfs_path }}`):**
+```
+{{ d.updated_text }}
+```
 
-You must carefully analyze the differences between the specifications. Identify what
-has been added, removed or changed, and consider what, if anything, in the current version
-of the implementation has been changed.
+{% endfor %}
+{% else %}
+No spec files have been changed on this resume.
+{% endif %}
 
 {% for change in other_changes %}
 In addition, the {{ change.single_form }} used in the original workflow was the following:

@@ -1,8 +1,8 @@
 import asyncio
+import contextlib
 import traceback
 from abc import abstractmethod
-from collections.abc import Coroutine
-from typing import Callable
+from typing import AsyncContextManager, Callable, Coroutine
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -32,7 +32,29 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
     .vfs-change { color: cyan; }
     Collapsible { background: transparent; border: none; padding: 0; }
     CollapsibleTitle { padding: 0 1; }
-    Collapsible Contents { padding: 0 0 0 3; }
+
+    /* Tool-call block: a (call line, attachment) pair mounted as one
+     * unit so the attachment hugs the parent line with no inter-row
+     * gap, while the block itself participates in the standard
+     * ``> * { margin-bottom: 1 }`` separation. */
+    .tool-call-block { height: auto; }
+    .tool-call-block > * { margin-bottom: 0; }
+    .tool-call-attachment {
+        margin-left: 2;
+        margin-top: 0;
+        margin-bottom: 0;
+        height: auto;
+    }
+    .attachment-row { height: auto; width: 1fr; }
+    .attachment-corner {
+        width: 3;
+        color: $text-muted;
+        padding: 0;
+    }
+    .attachment-pending {
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     BINDINGS = [
@@ -109,15 +131,28 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
         await target.mount_all(widgets)
         await self._auto_scroll()
 
-    def _reset_tool_collapsing(self):
-        """Reset consecutive tool call collapsing state."""
-        self._renderer.reset_tool_collapsing()
+    def _reset_tool_collapsing_for(self, path: list[str]) -> None:
+        """Reset consecutive tool-call collapsing for the thread on
+        ``path``. Used by subclasses that mount non-tool widgets and
+        want to break the current group (e.g. a VFS-change line)."""
+        if not path:
+            return
+        state = self._renderer.threads.get(path[-1])
+        if state is not None:
+            state.tool_group.reset()
 
     # ── Abstract / overridable methods ────────────────────────
 
     @abstractmethod
-    def build_interaction(self, ty: H) -> tuple[Text, str, list[Validator]]:
-        """Return (prompt_renderable, hint_text, validators) for the interaction type."""
+    def build_interaction(
+        self, ty: H
+    ) -> tuple[Text, str, list[Validator], AsyncContextManager[None] | None]:
+        """Return (prompt_renderable, hint_text, validators, side_effect).
+
+        ``side_effect`` is an optional async context manager whose scope
+        wraps the prompt/response lifecycle — e.g. open a diff tab on entry
+        and close it on exit. ``None`` means no side effect.
+        """
         ...
 
     @abstractmethod
@@ -125,8 +160,14 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
         """Render a progress update into the target container."""
         ...
 
-    async def render_state_extras(self, target: VerticalScroll, node_name: str, node_data: dict) -> None:
-        """Handle non-message state data (e.g. VFS changes). Override in subclasses."""
+    async def render_state_extras(
+        self, target: VerticalScroll, path: list[str], node_name: str, node_data: dict,
+    ) -> None:
+        """Handle non-message state data (e.g. VFS changes). Override in subclasses.
+
+        ``path`` is the thread path so subclasses can scope tool-group
+        reset to the thread that produced this update.
+        """
         pass
 
     # ── IOHandler protocol ────────────────────────────────────
@@ -149,7 +190,9 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
     async def log_start(self, *, path: list[str], description: str, tool_id: str | None):
         await self._mounted.wait()
         root = self.query_one("#event-log", VerticalScroll)
-        await self._renderer.render_start(root, path=path, description=description)
+        await self._renderer.render_start(
+            root, path=path, description=description, tool_id=tool_id,
+        )
 
     async def log_end(self, path: list[str]):
         await self._mounted.wait()
@@ -164,8 +207,8 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
             if node_name not in KNOWN_NODES:
                 continue
             if "messages" in v:
-                await self._renderer.render_messages(target, v["messages"])
-            await self.render_state_extras(target, node_name, v)
+                await self._renderer.render_messages(path, v["messages"])
+            await self.render_state_extras(target, path, node_name, v)
 
     async def progress_update(self, path: list[str], upd: P):
         await self._mounted.wait()
@@ -181,28 +224,29 @@ class BaseRichConsoleApp[H, P](LogViewerMixin, IDEContentMixin, App):
         target = self.query_one("#event-log", VerticalScroll)
 
         # Mount directly from worker — post_message races with state update mounts
-        prompt_content, hint_text, validators = self.build_interaction(ty)
+        prompt_content, hint_text, validators, side_effect = self.build_interaction(ty)
 
-        prompt_widget = Static(prompt_content)
-        hint_widget = Static(hint_text, classes="interaction-hint")
-        input_widget = Input(placeholder="Type here...", validate_on=["submitted"])
-        input_widget.validators = validators
+        async with side_effect if side_effect is not None else contextlib.nullcontext():
+            prompt_widget = Static(prompt_content)
+            hint_widget = Static(hint_text, classes="interaction-hint")
+            input_widget = Input(placeholder="Type here...", validate_on=["submitted"])
+            input_widget.validators = validators
 
-        await self._mount_to(target, prompt_widget, input_widget, hint_widget)
-        input_widget.focus()
+            await self._mount_to(target, prompt_widget, input_widget, hint_widget)
+            input_widget.focus()
 
-        response = await self._input_queue.get()
+            response = await self._input_queue.get()
 
-        # Replace interaction widgets with compact summary
-        await prompt_widget.remove()
-        await input_widget.remove()
-        await hint_widget.remove()
-        await self._mount_to(
-            target,
-            Static(dot("green", Text.assemble(("You: ", "bold green"), response)))
-        )
+            # Replace interaction widgets with compact summary
+            await prompt_widget.remove()
+            await input_widget.remove()
+            await hint_widget.remove()
+            await self._mount_to(
+                target,
+                Static(dot("green", Text.assemble(("You: ", "bold green"), response)))
+            )
 
-        return response
+            return response
 
     def on_input_submitted(self, event: Input.Submitted):
         value = event.value.strip()

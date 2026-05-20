@@ -1,7 +1,25 @@
 The files referenced above are available as uploaded documents:
-- The specification file is: {{ spec_filename }}
-- The interface file is: {{ interface_filename }} 
+- The interface file is: {{ interface_filename }}
 - The system documentation is: {{ system_doc_filename }}
+{% if spec_entries|length == 1 %}
+- The specification file is at `{{ spec_entries[0].vfs_path }}` ({{ spec_entries[0].basename }}).
+{% else %}
+- The contract has {{ spec_entries|length }} specification files; each describes part of the contract's
+  behavior. Together they form the complete formal specification, and the implementation must be verified
+  against **each** of them independently. The spec files are at the following VFS paths:
+  {% for s in spec_entries %}
+  - `{{ s.vfs_path }}` ({{ s.basename }})
+  {% endfor %}
+{% endif %}
+{% if contract_name %}
 
-These files have been uploaded and are accessible to you through the document references in the conversation.
+The contract you are implementing is called **`{{ contract_name }}`**.
+{% endif %}
+{% if implementation_path %}
+A suggested VFS path for your implementation is **`{{ implementation_path }}`** (you may place the
+implementation there, or choose a different path if the existing project layout calls for it).
+{% endif %}
+
+These files have been uploaded and are accessible to you through the document references in the conversation;
+every spec file is also present in the VFS at its listed path.
 {% if debug_prompt %}{{ debug_prompt }}{% endif %}
