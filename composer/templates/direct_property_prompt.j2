@@ -53,7 +53,7 @@ Read the user-provided properties carefully. They may be formatted as:
 **For every property the user wrote, assign it to exactly one conf** and produce exactly
 one `PropertyFormulation` entry inside that conf's `properties` list. Do NOT duplicate a
 property across confs. Do NOT invent properties of your own. Do NOT generalize, strengthen,
-weaken, or "rewrite for clarity". The downstream agent must see the user's own wording.
+weaken, or "rewrite for clarity". It's important to keep the users wording.
 
 A property's conf assignment is determined by which conf's `files` field contains the
 contracts the property actually references. When a property plausibly fits several confs,
