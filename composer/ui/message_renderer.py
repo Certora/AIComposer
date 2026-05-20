@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from composer.diagnostics.handlers import normalize_content
 from composer.ui.tool_display import ToolDisplayConfig
-from composer.ui.tool_call_renderer import ToolCallRenderer
+from composer.ui.tool_call_renderer import ToolCallRenderer, format_elapsed
 
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
 from graphcore.utils import get_token_usage
@@ -147,9 +147,13 @@ class MessageRenderer(ToolCallRenderer):
         name = getattr(msg, "name", None) or "Tool result"
         result_info = self.tool_config.format_result(name, msg)
         if result_info is None:
+            self.pop_tool_call_elapsed(getattr(msg, "tool_call_id", None))
             return None
         self.reset_tool_collapsing()
         label, body = result_info
+        elapsed = self.pop_tool_call_elapsed(getattr(msg, "tool_call_id", None))
+        if elapsed is not None:
+            label = f"{label} ({format_elapsed(elapsed)})"
         return Collapsible(Static(body, markup=False), title=label, collapsed=True)
 
     def get_mount_target(self, root: VerticalScroll, path: list[str]) -> VerticalScroll:
