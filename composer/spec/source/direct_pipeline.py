@@ -62,6 +62,7 @@ async def run_autoprove_pipeline(
     *,
     cloud: CloudConfig | None = None,
     max_concurrent: int = 4,
+    max_bug_rounds: int = 3,
 ) -> AutoProveResult:
     """Run the auto-prove multi-agent pipeline."""
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -142,5 +143,6 @@ async def run_autoprove_pipeline(
         semaphore=semaphore,
         summary=harnessed_app,
         interactive=False,
-        threat_model=None
+        threat_model=None,
+        max_bug_rounds=max_bug_rounds,
     )

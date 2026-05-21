@@ -191,7 +191,7 @@ async def analyze_single_contract(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{summary.contract.name}-{component_idx}", name, "bug_analysis"),
-            lambda: run_property_inference(feat_ctx, services.env, feat),
+            lambda: run_property_inference(feat_ctx, services.env, feat, max_rounds=max_bug_rounds),
             semaphore,
         )
 
@@ -301,6 +301,7 @@ async def run_natspec_pipeline(
     handler_factory: HandlerFactory[Phase, None],
     *,
     max_concurrent: int = 4,
+    max_bug_rounds: int = 3,
 ) -> PipelineResult:
     """Run the full natspec multi-agent pipeline.
 

@@ -56,7 +56,8 @@ async def run_generation_pipeline(
     prover_tool: BaseTool,
     prover_config: dict,
     interactive: bool,
-    threat_model: str | dict | None
+    threat_model: str | dict | None,
+    max_bug_rounds: int = 3,
 ) -> AutoProveResult:
     
     contract_instance : ContractInstance
@@ -96,7 +97,7 @@ async def run_generation_pipeline(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{component_idx}", name, AutoProvePhase.BUG_ANALYSIS),
-            lambda conv: run_property_inference(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model),
+            lambda conv: run_property_inference(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model, max_rounds=max_bug_rounds),
             semaphore,
         )
 
