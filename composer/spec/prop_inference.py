@@ -229,6 +229,7 @@ async def _run_bug_analysis_inner(
         d,
         BugAnalysisInput(input=extra_input, memory=None, did_read=False),
         thread_id=agent_component_analysis.thread_id,
+        recursion_limit=agent_component_analysis.recursion_limit,
         description=DESCRIPTION,
     )
     assert "result" in r

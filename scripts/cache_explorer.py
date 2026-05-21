@@ -258,6 +258,7 @@ def main() -> int:
         services=DummyServices(),  # type: ignore[arg-type]
         thread_id="explorer",
         store=store,
+        recursion_limit=50,
         memory_namespace=args.memory_ns,
         cache_namespace=root_ns,
     )

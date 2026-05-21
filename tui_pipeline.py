@@ -11,7 +11,7 @@ from typing import cast, Protocol
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions
+from composer.input.types import ModelOptions, RAGDBOptions, LanggraphOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
@@ -33,7 +33,7 @@ from composer.ui.pipeline_app import PipelineApp
 # Args
 # ---------------------------------------------------------------------------
 
-class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
+class PipelineArgs(ModelOptions, RAGDBOptions, LanggraphOptions, Protocol):
     input_file: str
     contract_name: str
     solc_version: str
@@ -52,6 +52,7 @@ async def main() -> int:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
+    add_protocol_args(parser, LanggraphOptions)
     parser.add_argument("input_file", help="Path to the design document (text or PDF)")
     parser.add_argument("--solc-version", default="8.29", help="Solidity compiler version (default: 8.29)")
     parser.add_argument("--max-concurrent", type=int, default=4, help="Max concurrent agents (default: 4)")
@@ -85,7 +86,8 @@ async def main() -> int:
             db=rag,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
             kb_ns=DEFAULT_KB_NS,
-            store=conn.indexed_store
+            store=conn.indexed_store,
+            recursion_limit=args.recursion_limit,
         )
 
         cache_root = (args.cache_ns, string_hash(str(system_doc.content))) if args.cache_ns else None
@@ -95,6 +97,7 @@ async def main() -> int:
             services=lambda ns: async_memory_tool(conn.memory(ns)),
             thread_id=thread_id,
             store=store,
+            recursion_limit=args.recursion_limit,
             cache_namespace=cache_root,
             memory_namespace=args.memory_ns,
         )

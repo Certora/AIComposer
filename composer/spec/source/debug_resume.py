@@ -13,7 +13,7 @@ from typing import cast
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions
+from composer.input.types import ModelOptions, RAGDBOptions, LanggraphOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -40,6 +40,7 @@ async def resume_from_snapshot(
     env: SourceEnvironment,
     services: WorkflowServices,
     store: BaseStore,
+    recursion_limit: int,
     cloud: CloudConfig | None = None,
 ) -> GeneratedCVL:
     """Reconstruct inputs from a snapshot and re-enter batch_cvl_generation."""
@@ -50,6 +51,7 @@ async def resume_from_snapshot(
         services=services,
         thread_id=snapshot.thread_id,
         store=store,
+        recursion_limit=recursion_limit,
         memory_namespace=snapshot.memory_namespace,
         cache_namespace=snapshot.cache_namespace,
     )
@@ -71,7 +73,7 @@ async def resume_from_snapshot(
     )
 
 
-class _ResumeArgs(ModelOptions, RAGDBOptions):
+class _ResumeArgs(ModelOptions, RAGDBOptions, LanggraphOptions):
     mnemonic: str
     cloud: bool
 
@@ -82,6 +84,7 @@ async def main() -> int:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
+    add_protocol_args(parser, LanggraphOptions)
     parser.add_argument("mnemonic", help="Snapshot mnemonic ID (e.g. proven-lattice-forging-deeply)")
     parser.add_argument("--cloud", action="store_true", help="Run prover in the cloud")
 
@@ -109,6 +112,7 @@ async def main() -> int:
             store=conns.indexed_store,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
             source_question_ns=("source_agent", "cache", root_key),
+            recursion_limit=args.recursion_limit,
         )
 
         result = await resume_from_snapshot(
@@ -117,6 +121,7 @@ async def main() -> int:
             env=env,
             services=lambda ns: async_memory_tool(conns.memory(ns)),
             store=conns.store,
+            recursion_limit=args.recursion_limit,
             cloud=CloudConfig() if args.cloud else None,
         )
 

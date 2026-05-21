@@ -102,7 +102,7 @@ async def run_component_analysis[T: BaseApplication](
         graph,
         flow_input,
         thread_id=child_ctxt.thread_id,
-        recursion_limit=100,
+        recursion_limit=child_ctxt.recursion_limit,
         description=DESCRIPTION,
     )
     assert "result" in res
