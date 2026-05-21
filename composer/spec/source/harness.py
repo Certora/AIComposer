@@ -525,7 +525,7 @@ async def run_setup(
     )
 
     if isinstance(setup_result, SetupFailure):
-        return None
+        raise RuntimeError(f"Auto setup failed: {setup_result.error}\nProc stderr:\n{setup_result.stderr}")
 
     to_ret = ContractSetup(
         system_description=sys_desc,
