@@ -18,7 +18,7 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.cvl.tools import get_cvl
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.gen_types import TemplateInstantiation, InjectedTemplate, TypedTemplate
-from composer.spec.cvl_generation import FeedbackToolContext, SkippedProperty
+from composer.spec.cvl_generation import FeedbackToolContext, Rebuttal, SkippedProperty
 from composer.spec.tool_env import BasicAgentTools
 from composer.spec.system_model import ContractComponentInstance
 from composer.spec.util import uniq_thread_id
@@ -93,6 +93,8 @@ def property_feedback_judge(
     async def the_tool(
         cvl: str,
         skipped: Sequence[SkippedProperty],
+        rebuttals: Sequence[Rebuttal],
+        within_tool: str,
     ) -> PropertyFeedback:
         input_parts: list[str | dict] = []
         if extra_inputs:
@@ -107,11 +109,27 @@ def property_feedback_judge(
             input_parts.append("The following properties were explicitly skipped by the author:")
             for s in skipped:
                 input_parts.append(f"  Property {s.property_index}: {s.reason}")
+        if rebuttals:
+            input_parts.append(
+                "The author has filed the following rebuttals against feedback from "
+                "prior rounds. Evaluate each per the Step 1 rebuttal rule (and the "
+                "Criteria 7 exception for skip-related rebuttals). Empirical evidence "
+                "types (`typecheck_failure`, `counterexample`, `manual_citation`) "
+                "carry near-binding weight; `reasoned` rebuttals are a conversation, "
+                "not a veto."
+            )
+            for i, r in enumerate(rebuttals, 1):
+                input_parts.append(
+                    f"  Rebuttal {i} [{r.evidence_type}]\n"
+                    f"    Addressing: {r.prior_feedback_reference}\n"
+                    f"    Evidence: {r.evidence}"
+                )
         res = await run_to_completion(
             workflow,
             SpecJudgeInput(input=input_parts, curr_spec=cvl, memory=None, did_read=False),
             thread_id=uniq_thread_id("feedback"),
             description="Property feedback judge",
+            within_tool=within_tool,
         )
         assert "result" in res
         return res["result"]

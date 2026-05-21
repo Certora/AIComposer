@@ -180,6 +180,7 @@ async def get_invariant_formulation(
                     ),
                     thread_id=uniq_thread_id("invariant-judge"),
                     description=f"Invariant feedback: {self.inv.name}",
+                    within_tool=self.tool_call_id,
                 )
                 assert "result" in res
                 feedback: InvariantFeedback = res["result"]
