@@ -7,6 +7,17 @@ audit effort.
 {% include "application_context_new.j2" %}
 </inputs>
 
+<reference_database>
+The following is a catalog of properties that are typical across common Web3 protocol types, drawn from prior audits and reference specs. It is organized into one section per protocol type, each introduced by a top-level `#` heading.
+
+Use this catalog as INSPIRATION when generating properties for the component. See Step 1 for how to select the relevant section(s).
+
+{% for tpl in list_templates_in("protocol_types") %}
+{% include tpl %}
+
+{% endfor %}
+</reference_database>
+
 <task>
 {% if has_source %}
 Input: The implementation of the application, and a description of a specific component of that application
@@ -26,6 +37,11 @@ for this component. Each security property description must be precise and conci
 Analyze the provided design document and component description and formulate a set of security properties that are PLAUSIBLE
 for this component. Each security property description must be precise and concise.
 {% endif %}
+Use the **Application Type** string shown in `<inputs>` above to select the relevant section(s) of the `<reference_database>`:
+- Soft-match the application type against the section headings. Examples: "AMM" / "DEX" / "Liquidity Provider" → `# DEX / AMM`; "ERC20" / "Token" → `# ERC20 Token`; "Lending" / "Borrowing" → `# Lending Protocol`; "Vault" / "ERC4626" / "Yield" → `# Vault / Yield`; "Staking" / "Liquid Staking" / "Restaking" → `# Staking / Liquid Staking`; "Governance" / "DAO" / "Voting" → `# Governance / Voting / Access Control`.
+- One or more sections may apply — for example, a lending protocol with its own share token may draw from both `# Lending Protocol` and `# ERC20 Token`. Pick all that fit.
+- Treat matching catalog entries as INSPIRATION, not a checklist: include them only if they plausibly apply to *this* component's actual surface, adapt the wording to the code/design under review, and feel free to add component-specific properties that are not in the catalog.
+- If no section clearly matches the application type, derive properties purely from first principles and ignore the catalog.
 
 Security properties fall into one of three categories:
 1. Invariants are representational invariants that should always hold from the point of construction of the smart contract.

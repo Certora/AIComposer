@@ -1,0 +1,193 @@
+# Staking / Liquid Staking
+
+Staking, liquid staking, and restaking protocol properties.
+
+Throughout this catalog, "underlying" denotes the asset being staked and "staking token" (or "shares") denotes the receipt token minted in return.
+
+## Valid States (Invariants)
+
+### exchange_rate_well_defined
+The exchange rate between the staking token and the underlying asset is well-defined whenever the supply is positive.
+
+### zero_backing_implies_zero_supply
+When the total backing (delegated assets minus fees) is zero, the supply must also be zero.
+
+### fee_reserve_bounded
+The fee reserve never exceeds the total delegated amount.
+
+### reward_fee_bounded
+The reward fee never exceeds the configured maximum.
+
+### validator_accounting
+The sum of every validator's `totalStaked` equals the tracked total delegation.
+
+### active_validators_are_active
+Every validator in the `activeValidators` list has `ACTIVE` status.
+
+### deactivated_has_zero_stake
+Deactivated validators have zero `totalStaked` (excluding admin-recovery functions).
+
+### deactivated_has_zero_deposit_allocation
+Deactivated validators have a zero deposit-share allocation.
+
+### validator_list_unique
+Each validator ID appears at most once in the validator list.
+
+### active_subset_of_list
+The set of active validators is a subset of the full validator list.
+
+### deposit_shares_sum
+Active validators' deposit-share allocations sum to either 0 (before any configuration) or 100.
+
+### nonce_ordering
+Each per-user withdrawal nonce is less than the global nonce counter.
+
+### nonce_uniqueness
+Withdrawal nonces are unique across all users and indices.
+
+### nonce_zero_reserved
+Nonce zero is reserved and is never assigned to any user.
+
+### vault_array_is_set
+Connected vaults form a set: no duplicates, with mutually consistent index-to-vault and vault-to-index mappings.
+
+### vault_locked_covers_liability
+Each connected vault's locked amount covers its liability plus the required reserve.
+
+### external_shares_bounded
+Externally minted shares (e.g., minted by connected vaults) are bounded by the configured limit.
+
+## State Transitions
+
+### exchange_rate_monotonic
+The exchange rate never decreases under non-administrative operations.
+
+**Note:** Use cross-multiplication to avoid division.
+
+### global_nonce_monotonic
+The global withdrawal nonce never decreases; it starts at 1 on initialization.
+
+### funded_validators_not_removable
+A validator with `totalStaked > 0` and `ACTIVE` status cannot transition to `DEACTIVATED`.
+
+**Note:** Applies across all functions, not only an explicit removal function — strictly stronger than a post-state check.
+
+### validator_status_transitions
+A validator's status follows valid transitions: `INACTIVE -> ACTIVE -> DEACTIVATED`.
+
+### shares_and_liability_change_together
+For a given vault, externally minted shares and the vault's liability always change in the same direction.
+
+### epoch_monotonic
+The unwinding/unlock epoch cannot decrease across non-initialization function calls.
+
+## High Level
+
+### rounding_favors_protocol
+A round-trip — converting underlying to staking token and back — never profits the user.
+
+**Note:** Both conversions use floor division, so the double floor guarantees a loss to the user.
+
+### underlying_decrease_iff_shares_increase
+A user loses underlying assets if and only if they receive staking tokens.
+
+### maximum_fee_preserves_backing
+At the maximum fee, restaking preserves each user's backing (rewards are absorbed equally as fees).
+
+### zero_fee_preserves_fee_balance
+When the fee is zero, the fee balance never increases.
+
+### no_overslashing
+Slashing cannot reduce operator shares below zero or slash more shares than were allocated.
+
+### vault_health_maintained
+Connected vaults maintain a healthy reserve ratio between reports.
+
+### voting_power_monotonic_with_amount
+Voting weight is monotonically non-decreasing in the locked/staked amount.
+
+### voting_power_monotonic_with_duration
+Voting weight is monotonically non-decreasing in the lock duration.
+
+### global_voting_power_geq_sum_individual
+Global voting power is at least the sum of any two users' individual voting powers.
+
+**Note:** If the property holds for any 2-user partition, it generalizes to N users.
+
+### exit_safety
+No exit or unstake function can succeed when there are unapplied losses or pending rewards.
+
+**Note:** Applies across all exiting functions.
+
+## Unit Level
+
+### mint_staking_token_integrity
+Minting credits the user with shares equal to the conversion at the pre-transaction exchange rate, and decreases their underlying balance by the exact deposit amount.
+
+### redeem_staking_token_integrity
+Redeeming burns the exact amount of staking tokens and creates a withdrawal nonce for the correct underlying amount.
+
+### withdraw_integrity
+A withdrawal succeeds only when the nonce has matured and transfers a positive amount to the user.
+
+### withdraw_liveness
+Withdrawal succeeds whenever: a single matured nonce exists, the reentrancy guard is released, the system is not paused, and the protocol holds sufficient balance.
+
+### add_validator_integrity
+Adding a validator grows both the full list and the active list by one, sets the validator's status to `ACTIVE`, and initializes `totalStaked == 0` with a zero deposit-share allocation.
+
+### remove_validator_integrity
+Removing a validator shrinks the active list by one, sets its status to `DEACTIVATED`, and reverts if pending rewards remain.
+
+### restake_validator_integrity
+Restaking a validator increases its stake and balance while preserving its status.
+
+### distribute_full_amount
+On distribution, the full deposit amount is allocated across validators with no leftover.
+
+### zero_allocation_validator_rejected
+Minting reverts when targeting a validator with a zero deposit-share allocation and a zero divergence tolerance.
+
+### withdrawal_fifo
+A withdrawal consumes the front nonce from the user's queue (FIFO order).
+
+### double_withdrawal_reverts
+A second withdrawal against a single-nonce queue reverts.
+
+### mint_reverts_when_overfunded
+Minting reverts when every validator is at the capacity ceiling.
+
+### take_fee_noop_when_zero
+The fee-collection routine returns early without state changes when the fee balance is zero.
+
+## Risk / Security
+
+### fee_receiver_preservation
+Once the fee-receiver address is set to a non-zero value, it is never reset to zero.
+
+### mint_reverts_when_all_validators_locked
+Minting reverts when every validator reports locked status.
+
+### zero_divergence_blocks_deposits
+With a zero divergence tolerance, deposits to validators that are at their target allocation are blocked.
+
+### truncation_safety
+Truncation in packed storage (e.g., `uint128`/`uint96` fields) does not silently lose data.
+
+### pending_disconnect_safety
+Vaults that are pending disconnection cannot mint additional shares.
+
+### disconnected_vault_zero_liability
+Disconnected vaults always have zero liability.
+
+### operator_self_delegation
+Registered operators are always delegated to themselves.
+
+## Accounting / Solvency (Foundational Invariants)
+
+### balance_sum_staking_token
+The staking token's `totalSupply` equals the sum of all individual balances.
+
+### asset_decomposition_staking
+The total staked assets equal the sum of each validator's (or position's) assets.
+

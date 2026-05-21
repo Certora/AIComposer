@@ -1,0 +1,90 @@
+# DEX / AMM
+
+Decentralized exchange and automated market maker properties.
+
+## Valid States (Invariants)
+
+### constant_product_invariant
+After any swap, the product of the reserves is greater than or equal to the product before the swap (fees cause it to strictly increase).
+
+**Formula:** `reserveA' * reserveB' >= reserveA * reserveB`
+
+**Note:** Use cross-multiplication to avoid overflow: compare products directly.
+
+### reserve_solvency
+The pool's actual token balances are at least as large as its tracked reserves.
+
+**Formula:** `tokenA.balanceOf(pool) >= reserveA && tokenB.balanceOf(pool) >= reserveB`
+
+### lp_token_total_supply
+The total supply of LP tokens equals the sum of all holder balances.
+
+### fee_accounting
+Trading fees are correctly collected and tracked.
+
+**Formula:** `accumulatedFees <= totalVolumeSwapped * feeRate`
+
+### reserve_ratio_consistency
+The internally tracked reserves are consistent with the values used in price calculations.
+
+## State Transitions
+
+### swap_preserves_invariant
+Each swap preserves or increases the constant product.
+
+**Formula:** `reserveA_post * reserveB_post >= reserveA_pre * reserveB_pre`
+
+### price_impact_monotonic
+Larger swaps produce worse per-unit prices: price impact grows monotonically with trade size.
+
+### liquidity_addition_no_drain
+Adding liquidity and then removing it returns at most the amount that was added.
+
+## High Level
+
+### no_drain
+No sequence of swaps can extract more tokens than the pool holds.
+
+**Note:** Implied by the constant-product invariant, since the product never decreases.
+
+### no_free_tokens
+LP tokens can only be minted by providing proportional reserves of both assets.
+
+### arbitrage_bounded
+Any profitable arbitrage path is bounded by the fee margin.
+
+## Unit Level
+
+### swap_correctness
+A swap increases one reserve and decreases the other by amounts consistent with the pricing function.
+
+### swap_output_bounded
+The output of a swap is strictly less than the available reserve of the output token.
+
+**Formula:** `amountOut < reserveOut`
+
+### add_liquidity_proportional
+Adding liquidity mints LP tokens in proportion to the share of reserves added.
+
+### remove_liquidity_proportional
+Removing liquidity returns tokens in proportion to the share of LP tokens burned.
+
+### slippage_protection
+A swap reverts when its output is below the user's specified minimum.
+
+### conversion_of_zero
+Swapping zero tokens returns zero output.
+
+## Risk / Security
+
+### reentrancy_safety
+A reentrancy guard protects all swap and liquidity operations.
+
+### flash_loan_repayment
+Flash loans must be repaid within the same transaction (reserves restored, plus the fee).
+
+### no_unauthorized_withdrawal
+Only LP token holders can remove liquidity, and only in proportion to their share.
+
+### oracle_manipulation_resistance
+The TWAP oracle cannot be manipulated by trades within a single block.

@@ -1,0 +1,142 @@
+# Lending Protocol
+
+Lending and borrowing protocol properties.
+
+## Valid States (Invariants)
+
+### solvency
+The protocol's token balance is at least the sum of all user deposits plus withdrawable amounts.
+
+### debt_accounting
+The sum of individual user debt shares equals the total debt shares tracked by the pool.
+
+### collateral_accounting
+The sum of individual collateral shares equals the total collateral shares tracked by the pool.
+
+### total_assets_vs_shares
+Total assets tracked are at least as large as total shares (because the interest accumulator never decreases, assets always cover shares).
+
+### interest_accumulator_minimum
+The interest accumulator (e.g., supply or borrow index) is always at least its initial value.
+
+**Note:** The accumulator starts at its initial value and only increases when interest is accrued.
+
+### no_debt_in_both_markets
+A user cannot simultaneously hold debt positions in two different markets.
+
+### debt_implies_collateral
+If a user has any debt, they must also have collateral in some market.
+
+### fee_bounds
+Fees and interest rates stay within their configured bounds.
+
+### reserve_id_validity
+Every reserve ID referenced by a user position is valid (within the configured range).
+
+## State Transitions
+
+### interest_accrual_monotonic
+Interest-accrual indices only increase over time; they never decrease.
+
+### interest_accrual_idempotent
+Calling `accrueInterest` twice in the same block has the same effect as calling it once.
+
+### accrue_required_before_state_changes
+Interest must be accrued before any state-changing operation.
+
+### supply_rate_monotonic
+At a constant state, the supply rate is monotonically non-decreasing over time.
+
+### liquidation_requires_unhealthy
+Liquidation can only be performed on positions that are unhealthy (undercollateralized).
+
+### liquidation_improves_health
+After liquidation, the borrower's position is either healthier than before or fully repaid.
+
+### healthy_positions_stay_healthy
+After any non-liquidation operation initiated by the user, a position that was healthy before remains healthy.
+
+## High Level
+
+### no_drain
+No sequence of operations can extract more tokens than were deposited.
+
+### accrue_consistency
+Accruing all markets at once produces the same state as accruing each market individually.
+
+### shares_additivity
+Adding `x` and then `y` produces the same result as adding `x + y` in a single operation; splitting deposits never benefits the user.
+
+### single_user_per_call
+Each external call modifies at most one user's position; no cross-contamination occurs.
+
+## Unit Level
+
+### deposit_integrity
+After a deposit, the user's collateral shares increase and their token balance decreases by the deposited amount.
+
+### withdraw_integrity
+After a withdrawal, the user's collateral shares decrease and their token balance increases.
+
+### borrow_integrity
+After a borrow, the user's debt shares increase and their token balance increases.
+
+### repay_integrity
+After a repayment, the user's debt shares decrease and their token balance decreases.
+
+### preview_deposit_correctness
+`previewDeposit` returns a number of shares less than or equal to the actual deposit result (a conservative estimate).
+
+### preview_withdraw_correctness
+`previewWithdraw` returns the same asset amount that an actual withdrawal would return.
+
+### preview_mint_correctness
+`previewMint` returns the exact asset amount required for the mint.
+
+### max_deposit_reverts
+A deposit exceeding `maxDeposit()` reverts.
+
+### max_borrow_succeeds
+Borrowing exactly `maxBorrow()` always succeeds (liveness).
+
+### max_withdraw_bounded
+`maxWithdraw()` does not exceed the protocol's available liquidity.
+
+### max_repay_burns_all_debt
+Repaying `maxRepay()` fully clears the borrower's debt position.
+
+### unrealized_fees_increase
+Unrealized fees increase monotonically as time passes.
+
+### unrealized_fees_bounded
+At a 100% fee rate, unrealized fees are bounded by the total interest accrued.
+
+## Risk / Security
+
+### no_unauthorized_position_change
+Only the user themselves, or their authorized delegate, can modify their position.
+
+### reentrancy_guard_checked
+A reentrancy guard is enforced on every state-changing external function.
+
+### reentrancy_guard_unlocked_after
+The reentrancy guard is always released after any public function returns.
+
+### solvent_checked_on_correct_user
+A solvency check is performed on the correct user (the borrower, not `msg.sender`).
+
+### oracle_failure_safety
+If the oracle returns zero or reverts, critical operations such as `borrow` and `withdraw` are blocked.
+
+### borrower_collateral_assignment_persistent
+Once a borrower's collateral-market assignment is set, it is never cleared back to zero.
+
+### third_party_protection_deposit
+A deposit does not affect the balances of unrelated users.
+
+### third_party_protection_borrow
+A borrow does not affect the positions of unrelated users.
+
+### third_party_protection_repay
+A repayment does not affect the debt of unrelated users.
+

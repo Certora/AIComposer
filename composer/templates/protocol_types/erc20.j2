@@ -1,0 +1,61 @@
+# ERC20 Token
+
+Standard ERC20 token properties.
+
+## Valid States (Invariants)
+
+### total_supply_integrity
+`totalSupply` equals the sum of all individual balances.
+
+**Formula:** `totalSupply == Sigma(balanceOf[user] for all user)`
+
+### no_balance_exceeds_supply
+No individual balance exceeds `totalSupply`.
+
+**Formula:** `forall user: balanceOf[user] <= totalSupply`
+
+### allowance_consistency
+`approve` sets the allowance to the exact value provided; `transferFrom` decreases it by the spent amount.
+
+## State Transitions
+
+### balance_transfer_correctness
+`transfer` decreases the sender's balance by the transferred amount and increases the receiver's balance by the same amount.
+
+### transfer_from_correctness
+`transferFrom` decreases the sender's balance, increases the receiver's balance, and decreases the allowance by the transferred amount (unless the allowance is at its maximum, in which case it is treated as infinite).
+
+### no_balance_creation
+No function increases `totalSupply` except `mint` (when minting is supported).
+
+**Formula:** `totalSupply_post > totalSupply_pre => f.selector == mint.selector`
+
+## Unit Level
+
+### self_transfer_identity
+Transferring to oneself does not change the sender's balance.
+
+**Formula:** `transfer(self, amount) => balanceOf(self)_post == balanceOf(self)_pre`
+
+### zero_transfer_noop
+Transferring zero tokens does not change any state.
+
+### transfer_revert_insufficient
+`transfer` reverts when the sender's balance is less than the amount.
+
+### approve_sets_exact
+`approve(spender, amount)` sets the allowance to exactly `amount`.
+
+## Risk / Security
+
+### only_owner_can_mint
+Only authorized addresses can call `mint` (when minting is supported).
+
+### only_owner_can_burn
+Only authorized addresses, or the token holder themselves, can burn tokens.
+
+### no_overflow_in_balances
+Balance additions never overflow (`totalSupply` bounds all balances).
+
+### third_party_protection
+A transfer or approval by user A does not change user B's balance (where B is neither the sender nor the receiver).

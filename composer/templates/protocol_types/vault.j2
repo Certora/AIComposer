@@ -1,0 +1,150 @@
+# Vault / Yield
+
+ERC4626-style vault and yield-aggregator properties.
+
+## Valid States (Invariants)
+
+### total_supply_integrity
+The vault's `totalSupply` is at least the sum of all user share balances.
+
+### vault_solvency
+The vault's underlying token balance covers all liabilities (i.e., `totalAssets`).
+
+### vault_solvency_by_rate
+The total asset value held by the vault covers all share value at the current exchange rate.
+
+### share_price_bounded_upper
+The product `sharePrice * totalSupply` does not exceed `(totalAssets + 1) * ONE_SHARE` (no inflation).
+
+### share_price_bounded_lower
+The product `sharePrice * totalSupply` is at least `totalAssets * ONE_SHARE` (no deflation).
+
+### share_price_minimum
+The share price never drops below 1 asset per share (prevents the first-depositor attack).
+
+### exchange_rate_le_highwater_mark
+While the vault is not paused, the exchange rate is at most the highwater mark (fees are correctly tracked).
+
+### allowed_exchange_rate_bounds
+The exchange-rate change bounds are sane: the upper bound is at least 100% and the lower bound is at most 100%.
+
+### deposit_cap_respected
+The total supply never exceeds the deposit cap, unless the cap was lowered after deposits were made.
+
+### zero_allowance_on_assets
+The deposit handler never holds standing allowances over user assets (preventing draining).
+
+## State Transitions
+
+### exchange_rate_monotonic
+The exchange rate (assets per share) never decreases under non-administrative operations.
+
+**Note:** Use cross-multiplication to avoid division: `a/b >= c/d iff a*d >= c*b`.
+
+### highwater_mark_never_decreases
+The highwater mark only increases, except via an explicit admin reset.
+
+### last_update_timestamp_monotonic
+`lastUpdateTimestamp` never decreases.
+
+### deposit_nonce_monotonic
+The deposit nonce is monotonically increasing.
+
+### fees_only_decrease_via_claim
+The fees-owed value can only decrease through the fee-claim function.
+
+## High Level
+
+### dust_favors_the_house
+Depositing and then immediately withdrawing never profits the user (rounding favors the vault).
+
+### no_free_assets
+A bulk-deposit followed by a bulk-withdrawal round-trip returns at most the originally deposited amount.
+
+### conversion_weak_monotonicity_assets
+Converting a larger asset amount yields at least as many shares as converting a smaller amount.
+
+### conversion_weak_monotonicity_shares
+Converting a larger share amount yields at least as many assets as converting a smaller amount.
+
+### conversion_roundtrip_assets
+Converting assets to shares and back returns at most the original amount (rounding loss).
+
+### conversion_roundtrip_shares
+Converting shares to assets and back returns at most the original amount (rounding loss).
+
+### conversion_additivity_shares
+Splitting a deposit is worse for the user than depositing the full amount at once.
+
+### conversion_additivity_assets
+Splitting a withdrawal is worse for the user than withdrawing the full amount at once.
+
+### end_to_end_solvency
+The total asset value remains at least the total receipt-token value across all non-view function calls.
+
+### exit_safety
+No exit function (`withdraw`, `redeem`) can succeed when there are unapplied losses.
+
+## Unit Level
+
+### deposit_integrity
+A deposit transfers the exact asset amount from the user and mints at least `minimumMint` shares.
+
+### withdraw_integrity
+A withdrawal burns the exact share amount and transfers at least `minimumAssets` to the receiver.
+
+### conversion_of_zero
+Converting zero assets or zero shares always returns zero.
+
+### max_deposit_respected
+Deposits exceeding `maxDeposit()` revert.
+
+## Risk / Security
+
+### no_dynamic_calls
+No external `CALL` or `DELEGATECALL` is made to untrusted addresses (preventing acting-as-contract attacks).
+
+### reentrancy_view_safe
+No `STATICCALL` is made to external addresses after storage writes (preventing read-after-write reentrancy).
+
+### denied_users_balance_nondecreasing
+A blacklisted user's share balance cannot decrease except through `withdraw`.
+
+### denied_users_balance_nonincreasing
+A user blocked from receiving shares cannot have their share balance increase (no forced deposits).
+
+### paused_methods_revert
+All public deposit and withdrawal methods revert while the vault is paused.
+
+### paused_values_frozen
+While paused, the exchange rate and fees do not change, except via an explicit admin reset.
+
+### accounting_holds_no_tokens
+The accounting component never accumulates tokens itself; all fees are sent to the designated payout address.
+
+### deposit_handler_holds_no_tokens
+The deposit-handling component never accumulates user tokens itself.
+
+### vault_immutable
+The vault reference held by the deposit handler cannot be changed after construction.
+
+### only_deposit_methods_reduce_assets
+Only deposit functions (e.g., `deposit`, `depositWithPermit`, `bulkDeposit`) can reduce a user's asset balance.
+
+### withdrawing_produces_assets
+An owner's shares decrease if and only if the receiver's assets increase (biconditional).
+
+## Accounting / Solvency (Foundational Invariants)
+
+### balance_sum_asset_token
+For the underlying asset's ERC20 contract, `totalSupply` equals the sum of all balances.
+
+### balance_sum_share_token
+For the share/receipt token, `totalSupply` equals the sum of all balances.
+
+**Note:** Same pattern as `balance_sum_asset_token`, applied to the share/receipt ERC20.
+
+### asset_decomposition
+The total assets reported by the accounting component equal the sum of all farm/adapter assets plus any idle assets.
+
+**Note:** Important for protocols that aggregate over multiple farms or adapters.

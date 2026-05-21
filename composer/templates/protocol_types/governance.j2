@@ -1,0 +1,54 @@
+# Governance / Voting / Access Control
+
+Governance, voting, DAO, and access-control properties.
+
+## Valid States (Invariants)
+
+### vote_accounting
+For each proposal, the sum of "for", "against", and "abstain" votes equals the total votes cast on that proposal.
+
+### voting_power_integrity
+The sum of every account's voting power equals the total voting power tracked by the protocol.
+
+### paused_state_consistency
+The pause state is internally consistent: individual function pauses agree with any global pause state.
+
+## State Transitions
+
+### proposal_lifecycle
+Proposals follow the valid state transitions: `pending -> active -> succeeded/defeated -> queued -> executed`.
+
+### one_vote_per_user
+A user can vote at most once per proposal; double voting is impossible.
+
+### quorum_required
+A proposal can only succeed if it meets the quorum threshold.
+
+### no_vote_after_deadline
+Votes cannot be cast after the voting period has ended.
+
+### pause_unpause_permissions
+Only the designated pauser can pause the system; only the designated unpauser can unpause it.
+
+### timelock_respected
+A proposal cannot be executed before its timelock delay has expired.
+
+## Unit Level
+
+### delegation_correctness
+Delegation transfers voting power from the delegator to the delegatee without changing either party's token balance.
+
+### execution_requires_success
+Only proposals in the `succeeded` or `queued` states can be executed.
+
+## Risk / Security
+
+### no_unauthorized_proposal
+Only addresses meeting the proposal threshold can create proposals.
+
+### cancel_only_authorized
+Only the proposer or the guardian can cancel a proposal.
+
+### paused_operations_revert
+Operations intended to be disabled during a pause actually revert when called.
+
