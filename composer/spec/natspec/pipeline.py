@@ -142,7 +142,8 @@ async def analyze_single_contract(
     intf: InterfaceResult,
     summary: ContractInstance,
     stub_registry: StubRegistry,
-    stub: StubDeclaration
+    stub: StubDeclaration,
+    max_bug_rounds: int
 ) -> ContractResult:
     
     contract_name = summary.contract.name
@@ -404,7 +405,8 @@ async def run_natspec_pipeline(
             intf=interface,
             stub_registry=registry,
             summary=ContractInstance(ind=ind, app=summary),
-            stub=name_to_stub[contract.name]
+            stub=name_to_stub[contract.name],
+            max_bug_rounds=max_bug_rounds
         )
         
         tasks.append(cont)
