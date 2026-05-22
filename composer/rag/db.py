@@ -110,18 +110,18 @@ type RagConnection = str | AsyncConnectionPool[AsyncConnection[TupleRow]]
 class PostgreSQLRAGDatabase(ComposerRAGDB):
     """Handle PostgreSQL database operations for RAG"""
 
-    def __init__(self, conn: RagConnection, model: SentenceTransformer):
+    def __init__(self, conn_string: RagConnection, model: SentenceTransformer):
         super().__init__(model)
-        if isinstance(conn, str):
+        if isinstance(conn_string, str):
             self._pool: AsyncConnectionPool[AsyncConnection[TupleRow]] = AsyncConnectionPool(
-                conninfo=conn,
+                conninfo=conn_string,
                 kwargs={"autocommit": True},
                 connection_class=AsyncConnection[TupleRow],
                 open=False,
             )
             self._owns_pool = True
         else:
-            self._pool = conn
+            self._pool = conn_string
             self._owns_pool = False
         self._opened = False
 
