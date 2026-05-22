@@ -19,6 +19,8 @@ from langchain_core.tools import BaseTool
 
 from graphcore.graph import Builder
 
+from composer.io.mnemonic_store import assign_mnemonic
+
 
 # ---------------------------------------------------------------------------
 # Workflow input types
@@ -69,7 +71,7 @@ type PlainBuilder = Builder[None, None, None]
 
 type CacheTypes = None | BaseModel | Marker
 
-SNAPSHOT_NAMESPACE = ("snapshots",)
+MNEMONIC_KEYS = ("thread_mnemonics",)
 
 
 class CacheKey[Parent: CacheTypes, Curr: CacheTypes]:
@@ -229,11 +231,11 @@ class WorkflowContext[K: CacheTypes]:
     def get_memory_tool(self) -> BaseTool:
         """Get a memory tool for this context's memory namespace."""
         return self._services(self.memory_namespace)
-
-    async def save_snapshot(self, key: str, data: BaseModel) -> None:
-        """Store a snapshot in the global snapshots namespace."""
-        await self._store.aput(SNAPSHOT_NAMESPACE, key, data.model_dump())
-
+    
+    async def thread_and_mnemonic(self) -> tuple[str, str]:
+        tid = self.thread_id
+        mnem = await assign_mnemonic(tid, self._store, MNEMONIC_KEYS)
+        return (tid, mnem)
 
 # ---------------------------------------------------------------------------
 # Utility

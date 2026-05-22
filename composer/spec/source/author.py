@@ -25,7 +25,6 @@ from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
 from composer.ui.tool_display import tool_display
 
 from graphcore.graph import FlowInput
-from composer.spec.source.snapshot import take_snapshot
 
 class SourceCVLGenerationExtra(CVLGenerationExtra, ProverStateExtra):
     pass
@@ -276,16 +275,6 @@ async def batch_cvl_generation(
     description: str,
     source: SourceCode
 ) -> GeneratedCVL:
-    mem = await take_snapshot(
-        ctx,
-        props=props,
-        resources=resources,
-        source=source,
-        init_config=init_config,
-        component=component,
-        description=description,
-    )
-
     result_tool = result_tool_generator(
         "result", (str, "Commentary on your generated spec"),
         "Call to signal your completed cvl generation",
@@ -331,7 +320,7 @@ async def batch_cvl_generation(
     res_state = await run_cvl_generator(
         ctx = ctx,
         d = task_graph,
-        description=f"{description} ({mem})",
+        description=description,
         ctxt=feedback_env,
         in_state=SourceCVLGenerationInput(
             curr_spec=None,
