@@ -1,11 +1,14 @@
-from typing import NotRequired, override, TypedDict, Literal, Annotated
+from typing import NotRequired, override, Literal, Annotated
+from typing_extensions import TypedDict
 import json
 
 from langchain_core.tools import BaseTool
 from pydantic import Field, BaseModel, Discriminator
 
-from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId, WithInjectedState
-from graphcore.tools.results import result_tool_generator
+from graphcore.tools.schemas import (
+    WithAsyncImplementation, WithImplementation, WithInjectedId, WithInjectedState,
+)
+from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import tool_state_update
 from graphcore.summary import SummaryConfig
 
@@ -27,7 +30,10 @@ from composer.ui.tool_display import tool_display
 from graphcore.graph import FlowInput
 from composer.spec.source.snapshot import take_snapshot
 
-class SourceCVLGenerationExtra(CVLGenerationExtra, ProverStateExtra):
+class SourceAuthorExtra(TypedDict):
+    failed: bool | None
+
+class SourceCVLGenerationExtra(CVLGenerationExtra, ProverStateExtra, SourceAuthorExtra):
     pass
 
 class SourceCVLGenerationInput(SourceCVLGenerationExtra, FlowInput):
@@ -35,6 +41,9 @@ class SourceCVLGenerationInput(SourceCVLGenerationExtra, FlowInput):
 
 class SourceCVLGenerationState(SourceCVLGenerationExtra, MessagesState):
     result: NotRequired[str]
+
+class GaveUp(BaseModel):
+    reason: str
 
 @tool_display(lambda p: f"Expecting rule `{p['rule_name']}` to fail", None)
 class ExpectRuleFailure(WithAsyncImplementation[Command], WithInjectedId):
@@ -77,8 +86,37 @@ def result_checker(
     s: SourceCVLGenerationState,
     res: str,
     tid: str
-) -> str | None:
-    return check_completion(s)
+) -> ValidationResult:
+    if (err := check_completion(s)) is not None:
+        return err
+    return tool_state_update(
+        tid, "Accepted",
+        result=res,
+        failed=False,
+    )
+
+
+@tool_display(
+    label=lambda p: f"Giving up on CVL generation: {p['reason']}",
+    result=None,
+)
+class GiveUpTool(WithImplementation[Command], WithInjectedId):
+    """
+    Call this tool to give up on the CVL generation for this task.
+
+    This should only ever be called as a LAST RESORT when you have exhausted all other
+    mechanisms to complete your task.
+    """
+    reason: str = Field(description="The reason for giving up on your task")
+
+    @override
+    def run(self) -> Command:
+        return tool_state_update(
+            self.tool_call_id,
+            "Accepted",
+            failed=True,
+            result=self.reason,
+        )
 
 class PropertyGenParams(TypedDict):
     context: ContractComponentInstance | None
@@ -275,7 +313,7 @@ async def batch_cvl_generation(
     env: SourceEnvironment,
     description: str,
     source: SourceCode
-) -> GeneratedCVL:
+) -> GeneratedCVL | GaveUp:
     mem = await take_snapshot(
         ctx,
         props=props,
@@ -304,7 +342,7 @@ async def batch_cvl_generation(
     ).with_tools(
         static_tools()
     ).with_tools(
-        [prover_tool, ExpectRulePassage.as_tool("expect_rule_passage"), ExpectRuleFailure.as_tool("expect_rule_failure"), result_tool, ctx.get_memory_tool()]
+        [prover_tool, ExpectRulePassage.as_tool("expect_rule_passage"), ExpectRuleFailure.as_tool("expect_rule_failure"), GiveUpTool.as_tool("give_up"), result_tool, ctx.get_memory_tool()]
     ).with_state(
         SourceCVLGenerationState
     ).with_output_key(
@@ -340,12 +378,17 @@ async def batch_cvl_generation(
             required_validations=[FEEDBACK_VALIDATION_KEY, PROVER_VALIDATION_KEY],
             rule_skips={},
             skipped=[],
-            validations={}
+            validations={},
+            failed=None,
         )
     )
 
+    assert "result" in res_state
+    assert res_state["failed"] is not None
+    if res_state["failed"]:
+        return GaveUp(reason=res_state["result"])
     d = res_state["curr_spec"]
-    assert d is not None and "result" in res_state
+    assert d is not None
     return GeneratedCVL(
         commentary=res_state["result"],
         cvl=d,
