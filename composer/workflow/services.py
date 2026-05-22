@@ -428,6 +428,7 @@ def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
             + (["interleaved-thinking-2025-05-14"] if effective_interleaved else [])
         ),
         thinking=thinking,
+        model_kwargs={"cache_control": {"type": "ephemeral"}},
     )
 
 
