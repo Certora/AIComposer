@@ -120,12 +120,15 @@ async def main() -> int:
             cloud=CloudConfig() if args.cloud else None,
         )
 
-        print(f"--- Generated CVL ---\n{result.cvl}")
-        print(f"\n--- Commentary ---\n{result.commentary}")
-        if result.skipped:
-            print(f"\n--- Skipped ---")
-            for s in result.skipped:
-                print(f"  #{s.property_index}: {s.reason}")
+        if isinstance(result, GaveUp):
+            print(f"--- Gave up ---\n{result.reason}")
+        else:
+            print(f"--- Generated CVL ---\n{result.cvl}")
+            print(f"\n--- Commentary ---\n{result.commentary}")
+            if result.skipped:
+                print(f"\n--- Skipped ---")
+                for s in result.skipped:
+                    print(f"  #{s.property_index}: {s.reason}")
 
     return 0
 
