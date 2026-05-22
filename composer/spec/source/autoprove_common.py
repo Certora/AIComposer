@@ -17,7 +17,7 @@ from composer.rag.models import get_model
 from composer.workflow.services import create_llm, standard_connections
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, get_document_input,
+    WorkflowContext, SourceCode,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
 from composer.spec.source.prover import CloudConfig
@@ -98,19 +98,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
 
     relative_path = str(full_contract_path.relative_to(project_root))
 
-    # Read input document
     sys_path = pathlib.Path(args.system_doc)
-    content = get_document_input(sys_path)
-    if content is None:
-        parser.error(f"cannot read {sys_path}")
-
-    system_doc = SourceCode(
-        content=content,
-        project_root=str(project_root),
-        contract_name=contract_name,
-        relative_path=relative_path,
-        forbidden_read=FS_FORBIDDEN_READ,
-    )
 
     # Set up services
     llm = create_llm(args)
@@ -128,8 +116,6 @@ async def _entry_point() -> AsyncIterator[Executor]:
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
 
-    threat_model = get_document_input(pathlib.Path(threat_path)) if (threat_path := args.threat_model) is not None else None
-
     async with (
         standard_connections(
             embedder=DefaultEmbedder(model)
@@ -137,6 +123,23 @@ async def _entry_point() -> AsyncIterator[Executor]:
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context()
     ):
+        # Read input documents now that the uploader is available.
+        content = await conns.uploader.get_document(sys_path)
+        if content is None:
+            parser.error(f"cannot read {sys_path}")
+
+        system_doc = SourceCode(
+            content=content,
+            project_root=str(project_root),
+            contract_name=contract_name,
+            relative_path=relative_path,
+            forbidden_read=FS_FORBIDDEN_READ,
+        )
+
+        threat_model = (
+            await conns.uploader.get_document(pathlib.Path(threat_path))
+            if (threat_path := args.threat_model) is not None else None
+        )
         source_env = build_source_env(
             llm=llm,
             db=rag_db,

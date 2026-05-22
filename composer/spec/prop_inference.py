@@ -17,6 +17,7 @@ from langchain_core.messages import AnyMessage, SystemMessage, AIMessage, ToolMe
 from graphcore.graph import MessagesState, FlowInput
 from graphcore.tools.schemas import WithImplementation
 
+from composer.input.files import Document
 from composer.spec.context import WorkflowContext, CacheKey, ComponentGroup
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.prop import PropertyFormulation
@@ -53,7 +54,7 @@ class _AgentRoundWithHistory(_AgentRoundResult):
     agent_conversation: list[AnyMessage]
 
 def bug_analysis_key(
-    threat_model: dict | str | None,
+    threat_model: Document | None,
     with_refinement: bool
 ) -> CacheKey[ComponentGroup, _BugAnalysisCache]:
     base_key = "bug_analysis"
@@ -61,7 +62,7 @@ def bug_analysis_key(
         base_key += "|refine"
     if threat_model is None:
         return CacheKey[ComponentGroup, _BugAnalysisCache](base_key)
-    return CacheKey[ComponentGroup, _BugAnalysisCache](base_key + "-tm-" + string_hash(str(threat_model)))
+    return CacheKey[ComponentGroup, _BugAnalysisCache](base_key + "-tm-" + threat_model.to_digest())
 
 class _AgentResult(_BugAnalysisCache):
     final_history: list[AnyMessage]
@@ -290,7 +291,7 @@ async def _run_bug_analysis_inner(
     env: BugEnvironment,
     component: ContractComponentInstance,
     extra_input: Sequence[str | dict],
-    threat_model: str | dict | None,
+    threat_model: Document | None,
     max_rounds: int
 ) -> _AgentResult:
     if (cached := await agent_component_analysis.cache_get(_AgentResult)) is not None:
@@ -304,7 +305,7 @@ async def _run_bug_analysis_inner(
             "so some of the issues/vulnerabilities/attacks may not be relevant to your analysis. Do *NOT* overfit to this threat model; carefully "
             "analyze what content of the provided threat model is worth considering vs out of scope. Further, this threat model is just a starting point, "
             "you should ALSO look for threats *not* mentioned in this document.",
-            threat_model
+            threat_model.to_dict(with_cache=True)
         ])
 
     prev_rounds : list[_AgentRoundResult] = []
@@ -336,7 +337,7 @@ async def run_property_inference(
     env: BugEnvironment,
     component: ContractComponentInstance,
     extra_input : Sequence[str | dict] = tuple(),
-    threat_model: str | dict | None = None,
+    threat_model: Document | None = None,
     refinement: ConversationContextProvider | None = None,
     max_rounds: int = 3,
 ) -> list[PropertyFormulation]:

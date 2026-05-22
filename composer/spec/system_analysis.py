@@ -92,7 +92,7 @@ async def run_component_analysis[T: BaseApplication](
     graph = b.compile_async()
     inputs : list[str | dict] = [
         "The system document is as follows",
-        input.content,
+        input.content.to_dict(),
         *extra_input
     ]
 

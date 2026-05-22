@@ -152,7 +152,7 @@ async def analyze_single_contract(
     semaphore = services.sem
     interface = intf
 
-    doc_digest = string_hash(str(system_doc.content))
+    doc_digest = system_doc.content.to_digest()
     
     # ------------------------------------------------------------------
     # Shared artifacts for Phase 5
@@ -375,7 +375,7 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
 
     registry = StubRegistry.create(
-        store, STUB_NS + (string_hash(str(system_doc.content)),), tool_env.builder, ctx, interface, {
+        store, STUB_NS + (system_doc.content.to_digest(),), tool_env.builder, ctx, interface, {
             k: c.content for (k, c) in generated_stubs
         }, solc_version,
     )

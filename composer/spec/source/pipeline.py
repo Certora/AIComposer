@@ -20,6 +20,7 @@ from composer.io.multi_job import (
 )
 from composer.ui.autoprove_app import AutoProvePhase
 
+from composer.input.files import Document
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, CVLGeneration,
 )
@@ -68,7 +69,7 @@ async def run_autoprove_pipeline(
     cloud: CloudConfig | None = None,
     max_concurrent: int = 4,
     interactive: bool,
-    threat_model : str | dict | None = None,
+    threat_model : Document | None = None,
     max_bug_rounds: int = 3,
 ) -> AutoProveResult:
     """Run the auto-prove multi-agent pipeline."""

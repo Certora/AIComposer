@@ -3,6 +3,8 @@ from composer.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
 import pathlib
 from dataclasses import dataclass
 
+from composer.input.files import Document, TextDocument
+
 @dataclass
 class BasicArg:
     help: str
@@ -16,39 +18,6 @@ class Arg(BasicArg):
 class OptionalArg(BasicArg):
     pass
 
-
-@dataclass
-class UploadedFile:
-    """
-    Represents a file uploaded with claude's file API
-    """
-    file_id: str
-    basename: str
-
-    path: str
-
-    def to_document_dict(self) -> dict:
-        """Convert to document dictionary format for LangGraph"""
-        return {
-            "type": "document",
-            "source": {
-                "type": "file",
-                "file_id": self.file_id
-            }
-        }
-
-    def read(self) -> str:
-        with open(self.path, 'r') as f:
-            return f.read()
-        
-    @property
-    def string_contents(self) -> str:
-        return self.read()
-
-    @property
-    def bytes_contents(self) -> bytes:
-        with open(self.path, 'rb') as f:
-            return f.read()
 
 class InMemoryFile:
     def __init__(self, name: str, contents: str | bytes):
@@ -173,11 +142,12 @@ class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
 @dataclass
 class InputData:
     """
-    Represents all of the file inputs provided by the user after uploading
+    Represents all of the file inputs provided by the user after loading.
+    Spec and interface are guaranteed text; system_doc may be PDF or text.
     """
-    spec: UploadedFile
-    system_doc: UploadedFile
-    intf: UploadedFile
+    spec: TextDocument
+    system_doc: Document
+    intf: TextDocument
 
 
 class ResumeInput(Protocol):

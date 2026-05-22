@@ -10,6 +10,7 @@ from composer.io.multi_job import (
 )
 from composer.ui.autoprove_app import AutoProvePhase
 
+from composer.input.files import Document
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
@@ -56,7 +57,7 @@ async def run_generation_pipeline(
     prover_tool: BaseTool,
     prover_config: dict,
     interactive: bool,
-    threat_model: str | dict | None,
+    threat_model: Document | None,
     max_bug_rounds: int = 3,
 ) -> AutoProveResult:
     
