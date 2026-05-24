@@ -2,7 +2,9 @@
 
 import argparse
 import hashlib
+import logging
 import pathlib
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
@@ -20,14 +22,17 @@ from composer.spec.context import (
     WorkflowContext, SourceCode, get_document_input,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
+from composer.spec.source.direct_pipeline import run_autoprove_pipeline as run_direct_autoprove_pipeline
 from composer.spec.source.prover import CloudConfig
 from composer.spec.source.source_env import build_source_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
 
-from composer.spec.util import FS_FORBIDDEN_READ
-from composer.io.multi_job import HandlerFactory
+from composer.spec.util import FS_FORBIDDEN_READ, find_files
+from composer.io.multi_job import HandlerFactory, phase_summary, reset_phase_stats
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +49,11 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cloud: bool
     interactive: bool
     threat_model: str
+    properties_path: str
+    custom_summary_path: str | None
+    standard_summary_path: str | None
+    config_paths: list[str]
+    skip_setup: bool
 
 # ---------------------------------------------------------------------------
 # Cache
@@ -82,7 +92,12 @@ async def _entry_point() -> AsyncIterator[Executor]:
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
     parser.add_argument("--cloud", action="store_true", help="Run prover jobs in the cloud")
     parser.add_argument("--interactive", action="store_true", help="Interactively refine the security properties after extraction")
-    parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'thread' model (text or pdf) with which to seed the property extraction process")
+    parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'threat' model (text or pdf) with which to seed the property extraction process")
+    parser.add_argument("--custom-summary-path", type=str, default=None, help="Path to a custom CVL summaries file specific to the contract")
+    parser.add_argument("--standard-summary-path", type=str, default=None, help="Path to the standard PreAudit-generated CVL summaries file")
+    parser.add_argument("--config-paths", type=lambda s: [p.strip() for p in s.split(",") if p.strip()], default=[], help="Comma-separated list of .conf paths, relative to project_root. If empty, all configs in the folders are used.",)
+    parser.add_argument("--skip-setup", action="store_true", help="Assumes the project has already been setup")
+    parser.add_argument("--properties-path", type=str, default=None, help="Path to the list of properties - a document (text or PDF)")
 
     args = cast(AutoProveArgs, parser.parse_args())
 
@@ -93,6 +108,16 @@ async def _entry_point() -> AsyncIterator[Executor]:
     full_contract_path = pathlib.Path(main_contract_path).resolve()
     if not full_contract_path.is_relative_to(project_root):
         parser.error(f"Invalid path: {full_contract_path} doesn't appear in project root {project_root}")
+    
+    if args.config_paths:
+        if not args.skip_setup:
+            parser.error(f"Supplying config path is only allowed when the setup has been done (AutoSetup ran before)")
+        for p in args.config_paths:
+            if not p.endswith(".conf"):
+                parser.error(f"Invalid config path: {p} is not a .conf file")
+        args.config_paths = [str((project_root / p).resolve()) for p in args.config_paths]
+    else:
+        args.config_paths = find_files(project_root, ".conf")
 
     relative_path = str(full_contract_path.relative_to(project_root))
 
@@ -128,6 +153,8 @@ async def _entry_point() -> AsyncIterator[Executor]:
 
     threat_model = get_document_input(pathlib.Path(threat_path)) if (threat_path := args.threat_model) is not None else None
 
+    properties = get_document_input(pathlib.Path(properties_path)) if (properties_path := args.properties_path) is not None else None
+
     async with (
         standard_connections(
             embedder=DefaultEmbedder(model)
@@ -155,16 +182,42 @@ async def _entry_point() -> AsyncIterator[Executor]:
         )
 
         async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
-            return await run_autoprove_pipeline(
-                    llm=llm,
-                    ctx=ctx,
-                    source_input=system_doc,
-                    env=source_env,
-                    handler_factory=handler,
-                    cloud=CloudConfig() if args.cloud else None,
-                    max_concurrent=args.max_concurrent,
-                    interactive=args.interactive,
-                    threat_model=threat_model
+            reset_phase_stats()
+            pipeline_t0 = time.perf_counter()
+            logger.info("[pipeline] start skip_setup=%s cloud=%s max_concurrent=%d",
+                        args.skip_setup, args.cloud, args.max_concurrent)
+            try:
+                if args.skip_setup:
+                    return await run_direct_autoprove_pipeline(
+                            llm=llm,
+                            ctx=ctx,
+                            source_input=system_doc,
+                            config_paths=args.config_paths,
+                            env=source_env,
+                            handler_factory=handler,
+                            custom_summary_path=args.custom_summary_path,
+                            standard_summary_path=args.standard_summary_path,
+                            cloud=CloudConfig() if args.cloud else None,
+                            max_concurrent=args.max_concurrent,
+                            interactive=args.interactive,
+                            properties=properties
+                        )
+                return await run_autoprove_pipeline(
+                        llm=llm,
+                        ctx=ctx,
+                        source_input=system_doc,
+                        env=source_env,
+                        handler_factory=handler,
+                        cloud=CloudConfig() if args.cloud else None,
+                        max_concurrent=args.max_concurrent,
+                        interactive=args.interactive,
+                        threat_model=threat_model
+                    )
+            finally:
+                logger.info(
+                    "[pipeline] done in %.2fs\n%s",
+                    time.perf_counter() - pipeline_t0,
+                    phase_summary(),
                 )
 
         yield runner

@@ -38,6 +38,7 @@ _logger = logging.getLogger(__name__)
 class CloudConfig:
     server: str = "prover"
     prover_version: str = "master"
+    timeout: float = 1200.0
 
 
 @dataclass
@@ -156,6 +157,7 @@ async def run_prover(
     if options.cloud is not None:
         effective_args.extend(["--server", options.cloud.server])
         effective_args.extend(["--prover_version", options.cloud.prover_version])
+        effective_args.extend(["--global_timeout", str(int(options.cloud.timeout))])
 
     # 2. Notify callback
     await callbacks.on_prover_run(effective_args)
@@ -205,7 +207,11 @@ async def run_prover(
 
     # 7. Result retrieval: cloud vs local
     if options.cloud is not None:
-        results_cm = cloud_results(run_result["link"], poll_callback=callbacks.on_cloud_poll)
+        results_cm = cloud_results(
+            run_result["link"],
+            poll_callback=callbacks.on_cloud_poll,
+            poll_timeout=options.cloud.timeout + 5*60,  # Add buffer to cloud timeout for result retrieval
+        )
     else:
         if not run_result["is_local_link"]:
             return f"Prover did not produce local results.\nstdout:\n{stdout}"

@@ -2,15 +2,20 @@ import psycopg
 from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager
 from typing_extensions import TypeVar
 import inspect
+import logging
 import os
+import time
 from dataclasses import dataclass
+from uuid import UUID
 from psycopg.rows import dict_row, RowFactory, DictRow, Row
 from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langchain_core.callbacks.base import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
+from langchain_core.outputs import LLMResult
 from langchain_anthropic import ChatAnthropic
 from langgraph.store.postgres import PostgresStore
 from langgraph.store.postgres.aio import AsyncPostgresStore
@@ -402,6 +407,41 @@ async def memory_backend_context() -> AsyncIterator[MemoryBackendGenerator]:
 
 _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
 
+_llm_logger = logging.getLogger("composer.llm")
+
+
+class _LLMTimingCallback(BaseCallbackHandler):
+    """Logs wall time + token usage for every LLM round-trip."""
+
+    def __init__(self) -> None:
+        self._starts: dict[UUID, float] = {}
+
+    def on_chat_model_start(self, serialized: dict, messages: Any, *, run_id: UUID, **kwargs: Any) -> None:  # noqa: ARG002
+        self._starts[run_id] = time.perf_counter()
+
+    def on_llm_start(self, serialized: dict, prompts: list[str], *, run_id: UUID, **kwargs: Any) -> None:  # noqa: ARG002
+        self._starts[run_id] = time.perf_counter()
+
+    def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:  # noqa: ARG002
+        t0 = self._starts.pop(run_id, None)
+        if t0 is None:
+            return
+        elapsed = time.perf_counter() - t0
+        usage = (response.llm_output or {}).get("usage", {}) if response.llm_output else {}
+        in_tok = usage.get("input_tokens", 0)
+        out_tok = usage.get("output_tokens", 0)
+        cache_read = usage.get("cache_read_input_tokens", 0)
+        cache_create = usage.get("cache_creation_input_tokens", 0)
+        _llm_logger.info(
+            "[llm] %.2fs  in=%d out=%d cache_read=%d cache_create=%d",
+            elapsed, in_tok, out_tok, cache_read, cache_create,
+        )
+
+    def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:  # noqa: ARG002
+        t0 = self._starts.pop(run_id, None)
+        elapsed = time.perf_counter() - t0 if t0 is not None else -1.0
+        _llm_logger.warning("[llm] FAILED after %.2fs: %s", elapsed, error)
+
 
 def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
     """Create LLM; thinking disabled when args.thinking_tokens is None."""
@@ -428,6 +468,7 @@ def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
             + (["interleaved-thinking-2025-05-14"] if effective_interleaved else [])
         ),
         thinking=thinking,
+        callbacks=[_LLMTimingCallback()],
     )
 
 
