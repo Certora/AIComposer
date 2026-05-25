@@ -82,7 +82,7 @@ async def run_to_completion[I: StateLike, S: StateLike, C: StateLike | None](
     context: C = None,
     *,
     checkpoint_id: str | None = None,
-    recursion_limit: int = 100,
+    recursion_limit: int,
     description: str,
     within_tool: str | None = None,
 ) -> S:

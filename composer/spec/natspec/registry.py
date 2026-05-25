@@ -187,7 +187,7 @@ async def run_registry_agent(
         workflow,
         FlowInput(input=input_parts),
         thread_id=uniq_thread_id("stub-registrar"),
-        recursion_limit=20,
+        recursion_limit=ctx.recursion_limit,
         description="Stub update",
         within_tool=within_tool,
     )

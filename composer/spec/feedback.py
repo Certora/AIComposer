@@ -128,6 +128,7 @@ def property_feedback_judge(
             workflow,
             SpecJudgeInput(input=input_parts, curr_spec=cvl, memory=None, did_read=False),
             thread_id=uniq_thread_id("feedback"),
+            recursion_limit=ctx.recursion_limit,
             description="Property feedback judge",
             within_tool=within_tool,
         )

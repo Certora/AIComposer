@@ -332,7 +332,7 @@ async def execute_ai_composer_workflow(
             graph=graph,
             input=i,
             run_conf={
-                "recursion_limit": 100,
+                "recursion_limit": workflow_options.recursion_limit,
                 "configurable": {
                     "thread_id": "research-" + uuid.uuid4().hex[:16]
                 }

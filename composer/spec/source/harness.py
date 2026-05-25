@@ -178,7 +178,7 @@ async def classifier_agent(
         graph=d,
         context=None,
         description="Harness Analysis",
-        recursion_limit=200,
+        recursion_limit=child.recursion_limit,
         input=FlowInput(input=[]),
         thread_id=child.thread_id
     )
@@ -331,6 +331,7 @@ async def generate_harnesses(
         input=GenerationInput(input=[], vfs={}),
         context=None,
         description="Harness Implementation Generation",
+        recursion_limit=child.recursion_limit,
         thread_id=child.thread_id
     )
 

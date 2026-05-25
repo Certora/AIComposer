@@ -255,6 +255,7 @@ async def _setup_summaries_impl(
             ],
         ),
         thread_id=ctx.thread_id,
+        recursion_limit=ctx.recursion_limit,
         description="Custom summaries",
         context=SummaryContext(
             config=setup.config.prover_config,

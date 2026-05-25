@@ -45,6 +45,7 @@ async def launch_natspec_workflow(
             services=lambda ns: make_memory_tool(conn.memory(ns)),
             thread_id=thread_id,
             store=conn.store,
+            recursion_limit=ctx.config.recursion_limit,
             cache_namespace=cache_root,
             memory_namespace=args.memory_namespace or None,
         )
@@ -56,7 +57,8 @@ async def launch_natspec_workflow(
             checkpoint=conn.checkpointer,
             kb_ns=("cvl",),
             store=conn.store,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS
+            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
+            recursion_limit=ctx.config.recursion_limit,
         )
 
         app = PipelineApp(ide=ctx.ide)

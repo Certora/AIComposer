@@ -86,11 +86,12 @@ class _ExploreCodeCommon(BaseModel):
     )
 
 
-def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
+def code_explorer_tool(env: CodeExplorerEnv, recursion_limit: int) -> BaseTool:
     """Create a code exploration sub-agent tool from a pre-configured builder.
 
     Args:
-        builder: Builder with LLM and file tools already bound.
+        env: Code explorer env with builder and tools bound.
+        recursion_limit: LangGraph recursion limit for each sub-agent run.
 
     Returns:
         A BaseTool named ``explore_code``.
@@ -110,7 +111,7 @@ def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
                 input=FlowInput(
                     input=[self.question]
                 ),
-                recursion_limit=100,
+                recursion_limit=recursion_limit,
                 thread_id=uniq_thread_id("code_explorer"),
                 within_tool=self.tool_call_id,
             )
@@ -125,9 +126,10 @@ class ExtCodeExplorerEnv(CodeExplorerEnv, Protocol):
         ...
 
 def indexed_code_explorer_tool(
-    env: ExtCodeExplorerEnv
+    env: ExtCodeExplorerEnv,
+    recursion_limit: int,
 ) -> BaseTool:
-    
+
     extended_sys = CODE_EXPLORER_SYS_PROMPT + f"""
 You have access to findings from prior analyses of this codebase.
 These findings were produced by earlier agents investigating the same contracts
@@ -155,6 +157,7 @@ and are established facts — do not re-derive or re-verify them.
                 context=None,
                 description=f"Code Explorer: {self.question}",
                 thread_id=uniq_thread_id("code_explorer"),
+                recursion_limit=recursion_limit,
                 input=FlowInput(input=[
                     self.question,
                     *context
