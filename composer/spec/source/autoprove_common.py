@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import pathlib
 import uuid
+import os
 from contextlib import asynccontextmanager
 from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
@@ -11,7 +12,7 @@ from graphcore.tools.memory import async_memory_tool
 
 from composer.input.types import ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
-from composer.kb.knowledge_base import DefaultEmbedder
+from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.workflow.services import create_llm, standard_connections
@@ -22,6 +23,7 @@ from composer.spec.context import (
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
 from composer.spec.source.prover import CloudConfig
 from composer.spec.source.source_env import build_source_env
+from composer.spec.agent_index import agent_index_config_from_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
@@ -117,14 +119,17 @@ async def _entry_point() -> AsyncIterator[Executor]:
     model = get_model()
 
 
-    cache_root: tuple[str, str] | None = None
+    cache_root: tuple[str, ...] | None = None
+
+    uid_raw = os.environ.get("AUTOPROVER_USER_ID")
 
     root_key = _root_cache_key(
-            args.project_root, sys_path, relative_path, contract_name,
+            str(project_root), sys_path, relative_path, contract_name,
         )
 
     if args.cache_ns is not None:
-        cache_root = (args.cache_ns, root_key)
+        cache_base : tuple[str, ...] = tuple() if not uid_raw else (uid_raw,)
+        cache_root = cache_base + (args.cache_ns, root_key)
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
 
@@ -137,23 +142,31 @@ async def _entry_point() -> AsyncIterator[Executor]:
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context()
     ):
+        source_cache_ns = ("source_agent", "cache", root_key)
+        if uid_raw:
+            source_cache_ns = source_cache_ns + (uid_raw,)
         source_env = build_source_env(
             llm=llm,
             db=rag_db,
             checkpoint=conns.checkpointer,
             forbidden_read=FS_FORBIDDEN_READ,
-            kb_ns=("cvl",),
+            kb_ns=DEFAULT_KB_NS,
             root=args.project_root,
             store=conns.indexed_store,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
-            source_question_ns=("source_agent", "cache", root_key)
+            source_question_ns=source_cache_ns,
+            index_config=agent_index_config_from_env(),
         )
+
+        memory_ns = args.memory_ns
+        if uid_raw and memory_ns:
+            memory_ns = uid_raw + "." + memory_ns
         ctx = WorkflowContext.create(
             services=lambda namespace: async_memory_tool(conns.memory(namespace)),
             thread_id=thread_id,
             store=conns.store,
             cache_namespace=cache_root,
-            memory_namespace=args.memory_ns,
+            memory_namespace=memory_ns,
         )
 
         async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:

@@ -8,7 +8,7 @@ from composer.spec.tool_env import ToolEnvironment, SourceTools, BaseSourceTools
 from composer.spec.services import build_rag_tool_env, _BaseTools, RAGInputs
 from graphcore.tools.vfs import fs_tools
 from composer.spec.code_explorer import indexed_code_explorer_tool
-from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
+from composer.spec.agent_index import AgentIndex, AgentIndexConfig, RetrieveDocumentTool
 
 
 @dataclass(frozen=True)
@@ -32,13 +32,18 @@ def build_source_tools(
     s: BaseSourceTools,
     llm: BasicAgentTools,
     store: BaseStore,
-    cache_ns: tuple[str, ...]
+    cache_ns: tuple[str, ...],
+    index_config: AgentIndexConfig | None = None,
 ) -> SourceTools:
     @dataclass(frozen=True)
     class _ExplorerEnv(_BaseTools, _BaseSourceTools):
         index: AgentIndex
 
-    ind = AgentIndex(store, cache_ns)
+    ind = AgentIndex.with_config(
+        store=store,
+        global_ns=cache_ns,
+        config=index_config or AgentIndexConfig(),
+    )
 
     explorer_tool = indexed_code_explorer_tool(_ExplorerEnv(
         builder=llm.builder,
@@ -72,7 +77,13 @@ def build_source_env(
         forbidden_read=params["forbidden_read"]
     )
 
-    full_source = build_source_tools(basic_source, rag_env, params["store"], params["source_question_ns"])
+    full_source = build_source_tools(
+        basic_source,
+        rag_env,
+        params["store"],
+        params["source_question_ns"],
+        index_config=params.get("index_config"),
+    )
 
     @dataclass(frozen=True)
     class ToRet(_SourceTools, _BaseTools):
