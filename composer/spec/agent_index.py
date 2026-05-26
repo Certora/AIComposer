@@ -56,7 +56,7 @@ def agent_index_config_from_env() -> AgentIndexConfig:
     don't change without opting in). ``tiered`` additionally requires
     ``AUTOPROVER_USER_ID`` to be set.
     """
-    mode = os.environ.get("AUTOPROVER_AGENT_INDEX_MODE", "trusted").lower()
+    mode = os.environ.get("AUTOPROVER_AGENT_INDEX_MODE", "tiered").lower()
     uid = os.environ.get("AUTOPROVER_USER_ID")
 
     if mode == "trusted":
