@@ -13,7 +13,7 @@ from typing import cast
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions, LanggraphOptions
+from composer.input.types import ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -73,9 +73,10 @@ async def resume_from_snapshot(
     )
 
 
-class _ResumeArgs(ModelOptions, RAGDBOptions, LanggraphOptions):
+class _ResumeArgs(ModelOptions, RAGDBOptions):
     mnemonic: str
     cloud: bool
+    recursion_limit: int
 
 
 async def main() -> int:
@@ -84,7 +85,7 @@ async def main() -> int:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
-    add_protocol_args(parser, LanggraphOptions)
+    parser.add_argument("--recursion-limit", type=int, default=1000, help="The number of iterations of the graph to allow (default: 1000)")
     parser.add_argument("mnemonic", help="Snapshot mnemonic ID (e.g. proven-lattice-forging-deeply)")
     parser.add_argument("--cloud", action="store_true", help="Run prover in the cloud")
 

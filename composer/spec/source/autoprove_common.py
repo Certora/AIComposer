@@ -9,7 +9,7 @@ from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions, LanggraphOptions
+from composer.input.types import ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -34,7 +34,7 @@ from composer.io.multi_job import HandlerFactory
 # Args
 # ---------------------------------------------------------------------------
 
-class AutoProveArgs(ModelOptions, RAGDBOptions, LanggraphOptions, Protocol):
+class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     project_root: str
     main_contract: str
     system_doc: str
@@ -44,6 +44,7 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, LanggraphOptions, Protocol):
     cloud: bool
     interactive: bool
     threat_model: str
+    recursion_limit: int
 
 # ---------------------------------------------------------------------------
 # Cache
@@ -74,7 +75,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
-    add_protocol_args(parser, LanggraphOptions)
+    parser.add_argument("--recursion-limit", type=int, default=1000, help="The number of iterations of the graph to allow (default: 1000)")
     parser.add_argument("project_root", help="Root directory of the Solidity project")
     parser.add_argument("main_contract", help="Main contract as path:ContractName")
     parser.add_argument("system_doc", help="Path to the design document (text or PDF)")
