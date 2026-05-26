@@ -1,6 +1,7 @@
 import contextlib
 import hashlib
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Iterator
@@ -8,6 +9,11 @@ from typing import Iterator
 
 def string_hash(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
+
+
+def slugify_filename(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
+    return slug or "unnamed"
 
 
 @contextlib.contextmanager
