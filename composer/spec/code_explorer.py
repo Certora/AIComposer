@@ -15,7 +15,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 
 from graphcore.graph import Builder, FlowInput, MessagesState
-from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 from graphcore.tools.vfs import fs_tools
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
@@ -98,7 +98,7 @@ def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
     graph = _code_explorer_graph(env)
 
     @tool_display_of(CommonTools.code_explorer)
-    class ExploreCodeSchema(_ExploreCodeCommon, WithAsyncImplementation[str]):
+    class ExploreCodeSchema(_ExploreCodeCommon, WithAsyncImplementation[str], WithInjectedId):
         __doc__ = _ExploreCodeCommon.__doc__
 
         @override
@@ -111,7 +111,8 @@ def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
                     input=[self.question]
                 ),
                 recursion_limit=100,
-                thread_id=uniq_thread_id("code_explorer")
+                thread_id=uniq_thread_id("code_explorer"),
+                within_tool=self.tool_call_id,
             )
             assert "result" in st
             return st["result"]
@@ -140,13 +141,13 @@ and are established facts — do not re-derive or re-verify them.
     )
 
     @tool_display_of(CommonTools.code_explorer)
-    class CodeExplorerTool(_ExploreCodeCommon, IndexedTool[AgentIndex]):
+    class CodeExplorerTool(_ExploreCodeCommon, IndexedTool[AgentIndex], WithInjectedId):
         __doc__ = _ExploreCodeCommon.__doc__
 
         @override
         def get_question(self) -> str:
             return self.question
-        
+
         @override
         async def answer_question(self, context: list[str]) -> str:
             res = await run_to_completion(
@@ -157,7 +158,8 @@ and are established facts — do not re-derive or re-verify them.
                 input=FlowInput(input=[
                     self.question,
                     *context
-                ])
+                ]),
+                within_tool=self.tool_call_id,
             )
             assert "result" in res
             return res["result"]

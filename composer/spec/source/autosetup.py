@@ -9,7 +9,7 @@ import json
 import os
 import sys
 import tempfile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pathlib import Path
 from contextvars import ContextVar
 from typing import Any, TypedDict, Literal, Annotated, Protocol
@@ -26,6 +26,7 @@ class SetupSuccess(BaseModel):
 
 class SetupFailure(BaseModel):
     error: str
+    stderr: str | None = Field(default=None)
 
 type SetupResult = SetupSuccess | SetupFailure
 

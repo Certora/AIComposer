@@ -1,17 +1,37 @@
 -- init-db.sql
--- Create separate users for each application
-CREATE USER rag_user WITH PASSWORD 'rag_password';
-CREATE USER langgraph_store_user WITH PASSWORD 'langgraph_store_password';
-CREATE USER langgraph_checkpoint_user WITH PASSWORD 'langgraph_checkpoint_password';
-CREATE USER audit_db_user WITH PASSWORD 'audit_db_password';
-CREATE USER memory_tool_user WITH PASSWORD 'memory_tool_password';
+--
+-- Idempotent: safe to run on a fresh cluster AND on an already-initialized one.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rag_user') THEN
+        CREATE USER rag_user WITH PASSWORD 'rag_password';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'langgraph_store_user') THEN
+        CREATE USER langgraph_store_user WITH PASSWORD 'langgraph_store_password';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'langgraph_checkpoint_user') THEN
+        CREATE USER langgraph_checkpoint_user WITH PASSWORD 'langgraph_checkpoint_password';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'audit_db_user') THEN
+        CREATE USER audit_db_user WITH PASSWORD 'audit_db_password';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'memory_tool_user') THEN
+        CREATE USER memory_tool_user WITH PASSWORD 'memory_tool_password';
+    END IF;
+END $$;
 
--- Create application-specific databases
-CREATE DATABASE rag_db OWNER rag_user;
-CREATE DATABASE langgraph_store_db OWNER langgraph_store_user;
-CREATE DATABASE langgraph_checkpoint_db OWNER langgraph_checkpoint_user;
-CREATE DATABASE audit_db OWNER audit_db_user;
-CREATE DATABASE memory_tool_db OWNER memory_tool_user;
+-- Create application-specific databases. \gexec runs whichever string the
+-- preceding SELECT returns; the SELECT returns a row only when the database
+-- is missing, so existing databases are skipped silently.
+SELECT 'CREATE DATABASE rag_db OWNER rag_user'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'rag_db')\gexec
+SELECT 'CREATE DATABASE langgraph_store_db OWNER langgraph_store_user'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'langgraph_store_db')\gexec
+SELECT 'CREATE DATABASE langgraph_checkpoint_db OWNER langgraph_checkpoint_user'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'langgraph_checkpoint_db')\gexec
+SELECT 'CREATE DATABASE audit_db OWNER audit_db_user'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'audit_db')\gexec
+SELECT 'CREATE DATABASE memory_tool_db OWNER memory_tool_user'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'memory_tool_db')\gexec
 
 \c rag_db
 CREATE EXTENSION IF NOT EXISTS vector;
