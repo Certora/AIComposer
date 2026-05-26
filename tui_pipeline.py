@@ -40,6 +40,7 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
     max_concurrent: int
     cache_ns: str | None
     memory_ns: str | None
+    max_bug_rounds: int
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ async def main() -> int:
     parser.add_argument("--max-concurrent", type=int, default=4, help="Max concurrent agents (default: 4)")
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
+    parser.add_argument("--max-bug-rounds", type=int, default=3, help="Maximum number of bug-extraction rounds run per component during property analysis (default: 3)")
 
     args = cast(PipelineArgs, parser.parse_args())
 
@@ -112,6 +114,7 @@ async def main() -> int:
                     store=store,
                     handler_factory=app.make_handler,
                     max_concurrent=args.max_concurrent,
+                    max_bug_rounds=args.max_bug_rounds,
                 )
                 await app.on_pipeline_done(result)
             except Exception as exc:

@@ -7,6 +7,37 @@ audit effort.
 {% include "application_context_new.j2" %}
 </inputs>
 
+{% if prior_properties %}
+<prior_properties>
+You are running iteratively. {{ prior_properties | length }} prior round(s) have already
+analyzed this component. Their findings and reasoning are below. The properties listed
+here MUST NOT be re-proposed by you — including reframings of the same underlying claim
+as a different property sort (e.g. an attack-vector restated as an invariant, or vice
+versa). Your task this round is to surface security properties that prior rounds *missed*.
+
+{% for round_result in prior_properties %}
+### Round {{ loop.index }} extracted properties:
+{% for p in round_result.items %}
+- [{{ p.sort }}] {{ p.description }}
+{% endfor %}
+
+### Round {{ loop.index }} reasoning:
+{{ round_result.reasoning }}
+
+{% endfor %}
+
+When deciding what to look at this round, treat the prior rounds' reasoning as the
+authoritative record of what has been considered — not your own assumptions about what
+"a prior agent probably looked at". If a prior round's reasoning is silent on an angle,
+that angle is fair game for you.
+
+The standing rule from your system prompt — return an empty `items` list rather than
+pad with low-value properties — applies in full force here. If the prior rounds have
+already covered the meaningful property surface, returning nothing new is the right
+answer.
+</prior_properties>
+{% endif %}
+
 <task>
 {% if has_source %}
 Input: The implementation of the application, and a description of a specific component of that application
