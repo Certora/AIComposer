@@ -22,7 +22,7 @@ from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.author import batch_cvl_generation
+from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -119,7 +119,7 @@ async def run_generation_pipeline(
     async def _generate_batch(
         batch_idx: int,
         batch: _ComponentBatch,
-    ) -> GeneratedCVL:
+    ) -> BatchGeneratedCVLResult:
         batch_child = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
@@ -145,20 +145,21 @@ async def run_generation_pipeline(
             ),
             semaphore,
         )
-        await batch_child.cache_put(res)
+        if isinstance(res, GeneratedCVL):
+            await batch_child.cache_put(res)
         return res
-    
+
     async def _generate_and_write_batch(
         i: int, batch: _ComponentBatch
-    ) -> GeneratedCVL:
+    ) -> BatchGeneratedCVLResult:
         res = await _generate_batch(batch_idx=i, batch=batch)
-        if res.commentary.startswith("GAVE_UP:"):
+        if isinstance(res, GaveUp):
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
         certora_dir.mkdir(exist_ok=True, parents=True)
         (certora_dir / f"autospec_{batch.feat.ind}.spec").write_text(res.cvl)
         (certora_dir / f"autospec_{batch.feat.ind}.commentary.md").write_text(res.commentary)
-        return res  
+        return res
 
     generation_results = await asyncio.gather(
         *[
@@ -174,8 +175,8 @@ async def run_generation_pipeline(
         n_properties += len(batch.props)
         if isinstance(result, BaseException):
             failures.append(f"{batch.feat.component.name}: {result}")
-        elif isinstance(result, GeneratedCVL) and result.commentary.startswith("GAVE_UP:"):
-            failures.append(f"{batch.feat.component.name}: {result.commentary}")
+        elif isinstance(result, GaveUp):
+            failures.append(f"{batch.feat.component.name}: GAVE_UP: {result.reason}")
 
     return AutoProveResult(
         n_components=len(component_batches),

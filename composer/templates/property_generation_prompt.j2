@@ -139,6 +139,16 @@ which property (by its number) you are skipping and why. The feedback judge will
 your justification is valid — do not skip properties lightly.
 
 You must attempt to formalize ALL properties before considering any skips.
+
+If you encounter an environment issue that prevents this task from making any progress — for example, the
+`certoraRun` executable is not installed/available, the required `solc` version is missing, or some other
+required toolchain component is absent — call the `give_up` tool with a clear, specific explanation of the
+missing component so the user can fix the environment and re-run. Do this as soon as the environment issue
+is identified; do not keep retrying.
+
+Outside of environment issues, only use `give_up` as a LAST RESORT after repeated attempts — for example,
+when the feedback judge keeps rejecting every attempted formulation, or the source code is fundamentally
+unspecifiable as written.
 </skipping>
 
 {% if resources %}
