@@ -27,6 +27,7 @@ from composer.spec.cvl_generation import (
     FeedbackToolContext,
     FeedbackToolImpl
 )
+from composer.spec.feedback import Rebuttal
 
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
@@ -101,6 +102,8 @@ class Feedback:
 async def dummy_feedback(
     spec: str,
     s: list[SkippedProperty],
+    rebuttals: list[Rebuttal],
+    within_tool: str
 ) -> Feedback:
     return Feedback(good=True, feedback="")
 
@@ -124,7 +127,9 @@ def feedback_builder(
 
     async def impl(
         spec: str,
-        skipped: list[SkippedProperty]
+        skipped: list[SkippedProperty],
+        rebuttals: list[Rebuttal],
+        within_tool: str,
     ) -> Feedback:
         for sk in skipped:
             if sk.property_index not in skippable:

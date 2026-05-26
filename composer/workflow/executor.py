@@ -324,6 +324,7 @@ async def execute_ai_composer_workflow(
     async def runner[S: StateLike, I: StateLike](
         graph: CompiledStateGraph[S, Any, I, Any],
         i: I,
+        tool_id: str | None,
     ) -> S:
         return await run_graph(
             ctxt=None,
@@ -335,7 +336,8 @@ async def execute_ai_composer_workflow(
                 "configurable": {
                     "thread_id": "research-" + uuid.uuid4().hex[:16]
                 }
-            }
+            },
+            within_tool=tool_id
         )
     extra_tools.append(_build_research_tool(cvl_builder, runner, research_doc))
 
