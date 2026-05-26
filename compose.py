@@ -19,8 +19,6 @@ from composer.io.stream import EventQueue
 from composer.rag.db import DEFAULT_CONNECTION as RAG_DEFAULT
 from composer.workflow.services import create_llm
 from composer.io.graph_runner import run_graph
-from composer.input.types import LanggraphOptions
-from composer.input.parsing import add_protocol_args
 
 
 async def _drain_events(queue: EventQueue, handler: OrchestratorHandler) -> None:
@@ -35,7 +33,7 @@ async def main() -> int:
     parser.add_argument("--tokens", type=int, default=10_000, help="Token budget")
     parser.add_argument("--thinking-tokens", type=int, default=2048, help="Thinking token budget")
     parser.add_argument("--rag-db", default=RAG_DEFAULT, help="RAG database connection string")
-    add_protocol_args(parser, LanggraphOptions)
+    parser.add_argument("--recursion-limit", type=int, default=1000, help="The number of iterations of the graph to allow (default: 1000)")
     args = parser.parse_args()
 
     config = OrchestratorModelConfig(

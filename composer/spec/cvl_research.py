@@ -158,8 +158,8 @@ def cvl_research_tool(
             graph, inp,
             thread_id=uniq_thread_id("cvl-research"),
             description="CVL research",
-            within_tool=within_tool,
             recursion_limit=recursion_limit,
+            within_tool=within_tool,
         )
 
     return _build_research_tool(enriched, runner, doc)
