@@ -105,15 +105,41 @@ class ComposerRAGDB(ABC):
                 self.tr.encode_document, [f"search_document: {d.chunk}" for d in doc], show_progress_bar=False
             ))
 
-type RagConnection = str | AsyncConnectionPool[AsyncConnection[TupleRow]] | AsyncConnection[TupleRow]
+type RagConnection = str | AsyncConnectionPool[AsyncConnection[TupleRow]]
 
 class PostgreSQLRAGDatabase(ComposerRAGDB):
     """Handle PostgreSQL database operations for RAG"""
 
     def __init__(self, conn_string: RagConnection, model: SentenceTransformer):
         super().__init__(model)
-        self.conn_string = conn_string
-        self._lock = asyncio.Lock() if isinstance(conn_string, AsyncConnection) else None
+        if isinstance(conn_string, str):
+            self._pool: AsyncConnectionPool[AsyncConnection[TupleRow]] = AsyncConnectionPool(
+                conninfo=conn_string,
+                kwargs={"autocommit": True},
+                connection_class=AsyncConnection[TupleRow],
+                open=False,
+            )
+            self._owns_pool = True
+        else:
+            self._pool = conn_string
+            self._owns_pool = False
+        self._opened = False
+
+    async def _ensure_open(self) -> None:
+        if self._owns_pool and not self._opened:
+            await self._pool.open()
+            self._opened = True
+
+    @asynccontextmanager
+    async def _get_connection(self) -> AsyncIterator[AsyncConnection[TupleRow]]:
+        await self._ensure_open()
+        async with self._pool.connection() as conn:
+            yield conn
+
+    async def aclose(self) -> None:
+        if self._owns_pool and self._opened:
+            await self._pool.close()
+            self._opened = False
 
     async def test_connection(self) -> None:
         """Test database connection and setup"""
@@ -141,31 +167,15 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
 
     @asynccontextmanager
     @staticmethod
-    async def rag_context(model: SentenceTransformer, conn_str : str = DEFAULT_CONNECTION) -> AsyncIterator["PostgreSQLRAGDatabase"]:
-        async with AsyncConnectionPool(
-            conninfo=conn_str,
-            kwargs={"autocommit": True},
-            connection_class=AsyncConnection[TupleRow]
-        ) as pool:
-            db = PostgreSQLRAGDatabase(conn_string=pool, model=model)
+    async def rag_context(
+        model: SentenceTransformer, conn_str: str = DEFAULT_CONNECTION
+    ) -> AsyncIterator["PostgreSQLRAGDatabase"]:
+        db = PostgreSQLRAGDatabase(conn_str, model)
+        try:
             await db.test_connection()
             yield db
-
-
-    @asynccontextmanager
-    async def _get_connection(self) -> AsyncIterator[AsyncConnection[TupleRow]]:
-        """Get database connection with context manager"""
-        if isinstance(self.conn_string, str):
-            conn = await AsyncConnection.connect(self.conn_string, autocommit=True)
-            async with conn:
-                yield conn
-        elif isinstance(self.conn_string, AsyncConnection):
-            assert self._lock is not None
-            async with self._lock:
-                    yield self.conn_string
-        else:
-            async with self.conn_string.connection() as conn:
-                yield conn
+        finally:
+            await db.aclose()
 
     async def _create_schema(self, cur: AsyncCursor) -> None:
         """Create database schema"""
@@ -736,13 +746,11 @@ async def rag_context(
         async with ChromaRAGDatabase.rag_context(persist_dir=rag_connection_str, model=model) as conn:
             yield conn
 
-async def get_rag_db(
-    rag_connection_str: str,
-    model: SentenceTransformer
-) -> ComposerRAGDB:
+# NOTE: this leaks the entire pool, so consider deprecating and force the callers
+# to use `rag_context` instead.
+async def get_rag_db(rag_connection_str: str, model: SentenceTransformer) -> ComposerRAGDB:
     if rag_connection_str.startswith("postgresql://"):
-        conn = await AsyncConnection.connect(rag_connection_str, autocommit=True)
-        db = PostgreSQLRAGDatabase(conn, model=model)
+        db = PostgreSQLRAGDatabase(rag_connection_str, model)
         await db.test_connection()
         return db
     else:
