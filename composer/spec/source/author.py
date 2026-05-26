@@ -88,7 +88,7 @@ class PropertyGenParams(TypedDict):
 
 class PropertyGenerationConfig(SummaryConfig[SourceCVLGenerationState]):
     def __init__(self):
-        super().__init__(max_messages=75)
+        super().__init__()
 
     @override
     def get_summarization_prompt(self, state: SourceCVLGenerationState) -> str:

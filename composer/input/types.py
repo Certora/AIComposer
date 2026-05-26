@@ -96,7 +96,6 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
 
     recursion_limit: int
     audit_db: str
-    summarization_threshold: Optional[int]
 
     requirements_oracle: list[str]
     set_reqs: Optional[str]
