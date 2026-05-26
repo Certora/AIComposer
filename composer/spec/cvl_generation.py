@@ -8,7 +8,7 @@ Parameterized by:
 
 import hashlib
 from dataclasses import dataclass
-from typing import Annotated, Callable, NotRequired, override, Awaitable, Any, Protocol
+from typing import Annotated, Callable, Literal, NotRequired, override, Awaitable, Any, Protocol
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
@@ -50,6 +50,43 @@ class SkippedProperty(BaseModel):
     """A property the agent explicitly decided not to formalize."""
     property_index: int = Field(description="1-indexed property number from the batch listing")
     reason: str = Field(description="Justification for why this property was skipped")
+
+
+class Rebuttal(BaseModel):
+    """A rebuttal to a specific piece of feedback from a prior round, backed by evidence.
+
+    File a rebuttal when a prior-round suggestion was tried and provably does not work —
+    a typecheck error, a persistent counterexample, a CVL construct that does not parse,
+    etc. Do NOT file rebuttals for feedback you merely disagree with; address those by
+    revising the spec.
+    """
+    prior_feedback_reference: str = Field(
+        description=(
+            "A brief quote from, or clear pointer to, the piece of prior-round feedback "
+            "this rebuttal addresses. Just enough for the judge to identify which prior "
+            "suggestion you are responding to — not a full transcript."
+        )
+    )
+    evidence_type: Literal[
+        "typecheck_failure",
+        "counterexample",
+        "manual_citation",
+        "reasoned",
+    ] = Field(
+        description=(
+            "The basis of the rebuttal. Empirical types (`typecheck_failure`, "
+            "`counterexample`, `manual_citation`) carry more weight than `reasoned`; "
+            "only use `reasoned` when you genuinely cannot produce tool output or a "
+            "manual citation."
+        )
+    )
+    evidence: str = Field(
+        description=(
+            "The concrete artifact backing the rebuttal: typecheck error text, a "
+            "counterexample summary, a manual quote with location, or a brief reasoned "
+            "argument. Keep it short and specific — the judge reads this verbatim."
+        )
+    )
 
 
 def _merge_skips(
@@ -140,7 +177,14 @@ LAST_ATTEMPT_KEY = CacheKey[CVLGeneration, _LastAttemptCache]("last_attempt")
 
 DESCRIPTION = "CVL generation"
 
-type FeedbackToolImpl = Callable[[str, list[SkippedProperty]], Awaitable[PropertyFeedbackProtocol]]
+type FeedbackToolImpl = Callable[
+    [str, list[SkippedProperty], list[Rebuttal], str],
+    Awaitable[PropertyFeedbackProtocol],
+]
+"""``(cvl, skipped, rebuttals, within_tool) -> PropertyFeedback``. ``within_tool``
+is the calling ``_FeedbackSchema``'s ``tool_call_id``, plumbed through to the
+sub-graph's ``run_to_completion`` so its UI panel anchors under the parent
+tool widget."""
 
 @dataclass
 class FeedbackToolContext:
@@ -155,7 +199,24 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
     Receive feedback on your CVL and any skip declarations.
     The judge will evaluate coverage (all properties accounted for)
     and the validity of any skip justifications.
+
+    If a prior-round suggestion from the judge was tried and provably does not work,
+    file it in `rebuttals` with concrete evidence (typecheck error text, counterexample
+    summary, manual citation). Do NOT file rebuttals for feedback you merely disagree
+    with — address those by revising the spec. An empty rebuttal list is the expected
+    default; only populate it when you have ground-truth evidence against a prior point.
     """
+    rebuttals: list[Rebuttal] = Field(
+        default_factory=list,
+        description=(
+            "Optional rebuttals to specific pieces of prior-round feedback. Each entry "
+            "identifies the prior point being rebutted, classifies the evidence "
+            "(`typecheck_failure` / `counterexample` / `manual_citation` / `reasoned`), "
+            "and supplies the concrete evidence text. Empirical types outweigh reasoned "
+            "ones with the judge. Leave empty if you have nothing to rebut."
+        ),
+    )
+
     @override
     async def run(self) -> Command:
         feedback = get_runtime(FeedbackToolContext).context.feedback_thunk
@@ -164,7 +225,7 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
         if spec is None:
             return tool_return(self.tool_call_id, "No spec put yet")
         skipped = st["skipped"]
-        t = await feedback(spec, skipped)
+        t = await feedback(spec, skipped, self.rebuttals, self.tool_call_id)
         msg = f"Good? {t.good}\nFeedback {t.feedback}"
         if t.good:
             digest = _compute_digest(spec, skipped)

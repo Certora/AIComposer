@@ -11,7 +11,7 @@ from langgraph.graph import MessagesState
 from langgraph.graph.state import CompiledStateGraph
 
 from graphcore.graph import Builder, FlowInput
-from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
@@ -60,9 +60,12 @@ class _CVLResearchST(MessagesState, RoughDraftState):
 _CompiledResearchGraph = CompiledStateGraph[_CVLResearchST, None, _CVLResearchInput, Any]
 
 type GraphRunner = Callable[
-    [_CompiledResearchGraph, _CVLResearchInput],
+    [_CompiledResearchGraph, _CVLResearchInput, str | None],
     Awaitable[_CVLResearchST],
 ]
+"""``(graph, input, within_tool) -> state``. ``within_tool`` is the calling
+tool's ``tool_call_id`` so the sub-agent's UI panel anchors under the tool
+widget; pass ``None`` for top-level invocations."""
 
 
 def _did_read_draft(s: _CVLResearchST, _: Any) -> str | None:
@@ -120,7 +123,7 @@ def _build_research_tool(
     graph = _build_research_graph(builder, False)
 
     @tool_display_of(CommonTools.cvl_research)
-    class CVLResearchSchema(CVLResearchSchemaBase, WithAsyncImplementation[str]):
+    class CVLResearchSchema(CVLResearchSchemaBase, WithAsyncImplementation[str], WithInjectedId):
         __doc__ = doc
 
         @override
@@ -128,6 +131,7 @@ def _build_research_tool(
             st = await runner(
                 graph,
                 _CVLResearchInput(input=[self.question], did_read=False, memory=None),
+                self.tool_call_id,
             )
             assert "result" in st
             return st["result"]
@@ -146,12 +150,15 @@ def cvl_research_tool(
     enriched = env.builder.with_tools(env.base_rag_tools)
 
     async def runner(
-        graph: _CompiledResearchGraph, inp: _CVLResearchInput,
+        graph: _CompiledResearchGraph,
+        inp: _CVLResearchInput,
+        within_tool: str | None,
     ) -> _CVLResearchST:
         return await run_to_completion(
             graph, inp,
             thread_id=uniq_thread_id("cvl-research"),
             description="CVL research",
+            within_tool=within_tool,
         )
 
     return _build_research_tool(enriched, runner, doc)
@@ -165,7 +172,7 @@ def indexed_cvl_research_tool(
         with_index=True
     )
     @tool_display_of(CommonTools.cvl_research)
-    class CVLResearcher(CVLResearchSchemaBase, IndexedTool[AgentIndex]):
+    class CVLResearcher(CVLResearchSchemaBase, IndexedTool[AgentIndex], WithInjectedId):
         __doc__ = doc
         
         @override
@@ -182,7 +189,8 @@ def indexed_cvl_research_tool(
                 input=_CVLResearchInput(input=[
                     self.question,
                     *context
-                ], did_read=False, memory=None)
+                ], did_read=False, memory=None),
+                within_tool=self.tool_call_id,
             )
             assert "result" in res
             return res["result"]

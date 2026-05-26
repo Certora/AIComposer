@@ -22,7 +22,7 @@ from langgraph.graph import MessagesState
 from langgraph.store.base import BaseStore
 
 from graphcore.graph import FlowInput
-from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
 from composer.spec.graph_builder import bind_standard, run_to_completion
@@ -120,6 +120,8 @@ async def run_registry_agent(
     solc_version: str,
     builder: PlainBuilder,
     ctx: WorkflowContext,
+    *,
+    within_tool: str,
 ) -> RegistryResult:
     """Spawn a fresh registry agent to handle a single field request.
 
@@ -187,6 +189,7 @@ async def run_registry_agent(
         thread_id=uniq_thread_id("stub-registrar"),
         recursion_limit=20,
         description="Stub update",
+        within_tool=within_tool,
     )
     assert "result" in res
     return res["result"]
@@ -267,7 +270,7 @@ class StubRegistry:
         to_put[nm] = content
         self._store.put(self._namespace, STUB_STORE_KEY, to_put)
 
-    async def request_field(self, nm: str, purpose: str) -> str:
+    async def request_field(self, nm: str, purpose: str, *, within_tool: str) -> str:
         """Request a stub field for a given purpose. Serialized via lock.
 
         Spawns a fresh registry agent. If a new field is added, the agent
@@ -287,6 +290,7 @@ class StubRegistry:
                 solc_version=self._solc_version,
                 builder=self._builder,
                 ctx=self._ctx,
+                within_tool=within_tool,
             )
 
             if result.rejected:
@@ -327,7 +331,7 @@ class StubRegistry:
             lambda d: f"Requesting stub field: {d['purpose']}",
             "Stub field result",
         )
-        class RequestStubField(WithAsyncImplementation[str]):
+        class RequestStubField(WithAsyncImplementation[str], WithInjectedId):
             """Request a storage variable in the shared verification stub.
             Describe what you need the field for (e.g., "a mapping to track per-user
             deposit amounts"). The registry will either return an existing field that
@@ -343,7 +347,10 @@ class StubRegistry:
 
             @override
             async def run(self) -> str:
-                return await registry.request_field(nm, self.purpose)
+                return await registry.request_field(
+                    nm, self.purpose,
+                    within_tool=self.tool_call_id,
+                )
 
         return [
             ReadStubTool.as_tool("read_stub"),

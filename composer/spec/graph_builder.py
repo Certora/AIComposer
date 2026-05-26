@@ -84,11 +84,19 @@ async def run_to_completion[I: StateLike, S: StateLike, C: StateLike | None](
     checkpoint_id: str | None = None,
     recursion_limit: int = 100,
     description: str,
+    within_tool: str | None = None,
 ) -> S:
     """Run a compiled state graph to completion.
 
     Delegates to composer.io.context.run_graph, which handles event nesting
     automatically via context vars. Requires with_handler() to be active.
+
+    ``within_tool`` is the calling tool's ``tool_call_id`` when this graph is
+    being run as a sub-agent from inside a tool. It anchors the sub-graph's
+    UI panel under the tool-call widget so the renderer can mount nested
+    output in the right place. Pass ``self.tool_call_id`` from a tool that
+    mixes in ``WithInjectedId``; leave ``None`` for top-level / pipeline-
+    phase invocations.
     """
     run_conf: RunnableConfig = {
         "configurable": {"thread_id": thread_id},
@@ -103,4 +111,5 @@ async def run_to_completion[I: StateLike, S: StateLike, C: StateLike | None](
         input=input,
         run_conf=run_conf,
         description=description,
+        within_tool=within_tool,
     )
