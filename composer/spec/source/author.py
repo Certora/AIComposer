@@ -8,7 +8,6 @@ from pydantic import Field, BaseModel, Discriminator
 from graphcore.tools.schemas import (
     WithAsyncImplementation, WithImplementation, WithInjectedId, WithInjectedState,
 )
-from graphcore.tools.results import result_tool_generator, ValidationResult
 from graphcore.graph import tool_state_update
 from graphcore.summary import SummaryConfig
 
@@ -44,6 +43,8 @@ class SourceCVLGenerationState(SourceCVLGenerationExtra, MessagesState):
 
 class GaveUp(BaseModel):
     reason: str
+
+type BatchGeneratedCVLResult = GeneratedCVL | GaveUp
 
 @tool_display(lambda p: f"Expecting rule `{p['rule_name']}` to fail", None)
 class ExpectRuleFailure(WithAsyncImplementation[Command], WithInjectedId):
@@ -82,18 +83,30 @@ class ExpectRulePassage(WithAsyncImplementation[Command], WithInjectedId):
             }
         )
 
-def result_checker(
-    s: SourceCVLGenerationState,
-    res: str,
-    tid: str
-) -> ValidationResult:
-    if (err := check_completion(s)) is not None:
-        return err
-    return tool_state_update(
-        tid, "Accepted",
-        result=res,
-        failed=False,
-    )
+@tool_display(
+    label=lambda p: "Publishing CVL result",
+    result=None,
+)
+class PublishResultTool(
+    WithImplementation[Command | str],
+    WithInjectedState[SourceCVLGenerationState],
+    WithInjectedId,
+):
+    """
+    Call to signal your completed cvl generation.
+    """
+    commentary: str = Field(description="Commentary on your generated spec")
+
+    @override
+    def run(self) -> Command | str:
+        if (err := check_completion(self.state)) is not None:
+            return err
+        return tool_state_update(
+            self.tool_call_id,
+            "Accepted",
+            result=self.commentary,
+            failed=False,
+        )
 
 
 @tool_display(
@@ -313,7 +326,7 @@ async def batch_cvl_generation(
     env: SourceEnvironment,
     description: str,
     source: SourceCode
-) -> GeneratedCVL | GaveUp:
+) -> BatchGeneratedCVLResult:
     mem = await take_snapshot(
         ctx,
         props=props,
@@ -322,12 +335,6 @@ async def batch_cvl_generation(
         init_config=init_config,
         component=component,
         description=description,
-    )
-
-    result_tool = result_tool_generator(
-        "result", (str, "Commentary on your generated spec"),
-        "Call to signal your completed cvl generation",
-        (SourceCVLGenerationState, result_checker)
     )
 
     bound_template = _PropertyGenTemplate.bind({
@@ -342,7 +349,7 @@ async def batch_cvl_generation(
     ).with_tools(
         static_tools()
     ).with_tools(
-        [prover_tool, ExpectRulePassage.as_tool("expect_rule_passage"), ExpectRuleFailure.as_tool("expect_rule_failure"), GiveUpTool.as_tool("give_up"), result_tool, ctx.get_memory_tool()]
+        [prover_tool, ExpectRulePassage.as_tool("expect_rule_passage"), ExpectRuleFailure.as_tool("expect_rule_failure"), GiveUpTool.as_tool("give_up"), PublishResultTool.as_tool("result"), ctx.get_memory_tool()]
     ).with_state(
         SourceCVLGenerationState
     ).with_output_key(

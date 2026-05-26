@@ -22,7 +22,7 @@ from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.author import batch_cvl_generation, GaveUp
+from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -119,7 +119,7 @@ async def run_generation_pipeline(
     async def _generate_batch(
         batch_idx: int,
         batch: _ComponentBatch,
-    ) -> GeneratedCVL | GaveUp:
+    ) -> BatchGeneratedCVLResult:
         batch_child = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
@@ -151,7 +151,7 @@ async def run_generation_pipeline(
 
     async def _generate_and_write_batch(
         i: int, batch: _ComponentBatch
-    ) -> GeneratedCVL | GaveUp:
+    ) -> BatchGeneratedCVLResult:
         res = await _generate_batch(batch_idx=i, batch=batch)
         if isinstance(res, GaveUp):
             return res
