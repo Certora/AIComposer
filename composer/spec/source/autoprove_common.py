@@ -23,7 +23,7 @@ from composer.spec.context import (
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
 from composer.spec.source.prover import CloudConfig
 from composer.spec.source.source_env import build_source_env
-from composer.spec.agent_index import agent_index_config_from_env
+from composer.spec.agent_index import agent_index_config_from_env, user_data_ns
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
@@ -142,9 +142,13 @@ async def _entry_point() -> AsyncIterator[Executor]:
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context()
     ):
-        source_cache_ns = ("source_agent", "cache", root_key)
-        if uid_raw:
-            source_cache_ns = source_cache_ns + (uid_raw,)
+        # Source-code agent caches are always per-user — the conventional
+        # ``user_data_ns(uid)`` prefix lives directly in the ns we pass
+        # so the AgentIndex runs single-pool (no overlay).
+        source_data_ns = ("source_agent", "cache", root_key)
+        source_cache_ns = (
+            user_data_ns(uid_raw) + source_data_ns if uid_raw else source_data_ns
+        )
         source_env = build_source_env(
             llm=llm,
             db=rag_db,
@@ -155,7 +159,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
             store=conns.indexed_store,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
             source_question_ns=source_cache_ns,
-            index_config=agent_index_config_from_env(),
+            cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
         )
 
         memory_ns = args.memory_ns

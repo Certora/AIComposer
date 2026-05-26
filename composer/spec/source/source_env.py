@@ -33,16 +33,18 @@ def build_source_tools(
     llm: BasicAgentTools,
     store: BaseStore,
     cache_ns: tuple[str, ...],
-    index_config: AgentIndexConfig | None = None,
 ) -> SourceTools:
     @dataclass(frozen=True)
     class _ExplorerEnv(_BaseTools, _BaseSourceTools):
         index: AgentIndex
 
-    ind = AgentIndex.with_config(
+    # Source-code agent caches are always per-user (no shared base);
+    # the caller is responsible for passing a ``cache_ns`` that's
+    # already user-scoped via ``user_data_ns(uid)``. The index runs
+    # single-pool: no overlay, base_layer == cache_ns.
+    ind = AgentIndex(
         store=store,
-        global_ns=cache_ns,
-        config=index_config or AgentIndexConfig(),
+        config=AgentIndexConfig(base_layer=cache_ns),
     )
 
     explorer_tool = indexed_code_explorer_tool(_ExplorerEnv(
@@ -81,8 +83,7 @@ def build_source_env(
         basic_source,
         rag_env,
         params["store"],
-        params["source_question_ns"],
-        index_config=params.get("index_config"),
+        params["source_question_ns"]
     )
 
     @dataclass(frozen=True)

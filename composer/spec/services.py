@@ -48,11 +48,12 @@ def build_rag_tools(
     index_config: AgentIndexConfig | None = None,
 ) -> RAGTools:
 
-    ind = AgentIndex.with_config(
-        store=store,
-        global_ns=cache_ns,
-        config=index_config or AgentIndexConfig(),
-    )
+    # ``cache_ns`` is the data-kind namespace ("cvl_research/cached") and
+    # also the base_layer this index reads from. When the caller passes
+    # an env-derived config (the typical path), its base_layer is already
+    # this same ``cache_ns``; otherwise build a single-pool default.
+    cfg = index_config or AgentIndexConfig(base_layer=cache_ns)
+    ind = AgentIndex(store=store, config=cfg)
 
     @dataclass(frozen=True)
     class _CVLResearchEnv(_BaseTools):
@@ -96,7 +97,7 @@ class RAGInputs(LLMInputs):
     store: BaseStore
     kb_ns: tuple[str, ...]
     cvl_cache_ns: tuple[str, ...]
-    index_config: NotRequired[AgentIndexConfig]
+    cvl_index_config: NotRequired[AgentIndexConfig]
 
 class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
     pass
@@ -120,7 +121,7 @@ def build_rag_tool_env(
         s=rag_tools,
         store=params["store"],
         cache_ns=params["cvl_cache_ns"],
-        index_config=params.get("index_config"),
+        index_config=params.get("cvl_index_config"),
     )
 
     @dataclass(frozen=True)

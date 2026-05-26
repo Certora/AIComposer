@@ -21,55 +21,74 @@ class IndexedAgentResult(KeyedAgentResult):
     score: float
 
 
+def user_data_ns(uid: str) -> tuple[str, ...]:
+    """Conventional namespace prefix for tenant-scoped data.
+
+    Single source of truth: any per-user content (CVL research write
+    layer, source-code-agent caches, etc.) is stored under
+    ``("user_data", uid, …)``. Future refactors of the convention
+    (per-org scope, per-engagement scope) only need to touch this
+    function.
+    """
+    return ("user_data", uid)
+
+
 @dataclass(frozen=True)
 class AgentIndexConfig:
-    """Read/write policy for an ``AgentIndex``.
+    """Full specification for an ``AgentIndex``.
 
-    Three modes, expressed as combinations of ``tenant_id`` and
-    ``read_only``:
+    ``base_layer`` is mandatory and is always consulted on reads. It's
+    also the default write target. ``write_layer`` is an optional
+    overlay: when set, it's consulted first on reads and is the sole
+    write target. ``read_only`` drops writes entirely.
 
-    - ``tenant_id`` set, ``read_only`` False — **tiered**: writes land in
-      the per-tenant namespace; reads check tenant first, then global.
-      The default for customer-facing deployments. A poisoned answer
-      written by tenant A is invisible to tenant B (writes don't escape
-      the tenant pool); only the offline promotion pipeline can move
-      entries from a tenant ns into the global ns.
-    - ``tenant_id`` None, ``read_only`` False — **trusted write-through**:
-      writes go directly to the global ns. Intended for internal /
-      curating operators whose outputs are trusted to seed the shared
-      pool.
-    - ``tenant_id`` None, ``read_only`` True — **read-only**: writes are
-      silently dropped, reads consult global only. Useful for clients
-      that should consume the shared knowledge but never augment it.
+    Three useful modes:
+
+    - ``write_layer`` set, ``read_only`` False — **tiered**: writes
+      isolated to the overlay; reads see overlay-then-base. The overlay
+      is typically a per-tenant slot built via :func:`user_data_ns`.
+    - ``write_layer`` None, ``read_only`` False — **write-through**:
+      writes land in ``base_layer`` directly. The trusted-operator
+      case.
+    - ``write_layer`` None, ``read_only`` True — **read-only**: writes
+      silently dropped, reads consult ``base_layer`` only.
     """
 
-    tenant_id: str | None = None
+    base_layer: tuple[str, ...]
+    write_layer: tuple[str, ...] | None = None
     read_only: bool = False
 
 
-def agent_index_config_from_env() -> AgentIndexConfig:
-    """Build an ``AgentIndexConfig`` from process env.
+def agent_index_config_from_env(data_ns: tuple[str, ...]) -> AgentIndexConfig:
+    """Build a config from env, suitable for indexes that have a shared
+    ``base_layer`` plus an optional per-user overlay.
 
     ``AUTOPROVER_AGENT_INDEX_MODE`` selects between ``tiered``,
-    ``trusted``, and ``readonly`` (default: ``trusted`` — preserves the
-    current write-everything-to-global behavior so internal workflows
-    don't change without opting in). ``tiered`` additionally requires
-    ``AUTOPROVER_USER_ID`` to be set.
+    ``trusted``, and ``readonly`` (default: ``trusted``). ``tiered``
+    additionally requires ``AUTOPROVER_USER_ID``; the overlay is
+    constructed as ``user_data_ns(uid) + data_ns``. ``data_ns`` is the
+    *kind* of data this index stores (e.g. ``("cvl_research",
+    "cached")``); typically it's the same tuple the caller will pass
+    as the index's ``base_layer``.
     """
-    mode = os.environ.get("AUTOPROVER_AGENT_INDEX_MODE", "tiered").lower()
+    mode = os.environ.get("AUTOPROVER_AGENT_INDEX_MODE", "trusted").lower()
     uid = os.environ.get("AUTOPROVER_USER_ID")
 
     if mode == "trusted":
-        return AgentIndexConfig(tenant_id=None, read_only=False)
+        return AgentIndexConfig(base_layer=data_ns, read_only=False, write_layer=None)
     if mode == "readonly":
-        return AgentIndexConfig(tenant_id=None, read_only=True)
+        return AgentIndexConfig(base_layer=data_ns, read_only=True, write_layer=None)
     if mode == "tiered":
         if not uid:
             raise ValueError(
                 "AUTOPROVER_AGENT_INDEX_MODE=tiered requires "
                 "AUTOPROVER_USER_ID to be set."
             )
-        return AgentIndexConfig(tenant_id=uid, read_only=False)
+        return AgentIndexConfig(
+            base_layer=data_ns,
+            read_only=False,
+            write_layer=user_data_ns(uid) + data_ns,
+        )
     raise ValueError(
         f"Unknown AUTOPROVER_AGENT_INDEX_MODE: {mode!r}. "
         "Expected one of: tiered, trusted, readonly."
@@ -77,19 +96,26 @@ def agent_index_config_from_env() -> AgentIndexConfig:
 
 
 class AgentIndex:
-    """Two-tier semantic cache.
+    """Two-layer semantic cache.
 
-    The index has a ``global_ns`` (shared, curated pool) and an optional
-    ``tenant_ns`` (per-caller pool). Reads consult the tenant ns first
-    on exact-key lookup and merge both pools on vector search. Writes
-    target the tenant ns when set, or fall back to the global ns when
-    not. ``read_only=True`` drops writes entirely.
+    ``base_layer`` is always consulted on reads and is the default
+    write target. When ``config.write_layer`` is set, that overlay is
+    consulted first on reads and is the sole write target. When
+    ``config.read_only`` is true, writes are dropped silently.
 
-    Within any single ns, ``aput`` is first-write-wins on the
-    normalized-question key — the same semantics as the original
-    single-pool implementation. The expectation is that a separate
-    offline pipeline curates promotions from tenant pools to the
-    global pool.
+    Within any single layer, ``aput`` is first-write-wins on the
+    normalized-question key. The expectation is that a separate
+    offline pipeline curates promotions from per-user overlays into a
+    shared ``base_layer`` when applicable.
+
+    The choice of ``base_layer`` and ``write_layer`` namespaces is the
+    caller's responsibility — see :func:`user_data_ns` and
+    :func:`agent_index_config_from_env` for the conventional way to
+    build them. Note that langgraph store backends do prefix-matching
+    on ``asearch`` (InMemoryStore via tuple slicing, Postgres via
+    ``prefix LIKE``), so ``write_layer`` should not be a descendant of
+    ``base_layer`` — otherwise overlay rows leak into base-layer search
+    results.
     """
 
     WITH_INDEX_SYS_COMMON = """
@@ -104,45 +130,32 @@ class AgentIndex:
     def __init__(
         self,
         store: BaseStore,
-        global_ns: tuple[str, ...],
-        *,
-        tenant_ns: tuple[str, ...] | None = None,
-        read_only: bool = False,
+        config: AgentIndexConfig,
     ):
         self.store = store
-        self.global_ns = global_ns
-        self.tenant_ns = tenant_ns if tenant_ns != global_ns else None
-        self.read_only = read_only
+        self.base_layer = config.base_layer
+        # Treat a write_layer that equals the base as "no overlay" so
+        # the read path doesn't double-consult the same namespace.
+        self.write_layer = (
+            config.write_layer
+            if config.write_layer is not None and config.write_layer != config.base_layer
+            else None
+        )
+        self.read_only = config.read_only
 
-        self._write_ns = None if self.read_only else (self.tenant_ns if self.tenant_ns is not None else self.global_ns)
+        self._write_ns = (
+            None
+            if self.read_only
+            else (self.write_layer if self.write_layer is not None else self.base_layer)
+        )
 
     @property
     def _read_pools(self) -> list[tuple[str, ...]]:
-        # Tenant first so a per-tenant entry takes precedence on exact-key
-        # lookup. Global is always consulted as the shared fallback.
-        if self.tenant_ns is None:
-            return [self.global_ns]
-        return [self.tenant_ns, self.global_ns]
-
-    @classmethod
-    def with_config(
-        cls,
-        store: BaseStore,
-        global_ns: tuple[str, ...],
-        config: AgentIndexConfig,
-    ) -> "AgentIndex":
-        """Build an ``AgentIndex`` from a global namespace plus an
-        ``AgentIndexConfig``. The config's ``tenant_id`` (when set) is
-        appended to ``global_ns`` to derive the tenant namespace."""
-        tenant_ns = (
-            global_ns + (config.tenant_id,) if config.tenant_id else None
-        )
-        return cls(
-            store=store,
-            global_ns=global_ns,
-            tenant_ns=tenant_ns,
-            read_only=config.read_only,
-        )
+        # write_layer first so an overlay entry takes precedence on
+        # exact-key lookup; base_layer is always consulted as fallback.
+        if self.write_layer is None:
+            return [self.base_layer]
+        return [self.write_layer, self.base_layer]
 
     def _normalize(self, text: str) -> str:
         nfkc = unicodedata.normalize("NFKC", text).casefold()

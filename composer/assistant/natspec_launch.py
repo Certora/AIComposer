@@ -58,7 +58,7 @@ async def launch_natspec_workflow(
             kb_ns=("cvl",),
             store=conn.store,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
-            index_config=agent_index_config_from_env(),
+            cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
         )
 
         app = PipelineApp(ide=ctx.ide)
