@@ -12,6 +12,9 @@ def string_hash(s: str) -> str:
 
 
 def slugify_filename(name: str) -> str:
+    # Collapse any run of filesystem-unsafe characters into a single underscore so the
+    # result is safe to use as a filename component; falls back to "unnamed" if empty.
+    # Example: "transfer(address,uint256)" -> "transfer_address_uint256"
     slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
     return slug or "unnamed"
 
