@@ -26,6 +26,7 @@ from pydantic import Field, BaseModel
 
 from langgraph.graph import MessagesState
 
+from composer.prover.core import CloudConfig
 from graphcore.graph import FlowInput
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.tools.results import result_tool_generator
@@ -504,7 +505,8 @@ async def run_setup(
     context: WorkflowContext[None],
     source: SourceCode,
     env: SourceEnvironment,
-    application_desc: SourceApplication
+    application_desc: SourceApplication,
+    cloud: CloudConfig | None,
 ) -> ContractSetup | None:
     config_ctxt = context.child(config_key)
     if (cached := await config_ctxt.cache_get(ContractSetup)) is not None:
@@ -521,6 +523,7 @@ async def run_setup(
         Path(source.project_root),
         source.relative_path,
         source.contract_name,
+        cloud,
         *extra_files,
     )
 

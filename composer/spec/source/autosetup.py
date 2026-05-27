@@ -15,6 +15,7 @@ from contextvars import ContextVar
 from typing import Any, TypedDict, Literal, Annotated, Protocol
 from pydantic import Discriminator
 import asyncio
+from composer.prover.core import CloudConfig
 
 from composer.io.context import emit_custom_event
 
@@ -63,6 +64,7 @@ class SetupImpl(Protocol):
         project_root: Path,
         relative_path: str,
         main_contract: str,
+        cloud: CloudConfig | None,
         *extra_files
     ) -> SetupResult:
         ...
@@ -74,6 +76,7 @@ async def run_autosetup(
     project_root: Path,
     relative_path: str,
     main_contract: str,
+    cloud: CloudConfig | None,
     *extra_files: str
 ) -> SetupResult:
     """
@@ -83,6 +86,7 @@ async def run_autosetup(
         project_root: Path to the Foundry project root
         relative_path: Relative path to the main contract file
         main_contract: Contract name, e.g. "Token"
+        cloud: Cloud config to use for running AutoSetup, or None to run locally
 
     Returns:
         SetupResult with compilation config and summaries path
@@ -120,5 +124,6 @@ async def run_autosetup(
         project_root,
         relative_path,
         main_contract,
+        cloud,
         *extra_files
     )

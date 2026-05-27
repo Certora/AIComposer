@@ -87,7 +87,7 @@ async def run_autoprove_pipeline(
         handler_factory,
         TaskInfo("setup", "Auto Setup", AutoProvePhase.HARNESS),
         lambda: run_setup(
-            ctx, source_input, env, s
+            ctx, source_input, env, s, cloud 
         )
     )
     
