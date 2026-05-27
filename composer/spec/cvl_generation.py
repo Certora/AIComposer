@@ -325,7 +325,8 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
     d: CompiledStateGraph[S, C, I, Any],
     in_state: I,
     ctxt: C,
-    description: str
+    description: str,
+    skip_mnemonic: bool = False
 ) -> S:
     input_copy = in_state["input"].copy()
     last_attempt = await ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
@@ -334,13 +335,21 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
         input_copy.append(last_attempt.cvl)
     in_state_copy = in_state.copy()
     in_state_copy["input"] = input_copy
+    tid : str
+    desc : str
+    if not skip_mnemonic:
+        tid, mnem = await ctx.thread_and_mnemonic()
+        desc = f"{description} ({mnem})"
+    else:
+        tid = ctx.thread_id
+        desc = description
     try:
         r = await run_to_completion(
             d,
             in_state_copy,
-            thread_id=ctx.thread_id,
+            thread_id=tid,
             context=ctxt,
-            description=description,
+            description=desc,
             recursion_limit=200
         )
         return r
