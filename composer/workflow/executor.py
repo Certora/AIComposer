@@ -344,7 +344,6 @@ async def execute_ai_composer_workflow(
     (workflow_builder, materializer) = get_cryptostate_builder(
         llm=llm,
         fs_layer=fs_layer,
-        summarization_threshold=workflow_options.summarization_threshold,
     )
 
     workflow_graph = workflow_builder.with_tools(extra_tools).with_sys_prompt_template(
