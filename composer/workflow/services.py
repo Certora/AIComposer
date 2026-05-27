@@ -184,7 +184,7 @@ async def _get_async_composer_pool(
         connection_class=AsyncConnection[Row],
         kwargs=kwargs,
         min_size=1,
-        max_size=5,
+        max_size=1,
         open=False,
     )
     await pool.open()
@@ -257,7 +257,7 @@ async def _async_pool_context_inner(
         connection_class=AsyncConnection[Row],
         kwargs=kwargs,
         min_size=1,
-        max_size=5,
+        max_size=1,
         open=False,
     )
     async with pool:
