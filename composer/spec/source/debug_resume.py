@@ -13,7 +13,7 @@ from typing import cast
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions
+from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -85,7 +85,7 @@ async def main() -> int:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
-    parser.add_argument("--recursion-limit", type=int, default=1000, help="The number of iterations of the graph to allow (default: 1000)")
+    parser.add_argument("--recursion-limit", type=int, default=DEFAULT_RECURSION_LIMIT, help=f"The number of iterations of the graph to allow (default: {DEFAULT_RECURSION_LIMIT})")
     parser.add_argument("mnemonic", help="Snapshot mnemonic ID (e.g. proven-lattice-forging-deeply)")
     parser.add_argument("--cloud", action="store_true", help="Run prover in the cloud")
 

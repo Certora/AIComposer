@@ -16,6 +16,7 @@ from composer.assistant.handler import OrchestratorHandler
 from composer.assistant.types import OrchestratorContext, OrchestratorModelConfig
 from composer.ui.ide_bridge import IDEBridge
 from composer.io.stream import EventQueue
+from composer.input.types import DEFAULT_RECURSION_LIMIT
 from composer.rag.db import DEFAULT_CONNECTION as RAG_DEFAULT
 from composer.workflow.services import create_llm
 from composer.io.graph_runner import run_graph
@@ -33,7 +34,7 @@ async def main() -> int:
     parser.add_argument("--tokens", type=int, default=10_000, help="Token budget")
     parser.add_argument("--thinking-tokens", type=int, default=2048, help="Thinking token budget")
     parser.add_argument("--rag-db", default=RAG_DEFAULT, help="RAG database connection string")
-    parser.add_argument("--recursion-limit", type=int, default=1000, help="The number of iterations of the graph to allow (default: 1000)")
+    parser.add_argument("--recursion-limit", type=int, default=DEFAULT_RECURSION_LIMIT, help=f"The number of iterations of the graph to allow (default: {DEFAULT_RECURSION_LIMIT})")
     args = parser.parse_args()
 
     config = OrchestratorModelConfig(
