@@ -3,7 +3,7 @@ from composer.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
 import pathlib
 from dataclasses import dataclass
 
-from composer.input.files import Document, TextDocument
+from composer.input.files import Document, TextDocument, TextUploadable, Uploadable
 DEFAULT_RECURSION_LIMIT = 1000
 
 @dataclass
@@ -26,6 +26,10 @@ class InMemoryFile:
         self.bytes_contents = contents if isinstance(contents, bytes) else contents.encode("utf-8")
 
 class NativeFS:
+    """Filesystem-path-backed ``Uploadable``. Lazily reads bytes/text
+    off disk so the uploader's CRC-dedup machinery can decide whether
+    the file actually needs to be (re-)uploaded."""
+
     def __init__(self, p: pathlib.Path):
         self.where = p
 
@@ -37,6 +41,17 @@ class NativeFS:
     def basename(self) -> str:
         return self.where.name
 
+    @property
+    def string_contents(self) -> str | None:
+        try:
+            return self.where.read_text()
+        except UnicodeDecodeError:
+            return None
+        
+class TextNativeFS(NativeFS):
+    def __init__(self, p: pathlib.Path):
+        super().__init__(p)
+    
     @property
     def string_contents(self) -> str:
         return self.where.read_text()
@@ -117,8 +132,6 @@ class UploadPaths(Protocol):
 
 
 class CommandLineArgs(WorkflowOptions, ModelOptions, UploadPaths, Protocol):
-    debug_fs: str
-
     debug: bool
 
 class ResumeArgs(WorkflowOptions, ModelOptions, Protocol):
@@ -157,7 +170,7 @@ class ResumeInput(Protocol):
         ...
 
     @property
-    def new_system(self) -> Optional[NativeFS]:
+    def new_system(self) -> Optional[Uploadable]:
         ...
 
     @property
@@ -167,13 +180,13 @@ class ResumeInput(Protocol):
 @dataclass
 class ResumeIdData:
     thread_id: str
-    new_spec: NativeFS
+    new_spec: TextUploadable
     comments: Optional[str]
-    new_system: Optional[NativeFS]
+    new_system: Optional[Uploadable]
 
 @dataclass
 class ResumeFSData:
     thread_id: str
     file_path: str
     comments: Optional[str]
-    new_system: Optional[NativeFS]
+    new_system: Optional[Uploadable]

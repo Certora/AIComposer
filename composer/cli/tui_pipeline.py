@@ -1,10 +1,14 @@
-"""Entry point for the NatSpec multi-agent pipeline TUI."""
+"""Entry point for the NatSpec multi-agent pipeline TUI.
 
-import composer.certora as _
+Modern replacement for the top-level ``tui_pipeline.py`` wrapper.
+Registered as the ``tui-natspec`` script in ``[project.scripts]``."""
+
+import composer.bind as _
 
 import argparse
 import asyncio
 import pathlib
+import sys
 import uuid
 from typing import cast, Protocol
 
@@ -46,7 +50,7 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
 # Main
 # ---------------------------------------------------------------------------
 
-async def main() -> int:
+async def _main() -> int:
     parser = argparse.ArgumentParser(
         description="NatSpec multi-agent pipeline TUI"
     )
@@ -125,6 +129,9 @@ async def main() -> int:
         return 0
 
 
+def main() -> int:
+    return asyncio.run(_main())
+
+
 if __name__ == "__main__":
-    import sys
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())

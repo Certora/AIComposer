@@ -1,7 +1,12 @@
 import argparse
 from typing import TypeVar, Protocol, cast, Annotated, get_type_hints, get_origin, Any, get_args, Union
-from composer.audit.db import DEFAULT_CONNECTION as AUDITDB_DEFAULT_CONNECTION
 from composer.input.types import CommandLineArgs, ResumeArgs, Arg, OptionalArg, RAGDBOptions, ModelOptions, LanggraphOptions
+
+# The legacy audit DB has been retired; audit state now lives in the
+# LangGraph store. The ``--audit-db`` flag stays in the parser for
+# protocol compatibility (``WorkflowOptions.audit_db: str``) but is
+# no longer consumed by the workflow executor.
+AUDITDB_DEFAULT_CONNECTION = ""
 
 ArgNS = TypeVar("ArgNS", covariant=True)
 
@@ -109,8 +114,6 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--debug", action="store_true",
                     help="Enable debug logging output")
 
-
-    parser.add_argument("--debug-fs", help="Dump the virtual FS to the provided folder and exit. Requires thread-id and checkpoint-id")
 
     # Summarization options
     parser.add_argument("--summarization-threshold", type=int, help="The number of messages that triggers summarization")

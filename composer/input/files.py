@@ -32,7 +32,6 @@ from typing import Protocol, assert_never, Any
 import anthropic
 import openai
 
-from composer.audit.types import InputFileLike
 from composer.workflow.provider import ProviderKind
 
 
@@ -41,20 +40,36 @@ from composer.workflow.provider import ProviderKind
 # ---------------------------------------------------------------------------
 
 
-class Document(Protocol):
-    """A piece of content destined for an LLM message."""
+class Uploadable(Protocol):
+    """Source data for the uploader: anything that exposes a name, raw
+    bytes, and an optional text body. Both freshly-read disk files and
+    audit-restored in-memory blobs satisfy this — the uploader treats
+    them uniformly."""
 
     @property
     def basename(self) -> str: ...
     @property
-    def string_contents(self) -> str | None: ...
-    @property
     def bytes_contents(self) -> bytes: ...
+    @property
+    def string_contents(self) -> str | None: ...
+
+class TextUploadable(Uploadable, Protocol):
+    @property
+    def string_contents(self) -> str: ...
+
+# What the uploader's entry points accept. A bare path string or
+# ``pathlib.Path`` gets transparently wrapped in ``NativeFS`` before
+# the bytes are read.
+type UploadInput = str | pathlib.Path | Uploadable
+
+
+class Document(Uploadable, Protocol):
+    """An ``Uploadable`` that also knows how to render itself as an
+    LLM-message content block (``to_dict``) and produce a stable
+    digest (``to_digest``)."""
+
     def to_dict(self, with_cache: bool = False) -> dict: ...
     def to_digest(self) -> str: ...
-
-    def to_file_like(self) -> InputFileLike:
-        ...
 
 
 class TextDocument(Document, Protocol):
@@ -99,6 +114,22 @@ async def _upload_mime(path: str) -> str:
             return "text/plain"
         return guessed
     return "application/octet-stream" if await _is_binary_file(path) else "text/plain"
+
+
+def _mime_for_bytes(basename: str, data: bytes) -> str:
+    """Same shape as ``_upload_mime`` but for in-memory bytes — no disk
+    read, so the binary sniff happens on ``data`` directly."""
+    guessed, _ = mimetypes.guess_type(basename)
+    if guessed is not None:
+        if guessed.startswith("text/"):
+            return "text/plain"
+        return guessed
+    suffix = pathlib.Path(basename).suffix.lower()
+    if suffix in _KNOWN_BINARY_SUFFIXES:
+        return "application/octet-stream"
+    if b"\x00" in data[:_BINARY_SNIFF_BYTES]:
+        return "application/octet-stream"
+    return "text/plain"
 
 
 async def _is_binary_file(path: str) -> bool:
@@ -151,28 +182,6 @@ class InMemoryTextFile:
 
     def to_digest(self) -> str:
         return _bytes_digest(self.bytes_contents)
-
-    def to_file_like(self) -> InputFileLike:
-        return self
-
-
-@dataclass(frozen=True)
-class _IFWrapper:
-    _wrapped: "UploadedFile"
-
-    @property
-    def basename(self) -> str:
-        return self._wrapped.basename
-
-    @property
-    def bytes_contents(self) -> bytes:
-        return self._wrapped.bytes_contents
-
-    @property
-    def string_contents(self) -> str:
-        r = self._wrapped.string_contents
-        assert r is not None
-        return r
 
 
 @dataclass(frozen=True)
@@ -231,9 +240,6 @@ class UploadedFile:
     def bytes_contents(self) -> bytes:
         return self.contents
 
-    def to_file_like(self) -> InputFileLike:
-        return _IFWrapper(self)
-
 
 @dataclass(frozen=True)
 class UploadedTextFile(UploadedFile):
@@ -254,18 +260,18 @@ class UploadedTextFile(UploadedFile):
 
 
 class FileUploader(Protocol):
-    """Upload+dedup contract. Construct via :func:`fresh_uploader`."""
+    """Upload+dedup contract. Construct via :func:`fresh_uploader`.
+
+    The two entry points (``upload_if_needed``,
+    ``upload_text_if_needed``) take an :data:`UploadInput`: either a
+    path-like (str / pathlib.Path) or any ``Uploadable``. A path-like
+    is wrapped in ``NativeFS`` internally so the upload + dedup
+    machinery sees a uniform shape."""
 
     provider: ProviderKind
 
-    async def upload_file_if_needed(
-        self, file_path: str | pathlib.Path
-    ) -> UploadedFile: ...
-
-    async def upload_text_file_if_needed(
-        self, file_path: str | pathlib.Path
-    ) -> UploadedTextFile: ...
-
+    async def upload_if_needed(self, source: UploadInput) -> UploadedFile: ...
+    async def upload_text_if_needed(self, source: UploadInput) -> UploadedTextFile: ...
     async def get_document(
         self, path: str | pathlib.Path
     ) -> Document | None: ...
@@ -286,44 +292,53 @@ class _UploaderBase:
     uploaded: dict[str, str]
 
     async def _upload_bytes(
-        self, crc_basename: str, file_path: str, mime: str
+        self, crc_basename: str, data: bytes, mime: str
     ) -> str:
         """Provider-specific upload. Returns the remote file id."""
         raise NotImplementedError
 
+    def _as_uploadable(self, source: UploadInput) -> Uploadable:
+        """Normalize a path-like into a ``NativeFS`` ``Uploadable``;
+        otherwise return ``source`` unchanged."""
+        if isinstance(source, (str, pathlib.Path)):
+            from composer.input.types import NativeFS
+            return NativeFS(pathlib.Path(source) if isinstance(source, str) else source)
+        return source
+
     async def _upload_raw(
-        self, file_path: str | pathlib.Path
+        self, source: UploadInput
     ) -> tuple[str, str, bytes, str]:
         """Upload-or-reuse and return ``(file_id, basename, raw_bytes,
-        digest)``. File read + CRC happens on a thread; the upload
-        itself awaits on the provider client."""
-        if isinstance(file_path, pathlib.Path):
-            file_path = str(file_path)
-        basename = os.path.basename(file_path)
+        digest)``. The byte read happens off-thread (``bytes_contents``
+        may hit disk for ``NativeFS`` sources); the upload itself
+        awaits on the provider client.
+
+        Dedup key is ``crc32(bytes) + basename`` — so re-uploading the
+        same content under a different ``Uploadable`` wrapper still
+        hits the cache."""
+        uploadable = self._as_uploadable(source)
+        basename = uploadable.basename
 
         def _read_and_crc() -> tuple[bytes, str]:
-            with open(file_path, "rb") as f:
-                data = f.read()
+            data = uploadable.bytes_contents
             return data, hex(zlib.crc32(data))
 
         raw, crc_hex = await asyncio.to_thread(_read_and_crc)
         digest = _bytes_digest(raw)
         crc_basename = f"{crc_hex}_{basename}"
         if crc_basename not in self.uploaded:
-            mime = await _upload_mime(file_path)
-            file_id = await self._upload_bytes(crc_basename, file_path, mime)
+            mime = _mime_for_bytes(basename, raw)
+            file_id = await self._upload_bytes(crc_basename, raw, mime)
             self.uploaded[crc_basename] = file_id
             return file_id, basename, raw, digest
         return self.uploaded[crc_basename], basename, raw, digest
 
-    async def upload_file_if_needed(
-        self, file_path: str | pathlib.Path
-    ) -> UploadedFile:
-        """Upload ``file_path`` (or reuse cached upload). Intended for
-        binary inputs — callers that know they have text should prefer
-        :meth:`get_document` (default text-inline) or
-        :meth:`upload_text_file_if_needed` (explicit upload of text)."""
-        file_id, basename, raw, digest = await self._upload_raw(file_path)
+    async def upload_if_needed(self, source: UploadInput) -> UploadedFile:
+        """Upload ``source`` (or reuse cached upload). Accepts any
+        ``UploadInput`` — a path-like (auto-wrapped in ``NativeFS``)
+        or an ``Uploadable`` directly. Dedup cache keys off CRC +
+        basename, so the wrapper choice doesn't matter."""
+        file_id, basename, raw, digest = await self._upload_raw(source)
         return UploadedFile(
             file_id=file_id,
             basename=basename,
@@ -332,15 +347,12 @@ class _UploaderBase:
             provider=self.provider,
         )
 
-    async def upload_text_file_if_needed(
-        self, file_path: str | pathlib.Path
-    ) -> UploadedTextFile:
-        """Upload ``file_path`` and tag the result as text. Use for
-        very-large text inputs that would otherwise blow the prompt
-        budget if inlined; ordinary text should go through
-        :meth:`get_document`, which keeps the content in-prompt for
-        transcript debuggability."""
-        file_id, basename, raw, digest = await self._upload_raw(file_path)
+    async def upload_text_if_needed(self, source: UploadInput) -> UploadedTextFile:
+        """Same as :meth:`upload_if_needed` but tags the returned
+        document as text. Caller asserts the source's bytes are
+        UTF-8-decodable; the returned ``UploadedTextFile`` narrows
+        ``string_contents`` to ``str``."""
+        file_id, basename, raw, digest = await self._upload_raw(source)
         return UploadedTextFile(
             file_id=file_id,
             basename=basename,
@@ -365,7 +377,8 @@ class _UploaderBase:
         if not p.is_file():
             return None
         if await _is_binary_file(str(p)):
-            return await self.upload_file_if_needed(p)
+            from composer.input.types import NativeFS
+            return await self.upload_if_needed(NativeFS(p))
         text = await asyncio.to_thread(p.read_text)
         return InMemoryTextFile(
             basename=p.name,
@@ -393,10 +406,10 @@ class AnthropicFileUploader(_UploaderBase):
         return AnthropicFileUploader(client=client, uploaded=uploaded)
 
     async def _upload_bytes(
-        self, crc_basename: str, file_path: str, mime: str
+        self, crc_basename: str, data: bytes, mime: str
     ) -> str:
         uploaded_file = await self.client.beta.files.upload(
-            file=(crc_basename, open(file_path, "rb"), mime)
+            file=(crc_basename, data, mime)
         )
         return uploaded_file.id
 

@@ -1,5 +1,11 @@
+"""Entry point for the AI-assisted formal verification orchestrator.
+
+Modern replacement for the top-level ``compose.py`` wrapper.
+Registered as the ``ai-compose`` script in ``[project.scripts]``."""
+
 import argparse
 import asyncio
+import sys
 import uuid
 from pathlib import Path
 
@@ -28,7 +34,7 @@ async def _drain_events(queue: EventQueue, handler: OrchestratorHandler) -> None
         handler.on_event(event)
 
 
-async def main() -> int:
+async def _main() -> int:
     parser = argparse.ArgumentParser(description="AI-assisted formal verification orchestrator")
     parser.add_argument("--model", default="claude-opus-4-6", help="Model to use")
     parser.add_argument("--tokens", type=int, default=10_000, help="Token budget")
@@ -112,6 +118,9 @@ async def main() -> int:
     return 0
 
 
+def main() -> int:
+    return asyncio.run(_main())
+
+
 if __name__ == "__main__":
-    import sys
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())

@@ -54,6 +54,10 @@ graphcore = { path = "./graphcore", editable = true }
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
+console-codegen = "composer.cli.console_codegen:main"
+tui-codegen = "composer.cli.tui_codegen:main"
+tui-natspec = "composer.cli.tui_pipeline:main"
+ai-compose = "composer.cli.compose:main"
 
 [tool.setuptools.packages.find]
 include = ["composer*", "sanity_analyzer*", "analyzer*"]

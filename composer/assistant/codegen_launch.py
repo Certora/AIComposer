@@ -4,7 +4,10 @@ from typing import Optional
 
 from composer.assistant.launch_args import LaunchCodegenArgs, LaunchResumeArgs, CommonCodeGen
 from composer.assistant.types import OrchestratorContext
-from composer.audit.db import DEFAULT_CONNECTION as AUDIT_DEFAULT
+# The legacy audit DB has been retired; audit state now lives in the
+# LangGraph store. ``CodegenWorkflowArgs.audit_db`` is kept on the
+# dataclass for protocol compatibility but is no longer used.
+AUDIT_DEFAULT = ""
 from composer.input.types import ResumeFSData, UploadPaths, InputData
 from composer.input.files import fresh_uploader
 from composer.ui.codegen_rich import CodeGenRichApp
@@ -12,21 +15,21 @@ from composer.io.protocol import WorkflowPurpose
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.workflow.provider import ProviderKind, provider_for
 from composer.workflow.types import WorkflowResult, WorkflowSuccess, WorkflowFailure, WorkflowCrash
-from composer.workflow.services import create_llm
 
 
 async def upload_input(i: UploadPaths, provider: ProviderKind) -> InputData:
     """Build the codegen input triple (interface, spec, system doc).
 
-    Spec and interface go via ``upload_text_file_if_needed`` so the body
+    Spec and interface go via ``upload_text_if_needed`` so the body
     is available both as a Files-API ``file_id`` reference and (for
     text consumers) as in-memory bytes. The system doc routes through
-    ``FileUploader.get_document`` so PDFs land in the Files API and
-    plain-text inputs stay inline."""
+    ``upload_if_needed`` which classifies the bytes and uploads either
+    way; PDFs land in the Files API and plain-text inputs become
+    text-tagged uploads."""
     uploader = await fresh_uploader(provider)
-    interface_file = await uploader.upload_text_file_if_needed(i.interface_file)
-    spec_file = await uploader.upload_text_file_if_needed(i.spec_file)
-    system_doc_file = await uploader.upload_file_if_needed(i.system_doc)
+    interface_file = await uploader.upload_text_if_needed(i.interface_file)
+    spec_file = await uploader.upload_text_if_needed(i.spec_file)
+    system_doc_file = await uploader.upload_if_needed(i.system_doc)
     return InputData(
         spec=spec_file,
         system_doc=system_doc_file,
@@ -122,13 +125,12 @@ async def launch_codegen_workflow(
     )
     wf_args = _codegen_args(ctx, args)
     input_data = await upload_input(paths, provider_for(wf_args.model))
-    llm = create_llm(wf_args)
 
     app = CodeGenRichApp(ide=ctx.ide)
 
     async def work() -> None:
         app.result = await execute_ai_composer_workflow(
-            handler=app, llm=llm, input=input_data,
+            handler=app, input=input_data,
             workflow_options=wf_args,
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,
@@ -159,13 +161,12 @@ async def launch_resume_workflow(
     )
 
     wf_args = _codegen_args(ctx, args)
-    llm = create_llm(wf_args)
 
     app = CodeGenRichApp(ide=ctx.ide)
 
     async def work() -> None:
         app.result = await execute_ai_composer_workflow(
-            handler=app, llm=llm, input=input_data,
+            handler=app, input=input_data,
             workflow_options=wf_args,
             memory_namespace=args.memory_namespace,
             resume_work_key=args.resume_work_key,

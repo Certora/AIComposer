@@ -1,47 +1,49 @@
+"""Entry point for the codegen workflow — TUI mode (Textual).
+
+Modern replacement for the top-level ``tui_main.py`` wrapper.
+Registered as the ``tui-codegen`` script in ``[project.scripts]``."""
+
 import composer.bind as _
 
 import asyncio
+import logging
+import sys
 
 from composer.input.parsing import fresh_workflow_argument_parser
-from composer.workflow.services import create_llm
 from composer.workflow.provider import provider_for
 from composer.assistant.codegen_launch import upload_input
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.ui.codegen_rich import CodeGenRichApp
 from composer.ui.ide_bridge import IDEBridge
-from composer.diagnostics.debug import setup_logging, dump_fs
 from composer.ui.tool_display import tool_context
 
 
-async def main() -> int:
-    """TUI entry point for the AI Composer tool."""
+async def _main() -> int:
     parser = fresh_workflow_argument_parser()
-    parser.add_argument("--show-checkpoints", action="store_true", #type: ignore
-                        help="Show checkpoint IDs inline in the event log")
+    parser.add_argument(  # type: ignore
+        "--show-checkpoints",
+        action="store_true",
+        help="Show checkpoint IDs inline in the event log",
+    )
     args = parser.parse_args()
 
-    setup_logging(args.debug)
-
-    llm = create_llm(args)
-
-    if args.debug_fs:
-        if not args.checkpoint_id or not args.thread_id:
-            print("Need to provide checkpoint-id and thread-id")
-            return 1
-        return dump_fs(args, llm)
+    if args.debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
 
     input_data = await upload_input(args, provider_for(args.model))
 
     ide = await IDEBridge.connect()
 
-    app = CodeGenRichApp(show_checkpoints=args.show_checkpoints, ide=ide) #type: ignore
+    app = CodeGenRichApp(show_checkpoints=args.show_checkpoints, ide=ide)  # type: ignore
 
-    async def work():
+    async def work() -> None:
         app.result = await execute_ai_composer_workflow(
             handler=app,
-            llm=llm,
             input=input_data,
-            workflow_options=args
+            workflow_options=args,
         )
 
     app.set_work(work)
@@ -54,6 +56,9 @@ async def main() -> int:
     return app.exit_code
 
 
+def main() -> int:
+    return asyncio.run(_main())
+
+
 if __name__ == "__main__":
-    import sys
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())

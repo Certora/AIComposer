@@ -1,43 +1,46 @@
-import composer.certora as _
+"""Entry point for the codegen workflow — console mode (no TUI).
+
+Modern replacement for the top-level ``main.py`` wrapper. Registered
+as the ``console-codegen`` script in ``[project.scripts]``."""
+
+import composer.bind as _
 
 import asyncio
+import logging
+import sys
 
 from composer.input.parsing import fresh_workflow_argument_parser
-from composer.workflow.services import create_llm
 from composer.workflow.provider import provider_for
 from composer.assistant.codegen_launch import upload_input
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.ui.console import ConsoleHandler
-from composer.diagnostics.debug import setup_logging, dump_fs
 
-async def main() -> int:
-    """Main entry point for the AI Composer tool."""
+
+async def _main() -> int:
     parser = fresh_workflow_argument_parser()
     args = parser.parse_args()
 
-    setup_logging(args.debug)
-
-    llm = create_llm(args)
-
-    if args.debug_fs:
-        if not args.checkpoint_id or not args.thread_id:
-            print("Need to provide checkpoint-id and thread-id")
-            return 1
-        return dump_fs(args, llm)
+    if args.debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
 
     print("Reading input files...")
-
     input_data = await upload_input(args, provider_for(args.model))
 
     print("Starting AI Composer workflow...")
     result = await execute_ai_composer_workflow(
         handler=ConsoleHandler(capture_prover_output=args.prover_capture_output),
-        llm=llm,
         input=input_data,
-        workflow_options=args
+        workflow_options=args,
     )
     return result.exit_code
 
+
+def main() -> int:
+    return asyncio.run(_main())
+
+
 if __name__ == "__main__":
-    import sys
-    sys.exit(asyncio.run(main()))
+    sys.exit(main())
