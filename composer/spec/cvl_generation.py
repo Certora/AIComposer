@@ -328,13 +328,18 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
     description: str,
     skip_mnemonic: bool = False
 ) -> S:
-    input_copy = in_state["input"].copy()
+    
     last_attempt = await ctx.child(LAST_ATTEMPT_KEY).cache_get(_LastAttemptCache)
+    actual_input : I
     if last_attempt is not None:
-        input_copy.append("Your last working draft was (you will need to re-put this onto the VFS):")
-        input_copy.append(last_attempt.cvl)
-    in_state_copy = in_state.copy()
-    in_state_copy["input"] = input_copy
+        input_copy = in_state["input"].copy()
+        input_copy.append("You are resuming from a prior failed task, the prior working draft of the CVL specification has already been placed for you via `put_cvl`.")
+        in_state_copy = in_state.copy()
+        in_state_copy["input"] = input_copy
+        in_state_copy["curr_spec"] = last_attempt.cvl
+        actual_input = in_state_copy
+    else:
+        actual_input = in_state
     tid : str
     desc : str
     if not skip_mnemonic:
@@ -346,7 +351,7 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
     try:
         r = await run_to_completion(
             d,
-            in_state_copy,
+            actual_input,
             thread_id=tid,
             context=ctxt,
             description=desc,
