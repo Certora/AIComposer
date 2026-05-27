@@ -187,7 +187,7 @@ class SnapshotViewerApp(App):
     def _render_system(self, msg: SystemMessage, idx: int) -> Collapsible:
         content = msg.text()
         return Collapsible(
-            Static(content),
+            Static(content, markup=False),
             title=f"[{idx}] System ({len(content):,} chars)",
             collapsed=True,
         )
@@ -198,7 +198,7 @@ class SnapshotViewerApp(App):
         tag_label = f" [{tag}]" if tag else ""
         preview = _first_line(content)
         return Collapsible(
-            Static(content),
+            Static(content, markup=False),
             title=f"[{idx}] Human{tag_label}: {preview}",
             collapsed=True,
         )
@@ -294,7 +294,7 @@ class SnapshotViewerApp(App):
                 result_title.append(f": {preview}", style="dim")
 
                 widgets.append(Collapsible(
-                    Static(content),
+                    Static(content, markup=False),
                     title=result_title,
                     collapsed=True,
                     classes="tool-result",
