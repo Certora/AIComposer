@@ -63,7 +63,7 @@ class Summarization(TypedDict):
     checkpoint_id: str
 
 class ManualSearchResult(AuditResult[Literal["manual_search"]]):
-    ref: ManualRef
+    refs: list[ManualRef]
 
 ProgressUpdate = Annotated[
     Union[CEXAnalysisStart, ProverResult, ProverRun, RuleAnalysisResult, SummarizationNotice, ProverOutputEvent, CloudPollingEvent], Discriminator("type")

@@ -111,13 +111,12 @@ def _cvl_manual_search_factory(
                 top_k=max_results,
                 manual_section=manual_section,
             )
-            for t in refs:
-                upd: ManualSearchResult = {
-                    "type": "manual_search",
-                    "tool_id": tool_call_id,
-                    "ref": t,
-                }
-                writer(upd)
+            upd: ManualSearchResult = {
+                "type": "manual_search",
+                "tool_id": tool_call_id,
+                "refs": refs,
+            }
+            writer(upd)
             match provider:
                 case "anthropic":
                     return _anthropic_format_results(refs)

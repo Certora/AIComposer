@@ -15,7 +15,7 @@ Namespaces:
     ("audit", tid)                            / "vfs_result"        → StoredVFS
     ("audit", tid, "summarization")           / checkpoint_id       → StoredSummary
     ("audit", tid, "prover_results", tool_id) / rule_name           → StoredProverResult
-    ("audit", tid, "manual_results", tool_id) / uuid_hex            → StoredManualResult
+    ("audit", tid, "manual_results")          / tool_id              → StoredManualResults
 
 The ``audit_runs`` namespace is intentionally flat so callers can list
 every registered run without enumerating thread ids out-of-band — useful
@@ -44,7 +44,6 @@ import base64
 import hashlib
 import logging
 import pathlib
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -130,6 +129,16 @@ class StoredManualResult(TypedDict):
     similarity: float
     content: str
     header: str
+
+
+class StoredManualResults(TypedDict):
+    """All manual-search hits for one ``cvl_manual_search`` call,
+    stored as a single record under ``(audit, tid, "manual_results")``
+    keyed by ``tool_id``. (The legacy schema streamed one event per
+    hit and stored each under a uuid sub-key — a workaround for
+    postgres's clunky list support that no longer applies now that
+    audit lives in the LangGraph store.)"""
+    results: list[StoredManualResult]
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +311,7 @@ def _safe_dict(x: StoredProverResult |
                StoredRunMeta |
                StoredVFS |
                StoredSummary |
-               StoredManualResult) -> dict:
+               StoredManualResults) -> dict:
     return {**x}
 
 
@@ -576,33 +585,44 @@ class AuditStore:
                 analysis=payload["analysis"],  # type: ignore[typeddict-item]
             )
 
-    async def add_manual_result(
-        self, thread_id: str, tool_id: str, ref: ManualRef
+    async def add_manual_results(
+        self, thread_id: str, tool_id: str, refs: list[ManualRef]
     ) -> None:
-        payload: StoredManualResult = {
-            "similarity": ref.similarity,
-            "content": ref.content,
-            "header": " / ".join(ref.headers),
+        """Store *all* hits from a single ``cvl_manual_search`` call as
+        one record under ``(audit, tid, "manual_results") / tool_id``."""
+        payload: StoredManualResults = {
+            "results": [
+                {
+                    "similarity": ref.similarity,
+                    "content": ref.content,
+                    "header": " / ".join(ref.headers),
+                }
+                for ref in refs
+            ],
         }
         await self._store.aput(
-            self._ns(thread_id, "manual_results", tool_id),
-            uuid.uuid4().hex,
+            self._ns(thread_id, "manual_results"),
+            tool_id,
             _safe_dict(payload),
         )
 
     async def get_manual_results(
         self, thread_id: str, tool_id: str
-    ) -> AsyncIterator[ManualResult]:
-        items = await self._store.asearch(
-            self._ns(thread_id, "manual_results", tool_id), limit=10_000
+    ) -> list[ManualResult]:
+        item = await self._store.aget(
+            self._ns(thread_id, "manual_results"), tool_id
         )
-        for item in items:
-            payload = cast(StoredManualResult, item.value)
-            yield ManualResult(
-                content=payload["content"],
-                header=payload["header"],
-                similarity=payload["similarity"],
+        if item is None:
+            return []
+        payload = cast(StoredManualResults, item.value)
+        return [
+            ManualResult(
+                content=r["content"],
+                header=r["header"],
+                similarity=r["similarity"],
             )
+            for r in payload["results"]
+        ]
 
     # -- summarization -----------------------------------------------------
 
@@ -655,9 +675,11 @@ class AuditStoreSink:
             analysis=analysis,
         )
 
-    async def on_manual_search(self, tool_id: str, ref: ManualRef) -> None:
-        await self._audit.add_manual_result(
-            thread_id=self._thread_id, tool_id=tool_id, ref=ref
+    async def on_manual_search(
+        self, tool_id: str, refs: list[ManualRef]
+    ) -> None:
+        await self._audit.add_manual_results(
+            thread_id=self._thread_id, tool_id=tool_id, refs=refs,
         )
 
     async def on_summarization(self, checkpoint_id: str, summary: str) -> None:
@@ -666,22 +688,3 @@ class AuditStoreSink:
             checkpoint_id=checkpoint_id,
             summary=summary,
         )
-
-
-# Compatibility re-exports (make the protocol available here so callers
-# only need one import).
-__all__ = [
-    "AuditSink",
-    "AuditStore",
-    "AuditStoreSink",
-    "ResumeArtifact",
-    "ResumeSpecEntry",
-    "VFSRetriever",
-    "StoredRunInfo",
-    "StoredRunMeta",
-    "StoredResumeArtifact",
-    "StoredVFS",
-    "StoredSummary",
-    "StoredProverResult",
-    "StoredManualResult",
-]

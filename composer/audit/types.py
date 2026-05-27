@@ -14,7 +14,7 @@ InputFileLikeMaybeText = Uploadable
 
 
 class RuleResult(TypedDict):
-    analysis: NotRequired[str]
+    analysis: str | None
     status: str
     rule: str
 

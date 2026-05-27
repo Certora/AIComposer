@@ -66,15 +66,14 @@ async def _main() -> int:
 
     args = cast(PipelineArgs, parser.parse_args())
 
-    # Read input document (handles both text and PDF)
-    input_path = pathlib.Path(args.input_file)
-
+    # Set up services
     model = get_model()
 
     async with (
         standard_connections(args=args, embedder=DefaultEmbedder(model)) as conn,
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag
     ):
+        input_path = pathlib.Path(args.input_file)
         content = await conn.uploader.get_document(input_path)
         if content is None:
             print(f"Error: cannot read {input_path}")

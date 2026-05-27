@@ -39,7 +39,7 @@ class CodeGenEventHandler(EventHandler):
                 case "manual_search":
                     await self._audit.on_manual_search(
                         tool_id=d["tool_id"],
-                        ref=d["ref"]
+                        refs=d["refs"],
                     )
         elif is_user_update(d):
             await self._io.progress_update(path, d)
