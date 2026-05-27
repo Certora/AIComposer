@@ -1,6 +1,7 @@
 import contextlib
 import hashlib
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Iterator
@@ -8,6 +9,14 @@ from typing import Iterator
 
 def string_hash(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
+
+
+def slugify_filename(name: str) -> str:
+    # Collapse any run of filesystem-unsafe characters into a single underscore so the
+    # result is safe to use as a filename component; falls back to "unnamed" if empty.
+    # Example: "transfer(address,uint256)" -> "transfer_address_uint256"
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
+    return slug or "unnamed"
 
 
 @contextlib.contextmanager

@@ -37,7 +37,7 @@ from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import CloudConfig
 from composer.spec.source.prover import get_prover_tool
 from composer.spec.source.struct_invariant import get_invariant_formulation
-from composer.spec.source.author import batch_cvl_generation
+from composer.spec.source.author import batch_cvl_generation, GaveUp
 from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
 
 
@@ -183,7 +183,7 @@ async def run_autoprove_pipeline(
                 for inv in invariants.inv
             ]
 
-            inv_cvl = await run_task(
+            inv_cvl_result = await run_task(
                 handler_factory,
                 TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
                 lambda: batch_cvl_generation(
@@ -198,6 +198,11 @@ async def run_autoprove_pipeline(
                     source=source_input
                 ),
             )
+            if isinstance(inv_cvl_result, GaveUp):
+                raise RuntimeError(
+                    f"Structural invariant CVL generation gave up: {inv_cvl_result.reason}"
+                )
+            inv_cvl = inv_cvl_result
             await inv_cvl_ctx.cache_put(inv_cvl)
 
         inv_spec_name = "invariants.spec"
