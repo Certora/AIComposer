@@ -182,7 +182,10 @@ async def _get_async_composer_pool(
     pool = PGAsyncPool(
         conn_string,
         connection_class=AsyncConnection[Row],
-        kwargs=kwargs
+        kwargs=kwargs,
+        min_size=1,
+        max_size=5,
+        open=False,
     )
     await pool.open()
     return pool
@@ -252,7 +255,10 @@ async def _async_pool_context_inner(
     pool = PGAsyncPool(
         conn_string,
         connection_class=AsyncConnection[Row],
-        kwargs=kwargs
+        kwargs=kwargs,
+        min_size=1,
+        max_size=5,
+        open=False,
     )
     async with pool:
         yield pool
