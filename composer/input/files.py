@@ -72,6 +72,8 @@ def _bytes_digest(b: bytes) -> str:
 # the byte-scan heuristic for common cases.
 _KNOWN_BINARY_SUFFIXES = {".pdf"}
 
+_KNOWN_TEXT_SUFFIXES = {".md", ".txt", ".sol", ".spec", ".conf"}
+
 # Bytes scanned by the binary heuristic. Standard git/grep-I trick: a
 # NUL byte in the first 8 KiB means binary.
 _BINARY_SNIFF_BYTES = 8 * 1024
@@ -99,6 +101,8 @@ async def _is_binary_file(path: str) -> bool:
     suffix = pathlib.Path(path).suffix.lower()
     if suffix in _KNOWN_BINARY_SUFFIXES:
         return True
+    elif suffix in _KNOWN_TEXT_SUFFIXES:
+        return False
 
     def _scan() -> bytes:
         with open(path, "rb") as f:
