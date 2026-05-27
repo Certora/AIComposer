@@ -119,7 +119,7 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 connection_class=AsyncConnection[TupleRow],
                 open=False,
                 min_size=1,
-                max_size=5,
+                max_size=1,
             )
             self._owns_pool = True
         else:
