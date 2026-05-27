@@ -24,9 +24,8 @@ from composer.spec.context import WorkflowContext, CVLGeneration, WorkflowServic
 from composer.spec.source.snapshot import load_snapshot, CVLGenSnapshot
 from composer.spec.source.prover import get_prover_tool, CloudConfig
 from composer.spec.source.source_env import build_source_env, SourceEnvironment
-from composer.spec.source.author import batch_cvl_generation
+from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
-from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.util import string_hash
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -41,7 +40,7 @@ async def resume_from_snapshot(
     services: WorkflowServices,
     store: BaseStore,
     cloud: CloudConfig | None = None,
-) -> GeneratedCVL:
+) -> BatchGeneratedCVLResult:
     """Reconstruct inputs from a snapshot and re-enter batch_cvl_generation."""
     source = snapshot.source.restore()
     component = snapshot.component.restore() if snapshot.component else None
@@ -120,12 +119,15 @@ async def main() -> int:
             cloud=CloudConfig() if args.cloud else None,
         )
 
-        print(f"--- Generated CVL ---\n{result.cvl}")
-        print(f"\n--- Commentary ---\n{result.commentary}")
-        if result.skipped:
-            print(f"\n--- Skipped ---")
-            for s in result.skipped:
-                print(f"  #{s.property_index}: {s.reason}")
+        if isinstance(result, GaveUp):
+            print(f"--- Gave up ---\n{result.reason}")
+        else:
+            print(f"--- Generated CVL ---\n{result.cvl}")
+            print(f"\n--- Commentary ---\n{result.commentary}")
+            if result.skipped:
+                print(f"\n--- Skipped ---")
+                for s in result.skipped:
+                    print(f"  #{s.property_index}: {s.reason}")
 
     return 0
 
