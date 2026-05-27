@@ -184,7 +184,10 @@ async def _get_async_composer_pool(
     pool = PGAsyncPool(
         conn_string,
         connection_class=AsyncConnection[Row],
-        kwargs=kwargs
+        kwargs=kwargs,
+        min_size=1,
+        max_size=1,
+        open=False,
     )
     await pool.open()
     return pool
@@ -254,7 +257,10 @@ async def _async_pool_context_inner(
     pool = PGAsyncPool(
         conn_string,
         connection_class=AsyncConnection[Row],
-        kwargs=kwargs
+        kwargs=kwargs,
+        min_size=1,
+        max_size=1,
+        open=False,
     )
     async with pool:
         yield pool
@@ -430,6 +436,7 @@ def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
             + (["interleaved-thinking-2025-05-14"] if effective_interleaved else [])
         ),
         thinking=thinking,
+        model_kwargs={"cache_control": {"type": "ephemeral"}},
     )
 
 
