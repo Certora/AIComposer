@@ -55,7 +55,6 @@ def get_vfs_tools(
 def get_cryptostate_builder(
     llm: BaseChatModel,
     fs_layer: str | None,
-    summarization_threshold : int | None,
 ) -> tuple[Builder[AIComposerState, AIComposerContext, AIComposerInput], VFSAccessor[VFSState]]:
     (vfs_tooling, mat) = get_vfs_tools(fs_layer=fs_layer, immutable=False)
     # import here to avoid loading these for non-composer factory uses
@@ -81,11 +80,6 @@ def get_cryptostate_builder(
 
     builder : Builder[None, None, None] = Builder()
 
-
-    conf : SummaryGeneration | None = SummaryGeneration(
-        max_messages=summarization_threshold
-    ) if summarization_threshold else None
-
     res = builder.with_context(
         AIComposerContext
     ).with_loader(
@@ -100,9 +94,6 @@ def get_cryptostate_builder(
         llm
     ).with_output_key(
         "generated_code"
-    )
+    ).with_summary_config(SummaryGeneration())
 
-    if conf is not None:
-        res = res.with_summary_config(conf)
-    
     return (res, mat)

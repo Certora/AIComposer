@@ -324,7 +324,7 @@ async def generate_harnesses(
         "You are a methodical Solidity dveloper who is good at following instructions."
     ).with_tools(
         v_tools + [result_tool]
-    ).with_default_summarizer(max_messages=30).compile_async()
+    ).with_default_summarizer().compile_async()
 
     res_state = await run_to_completion(
         graph=g,

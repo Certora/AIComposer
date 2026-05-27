@@ -71,9 +71,7 @@ def bind_standard[_S: MessagesState, _C: StateLike | None, _I: FlowInput | None,
         assert doc is not None
         result_tool = result_tool_generator("result", (result_type, doc), tool_doc, valid)
 
-    return builder.with_state(state_type).with_tools([result_tool]).with_output_key("result").with_default_summarizer(
-        max_messages=50
-    )
+    return builder.with_state(state_type).with_tools([result_tool]).with_output_key("result").with_default_summarizer()
 
 async def run_to_completion[I: StateLike, S: StateLike, C: StateLike | None](
     graph: CompiledStateGraph[S, C, I, Any],

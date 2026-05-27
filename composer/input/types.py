@@ -97,7 +97,6 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     debug_prompt_override: Optional[str]
 
     audit_db: str
-    summarization_threshold: Optional[int]
 
     requirements_oracle: list[str]
     set_reqs: Optional[str]

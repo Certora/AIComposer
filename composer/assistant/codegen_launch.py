@@ -35,7 +35,6 @@ class CodegenWorkflowArgs:
     prover_keep_folders: bool = False
     local_prover: bool = False
     debug_prompt_override: Optional[str] = None
-    summarization_threshold: Optional[int] = 50
     requirements_oracle: list[str] = field(default_factory=list)
     set_reqs: Optional[str] = None
     skip_reqs: bool = False
