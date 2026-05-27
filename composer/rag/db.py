@@ -118,6 +118,8 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 kwargs={"autocommit": True},
                 connection_class=AsyncConnection[TupleRow],
                 open=False,
+                min_size=1,
+                max_size=5,
             )
             self._owns_pool = True
         else:
