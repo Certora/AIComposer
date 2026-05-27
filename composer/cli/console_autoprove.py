@@ -4,6 +4,7 @@ import asyncio
 
 import composer.bind as _
 
+from composer.diagnostics.timing import RunSummary
 from composer.ui.autoprove_console import AutoProveConsoleHandler
 from composer.spec.source.autoprove_common import _entry_point
 
@@ -13,11 +14,12 @@ from composer.spec.source.autoprove_common import _entry_point
 # ---------------------------------------------------------------------------
 
 async def _main() -> int:
-    async with _entry_point() as run:
+    summary = RunSummary()
+    async with _entry_point(summary) as run:
         result = await run(AutoProveConsoleHandler().make_handler)
         print(f"\n{'=' * 60}")
-        print("Auto-prove complete")
-        print(f"  Components:  {result.n_components}")
+        print(summary.format())
+        print(f"\n  Components:  {result.n_components}")
         print(f"  Properties:  {result.n_properties}")
         if result.failures:
             print(f"  Failures:    {len(result.failures)}")

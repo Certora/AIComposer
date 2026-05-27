@@ -39,11 +39,18 @@ class Start:
     thread_id: str
     description: str
     tool_id: str | None = None
+    started_at_wall: float = 0.0
+    """``time.time()`` at start — for human-readable timestamps."""
+    started_at_mono: float = 0.0
+    """``time.perf_counter()`` at start — pair with End.duration_s for deltas."""
 
 @dataclass
 class End:
     """Graph execution ended (success or failure)."""
     thread_id: str
+    duration_s: float = 0.0
+    error: str | None = None
+    """Exception class name if the graph raised; ``None`` on success."""
 
 @dataclass
 class ProgressEvent:

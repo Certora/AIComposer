@@ -38,6 +38,7 @@ from composer.io.events import (
     AllEvents, InnerEvent, Nested, NextCheckpoint,
     CustomUpdate, StateUpdate, Start, End, GraphEvents, ProgressEvent
 )
+from composer.diagnostics.jsonl_sink import emit as _emit_jsonl
 
 from langgraph._internal._typing import StateLike
 from langgraph.graph.state import CompiledStateGraph
@@ -80,21 +81,23 @@ async def _queue_drainer(
     """
     async for e in q.stream_events():
         if isinstance(e, ProgressEvent):
+            _emit_jsonl(e, path=[])
             await event_handler.handle_progress_event(e.payload)
             continue
         (parents, inner) = _unwrap(e)
+        full_path = parents + [inner.thread_id]
+        _emit_jsonl(inner, path=full_path)
         match inner:
             case Start():
-                await h.log_start(path=parents + [inner.thread_id], description=inner.description, tool_id=inner.tool_id)
+                await h.log_start(path=full_path, description=inner.description, tool_id=inner.tool_id)
             case End():
-                await h.log_end(parents + [inner.thread_id])
+                await h.log_end(full_path)
             case NextCheckpoint():
-                await h.log_checkpoint_id(path=parents + [inner.thread_id], checkpoint_id=inner.checkpoint_id)
+                await h.log_checkpoint_id(path=full_path, checkpoint_id=inner.checkpoint_id)
             case CustomUpdate():
-                full_path = parents + [inner.thread_id]
                 await event_handler.handle_event(inner.payload, full_path, inner.checkpoint_id)
             case StateUpdate():
-                await h.log_state_update(parents + [inner.thread_id], inner.payload)
+                await h.log_state_update(full_path, inner.payload)
 
 @asynccontextmanager
 async def with_handler(

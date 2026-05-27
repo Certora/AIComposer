@@ -11,6 +11,7 @@ just writes events to the sink it is given.  The higher-level
 and connects it to the ``EventQueue`` / drainer infrastructure.
 """
 
+import time
 from typing import Any, Protocol, Callable, Awaitable, cast
 
 from composer.io.events import GraphEvents, NextCheckpoint, CustomUpdate, Start, End, StateUpdate
@@ -64,7 +65,15 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     curr_config["configurable"] = config.copy()
 
     curr_checkpoint : str
-    event_sink(Start(tid, description=description, tool_id=within_tool))
+    mono_start = time.perf_counter()
+    event_sink(Start(
+        tid,
+        description=description,
+        tool_id=within_tool,
+        started_at_wall=time.time(),
+        started_at_mono=mono_start,
+    ))
+    err_name: str | None = None
     try:
         while True:
             curr_input = graph_input
@@ -105,5 +114,12 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
 
             result_state = (await graph.aget_state({"configurable": {"thread_id": tid}})).values
             return cast(S, result_state)
+    except BaseException as exc:
+        err_name = type(exc).__name__
+        raise
     finally:
-        event_sink(End(tid))
+        event_sink(End(
+            tid,
+            duration_s=time.perf_counter() - mono_start,
+            error=err_name,
+        ))
