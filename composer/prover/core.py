@@ -9,7 +9,7 @@ import asyncio
 import sys
 import tempfile
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator, cast
 from abc import ABC, abstractmethod
@@ -33,15 +33,41 @@ from composer.prover.prover_protocol import ProverResult
 _logger = logging.getLogger(__name__)
 
 
-@dataclass
-class CloudConfig:
-    server: str = "prover"
-    prover_version: str = "master"
+DEFAULT_GLOBAL_TIMEOUT: float = 1200.0
 
 
 @dataclass
 class ProverOptions:
-    cloud: CloudConfig | None = None
+    extra_args: list[str] = field(default_factory=list)
+
+    @property
+    def cloud(self) -> bool:
+        return "--server" in self.extra_args
+
+    @property
+    def global_timeout(self) -> float:
+        if "--global_timeout" not in self.extra_args:
+            return DEFAULT_GLOBAL_TIMEOUT
+        idx = self.extra_args.index("--global_timeout")
+        return float(self.extra_args[idx + 1])
+
+
+def make_prover_options(
+    *,
+    cloud: bool,
+    user_extra_args: list[str],
+) -> ProverOptions:
+    """Resolve user-supplied extras with cloud defaults; user flags take precedence."""
+    has_server = "--server" in user_extra_args
+    has_timeout = "--global_timeout" in user_extra_args
+
+    extras = list(user_extra_args)
+    if cloud:
+        if not has_timeout:
+            extras = ["--global_timeout", str(int(DEFAULT_GLOBAL_TIMEOUT))] + extras
+        if not has_server:
+            extras = ["--server", "prover"] + extras
+    return ProverOptions(extra_args=extras)
 
 @dataclass
 class ProverReport:
@@ -138,7 +164,7 @@ async def run_prover(
     folder: Path,
     args: list[str],
     tool_call_id: str,
-    options: ProverOptions,
+    prover_opts: ProverOptions,
     callbacks: ProverCallbacks,
     cex: CexHandler
 ) -> RawReport | SummarizedReport | str:
@@ -150,11 +176,8 @@ async def run_prover(
         str — error message
     """
 
-    # 1. Build effective args
-    effective_args = args.copy()
-    if options.cloud is not None:
-        effective_args.extend(["--server", options.cloud.server])
-        effective_args.extend(["--prover_version", options.cloud.prover_version])
+    # 1. Build effective args. extra_args is already fully resolved by make_prover_options.
+    effective_args = args + prover_opts.extra_args
 
     # 2. Notify callback
     await callbacks.on_prover_run(effective_args)
@@ -203,8 +226,12 @@ async def run_prover(
     assert run_result is not None and run_result["sort"] == "success" and run_result["link"] is not None
 
     # 7. Result retrieval: cloud vs local
-    if options.cloud is not None:
-        results_cm = cloud_results(run_result["link"], poll_callback=callbacks.on_cloud_poll)
+    if prover_opts.cloud:
+        results_cm = cloud_results(
+            run_result["link"],
+            poll_callback=callbacks.on_cloud_poll,
+            poll_timeout=prover_opts.global_timeout + 5 * 60,
+        )
     else:
         if not run_result["is_local_link"]:
             return f"Prover did not produce local results.\nstdout:\n{stdout}"
