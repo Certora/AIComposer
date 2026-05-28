@@ -441,7 +441,7 @@ _OPENAI_REASONING_PREFIXES = ("o1-", "o2-", "o3-", "o4-", "o5-", "gpt-5")
 def _openai_reasoning_effort(thinking_tokens: int) -> Literal["low", "medium", "high"]:
     """Map a thinking-token budget onto OpenAI's three-step effort knob."""
     if thinking_tokens <= 2048:
-        return "low"
+        return "medium"
     if thinking_tokens <= 8192:
         return "medium"
     return "high"
@@ -477,14 +477,40 @@ def _create_anthropic_llm(args: ModelOptionsBase) -> "BaseChatModel":
     )
 
 
-
 def _create_openai_llm(args: ModelOptionsBase) -> "BaseChatModel":
     from langchain_openai import ChatOpenAI
     kwargs: dict[str, Any] = {}
+    """Construct a ``ChatOpenAI`` configured for the Responses API in
+    *stateless* mode — analogous to Anthropic's "send the whole
+    conversation each time, server holds no state" shape.
+
+    Knobs (verified against langchain-openai source):
+
+    - ``use_responses_api=True`` — route through `/v1/responses`
+      instead of `/v1/chat/completions`.
+    - ``store=False`` — server-side response retention disabled; we
+      pass the full message history every turn.
+    - ``include=["reasoning.encrypted_content"]`` — surface OpenAI's
+      encrypted reasoning items in the response so we can pass them
+      back inline on subsequent turns (cross-turn reasoning continuity
+      without the server holding state).
+    - ``reasoning={"effort": ..., "summary": "auto"}`` — Responses-API
+      form of the reasoning knob (Chat Completions uses
+      ``reasoning_effort``; the Responses API uses the nested dict).
+      Only set on reasoning-capable model families (o-series, gpt-5+);
+      non-reasoning models reject it."""
+    kwargs: dict[str, Any] = {
+        "use_responses_api": True,
+        "store": False,
+        "include": ["reasoning.encrypted_content"],
+    }
     if args.thinking_tokens is not None and args.model.lower().startswith(
         _OPENAI_REASONING_PREFIXES
     ):
-        kwargs["reasoning_effort"] = _openai_reasoning_effort(args.thinking_tokens)
+        kwargs["reasoning"] = {
+            "effort": _openai_reasoning_effort(args.thinking_tokens),
+            "summary": "auto",
+        }
     return ChatOpenAI(
         model=args.model,
         max_completion_tokens=args.tokens,

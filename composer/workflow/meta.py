@@ -3,6 +3,8 @@
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import ToolMessage, HumanMessage
 
+from graphcore.utils import ainvoke
+
 from pydantic import BaseModel, Field
 
 from composer.core.state import AIComposerState
@@ -28,6 +30,6 @@ async def create_resume_commentary(state: AIComposerState, llm: BaseChatModel) -
 
     messages.append(HumanMessage(load_jinja_template("final_commentary_prompt.j2")))
 
-    res = await bound.ainvoke(messages)
+    res = await ainvoke(bound, messages)
     assert isinstance(res, ResumeCommentary)
     return res

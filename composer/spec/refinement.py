@@ -18,6 +18,7 @@ from rich.console import RenderableType
 
 from graphcore.graph import tool_state_update
 from graphcore.tools.schemas import WithAsyncImplementation, WithImplementation, WithInjectedId
+from graphcore.utils import ainvoke
 
 from langchain_core.messages import AnyMessage, BaseMessage, AIMessage, HumanMessage, ToolMessage
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -94,7 +95,7 @@ async def refinement_loop[T](
 
     async def llm_echo(state: ConversationState[T]) -> dict[str, list[BaseMessage]]:
         client.progress_update(ThinkingStart())
-        res = await bound_llm.ainvoke(state["messages"])
+        res = await ainvoke(bound_llm, state["messages"])
         assert isinstance(res, AIMessage)
         if len(res.tool_calls):
             if len(res.text) > 0:

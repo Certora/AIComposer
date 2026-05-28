@@ -4,6 +4,8 @@ import pathlib
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, BaseMessage
 
+from graphcore.utils import invoke
+
 def requirements_oracle(
     llm: BaseChatModel,
     paths: list[pathlib.Path]
@@ -56,7 +58,7 @@ Question: {q[1]}
 
 IMPORTANT: phrase your answer as a specification of what a (not yet written) implementation SHOULD do.
 """))
-        resp = llm.invoke(cast(list[AnyMessage], messages))
+        resp = invoke(llm, cast(list[AnyMessage], messages))
         messages.append(resp)
         return resp.text
 
