@@ -273,6 +273,7 @@ async def _run_bug_round(
         d,
         flow_input,
         thread_id=round_ctx.thread_id,
+        recursion_limit=ctx.recursion_limit,
         description=f"{DESCRIPTION} (Round {round + 1})",
     )
     assert "result" in r

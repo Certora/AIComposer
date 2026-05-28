@@ -22,7 +22,6 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import MessagesState
 
 from graphcore.graph import LLM
-from graphcore.utils import acached_invoke
 
 from composer.prover.analysis import analyze_cex_raw
 from composer.prover.cloud import cloud_results
@@ -132,7 +131,7 @@ PROVER REPORT:
     # max_tokens budget on reasoning, leaving nothing for actual text output.
     if isinstance(llm, BaseChatModel):
         llm = llm.model_copy(update={"thinking": None})
-    res = await acached_invoke(llm, fresh_messages)
+    res = await llm.ainvoke(fresh_messages)
     return res.text
 
 async def run_prover(

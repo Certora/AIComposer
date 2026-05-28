@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import sys
+import asyncio
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -26,38 +27,39 @@ from rich.syntax import Syntax
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
 from composer.diagnostics.handlers import normalize_content
-from composer.workflow.services import get_checkpointer, get_store
-from composer.spec.context import SNAPSHOT_NAMESPACE
+from composer.workflow.services import checkpointer_context, store_context
+from composer.spec.context import MNEMONIC_KEYS
+from composer.io.mnemonic_store import _mnem_ns
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
-def _load_thread_from_mnemonic(mnemonic: str) -> str:
+async def _load_thread_from_mnemonic(mnemonic: str) -> str:
     """Look up a snapshot by mnemonic and return its thread_id."""
-    store = get_store()
-    item = store.get(SNAPSHOT_NAMESPACE, mnemonic)
-    if item is None:
-        print(f"No snapshot found for mnemonic: {mnemonic}", file=sys.stderr)
-        sys.exit(1)
-    return item.value["thread_id"]
+    async with store_context() as store:
+        item = await store.aget(_mnem_ns(MNEMONIC_KEYS), mnemonic)
+        if item is None:
+            print(f"No snapshot found for mnemonic: {mnemonic}", file=sys.stderr)
+            sys.exit(1)
+        return item.value["thread_id"]
 
 
-def _load_messages(thread_id: str) -> tuple[list, str | None]:
+async def _load_messages(thread_id: str) -> tuple[list, str | None]:
     """Load messages from the latest checkpoint for a thread.
 
     Returns (messages, checkpoint_id).
     """
-    checkpointer = get_checkpointer()
-    ct = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
-    if ct is None:
-        print(f"No checkpoint found for thread {thread_id}", file=sys.stderr)
-        sys.exit(1)
-
-    checkpoint_id = ct.config["configurable"].get("checkpoint_id")
-    messages = ct.checkpoint["channel_values"].get("messages", [])
-    return messages, checkpoint_id
+    async with checkpointer_context() as checkpointer:
+        ct = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
+        if ct is None:
+            print(f"No checkpoint found for thread {thread_id}", file=sys.stderr)
+            sys.exit(1)
+        assert "configurable" in ct.config
+        checkpoint_id = ct.config["configurable"].get("checkpoint_id")
+        messages = ct.checkpoint["channel_values"].get("messages", [])
+        return messages, checkpoint_id
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +315,7 @@ class SnapshotViewerApp(App):
 # CLI
 # ---------------------------------------------------------------------------
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(
         description="Browse the conversation history of a CVL generation snapshot"
     )
@@ -328,10 +330,10 @@ def main():
     else:
         mnemonic = args.mnemonic
         print(f"Looking up snapshot: {mnemonic}...", file=sys.stderr)
-        thread_id = _load_thread_from_mnemonic(mnemonic)
+        thread_id = await _load_thread_from_mnemonic(mnemonic)
         print(f"Thread ID: {thread_id}", file=sys.stderr)
 
-    messages, checkpoint_id = _load_messages(thread_id)
+    messages, checkpoint_id = await _load_messages(thread_id)
     if not messages:
         print("Thread has no messages.", file=sys.stderr)
         sys.exit(1)
@@ -342,4 +344,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

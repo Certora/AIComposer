@@ -2,8 +2,6 @@ from langchain_core.messages import ToolMessage, HumanMessage, AIMessage, BaseMe
 from langchain_core.runnables import Runnable
 from langchain_core.language_models.base import LanguageModelInput
 
-from graphcore.utils import acached_invoke
-
 from composer.prover.ptypes import RuleResult
 from composer.templates.loader import load_jinja_template
 
@@ -34,7 +32,7 @@ The Certora Prover found a violation for the rule {rule.name}, with the followin
         )
     )
 
-    res = await acached_invoke(llm, new_messages)
+    res = await llm.ainvoke(new_messages)
     if not isinstance(res, AIMessage):
         return None
     return res.text

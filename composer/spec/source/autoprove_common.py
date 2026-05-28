@@ -9,7 +9,7 @@ from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions
+from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -44,6 +44,7 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cloud: bool
     interactive: bool
     threat_model: str
+    recursion_limit: int
     max_bug_rounds: int
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
+    parser.add_argument("--recursion-limit", type=int, default=DEFAULT_RECURSION_LIMIT, help=f"The number of iterations of the graph to allow (default: {DEFAULT_RECURSION_LIMIT})")
     parser.add_argument("project_root", help="Root directory of the Solidity project")
     parser.add_argument("main_contract", help="Main contract as path:ContractName")
     parser.add_argument("system_doc", help="Path to the design document (text or PDF)")
@@ -146,12 +148,14 @@ async def _entry_point() -> AsyncIterator[Executor]:
             root=args.project_root,
             store=conns.indexed_store,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
-            source_question_ns=("source_agent", "cache", root_key)
+            source_question_ns=("source_agent", "cache", root_key),
+            recursion_limit=args.recursion_limit,
         )
         ctx = WorkflowContext.create(
             services=lambda namespace: async_memory_tool(conns.memory(namespace)),
             thread_id=thread_id,
             store=conns.store,
+            recursion_limit=args.recursion_limit,
             cache_namespace=cache_root,
             memory_namespace=args.memory_ns,
         )

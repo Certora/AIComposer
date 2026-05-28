@@ -3,6 +3,8 @@ from composer.rag.db import DEFAULT_CONNECTION as RAGDB_DEFAULT_CONNECTION
 import pathlib
 from dataclasses import dataclass
 
+DEFAULT_RECURSION_LIMIT = 1000
+
 @dataclass
 class BasicArg:
     help: str
@@ -82,8 +84,8 @@ class LanggraphOptions(Protocol):
     checkpoint_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     thread_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     recursion_limit: Annotated[int, Arg(
-        help="The number of iterations of the graph to allow (default: {default}",
-        default=50
+        help="The number of iterations of the graph to allow (default: {default})",
+        default=DEFAULT_RECURSION_LIMIT
     )]
 
 
@@ -94,7 +96,6 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
 
     debug_prompt_override: Optional[str]
 
-    recursion_limit: int
     audit_db: str
 
     requirements_oracle: list[str]

@@ -30,11 +30,11 @@ class CodegenWorkflowArgs:
     """Satisfies WorkflowOptions protocol for programmatic invocation."""
     audit_db: str
     rag_db: str
+    recursion_limit: int
     prover_capture_output: bool = True
     prover_keep_folders: bool = False
     local_prover: bool = False
     debug_prompt_override: Optional[str] = None
-    recursion_limit: int = 100
     requirements_oracle: list[str] = field(default_factory=list)
     set_reqs: Optional[str] = None
     skip_reqs: bool = False
@@ -55,8 +55,8 @@ def _codegen_args(ctx: OrchestratorContext, cg: CommonCodeGen) -> CodegenWorkflo
         tokens=ctx.config.tokens,
         thinking_tokens=ctx.config.thinking_tokens,
         memory_tool=ctx.config.memory_tool,
-        recursion_limit=200,
-        debug_prompt_override=cg.prompt_addition
+        recursion_limit=ctx.config.recursion_limit,
+        debug_prompt_override=cg.prompt_addition,
     )
 
 

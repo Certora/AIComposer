@@ -32,7 +32,8 @@ def build_source_tools(
     s: BaseSourceTools,
     llm: BasicAgentTools,
     store: BaseStore,
-    cache_ns: tuple[str, ...]
+    cache_ns: tuple[str, ...],
+    recursion_limit: int,
 ) -> SourceTools:
     @dataclass(frozen=True)
     class _ExplorerEnv(_BaseTools, _BaseSourceTools):
@@ -40,13 +41,16 @@ def build_source_tools(
 
     ind = AgentIndex(store, cache_ns)
 
-    explorer_tool = indexed_code_explorer_tool(_ExplorerEnv(
-        builder=llm.builder,
-        has_source=llm.has_source,
-        base_source_tools=s.base_source_tools,
-        index=ind,
-        llm=llm.llm
-    ))
+    explorer_tool = indexed_code_explorer_tool(
+        _ExplorerEnv(
+            builder=llm.builder,
+            has_source=llm.has_source,
+            base_source_tools=s.base_source_tools,
+            index=ind,
+            llm=llm.llm,
+        ),
+        recursion_limit=recursion_limit,
+    )
 
     return _SourceTools(
         source_tools=s.base_source_tools + (explorer_tool,RetrieveDocumentTool.bind(ind).as_tool("code_document_ref"))
@@ -72,7 +76,13 @@ def build_source_env(
         forbidden_read=params["forbidden_read"]
     )
 
-    full_source = build_source_tools(basic_source, rag_env, params["store"], params["source_question_ns"])
+    full_source = build_source_tools(
+        basic_source,
+        rag_env,
+        params["store"],
+        params["source_question_ns"],
+        recursion_limit=params["recursion_limit"],
+    )
 
     @dataclass(frozen=True)
     class ToRet(_SourceTools, _BaseTools):
