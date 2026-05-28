@@ -125,7 +125,7 @@ class ModelOptions(Protocol):
         )]
     tokens: Annotated[int, Arg(
         help="Token budget for code generation (default: {default})",
-        default=32_000
+        default=128_000
     )]
     thinking_tokens: Annotated[int, Arg(
         help="Token budget for thinking (default: {default})",
