@@ -115,6 +115,7 @@ async def run_merge_agent(
     stub: str,
     contract_identifier: str,
     solc_version: str,
+    recursion_limit: int,
 ) -> MergeResult:
     """Spawn a merge agent to merge working_copy into master_content.
 
@@ -161,7 +162,7 @@ async def run_merge_agent(
             workflow,
             FlowInput(input=input_parts),
             thread_id=uniq_thread_id("spec_merge"),
-            recursion_limit=30,
+            recursion_limit=recursion_limit,
             description="Spec merge",
         )
         if "result" not in res:
@@ -225,7 +226,8 @@ def make_publish_tools(
     interface: InterfaceResult,
     contract_id: str,
     solc_version: str,
-    env: PublishEnv
+    env: PublishEnv,
+    recursion_limit: int,
 ) -> tuple[BaseTool, BaseTool]:
     """Construct PublishSpec + GiveUp tools for a property agent.
 
@@ -270,7 +272,8 @@ def make_publish_tools(
                     interface=interface,
                     contract_identifier=contract_id,
                     solc_version=solc_version,
-                    env=env
+                    env=env,
+                    recursion_limit=recursion_limit,
                 )
 
                 if not merge_result.success:

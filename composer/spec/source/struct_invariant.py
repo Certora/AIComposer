@@ -179,6 +179,7 @@ async def get_invariant_formulation(
                         did_read=False,
                     ),
                     thread_id=uniq_thread_id("invariant-judge"),
+                    recursion_limit=judge_ctx.recursion_limit,
                     description=f"Invariant feedback: {self.inv.name}",
                     within_tool=self.tool_call_id,
                 )
@@ -220,6 +221,7 @@ async def get_invariant_formulation(
         graph=graph,
         input=InvInput(input=[], invariant_data={}),
         thread_id=inv_ctx.thread_id,
+        recursion_limit=inv_ctx.recursion_limit,
         description="Structural invariant formulation",
     )
 

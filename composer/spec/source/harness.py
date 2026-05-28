@@ -26,6 +26,7 @@ from pydantic import Field, BaseModel
 
 from langgraph.graph import MessagesState
 
+from composer.prover.core import ProverOptions
 from graphcore.graph import FlowInput
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.tools.results import result_tool_generator
@@ -178,7 +179,7 @@ async def classifier_agent(
         graph=d,
         context=None,
         description="Harness Analysis",
-        recursion_limit=200,
+        recursion_limit=child.recursion_limit,
         input=FlowInput(input=[]),
         thread_id=child.thread_id
     )
@@ -331,6 +332,7 @@ async def generate_harnesses(
         input=GenerationInput(input=[], vfs={}),
         context=None,
         description="Harness Implementation Generation",
+        recursion_limit=child.recursion_limit,
         thread_id=child.thread_id
     )
 
@@ -504,7 +506,8 @@ async def run_setup(
     context: WorkflowContext[None],
     source: SourceCode,
     env: SourceEnvironment,
-    application_desc: SourceApplication
+    application_desc: SourceApplication,
+    prover_opts: ProverOptions,
 ) -> ContractSetup | None:
     config_ctxt = context.child(config_key)
     if (cached := await config_ctxt.cache_get(ContractSetup)) is not None:
@@ -521,6 +524,7 @@ async def run_setup(
         Path(source.project_root),
         source.relative_path,
         source.contract_name,
+        prover_opts,
         *extra_files,
     )
 

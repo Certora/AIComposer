@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import pathlib
+import shlex
 import uuid
 import os
 from contextlib import asynccontextmanager
@@ -10,7 +11,7 @@ from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions
+from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.rag.db import PostgreSQLRAGDatabase
@@ -21,7 +22,7 @@ from composer.spec.context import (
     WorkflowContext, SourceCode, get_document_input,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
-from composer.spec.source.prover import CloudConfig
+from composer.prover.core import make_prover_options
 from composer.spec.source.source_env import build_source_env
 from composer.spec.agent_index import agent_index_config_from_env
 from composer.core.user import get_uid, user_data_ns
@@ -55,8 +56,10 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cache_ns: str | None
     memory_ns: str | None
     cloud: bool
+    prover_extra_args: str | None
     interactive: bool
     threat_model: str
+    recursion_limit: int
     max_bug_rounds: int
 
 # ---------------------------------------------------------------------------
@@ -88,6 +91,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
+    parser.add_argument("--recursion-limit", type=int, default=DEFAULT_RECURSION_LIMIT, help=f"The number of iterations of the graph to allow (default: {DEFAULT_RECURSION_LIMIT})")
     parser.add_argument("project_root", help="Root directory of the Solidity project")
     parser.add_argument("main_contract", help="Main contract as path:ContractName")
     parser.add_argument("system_doc", help="Path to the design document (text or PDF)")
@@ -95,6 +99,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
     parser.add_argument("--cloud", action="store_true", help="Run prover jobs in the cloud")
+    parser.add_argument("--prover-extra-args", default=None, help='Extra arguments forwarded to certoraRun as a quoted string (e.g. "--rule_sanity advanced --smt_timeout 600")')
     parser.add_argument("--interactive", action="store_true", help="Interactively refine the security properties after extraction")
     parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'thread' model (text or pdf) with which to seed the property extraction process")
     parser.add_argument("--max-bug-rounds", type=int, default=3, help="Maximum number of bug-extraction rounds run per component during property analysis (default: 3)")
@@ -162,8 +167,8 @@ async def _entry_point() -> AsyncIterator[Executor]:
             kb_ns=DEFAULT_KB_NS,
             root=args.project_root,
             store=conns.indexed_store,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
-            source_question_ns=source_data_ns,
+            source_question_ns=("source_agent", "cache", root_key),
+            recursion_limit=args.recursion_limit,
             cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
         )
 
@@ -174,8 +179,14 @@ async def _entry_point() -> AsyncIterator[Executor]:
             services=lambda namespace: async_memory_tool(conns.memory(namespace)),
             thread_id=thread_id,
             store=conns.store,
+            recursion_limit=args.recursion_limit,
             cache_namespace=cache_root,
             memory_namespace=memory_ns,
+        )
+
+        prover_opts = make_prover_options(
+            cloud=args.cloud,
+            user_extra_args=shlex.split(args.prover_extra_args) if args.prover_extra_args else [],
         )
 
         async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
@@ -185,7 +196,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
                     source_input=system_doc,
                     env=source_env,
                     handler_factory=handler,
-                    cloud=CloudConfig() if args.cloud else None,
+                    prover_opts=prover_opts,
                     max_concurrent=args.max_concurrent,
                     interactive=args.interactive,
                     threat_model=threat_model,

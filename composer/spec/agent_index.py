@@ -22,6 +22,7 @@ class KeyedAgentResult(AgentResult):
 class IndexedAgentResult(KeyedAgentResult):
     score: float
 
+_UNSAFE_DISABLE_CACHE = False
 
 @dataclass(frozen=True)
 class AgentIndexConfig:
@@ -202,7 +203,7 @@ class AgentIndex:
     ) -> list[IndexedAgentResult] | KeyedAgentResult:
         key = self._question_key(question)
         cached = await self.aget(key)
-        if cached is not None:
+        if cached is not None and not _UNSAFE_DISABLE_CACHE:
             return KeyedAgentResult(ref_string=key,  **cached)
         # Vector search runs in parallel across both pools. Scores share
         # the same metric (cosine similarity), so merging by score is

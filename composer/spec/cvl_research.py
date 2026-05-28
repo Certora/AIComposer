@@ -115,9 +115,8 @@ def _build_research_tool(
     Args:
         builder: Builder with LLM and all external tools (CVL manual, KB, etc.)
             already bound.
-        checkpointer: Checkpointer for the sub-agent graph.
-        runner: How to invoke the compiled graph. Thread ID management is
-            the runner's responsibility.
+        runner: How to invoke the compiled graph. Thread ID management and
+            recursion_limit propagation are the runner's responsibility.
         doc: Docstring for the tool schema.
     """
     graph = _build_research_graph(builder, False)
@@ -145,6 +144,7 @@ def _build_research_tool(
 def cvl_research_tool(
     env: CVLResearchEnv,
     doc: str,
+    recursion_limit: int,
 ) -> BaseTool:
     """Create a CVL research BaseTool using a WorkflowContext."""
     enriched = env.builder.with_tools(env.base_rag_tools)
@@ -158,6 +158,7 @@ def cvl_research_tool(
             graph, inp,
             thread_id=uniq_thread_id("cvl-research"),
             description="CVL research",
+            recursion_limit=recursion_limit,
             within_tool=within_tool,
         )
 
@@ -165,7 +166,8 @@ def cvl_research_tool(
 
 def indexed_cvl_research_tool(
     env: IndexedCVLResearcherEnv,
-    doc: str
+    doc: str,
+    recursion_limit: int,
 ) -> BaseTool:
     graph = _build_research_graph(
         env.builder.with_tools(env.base_rag_tools),
@@ -174,11 +176,11 @@ def indexed_cvl_research_tool(
     @tool_display_of(CommonTools.cvl_research)
     class CVLResearcher(CVLResearchSchemaBase, IndexedTool[AgentIndex], WithInjectedId):
         __doc__ = doc
-        
+
         @override
         def get_question(self) -> str:
             return self.question
-        
+
         @override
         async def answer_question(self, context: list[str]) -> str:
             res = await run_to_completion(
@@ -186,6 +188,7 @@ def indexed_cvl_research_tool(
                 context=None,
                 description="CVL Researcher",
                 thread_id=uniq_thread_id("cvl-research"),
+                recursion_limit=recursion_limit,
                 input=_CVLResearchInput(input=[
                     self.question,
                     *context

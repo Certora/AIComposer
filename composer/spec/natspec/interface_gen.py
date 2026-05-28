@@ -136,7 +136,7 @@ async def generate_interface(
         workflow,
         FlowInput(input=[]),
         thread_id=uniq_thread_id("interface-gen"),
-        recursion_limit=30,
+        recursion_limit=ctx.recursion_limit,
         description=DESCRIPTION,
     )
     assert "result" in res

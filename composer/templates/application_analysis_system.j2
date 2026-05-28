@@ -20,4 +20,14 @@ of its behavior. This model will be used to guide the {% if has_source%}verifica
 {% if has_source %}
 - You have access to various source tools to explore the application source code. When needing an answer
   to a high-level query "How does the X contract manage Y?" prefer delegating to the code explorer tool
+
+## Parallel exploration
+
+The `code_explorer` tool spawns an isolated sub-agent with no shared state across
+invocations. Multiple `code_explorer` calls issued in the same response run
+concurrently; issued in separate responses they run sequentially with the LLM's
+own latency between each round. Any time you have several independent questions
+to ask — whether the initial round of exploration or follow-ups prompted by what
+earlier answers revealed — dispatch them all as parallel tool calls in a single
+response rather than one at a time.
 {% endif %}

@@ -33,6 +33,7 @@ def build_source_tools(
     llm: BasicAgentTools,
     store: BaseStore,
     cache_ns: tuple[str, ...],
+    recursion_limit: int,
 ) -> SourceTools:
     @dataclass(frozen=True)
     class _ExplorerEnv(_BaseTools, _BaseSourceTools):
@@ -47,13 +48,16 @@ def build_source_tools(
         config=AgentIndexConfig(base_layer=cache_ns),
     )
 
-    explorer_tool = indexed_code_explorer_tool(_ExplorerEnv(
-        builder=llm.builder,
-        has_source=llm.has_source,
-        base_source_tools=s.base_source_tools,
-        index=ind,
-        llm=llm.llm
-    ))
+    explorer_tool = indexed_code_explorer_tool(
+        _ExplorerEnv(
+            builder=llm.builder,
+            has_source=llm.has_source,
+            base_source_tools=s.base_source_tools,
+            index=ind,
+            llm=llm.llm,
+        ),
+        recursion_limit=recursion_limit,
+    )
 
     return _SourceTools(
         source_tools=s.base_source_tools + (explorer_tool,RetrieveDocumentTool.bind(ind).as_tool("code_document_ref"))
@@ -83,7 +87,8 @@ def build_source_env(
         basic_source,
         rag_env,
         params["store"],
-        params["source_question_ns"]
+        params["source_question_ns"],
+        recursion_limit=params["recursion_limit"],
     )
 
     @dataclass(frozen=True)

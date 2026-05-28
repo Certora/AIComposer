@@ -33,6 +33,7 @@ class OrchestratorModelConfig:
     thinking_tokens: int
     memory_tool: bool
     rag_db: str
+    recursion_limit: int
     interleaved_thinking: bool = False
 
 

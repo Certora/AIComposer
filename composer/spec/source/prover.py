@@ -25,7 +25,7 @@ from composer.prover.ptypes import RuleResult
 from graphcore.graph import LLM
 
 from composer.prover.core import (
-    CloudConfig, ProverOptions, ProverCallbacks, run_prover, SummarizedReport, DefaultCexHandler
+    ProverOptions, ProverCallbacks, run_prover, SummarizedReport, DefaultCexHandler
 )
 from composer.ui.tool_display import tool_display
 from composer.diagnostics.stream import (
@@ -151,28 +151,26 @@ def tmp_spec(
     ) as tmp:
         yield tmp
 
-def _prover_sem(
-    cloud: CloudConfig | None = None
-) -> AsyncContextManager[None]:
-    if cloud is None:
+def _prover_sem(cloud: bool) -> AsyncContextManager[None]:
+    if not cloud:
         return asyncio.Semaphore(1)
-    
+
     class ToRet():
         async def __aenter__(self):
             return
-        
+
         async def __aexit__(self, exc_type, exc, tb):
             return
-        
+
     return ToRet()
 
 def get_prover_tool(
     llm: LLM,
     main_contract: str,
     project_root: str,
-    cloud: CloudConfig | None = None,
+    prover_opts: ProverOptions,
 ) -> BaseTool:
-    sem = _prover_sem(cloud)
+    sem = _prover_sem(prover_opts.cloud)
     stamper = make_validation_stamper(VALIDATION_KEY)
 
     @tool_display("Running prover", None)
@@ -208,7 +206,7 @@ def get_prover_tool(
                         Path(project_root),
                         [f"certora/{config_path}"],
                         tool_call_id,
-                        ProverOptions(cloud=cloud),
+                        prover_opts,
                         _SpecCallbacks(get_stream_writer(), tool_call_id),
                         DefaultCexHandler(llm, state, summarization_threshold=10)
                     )

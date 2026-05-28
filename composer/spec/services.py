@@ -44,22 +44,17 @@ def build_rag_tools(
     s: BaseRAGTools,
     llm: BasicAgentTools,
     store: BaseStore,
-    cache_ns: tuple[str, ...],
-    index_config: AgentIndexConfig | None = None,
+    recursion_limit: int,
+    index_config: AgentIndexConfig,
 ) -> RAGTools:
-
-    # ``cache_ns`` is the data-kind namespace ("cvl_research/cached") and
-    # also the base_layer this index reads from. When the caller passes
-    # an env-derived config (the typical path), its base_layer is already
-    # this same ``cache_ns``; otherwise build a single-pool default.
-    cfg = index_config or AgentIndexConfig(base_layer=cache_ns)
+    cfg = index_config
     ind = AgentIndex(store=store, config=cfg)
 
     @dataclass(frozen=True)
     class _CVLResearchEnv(_BaseTools):
         base_rag_tools: tuple[BaseTool, ...]
         agent_index: AgentIndex
-    
+
     @dataclass(frozen=True)
     class _RAGTools:
         rag_tools: tuple[BaseTool, ...]
@@ -73,7 +68,8 @@ def build_rag_tools(
             agent_index=ind,
             llm=llm.llm
         ),
-        CVL_RESEARCH_BASE_DOC
+        CVL_RESEARCH_BASE_DOC,
+        recursion_limit=recursion_limit,
     )
     return _RAGTools(s.base_rag_tools + (cvl_researcher,RetrieveDocumentTool.bind(ind).as_tool("cvl_document_ref")))
 
@@ -96,8 +92,8 @@ class RAGInputs(LLMInputs):
     db: PostgreSQLRAGDatabase
     store: BaseStore
     kb_ns: tuple[str, ...]
-    cvl_cache_ns: tuple[str, ...]
-    cvl_index_config: NotRequired[AgentIndexConfig]
+    cvl_index_config: AgentIndexConfig
+    recursion_limit: int
 
 class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
     pass
@@ -120,8 +116,8 @@ def build_rag_tool_env(
         llm=llm,
         s=rag_tools,
         store=params["store"],
-        cache_ns=params["cvl_cache_ns"],
         index_config=params.get("cvl_index_config"),
+        recursion_limit=params["recursion_limit"],
     )
 
     @dataclass(frozen=True)

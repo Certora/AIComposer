@@ -122,7 +122,7 @@ async def generate_stub(
         workflow,
         FlowInput(input=input_parts),
         thread_id=uniq_thread_id("stub-gen"),
-        recursion_limit=20,
+        recursion_limit=ctx.recursion_limit,
         description=f"{DESCRIPTION}: {contract_name}",
     )
     assert "result" in res
