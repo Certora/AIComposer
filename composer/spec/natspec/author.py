@@ -32,7 +32,7 @@ NoSourceGen = TypedTemplate[SourceGenerationParams]("nosource_property_generatio
 
 class _CVLConfig(SummaryConfig[CVLGenerationState]):
     def __init__(self, reader: Callable[[], str], contract_name: str):
-        super().__init__(max_messages=50, enabled=True)
+        super().__init__(enabled=True)
         self.reader = reader
         self.contract_name = contract_name
 

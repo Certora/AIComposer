@@ -1,8 +1,6 @@
 from typing import Callable, cast
 import pathlib
 
-from graphcore.utils import cached_invoke
-
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, BaseMessage
 
@@ -58,7 +56,7 @@ Question: {q[1]}
 
 IMPORTANT: phrase your answer as a specification of what a (not yet written) implementation SHOULD do.
 """))
-        resp = cached_invoke(llm, cast(list[AnyMessage], messages))
+        resp = llm.invoke(cast(list[AnyMessage], messages))
         messages.append(resp)
         return resp.text
 

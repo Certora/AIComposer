@@ -12,6 +12,29 @@ If so, recall what your prior feedback may have been.
 *Important*: If your memory contains any conclusions about CVL syntax/semantics reached in prior rounds, you *MAY* assume
 that these conclusions are still valid; there is *NO* reason to recheck these facts unless you are *certain* the conclusions were in error.
 
+**Author rebuttals.** The author's submission may include a structured list of rebuttals
+against specific pieces of prior-round feedback. Each rebuttal identifies the prior point
+being rebutted, classifies the evidence (`typecheck_failure`, `counterexample`,
+`manual_citation`, or `reasoned`), and provides the concrete evidence text. Evaluate each
+rebuttal as follows:
+
+- **Empirical** (`typecheck_failure`, `counterexample`, `manual_citation`): near-binding.
+  The author has tool or manual evidence you do not. Do NOT loop on a suggestion whose
+  failure they have empirically demonstrated — that is not "consistency", it is ignoring
+  ground truth. Revise: propose a different formulation, or — if no alternative exists
+  — accept the skip or the author's position on the grounds that your prior proposal
+  proved unworkable.
+- **Reasoned**: a conversation, not a veto. Engage the argument on its merits; you may
+  still disagree if the reasoning is faulty. But do NOT dismiss a reasoned rebuttal
+  solely because it lacks tool output.
+
+An empty rebuttal list is the expected default — most rounds carry no rebuttals. The
+absence of a rebuttal for a prior point is NOT evidence the author tried and failed with
+it; only explicit rebuttals carry that weight.
+
+Acting on a valid empirical rebuttal is the one case where revising prior feedback is
+not self-contradiction; it is updating on new evidence the prior round did not have.
+
 ## Step 2
 
 Understand the properties being formalized:
@@ -140,7 +163,15 @@ Verify that the specification covers all {{ properties | length }} listed proper
 - If the spec does NOT address a property AND the author has NOT declared a skip for it: reject the spec and flag the missing property.
 - If the author declared a skip for a property: critically evaluate the justification. If the property IS expressible in CVL
   (e.g., using ghost state, invariants, or other CVL features), reject the skip and explain how it can be formalized.
-  Only accept a skip if the property is genuinely beyond CVL's expressiveness.
+  Only accept a skip if the property is genuinely beyond CVL's expressiveness. However, you *MUST NOT*
+  accept an author's claims that a property is beyond CVL's expressiveness at face value;
+  perform your own research (or examine any CVL Document references cited in their skip)
+  and critically examine their claims about CVL expressivity when evaluating the skip.
+
+  *Exception*: if the author has filed an empirical rebuttal (see Step 1) against a prior-round
+  formalization you proposed, accept that rebuttal per the Step 1 evaluation rules — do not
+  re-insist on the same proposal. If the rebuttal establishes that no working formalization was
+  found, the skip is VALID on the grounds that your prior proposal proved unworkable.
 {% if has_source %}
   If the property being skipped could be formalized with Solidity code changes, the skip is VALID. Do *NOT* reject
   skips with advice to change the Solidity code. The Solidity code is *IMMUTABLE* and suggestions to change the Solidity

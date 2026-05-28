@@ -11,7 +11,7 @@ from typing import cast, Protocol
 
 from graphcore.tools.memory import async_memory_tool
 
-from composer.input.types import ModelOptions, RAGDBOptions
+from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
@@ -40,6 +40,8 @@ class PipelineArgs(ModelOptions, RAGDBOptions, Protocol):
     max_concurrent: int
     cache_ns: str | None
     memory_ns: str | None
+    recursion_limit: int
+    max_bug_rounds: int
 
 
 # ---------------------------------------------------------------------------
@@ -52,11 +54,13 @@ async def main() -> int:
     )
     add_protocol_args(parser, RAGDBOptions)
     add_protocol_args(parser, ModelOptions)
+    parser.add_argument("--recursion-limit", type=int, default=DEFAULT_RECURSION_LIMIT, help=f"The number of iterations of the graph to allow (default: {DEFAULT_RECURSION_LIMIT})")
     parser.add_argument("input_file", help="Path to the design document (text or PDF)")
     parser.add_argument("--solc-version", default="8.29", help="Solidity compiler version (default: 8.29)")
     parser.add_argument("--max-concurrent", type=int, default=4, help="Max concurrent agents (default: 4)")
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
+    parser.add_argument("--max-bug-rounds", type=int, default=3, help="Maximum number of bug-extraction rounds run per component during property analysis (default: 3)")
 
     args = cast(PipelineArgs, parser.parse_args())
 
@@ -85,7 +89,8 @@ async def main() -> int:
             db=rag,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
             kb_ns=DEFAULT_KB_NS,
-            store=conn.indexed_store
+            store=conn.indexed_store,
+            recursion_limit=args.recursion_limit,
         )
 
         cache_root = (args.cache_ns, string_hash(str(system_doc.content))) if args.cache_ns else None
@@ -95,6 +100,7 @@ async def main() -> int:
             services=lambda ns: async_memory_tool(conn.memory(ns)),
             thread_id=thread_id,
             store=store,
+            recursion_limit=args.recursion_limit,
             cache_namespace=cache_root,
             memory_namespace=args.memory_ns,
         )
@@ -112,6 +118,7 @@ async def main() -> int:
                     store=store,
                     handler_factory=app.make_handler,
                     max_concurrent=args.max_concurrent,
+                    max_bug_rounds=args.max_bug_rounds,
                 )
                 await app.on_pipeline_done(result)
             except Exception as exc:

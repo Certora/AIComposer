@@ -16,9 +16,10 @@ _repo_root = str(Path(__file__).parent.parent.absolute())
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
 
+from composer.input.types import DEFAULT_RECURSION_LIMIT
 from composer.ui.cache_explorer import CacheNode, CacheExplorerApp, DummyServices, CacheTreeNode, OrgNode
 from composer.spec.context import (
-    WorkflowContext, CacheKey, CVLGeneration, get_system_doc, 
+    WorkflowContext, CacheKey, CVLGeneration, get_system_doc,
     Contract, CacheTypes, Marker, ComponentGroup, Properties
 )
 from composer.spec.system_model import Application, ExplicitContract, ContractComponent, ExternalActor
@@ -258,6 +259,7 @@ def main() -> int:
         services=DummyServices(),  # type: ignore[arg-type]
         thread_id="explorer",
         store=store,
+        recursion_limit=DEFAULT_RECURSION_LIMIT,
         memory_namespace=args.memory_ns,
         cache_namespace=root_ns,
     )

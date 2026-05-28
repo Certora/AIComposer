@@ -11,7 +11,7 @@ from langgraph.graph import MessagesState
 from langgraph.graph.state import CompiledStateGraph
 
 from graphcore.graph import Builder, FlowInput
-from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
@@ -60,9 +60,12 @@ class _CVLResearchST(MessagesState, RoughDraftState):
 _CompiledResearchGraph = CompiledStateGraph[_CVLResearchST, None, _CVLResearchInput, Any]
 
 type GraphRunner = Callable[
-    [_CompiledResearchGraph, _CVLResearchInput],
+    [_CompiledResearchGraph, _CVLResearchInput, str | None],
     Awaitable[_CVLResearchST],
 ]
+"""``(graph, input, within_tool) -> state``. ``within_tool`` is the calling
+tool's ``tool_call_id`` so the sub-agent's UI panel anchors under the tool
+widget; pass ``None`` for top-level invocations."""
 
 
 def _did_read_draft(s: _CVLResearchST, _: Any) -> str | None:
@@ -112,15 +115,14 @@ def _build_research_tool(
     Args:
         builder: Builder with LLM and all external tools (CVL manual, KB, etc.)
             already bound.
-        checkpointer: Checkpointer for the sub-agent graph.
-        runner: How to invoke the compiled graph. Thread ID management is
-            the runner's responsibility.
+        runner: How to invoke the compiled graph. Thread ID management and
+            recursion_limit propagation are the runner's responsibility.
         doc: Docstring for the tool schema.
     """
     graph = _build_research_graph(builder, False)
 
     @tool_display_of(CommonTools.cvl_research)
-    class CVLResearchSchema(CVLResearchSchemaBase, WithAsyncImplementation[str]):
+    class CVLResearchSchema(CVLResearchSchemaBase, WithAsyncImplementation[str], WithInjectedId):
         __doc__ = doc
 
         @override
@@ -128,6 +130,7 @@ def _build_research_tool(
             st = await runner(
                 graph,
                 _CVLResearchInput(input=[self.question], did_read=False, memory=None),
+                self.tool_call_id,
             )
             assert "result" in st
             return st["result"]
@@ -141,37 +144,43 @@ def _build_research_tool(
 def cvl_research_tool(
     env: CVLResearchEnv,
     doc: str,
+    recursion_limit: int,
 ) -> BaseTool:
     """Create a CVL research BaseTool using a WorkflowContext."""
     enriched = env.builder.with_tools(env.base_rag_tools)
 
     async def runner(
-        graph: _CompiledResearchGraph, inp: _CVLResearchInput,
+        graph: _CompiledResearchGraph,
+        inp: _CVLResearchInput,
+        within_tool: str | None,
     ) -> _CVLResearchST:
         return await run_to_completion(
             graph, inp,
             thread_id=uniq_thread_id("cvl-research"),
             description="CVL research",
+            recursion_limit=recursion_limit,
+            within_tool=within_tool,
         )
 
     return _build_research_tool(enriched, runner, doc)
 
 def indexed_cvl_research_tool(
     env: IndexedCVLResearcherEnv,
-    doc: str
+    doc: str,
+    recursion_limit: int,
 ) -> BaseTool:
     graph = _build_research_graph(
         env.builder.with_tools(env.base_rag_tools),
         with_index=True
     )
     @tool_display_of(CommonTools.cvl_research)
-    class CVLResearcher(CVLResearchSchemaBase, IndexedTool[AgentIndex]):
+    class CVLResearcher(CVLResearchSchemaBase, IndexedTool[AgentIndex], WithInjectedId):
         __doc__ = doc
-        
+
         @override
         def get_question(self) -> str:
             return self.question
-        
+
         @override
         async def answer_question(self, context: list[str]) -> str:
             res = await run_to_completion(
@@ -179,10 +188,12 @@ def indexed_cvl_research_tool(
                 context=None,
                 description="CVL Researcher",
                 thread_id=uniq_thread_id("cvl-research"),
+                recursion_limit=recursion_limit,
                 input=_CVLResearchInput(input=[
                     self.question,
                     *context
-                ], did_read=False, memory=None)
+                ], did_read=False, memory=None),
+                within_tool=self.tool_call_id,
             )
             assert "result" in res
             return res["result"]

@@ -22,7 +22,7 @@ from psycopg.connection_async import AsyncConnection
 from psycopg.sql import SQL, Identifier
 from psycopg_pool.pool_async import AsyncConnectionPool as PGAsyncPool
 
-from composer.prover.core import SummarizedReport, RawReport
+from composer.prover.core import SummarizedReport, RawReport, ProverOptions
 from composer.spec.source.prover import get_prover_tool, LLM
 
 if TYPE_CHECKING:
@@ -208,7 +208,7 @@ def certora_prover(
     ))
 
     the_tool = get_prover_tool(
-        cloud=None,
+        prover_opts=ProverOptions(),
         llm=fake_llm,
         main_contract="Dummy",
         project_root=str(tmp_path),

@@ -15,7 +15,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 
 from graphcore.graph import Builder, FlowInput, MessagesState
-from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 from graphcore.tools.vfs import fs_tools
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
@@ -77,6 +77,12 @@ class _ExploreCodeCommon(BaseModel):
     The sub-agent has its own conversation thread with file tools (list_files, get_file,
     grep_files) and will return a synthesized answer. Use this instead of reading files
     directly when you need to understand a specific aspect of the codebase.
+
+    Each invocation is independent — sub-agents do not share memory or context with
+    each other. When you have several questions to ask, issue them as parallel tool
+    calls in a single response rather than asking one, waiting for the answer, and
+    then asking the next; the calls run concurrently and the overall wall-clock cost
+    is roughly the slowest single answer instead of the sum.
     """
     question: str = Field(
         description="A specific, focused question about the source code. "
@@ -86,11 +92,12 @@ class _ExploreCodeCommon(BaseModel):
     )
 
 
-def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
+def code_explorer_tool(env: CodeExplorerEnv, recursion_limit: int) -> BaseTool:
     """Create a code exploration sub-agent tool from a pre-configured builder.
 
     Args:
-        builder: Builder with LLM and file tools already bound.
+        env: Code explorer env with builder and tools bound.
+        recursion_limit: LangGraph recursion limit for each sub-agent run.
 
     Returns:
         A BaseTool named ``explore_code``.
@@ -98,7 +105,7 @@ def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
     graph = _code_explorer_graph(env)
 
     @tool_display_of(CommonTools.code_explorer)
-    class ExploreCodeSchema(_ExploreCodeCommon, WithAsyncImplementation[str]):
+    class ExploreCodeSchema(_ExploreCodeCommon, WithAsyncImplementation[str], WithInjectedId):
         __doc__ = _ExploreCodeCommon.__doc__
 
         @override
@@ -110,8 +117,9 @@ def code_explorer_tool(env: CodeExplorerEnv) -> BaseTool:
                 input=FlowInput(
                     input=[self.question]
                 ),
-                recursion_limit=100,
-                thread_id=uniq_thread_id("code_explorer")
+                recursion_limit=recursion_limit,
+                thread_id=uniq_thread_id("code_explorer"),
+                within_tool=self.tool_call_id,
             )
             assert "result" in st
             return st["result"]
@@ -124,9 +132,10 @@ class ExtCodeExplorerEnv(CodeExplorerEnv, Protocol):
         ...
 
 def indexed_code_explorer_tool(
-    env: ExtCodeExplorerEnv
+    env: ExtCodeExplorerEnv,
+    recursion_limit: int,
 ) -> BaseTool:
-    
+
     extended_sys = CODE_EXPLORER_SYS_PROMPT + f"""
 You have access to findings from prior analyses of this codebase.
 These findings were produced by earlier agents investigating the same contracts
@@ -140,13 +149,13 @@ and are established facts — do not re-derive or re-verify them.
     )
 
     @tool_display_of(CommonTools.code_explorer)
-    class CodeExplorerTool(_ExploreCodeCommon, IndexedTool[AgentIndex]):
+    class CodeExplorerTool(_ExploreCodeCommon, IndexedTool[AgentIndex], WithInjectedId):
         __doc__ = _ExploreCodeCommon.__doc__
 
         @override
         def get_question(self) -> str:
             return self.question
-        
+
         @override
         async def answer_question(self, context: list[str]) -> str:
             res = await run_to_completion(
@@ -154,10 +163,12 @@ and are established facts — do not re-derive or re-verify them.
                 context=None,
                 description=f"Code Explorer: {self.question}",
                 thread_id=uniq_thread_id("code_explorer"),
+                recursion_limit=recursion_limit,
                 input=FlowInput(input=[
                     self.question,
                     *context
-                ])
+                ]),
+                within_tool=self.tool_call_id,
             )
             assert "result" in res
             return res["result"]

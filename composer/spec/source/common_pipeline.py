@@ -13,7 +13,7 @@ from composer.ui.autoprove_app import AutoProvePhase
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
-from composer.spec.util import string_hash
+from composer.spec.util import string_hash, slugify_filename
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
@@ -22,7 +22,7 @@ from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.author import batch_cvl_generation
+from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -56,7 +56,8 @@ async def run_generation_pipeline(
     prover_tool: BaseTool,
     prover_config: dict,
     interactive: bool,
-    threat_model: str | dict | None
+    threat_model: str | dict | None,
+    max_bug_rounds: int = 3,
 ) -> AutoProveResult:
     
     contract_instance : ContractInstance
@@ -96,7 +97,7 @@ async def run_generation_pipeline(
         props = await run_task(
             handler_factory,
             TaskInfo(f"bug-{component_idx}", name, AutoProvePhase.BUG_ANALYSIS),
-            lambda conv: run_property_inference(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model),
+            lambda conv: run_property_inference(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model, max_rounds=max_bug_rounds),
             semaphore,
         )
 
@@ -113,13 +114,22 @@ async def run_generation_pipeline(
     if not component_batches:
         raise ValueError("No properties extracted from any component.")
 
+    raw_slugs = [slugify_filename(b.feat.component.name) for b in component_batches]
+    slug_counts: dict[str, int] = {}
+    for s in raw_slugs:
+        slug_counts[s] = slug_counts.get(s, 0) + 1
+    batch_filename_bases = [
+        f"{s}_{b.feat.ind}" if slug_counts[s] > 1 else s
+        for s, b in zip(raw_slugs, component_batches)
+    ]
+
     # ------------------------------------------------------------------
     # Phase 6: Per-component CVL generation
     # ------------------------------------------------------------------
     async def _generate_batch(
         batch_idx: int,
         batch: _ComponentBatch,
-    ) -> GeneratedCVL:
+    ) -> BatchGeneratedCVLResult:
         batch_child = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
@@ -145,20 +155,22 @@ async def run_generation_pipeline(
             ),
             semaphore,
         )
-        await batch_child.cache_put(res)
+        if isinstance(res, GeneratedCVL):
+            await batch_child.cache_put(res)
         return res
-    
+
     async def _generate_and_write_batch(
         i: int, batch: _ComponentBatch
-    ) -> GeneratedCVL:
+    ) -> BatchGeneratedCVLResult:
         res = await _generate_batch(batch_idx=i, batch=batch)
-        if res.commentary.startswith("GAVE_UP:"):
+        if isinstance(res, GaveUp):
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
         certora_dir.mkdir(exist_ok=True, parents=True)
-        (certora_dir / f"autospec_{batch.feat.ind}.spec").write_text(res.cvl)
-        (certora_dir / f"autospec_{batch.feat.ind}.commentary.md").write_text(res.commentary)
-        return res  
+        base = batch_filename_bases[i]
+        (certora_dir / f"autospec_{base}.spec").write_text(res.cvl)
+        (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
+        return res
 
     generation_results = await asyncio.gather(
         *[
@@ -174,8 +186,8 @@ async def run_generation_pipeline(
         n_properties += len(batch.props)
         if isinstance(result, BaseException):
             failures.append(f"{batch.feat.component.name}: {result}")
-        elif isinstance(result, GeneratedCVL) and result.commentary.startswith("GAVE_UP:"):
-            failures.append(f"{batch.feat.component.name}: {result.commentary}")
+        elif isinstance(result, GaveUp):
+            failures.append(f"{batch.feat.component.name}: GAVE_UP: {result.reason}")
 
     return AutoProveResult(
         n_components=len(component_batches),
