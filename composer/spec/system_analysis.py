@@ -23,23 +23,24 @@ class AnalysisEnv(BasicAgentTools, Protocol):
 def _validate_connectivity(
     _: Any, app: BaseApplication
 ) -> str | None:
-    known_components : dict[str, set[str]] = {}
-
-    known_external : set[str] = set()
+    errors: list[str] = []
+    known_components: dict[str, set[str]] = {}
+    known_external: set[str] = set()
 
     for c in app.components:
         if isinstance(c, ExplicitContract):
             if c.name in known_components:
-                return f"Duplicate contract names: {c.name}"
-            known_components[c.name] = set()
+                errors.append(f"Duplicate contract names: {c.name}")
+            else:
+                known_components[c.name] = set()
             for sub_comp in c.components:
                 if sub_comp.name in known_components[c.name]:
-                    return f"Duplicate component names in {c.name}: {sub_comp.name}"
+                    errors.append(f"Duplicate component names in {c.name}: {sub_comp.name}")
                 known_components[c.name].add(sub_comp.name)
         else:
             assert isinstance(c, ExternalActor)
             known_external.add(c.name)
-    
+
     for explicit in app.components:
         if not isinstance(explicit, ExplicitContract):
             continue
@@ -48,13 +49,30 @@ def _validate_connectivity(
             for interaction in sub_comp.interactions:
                 if isinstance(interaction, ExternalDependency):
                     if interaction.external_actor not in known_external:
-                        return f"{thing_interacts_with_str} unknown external actor: {interaction.external_actor}"
+                        errors.append(f"{thing_interacts_with_str} unknown external actor: {interaction.external_actor}")
                 else:
                     if interaction.contract_name not in known_components:
-                        return f"{thing_interacts_with_str} an unknown explicit contact: {interaction.contract_name}"
-                    if interaction.component and interaction.component not in known_components[interaction.contract_name]:
-                        return f"{thing_interacts_with_str} unknown component {interaction.component} of explicit contract {interaction.contract_name}"
-    return None
+                        errors.append(f"{thing_interacts_with_str} an unknown explicit contact: {interaction.contract_name}")
+                    elif interaction.component and interaction.component not in known_components[interaction.contract_name]:
+                        errors.append(f"{thing_interacts_with_str} unknown component {interaction.component} of explicit contract {interaction.contract_name}")
+
+    if not errors:
+        return None
+
+    def _fmt(items: set[str]) -> str:
+        return ", ".join(sorted(items)) if items else "(none)"
+
+    reference_lines = [
+        f"- Declared contracts: {_fmt(set(known_components))}",
+        f"- Declared external actors: {_fmt(known_external)}",
+    ]
+    for contract_name, subs in sorted(known_components.items()):
+        reference_lines.append(f"- Components of {contract_name}: {_fmt(subs)}")
+    reference = "\n\nFor reference, the names you declared in your submission:\n" + "\n".join(reference_lines)
+
+    if len(errors) == 1:
+        return errors[0] + reference
+    return "Multiple validation errors found; fix all of them before resubmitting:\n" + "\n".join(f"- {e}" for e in errors) + reference
 
 async def run_component_analysis[T: BaseApplication](
     ty: type[T],
