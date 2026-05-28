@@ -391,7 +391,7 @@ async def execute_ai_composer_workflow(
 
     resolved = make_prover_options(
         cloud=not workflow_options.local_prover,
-        user_extra_args=shlex.split(workflow_options.extra_args) if workflow_options.extra_args else [],
+        user_extra_args=shlex.split(workflow_options.prover_extra_args) if workflow_options.prover_extra_args else [],
     )
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,

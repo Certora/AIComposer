@@ -93,7 +93,7 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     prover_capture_output: bool
     prover_keep_folders: bool
     local_prover: bool
-    extra_args: Optional[str]
+    prover_extra_args: Optional[str]
 
     debug_prompt_override: Optional[str]
 
