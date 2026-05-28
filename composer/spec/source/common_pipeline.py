@@ -13,7 +13,7 @@ from composer.ui.autoprove_app import AutoProvePhase
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
-from composer.spec.util import string_hash
+from composer.spec.util import string_hash, slugify_filename
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
@@ -114,6 +114,15 @@ async def run_generation_pipeline(
     if not component_batches:
         raise ValueError("No properties extracted from any component.")
 
+    raw_slugs = [slugify_filename(b.feat.component.name) for b in component_batches]
+    slug_counts: dict[str, int] = {}
+    for s in raw_slugs:
+        slug_counts[s] = slug_counts.get(s, 0) + 1
+    batch_filename_bases = [
+        f"{s}_{b.feat.ind}" if slug_counts[s] > 1 else s
+        for s, b in zip(raw_slugs, component_batches)
+    ]
+
     # ------------------------------------------------------------------
     # Phase 6: Per-component CVL generation
     # ------------------------------------------------------------------
@@ -158,8 +167,9 @@ async def run_generation_pipeline(
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
         certora_dir.mkdir(exist_ok=True, parents=True)
-        (certora_dir / f"autospec_{batch.feat.ind}.spec").write_text(res.cvl)
-        (certora_dir / f"autospec_{batch.feat.ind}.commentary.md").write_text(res.commentary)
+        base = batch_filename_bases[i]
+        (certora_dir / f"autospec_{base}.spec").write_text(res.cvl)
+        (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
         return res
 
     generation_results = await asyncio.gather(
