@@ -21,7 +21,7 @@ from composer.io.multi_job import (
 from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, CacheKey, Properties, CVLGeneration,
+    WorkflowContext, SourceCode, CacheKey, Properties,
 )
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
@@ -37,8 +37,11 @@ from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import get_prover_tool
 from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
-from composer.spec.source.author import batch_cvl_generation, GaveUp
-from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
+from composer.spec.source.author import GaveUp
+from composer.spec.source.common_pipeline import (
+    AutoProveResult, autosetup_summaries_resource, run_cached_batch_cvl,
+    run_generation_pipeline,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -130,12 +133,7 @@ async def run_autoprove_pipeline(
 
     # Build initial resources from AutoSetup-generated summaries
     resources: list[CVLResource] = [
-        CVLResource(
-            import_path=str(setup.config.summaries_path),
-            required=True,
-            description="AutoSetup-generated summaries",
-            sort="import",
-        ),
+        autosetup_summaries_resource(str(setup.config.summaries_path)),
     ]
 
     if setup.system_description.erc20_contracts or setup.system_description.external_interfaces:
@@ -169,41 +167,32 @@ async def run_autoprove_pipeline(
 
     if invariants.inv:
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
-        cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
-
-        if cached_inv_cvl is not None:
-            inv_cvl = cached_inv_cvl
-        else:
-            inv_props = [
-                PropertyFormulation(
-                    methods="invariant",
-                    description=inv.description,
-                    sort="invariant",
-                )
-                for inv in invariants.inv
-            ]
-
-            inv_cvl_result = await run_task(
-                handler_factory,
-                TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
-                lambda: batch_cvl_generation(
-                    ctx=inv_cvl_ctx.abstract(CVLGeneration),
-                    component=None,
-                    props=inv_props,
-                    env=env,
-                    init_config=setup.config.prover_config,
-                    prover_tool=prover_tool,
-                    resources=resources,
-                    description="Structural invariant CVL",
-                    source=source_input
-                ),
+        inv_props = [
+            PropertyFormulation(
+                description=inv.description,
+                sort="invariant",
             )
-            if isinstance(inv_cvl_result, GaveUp):
-                raise RuntimeError(
-                    f"Structural invariant CVL generation gave up: {inv_cvl_result.reason}"
-                )
-            inv_cvl = inv_cvl_result
-            await inv_cvl_ctx.cache_put(inv_cvl)
+            for inv in invariants.inv
+        ]
+
+        inv_cvl_result = await run_cached_batch_cvl(
+            cache_ctx=inv_cvl_ctx,
+            handler_factory=handler_factory,
+            task_info=TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
+            init_config=setup.config.prover_config,
+            props=inv_props,
+            component=None,
+            resources=resources,
+            prover_tool=prover_tool,
+            env=env,
+            source=source_input,
+            description="Structural invariant CVL",
+        )
+        if isinstance(inv_cvl_result, GaveUp):
+            raise RuntimeError(
+                f"Structural invariant CVL generation gave up: {inv_cvl_result.reason}"
+            )
+        inv_cvl = inv_cvl_result
 
         inv_spec_name = "invariants.spec"
         (Path(source_input.project_root) / "certora" / inv_spec_name).write_text(inv_cvl.cvl)

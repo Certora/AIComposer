@@ -24,6 +24,63 @@ from composer.spec.system_model import (
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 
+
+def autosetup_summaries_resource(summaries_path: str) -> CVLResource:
+    """Build the standard AutoSetup-summaries CVL import resource."""
+    return CVLResource(
+        import_path=summaries_path,
+        required=True,
+        description="AutoSetup-generated summaries",
+        sort="import",
+    )
+
+
+async def run_cached_batch_cvl(
+    cache_ctx: WorkflowContext[GeneratedCVL],
+    handler_factory: HandlerFactory[AutoProvePhase, None],
+    task_info: TaskInfo[AutoProvePhase],
+    *,
+    init_config: dict,
+    props: list[PropertyFormulation],
+    component: ContractComponentInstance | None,
+    resources: list[CVLResource],
+    prover_tool: BaseTool,
+    env: SourceEnvironment,
+    source: SourceCode,
+    description: str | None = None,
+    semaphore: asyncio.Semaphore | None = None,
+) -> BatchGeneratedCVLResult:
+    """Run ``batch_cvl_generation`` under ``run_task`` with cache get/put.
+
+    Returns the cached ``GeneratedCVL`` directly on a hit. On a miss, runs the
+    generator inside ``run_task`` and stores any successful result back in the
+    cache. ``GaveUp`` results are returned to the caller (not cached) so each
+    caller can decide whether to fail hard or collect a failure.
+    """
+    cached = await cache_ctx.cache_get(GeneratedCVL)
+    if cached is not None:
+        return cached
+    label = description if description is not None else task_info.label
+    result = await run_task(
+        handler_factory,
+        task_info,
+        lambda: batch_cvl_generation(
+            ctx=cache_ctx.abstract(CVLGeneration),
+            init_config=init_config,
+            component=component,
+            env=env,
+            props=props,
+            prover_tool=prover_tool,
+            resources=resources,
+            description=label,
+            source=source,
+        ),
+        semaphore,
+    )
+    if isinstance(result, GeneratedCVL):
+        await cache_ctx.cache_put(result)
+    return result
+
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 
@@ -134,30 +191,20 @@ async def run_generation_pipeline(
             _batch_cache_key(batch.props),
             {"properties": [p.model_dump() for p in batch.props]},
         )
-        if (cached := await batch_child.cache_get(GeneratedCVL)) is not None:
-            return cached
-        batch_ctx = batch_child.abstract(CVLGeneration)
-
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
-        res = await run_task(
-            handler_factory,
-            TaskInfo(f"cvl-{batch_idx}", label, AutoProvePhase.CVL_GEN),
-            lambda: batch_cvl_generation(
-                ctx=batch_ctx,
-                init_config=prover_config,
-                component=batch.feat,
-                env=env,
-                props=batch.props,
-                prover_tool=prover_tool,
-                resources=resources,
-                description=label,
-                source=source_input
-            ),
-            semaphore,
+        return await run_cached_batch_cvl(
+            cache_ctx=batch_child,
+            handler_factory=handler_factory,
+            task_info=TaskInfo(f"cvl-{batch_idx}", label, AutoProvePhase.CVL_GEN),
+            init_config=prover_config,
+            props=batch.props,
+            component=batch.feat,
+            resources=resources,
+            prover_tool=prover_tool,
+            env=env,
+            source=source_input,
+            semaphore=semaphore,
         )
-        if isinstance(res, GeneratedCVL):
-            await batch_child.cache_put(res)
-        return res
 
     async def _generate_and_write_batch(
         i: int, batch: _ComponentBatch
