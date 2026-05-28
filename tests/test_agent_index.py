@@ -87,11 +87,11 @@ class TestConfigFromEnv:
     convention is encoded for the CVL-research path. Verify each branch
     yields the expected fully-specified AgentIndexConfig."""
 
-    def test_default_is_trusted(self, monkeypatch):
+    def test_default_is_untrusted(self, monkeypatch):
         monkeypatch.delenv("AUTOPROVER_AGENT_INDEX_MODE", raising=False)
         monkeypatch.delenv("AUTOPROVER_USER_ID", raising=False)
         cfg = agent_index_config_from_env(DATA_NS)
-        assert cfg == AgentIndexConfig(base_layer=DATA_NS)
+        assert cfg == AgentIndexConfig(base_layer=DATA_NS, read_only=False, write_layer=("user_data", "_anonymous") + DATA_NS)
 
     def test_trusted_explicit(self, monkeypatch):
         monkeypatch.setenv("AUTOPROVER_AGENT_INDEX_MODE", "trusted")
@@ -115,11 +115,10 @@ class TestConfigFromEnv:
         assert cfg.write_layer == ("user_data", ALICE) + DATA_NS
         assert cfg.read_only is False
 
-    def test_tiered_without_uid_raises(self, monkeypatch):
+    def test_tiered_without_uid_is_anonymsou(self, monkeypatch):
         monkeypatch.setenv("AUTOPROVER_AGENT_INDEX_MODE", "tiered")
         monkeypatch.delenv("AUTOPROVER_USER_ID", raising=False)
-        with pytest.raises(ValueError, match="AUTOPROVER_USER_ID"):
-            agent_index_config_from_env(DATA_NS)
+        assert agent_index_config_from_env(DATA_NS) == AgentIndexConfig(base_layer=DATA_NS, write_layer=("user_data", "_anonymous") + DATA_NS, read_only=False)
 
     def test_unknown_mode_raises(self, monkeypatch):
         monkeypatch.setenv("AUTOPROVER_AGENT_INDEX_MODE", "garbage")

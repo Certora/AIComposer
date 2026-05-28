@@ -8,7 +8,7 @@ def get_uid() -> str:
     return uid
 
 
-def user_data_ns(uid: str = get_uid()) -> tuple[str, ...]:
+def user_data_ns(uid: str | None = None) -> tuple[str, ...]:
     """Conventional namespace prefix for tenant-scoped data.
 
     Single source of truth: any per-user content (CVL research write
@@ -17,4 +17,5 @@ def user_data_ns(uid: str = get_uid()) -> tuple[str, ...]:
     (per-org scope, per-engagement scope) only need to touch this
     function.
     """
+    uid = get_uid() if not uid else uid
     return ("user_data", uid)
