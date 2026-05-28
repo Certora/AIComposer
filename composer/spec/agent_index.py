@@ -10,6 +10,8 @@ from langgraph.store.base import BaseStore
 from graphcore.tools.schemas import WithAsyncDependencies
 from pydantic import Field
 
+from composer.core.user import get_uid, user_data_ns
+
 class AgentResult(TypedDict):
     question: str
     answer: str
@@ -19,18 +21,6 @@ class KeyedAgentResult(AgentResult):
 
 class IndexedAgentResult(KeyedAgentResult):
     score: float
-
-
-def user_data_ns(uid: str) -> tuple[str, ...]:
-    """Conventional namespace prefix for tenant-scoped data.
-
-    Single source of truth: any per-user content (CVL research write
-    layer, source-code-agent caches, etc.) is stored under
-    ``("user_data", uid, …)``. Future refactors of the convention
-    (per-org scope, per-engagement scope) only need to touch this
-    function.
-    """
-    return ("user_data", uid)
 
 
 @dataclass(frozen=True)
@@ -71,23 +61,17 @@ def agent_index_config_from_env(data_ns: tuple[str, ...]) -> AgentIndexConfig:
     "cached")``); typically it's the same tuple the caller will pass
     as the index's ``base_layer``.
     """
-    mode = os.environ.get("AUTOPROVER_AGENT_INDEX_MODE", "trusted").lower()
-    uid = os.environ.get("AUTOPROVER_USER_ID")
+    mode = os.environ.get("AUTOPROVER_AGENT_INDEX_MODE", "tiered").lower()
 
     if mode == "trusted":
         return AgentIndexConfig(base_layer=data_ns, read_only=False, write_layer=None)
     if mode == "readonly":
         return AgentIndexConfig(base_layer=data_ns, read_only=True, write_layer=None)
     if mode == "tiered":
-        if not uid:
-            raise ValueError(
-                "AUTOPROVER_AGENT_INDEX_MODE=tiered requires "
-                "AUTOPROVER_USER_ID to be set."
-            )
         return AgentIndexConfig(
             base_layer=data_ns,
             read_only=False,
-            write_layer=user_data_ns(uid) + data_ns,
+            write_layer=user_data_ns() + data_ns,
         )
     raise ValueError(
         f"Unknown AUTOPROVER_AGENT_INDEX_MODE: {mode!r}. "

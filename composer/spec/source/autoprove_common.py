@@ -23,7 +23,8 @@ from composer.spec.context import (
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
 from composer.spec.source.prover import CloudConfig
 from composer.spec.source.source_env import build_source_env
-from composer.spec.agent_index import agent_index_config_from_env, user_data_ns
+from composer.spec.agent_index import agent_index_config_from_env
+from composer.core.user import get_uid, user_data_ns
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
@@ -31,6 +32,16 @@ from composer.ui.tool_display import async_tool_context
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.io.multi_job import HandlerFactory
 
+def user_ns(
+    *parts: str | tuple[str, ...]
+) -> tuple[str,...]:
+    to_ret : list[str] = []
+    for p in parts:
+        if isinstance(p, str):
+            to_ret.append(p)
+        else:
+            to_ret.extend(p)
+    return user_data_ns() + tuple(to_ret)
 
 # ---------------------------------------------------------------------------
 # Args
@@ -121,15 +132,12 @@ async def _entry_point() -> AsyncIterator[Executor]:
 
     cache_root: tuple[str, ...] | None = None
 
-    uid_raw = os.environ.get("AUTOPROVER_USER_ID")
-
     root_key = _root_cache_key(
             str(project_root), sys_path, relative_path, contract_name,
         )
 
     if args.cache_ns is not None:
-        cache_base : tuple[str, ...] = tuple() if not uid_raw else (uid_raw,)
-        cache_root = cache_base + (args.cache_ns, root_key)
+        cache_root = user_ns(args.cache_ns, root_key)
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
 
@@ -145,10 +153,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
         # Source-code agent caches are always per-user — the conventional
         # ``user_data_ns(uid)`` prefix lives directly in the ns we pass
         # so the AgentIndex runs single-pool (no overlay).
-        source_data_ns = ("source_agent", "cache", root_key)
-        source_cache_ns = (
-            user_data_ns(uid_raw) + source_data_ns if uid_raw else source_data_ns
-        )
+        source_data_ns = user_ns("source_agent", "cache", root_key)
         source_env = build_source_env(
             llm=llm,
             db=rag_db,
@@ -158,13 +163,13 @@ async def _entry_point() -> AsyncIterator[Executor]:
             root=args.project_root,
             store=conns.indexed_store,
             cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
-            source_question_ns=source_cache_ns,
+            source_question_ns=source_data_ns,
             cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
         )
 
         memory_ns = args.memory_ns
-        if uid_raw and memory_ns:
-            memory_ns = uid_raw + "." + memory_ns
+        if memory_ns:
+            memory_ns = get_uid() + "/" + memory_ns
         ctx = WorkflowContext.create(
             services=lambda namespace: async_memory_tool(conns.memory(namespace)),
             thread_id=thread_id,
