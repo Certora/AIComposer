@@ -77,6 +77,12 @@ class _ExploreCodeCommon(BaseModel):
     The sub-agent has its own conversation thread with file tools (list_files, get_file,
     grep_files) and will return a synthesized answer. Use this instead of reading files
     directly when you need to understand a specific aspect of the codebase.
+
+    Each invocation is independent — sub-agents do not share memory or context with
+    each other. When you have several questions to ask, issue them as parallel tool
+    calls in a single response rather than asking one, waiting for the answer, and
+    then asking the next; the calls run concurrently and the overall wall-clock cost
+    is roughly the slowest single answer instead of the sum.
     """
     question: str = Field(
         description="A specific, focused question about the source code. "
