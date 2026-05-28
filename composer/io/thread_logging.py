@@ -27,7 +27,7 @@ class ThreadMeta(_WithTimings):
     start_checkpoint_id: str | None
     end_checkpoint_id: str | None
 
-META_NS = ("logging",)
+DEFAULT_META_NS = ("logging",)
 
 def _time_string() -> str:
     return datetime.now(UTC).isoformat()
@@ -129,7 +129,7 @@ async def log_thread(
 async def thread_logger(
     store: BaseStore,
     tags: dict[str, Any],
-    ns: tuple[str, ...] = META_NS
+    ns: tuple[str, ...]
 ) -> AsyncIterator[None]:
     run_id = uuid4().hex
 
