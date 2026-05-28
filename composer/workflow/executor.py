@@ -1,5 +1,6 @@
 from typing import Optional, cast, Any
 import logging
+import shlex
 import uuid
 from dataclasses import dataclass
 import pathlib
@@ -25,7 +26,7 @@ from composer.workflow.services import get_checkpointer, get_store, get_memory, 
 from composer.workflow.types import PromptParams, WorkflowSuccess, WorkflowFailure, WorkflowCrash, WorkflowResult
 from composer.workflow.meta import create_resume_commentary
 from composer.core.context import AIComposerContext, ProverOptions
-from composer.prover.core import CloudConfig
+from composer.prover.core import make_prover_options
 from composer.core.validation import ValidationType, prover, reqs as req_type
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model as get_rag_model
@@ -388,10 +389,14 @@ async def execute_ai_composer_workflow(
     if workflow_options.checkpoint_id is not None:
         config["configurable"]["checkpoint_id"] = workflow_options.checkpoint_id
 
+    resolved = make_prover_options(
+        cloud=not workflow_options.local_prover,
+        user_extra_args=shlex.split(workflow_options.prover_extra_args) if workflow_options.prover_extra_args else [],
+    )
     prover_opts: ProverOptions = ProverOptions(
         capture_output=workflow_options.prover_capture_output,
         keep_folder=workflow_options.prover_keep_folders,
-        cloud=None if workflow_options.local_prover else CloudConfig(),
+        extra_args=resolved.extra_args,
     )
 
     required_validations : list[ValidationType] = [prover]
