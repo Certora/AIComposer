@@ -16,6 +16,7 @@ from composer.spec.context import (
 from composer.spec.natspec.pipeline import run_natspec_pipeline, PipelineResult
 from composer.workflow.services import create_llm, standard_connections, get_store
 from composer.spec.services import build_natspec_env
+from composer.spec.agent_index import agent_index_config_from_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 
 async def launch_natspec_workflow(
@@ -56,7 +57,7 @@ async def launch_natspec_workflow(
             checkpoint=conn.checkpointer,
             kb_ns=("cvl",),
             store=conn.store,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
+            cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
             recursion_limit=ctx.config.recursion_limit,
         )
 

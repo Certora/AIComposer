@@ -31,7 +31,8 @@ from composer.spec.source.harness import (
     AgentSystemDescription,
     HarnessResult,
 )
-from composer.spec.source.autoprove_common import _root_cache_key
+from composer.spec.source.autoprove_common import _root_cache_key, user_ns
+from composer.core.user import get_uid
 from composer.spec.source.summarizer import _summary_key, _SummaryCache
 from composer.spec.source.struct_invariant import STRUCTURAL_INV_KEY, Invariants
 from composer.spec.source.common_pipeline import PROPERTIES_KEY, INV_CVL_KEY, _component_cache_key, _batch_cache_key
@@ -396,23 +397,28 @@ def main() -> int:
     from composer.workflow.services import get_store
     store = get_store()
 
-    root_ns = (args.cache_ns, _root_cache_key(
-        args.project_root, sys_path, relative_path, contract_name,
-    ))
+    root_key = _root_cache_key(
+        str(project_root), sys_path, relative_path, contract_name,
+    )
+    root_ns = user_ns(args.cache_ns, root_key)
     print(f"Root namespace: {root_ns}")
+
+    memory_ns = args.memory_ns
+    if memory_ns:
+        memory_ns = get_uid() + "/" + memory_ns
 
     root_ctx: WorkflowContext[None] = WorkflowContext.create(
         services=DummyServices(),  # type: ignore[arg-type]
         thread_id="explorer",
         store=store,
         recursion_limit=DEFAULT_RECURSION_LIMIT,
-        memory_namespace=args.memory_ns,
+        memory_namespace=memory_ns,
         cache_namespace=root_ns,
     )
 
     status = f"Cache NS: {root_ns}"
-    if args.memory_ns:
-        status += f"  |  Memory NS: {args.memory_ns}"
+    if memory_ns:
+        status += f"  |  Memory NS: {memory_ns}"
 
     app = CacheExplorerApp(
         build_tree=lambda: build_tree(root_ctx, contract_name),
