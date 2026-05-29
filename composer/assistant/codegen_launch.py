@@ -5,13 +5,32 @@ from typing import Optional
 from composer.assistant.launch_args import LaunchCodegenArgs, LaunchResumeArgs, CommonCodeGen
 from composer.assistant.types import OrchestratorContext
 from composer.audit.db import DEFAULT_CONNECTION as AUDIT_DEFAULT
-from composer.input.files import upload_input
-from composer.input.types import ResumeFSData
+from composer.input.types import ResumeFSData, UploadPaths, InputData
+from composer.input.files import FileUploader
 from composer.ui.codegen_rich import CodeGenRichApp
 from composer.io.protocol import WorkflowPurpose
 from composer.workflow.executor import execute_ai_composer_workflow
 from composer.workflow.types import WorkflowResult, WorkflowSuccess, WorkflowFailure, WorkflowCrash
 from composer.workflow.services import create_llm
+
+
+async def upload_input(i: UploadPaths) -> InputData:
+    """Build the codegen input triple (interface, spec, system doc).
+
+    Spec and interface go via ``upload_text_file_if_needed`` so the body
+    is available both as a Files-API ``file_id`` reference and (for
+    text consumers) as in-memory bytes. The system doc routes through
+    ``FileUploader.get_document`` so PDFs land in the Files API and
+    plain-text inputs stay inline."""
+    uploader = await FileUploader.fresh()
+    interface_file = await uploader.upload_text_file_if_needed(i.interface_file)
+    spec_file = await uploader.upload_text_file_if_needed(i.spec_file)
+    system_doc_file = await uploader.upload_file_if_needed(i.system_doc)
+    return InputData(
+        spec=spec_file,
+        system_doc=system_doc_file,
+        intf=interface_file,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +119,7 @@ async def launch_codegen_workflow(
         interface_file=str(ctx.workspace / args.interface_file),
         system_doc=str(ctx.workspace / args.system_doc),
     )
-    input_data = upload_input(paths)
+    input_data = await upload_input(paths)
 
     wf_args = _codegen_args(ctx, args)
     llm = create_llm(wf_args)

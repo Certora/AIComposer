@@ -43,7 +43,7 @@ async def _load_thread_from_mnemonic(mnemonic: str) -> str:
         if item is None:
             print(f"No snapshot found for mnemonic: {mnemonic}", file=sys.stderr)
             sys.exit(1)
-        return item.value["thread_id"]
+        return item.value["tid"]
 
 
 async def _load_messages(thread_id: str) -> tuple[list, str | None]:
@@ -340,7 +340,7 @@ async def main():
 
     print(f"Loaded {len(messages)} messages. Launching viewer...", file=sys.stderr)
     app = SnapshotViewerApp(thread_id, messages, checkpoint_id, mnemonic)
-    app.run()
+    await app.run_async()
 
 
 if __name__ == "__main__":

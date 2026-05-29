@@ -8,8 +8,6 @@ be passed explicitly to agents that need it.
 """
 
 from dataclasses import dataclass
-import base64
-from pathlib import Path
 from typing import Annotated, Callable, overload, Awaitable
 
 from pydantic import BaseModel, ValidationError
@@ -19,6 +17,7 @@ from langchain_core.tools import BaseTool
 
 from graphcore.graph import Builder
 
+from composer.input.files import Document
 from composer.io.mnemonic_store import assign_mnemonic
 
 
@@ -29,7 +28,7 @@ from composer.io.mnemonic_store import assign_mnemonic
 @dataclass
 class SystemDoc:
     """Input when only a design document is available (natspec)."""
-    content: str | dict  # text or base64-encoded PDF
+    content: Document
 
 
 @dataclass
@@ -247,19 +246,3 @@ class WorkflowContext[K: CacheTypes]:
 # Utility
 # ---------------------------------------------------------------------------
 
-def get_document_input(sys_path: Path) -> dict | str | None:
-    """Load a system document from a file path, returning base64-encoded PDF or text."""
-    if not sys_path.is_file():
-        return None
-    if sys_path.suffix == ".pdf":
-        file_data = base64.standard_b64encode(sys_path.read_bytes()).decode("utf-8")
-        return {
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": file_data
-            }
-        }
-    else:
-        return sys_path.read_text()

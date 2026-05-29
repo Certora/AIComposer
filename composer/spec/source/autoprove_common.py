@@ -19,7 +19,7 @@ from composer.rag.models import get_model
 from composer.workflow.services import create_llm, standard_connections
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, get_document_input,
+    WorkflowContext, SourceCode,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
 from composer.prover.core import make_prover_options
@@ -116,19 +116,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
 
     relative_path = str(full_contract_path.relative_to(project_root))
 
-    # Read input document
     sys_path = pathlib.Path(args.system_doc)
-    content = get_document_input(sys_path)
-    if content is None:
-        parser.error(f"cannot read {sys_path}")
-
-    system_doc = SourceCode(
-        content=content,
-        project_root=str(project_root),
-        contract_name=contract_name,
-        relative_path=relative_path,
-        forbidden_read=FS_FORBIDDEN_READ,
-    )
 
     # Set up services
     llm = create_llm(args)
@@ -146,8 +134,6 @@ async def _entry_point() -> AsyncIterator[Executor]:
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
 
-    threat_model = get_document_input(pathlib.Path(threat_path)) if (threat_path := args.threat_model) is not None else None
-
     async with (
         standard_connections(
             embedder=DefaultEmbedder(model)
@@ -159,6 +145,23 @@ async def _entry_point() -> AsyncIterator[Executor]:
         # ``user_data_ns(uid)`` prefix lives directly in the ns we pass
         # so the AgentIndex runs single-pool (no overlay).
         source_data_ns = user_ns("source_agent", "cache", root_key)
+        # Read input documents now that the uploader is available.
+        content = await conns.uploader.get_document(sys_path)
+        if content is None:
+            parser.error(f"cannot read {sys_path}")
+
+        system_doc = SourceCode(
+            content=content,
+            project_root=str(project_root),
+            contract_name=contract_name,
+            relative_path=relative_path,
+            forbidden_read=FS_FORBIDDEN_READ,
+        )
+
+        threat_model = (
+            await conns.uploader.get_document(pathlib.Path(threat_path))
+            if (threat_path := args.threat_model) is not None else None
+        )
         source_env = build_source_env(
             llm=llm,
             db=rag_db,
@@ -167,7 +170,7 @@ async def _entry_point() -> AsyncIterator[Executor]:
             kb_ns=DEFAULT_KB_NS,
             root=args.project_root,
             store=conns.indexed_store,
-            source_question_ns=("source_agent", "cache", root_key),
+            source_question_ns=source_data_ns,
             recursion_limit=args.recursion_limit,
             cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
         )
