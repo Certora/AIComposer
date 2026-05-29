@@ -30,7 +30,8 @@ from composer.spec.system_model import (
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.prover import CloudConfig, get_prover_tool
+from composer.spec.source.prover import get_prover_tool
+from composer.prover.core import ProverOptions
 from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
 
 
@@ -60,7 +61,7 @@ async def run_autoprove_pipeline(
     standard_summary_path: str,
     config_path: str,
     *,
-    cloud: CloudConfig | None = None,
+    prover_opts: ProverOptions,
     max_concurrent: int = 4,
     max_bug_rounds: int = 3,
 ) -> AutoProveResult:
@@ -125,7 +126,7 @@ async def run_autoprove_pipeline(
     # Build prover tool (needs config from phase 1)
     prover_tool = get_prover_tool(
         llm, source_input.contract_name,
-        source_input.project_root, cloud=cloud,
+        source_input.project_root, prover_opts=prover_opts,
     )
 
     # ------------------------------------------------------------------

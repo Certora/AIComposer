@@ -44,16 +44,17 @@ def build_rag_tools(
     s: BaseRAGTools,
     llm: BasicAgentTools,
     store: BaseStore,
-    cache_ns: tuple[str, ...]
+    cache_ns: tuple[str, ...],
+    recursion_limit: int,
 ) -> RAGTools:
-    
+
     ind = AgentIndex(store=store, cache_ns=cache_ns)
 
     @dataclass(frozen=True)
     class _CVLResearchEnv(_BaseTools):
         base_rag_tools: tuple[BaseTool, ...]
         agent_index: AgentIndex
-    
+
     @dataclass(frozen=True)
     class _RAGTools:
         rag_tools: tuple[BaseTool, ...]
@@ -67,7 +68,8 @@ def build_rag_tools(
             agent_index=ind,
             llm=llm.llm
         ),
-        CVL_RESEARCH_BASE_DOC
+        CVL_RESEARCH_BASE_DOC,
+        recursion_limit=recursion_limit,
     )
     return _RAGTools(s.base_rag_tools + (cvl_researcher,RetrieveDocumentTool.bind(ind).as_tool("cvl_document_ref")))
 
@@ -91,6 +93,7 @@ class RAGInputs(LLMInputs):
     store: BaseStore
     kb_ns: tuple[str, ...]
     cvl_cache_ns: tuple[str, ...]
+    recursion_limit: int
 
 class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
     pass
@@ -113,7 +116,8 @@ def build_rag_tool_env(
         llm=llm,
         s=rag_tools,
         store=params["store"],
-        cache_ns=params["cvl_cache_ns"]
+        cache_ns=params["cvl_cache_ns"],
+        recursion_limit=params["recursion_limit"],
     )
 
     @dataclass(frozen=True)

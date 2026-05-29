@@ -35,8 +35,8 @@ from composer.spec.system_model import (
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.prover import CloudConfig
 from composer.spec.source.prover import get_prover_tool
+from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
 from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
@@ -66,7 +66,7 @@ async def run_autoprove_pipeline(
     handler_factory: HandlerFactory[AutoProvePhase, None],
     env: SourceEnvironment,
     *,
-    cloud: CloudConfig | None = None,
+    prover_opts: ProverOptions,
     max_concurrent: int = 4,
     interactive: bool,
     threat_model : Document | None = None,
@@ -88,7 +88,7 @@ async def run_autoprove_pipeline(
         handler_factory,
         TaskInfo("setup", "Auto Setup", AutoProvePhase.HARNESS),
         lambda: run_setup(
-            ctx, source_input, env, s
+            ctx, source_input, env, s, prover_opts
         )
     )
     
@@ -156,7 +156,7 @@ async def run_autoprove_pipeline(
     # Build prover tool (needs config from phase 1)
     prover_tool = get_prover_tool(
         llm, source_input.contract_name,
-        source_input.project_root, cloud=cloud,
+        source_input.project_root, prover_opts=prover_opts,
     )
 
     # ------------------------------------------------------------------

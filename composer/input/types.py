@@ -4,6 +4,7 @@ import pathlib
 from dataclasses import dataclass
 
 from composer.input.files import Document, TextDocument
+DEFAULT_RECURSION_LIMIT = 1000
 
 @dataclass
 class BasicArg:
@@ -31,15 +32,15 @@ class NativeFS:
     @property
     def bytes_contents(self) -> bytes:
         return self.where.read_bytes()
-    
+
     @property
     def basename(self) -> str:
         return self.where.name
-    
+
     @property
     def string_contents(self) -> str:
         return self.where.read_text()
-    
+
 class RAGDBOptions(Protocol):
     # database options
     rag_db: Annotated[str, Arg(
@@ -51,8 +52,8 @@ class LanggraphOptions(Protocol):
     checkpoint_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     thread_id: Annotated[Optional[str], OptionalArg(help="The checkpoint id to resume a workflow from")]
     recursion_limit: Annotated[int, Arg(
-        help="The number of iterations of the graph to allow (default: {default}",
-        default=50
+        help="The number of iterations of the graph to allow (default: {default})",
+        default=DEFAULT_RECURSION_LIMIT
     )]
 
 
@@ -60,10 +61,10 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     prover_capture_output: bool
     prover_keep_folders: bool
     local_prover: bool
+    prover_extra_args: Optional[str]
 
     debug_prompt_override: Optional[str]
 
-    recursion_limit: int
     audit_db: str
 
     requirements_oracle: list[str]
@@ -93,7 +94,7 @@ class ModelOptions(Protocol):
         )]
     tokens: Annotated[int, Arg(
         help="Token budget for code generation (default: {default})",
-        default=10_000
+        default=128_000
     )]
     thinking_tokens: Annotated[int, Arg(
         help="Token budget for thinking (default: {default})",

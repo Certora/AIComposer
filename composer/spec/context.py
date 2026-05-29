@@ -126,12 +126,15 @@ class WorkflowContext[K: CacheTypes]:
     - thread_id: Root for LangGraph checkpointing (sub-workflows derive from this)
     - memory_namespace: String namespace for persistent memory (memory_tool)
     - cache_namespace: Tuple namespace for store caching (None = no caching)
+    - recursion_limit: LangGraph recursion limit applied to every sub-workflow
+      run launched through this context
     """
     _services: WorkflowServices
     thread_id: str
     memory_namespace: str
     cache_namespace: tuple[str, ...] | None
     _store: BaseStore
+    recursion_limit: int
 
     def abstract[T: Abstraction](self, ty: type[T]) -> "WorkflowContext[T]":
         return self  # type: ignore[return-value]
@@ -141,6 +144,7 @@ class WorkflowContext[K: CacheTypes]:
         services: WorkflowServices,
         thread_id: str,
         store: BaseStore,
+        recursion_limit: int,
         memory_namespace: str | None = None,
         cache_namespace: tuple[str, ...] | None | str = None,
     ) -> "WorkflowContext[None]":
@@ -155,6 +159,7 @@ class WorkflowContext[K: CacheTypes]:
             memory_namespace=memory_namespace or thread_id,
             cache_namespace=cache_ns,
             _store=store,
+            recursion_limit=recursion_limit,
         )
     
     @overload
@@ -166,7 +171,7 @@ class WorkflowContext[K: CacheTypes]:
         ...
 
     def _child_pure[NXT: CacheTypes](
-        self, name_key: CacheKey[K, NXT],    
+        self, name_key: CacheKey[K, NXT],
     ) -> tuple["WorkflowContext[NXT]", tuple[str, ...] | None]:
         name = name_key.key
         child_cache_ns = (*self.cache_namespace, name) if self.cache_namespace else None
@@ -176,6 +181,7 @@ class WorkflowContext[K: CacheTypes]:
             memory_namespace=f"{self.memory_namespace}-{name}",
             cache_namespace=child_cache_ns,
             _store=self._store,
+            recursion_limit=self.recursion_limit,
         ), child_cache_ns)
 
     async def _child_async[NXT: CacheTypes](

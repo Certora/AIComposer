@@ -350,7 +350,7 @@ async def run_cvl_generator[S: CVLGenerationState, C: FeedbackToolContext, I: CV
             thread_id=tid,
             context=ctxt,
             description=desc,
-            recursion_limit=200
+            recursion_limit=ctx.recursion_limit,
         )
         return r
     finally:

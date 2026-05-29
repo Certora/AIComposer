@@ -229,7 +229,8 @@ async def analyze_single_contract(
             interface=interface,
             contract_id=stub.solidity_identifier,
             solc_version=solc_version,
-            env=services.env
+            env=services.env,
+            recursion_limit=batch_ctx.recursion_limit,
         )
 
         prompt_extras = [
