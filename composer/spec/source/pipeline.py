@@ -35,7 +35,7 @@ from composer.spec.system_model import (
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.prover import get_prover_tool
+from composer.spec.source.prover import get_prover_tool, dump_final_conf
 from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
@@ -208,6 +208,12 @@ async def run_autoprove_pipeline(
 
         inv_spec_name = "invariants.spec"
         (Path(source_input.project_root) / "certora" / inv_spec_name).write_text(inv_cvl.cvl)
+        dump_final_conf(
+            project_root=source_input.project_root,
+            main_contract=source_input.contract_name,
+            task_id="invariant-cvl",
+            spec_name=inv_spec_name,
+        )
         resources.append(CVLResource(
             import_path=inv_spec_name,
             required=False,

@@ -12,7 +12,7 @@ from logging import Logger
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Callable, Iterable, Protocol
+from typing import AsyncIterator, Iterable, Protocol
 
 
 @dataclass
@@ -25,6 +25,7 @@ class PhaseRecord:
     error: str | None = None
     prover_s: float = 0.0
     prover_calls: int = 0
+    final_link: str | None = None # URL (cloud) or local results directory (local) of the last prover run.
 
 
 @dataclass
@@ -35,6 +36,10 @@ class RunSummary:
     prover_total_calls: int = 0
     _active_prover_by_task: dict[str, tuple[float, int]] = field(default_factory=dict, repr=False)
     """Maps task_id -> (prover_s_accum, prover_calls) recorded while task is in flight."""
+    _latest_link_by_task: dict[str, str] = field(default_factory=dict, repr=False)
+    """Maps task_id -> link for the most recent prover run."""
+    _latest_conf_by_task: dict[str, dict] = field(default_factory=dict, repr=False)
+    """Maps task_id -> the full conf dict passed to the most recent prover run."""
 
     def record_phase(
         self,
@@ -47,6 +52,7 @@ class RunSummary:
         error: str | None = None,
     ) -> None:
         prover_s, prover_calls = self._active_prover_by_task.pop(task_id, (0.0, 0))
+        link = self._latest_link_by_task.pop(task_id, None)
         self.phases.append(PhaseRecord(
             task_id=task_id,
             label=label,
@@ -56,14 +62,41 @@ class RunSummary:
             error=error,
             prover_s=prover_s,
             prover_calls=prover_calls,
+            final_link=link,
         ))
 
-    def add_prover_call(self, task_id: str | None, duration_s: float) -> None:
+    def add_prover_call(self, duration_s: float, *, task_id: str | None = None) -> None:
+        task_id = task_id or get_current_task_id()
         self.prover_total_s += duration_s
         self.prover_total_calls += 1
         if task_id is not None:
             prev_s, prev_n = self._active_prover_by_task.get(task_id, (0.0, 0))
             self._active_prover_by_task[task_id] = (prev_s + duration_s, prev_n + 1)
+
+    def record_prover_link(self, link: str, *, task_id: str | None = None) -> None:
+        """Stash the latest prover link (URL or local path); defaults to the active task."""
+        if (task_id := task_id or get_current_task_id()) is None:
+            return
+        self._latest_link_by_task[task_id] = link
+
+    def get_latest_link(self, task_id: str | None = None) -> str | None:
+        """Return the most recent prover link; defaults to the active task. None if none."""
+        if (task_id := task_id or get_current_task_id()) is None:
+            return None
+        return self._latest_link_by_task.get(task_id)
+
+    def record_prover_conf(self, conf: dict, *, task_id: str | None = None) -> None:
+        """Stash the full conf passed to the prover; defaults to the active task. Last write wins."""
+        if (task_id := task_id or get_current_task_id()) is None:
+            return
+        self._latest_conf_by_task[task_id] = dict(conf)
+
+    def get_latest_conf(self, task_id: str | None = None) -> dict | None:
+        """Return a copy of the most recent prover conf; defaults to the active task. None if none."""
+        if (task_id := task_id or get_current_task_id()) is None:
+            return None
+        v = self._latest_conf_by_task.get(task_id)
+        return dict(v) if v is not None else None
 
     def total_wall_s(self) -> float:
         return time.perf_counter() - self.started_at_mono
@@ -76,20 +109,19 @@ _run_summary: ContextVar[RunSummary | None] = ContextVar("_run_summary", default
 _current_task_id: ContextVar[str | None] = ContextVar("_current_task_id", default=None)
 
 
-def get_run_summary() -> RunSummary | None:
-    """Return the active run summary, if any. Returns ``None`` outside an autoprove run."""
-    return _run_summary.get()
+def get_run_summary() -> RunSummary:
+    """Return the active run summary, or a throwaway inert one outside a run.
+
+    Writes to the throwaway are discarded and reads return ``None``, so callers
+    never need to None-check — they record unconditionally and treat any read of
+    ``None`` as "no data," whether or not a run is active.
+    """
+    return _run_summary.get() or RunSummary()
 
 
 def install_run_summary(summary: RunSummary) -> None:
     """Install ``summary`` as the active aggregator for the rest of the run."""
     _run_summary.set(summary)
-
-
-def update_summary(l: Callable[[RunSummary], None]):
-    summary = get_run_summary()
-    if summary is not None:
-          l(summary)
 
 
 def get_current_task_id() -> str | None:
@@ -159,6 +191,12 @@ def _format_summary(summary: RunSummary) -> str:
         f"Prover total: {_fmt_secs(summary.prover_total_s)} across "
         f"{summary.prover_total_calls} call(s)"
     )
+    linked = [p for p in summary.phases if p.final_link]
+    if linked:
+        out.append("")
+        out.append("Final prover runs:")
+        for p in linked:
+            out.append(f"  {p.label}: {p.final_link}")
     failures = [p for p in summary.phases if p.error is not None]
     if failures:
         out.append("")
@@ -185,12 +223,11 @@ async def task_logger(
     phase_name: str,
     logger: Logger,
 ) -> AsyncIterator[StartLogger]:
-    summary = get_run_summary()
+    summary = _run_summary.get()
     if summary is None:
-          class Dummy():
-                 def task_started(self) -> None: ...
-          yield Dummy()
-          return
+        # No active run — skip timing bookkeeping entirely.
+        yield _TaskLog()
+        return
     t_request = time.perf_counter()
     log = _TaskLog()
     tok = _current_task_id.set(task_id)

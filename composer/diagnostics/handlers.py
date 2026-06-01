@@ -97,7 +97,7 @@ def summarize_update(
 # Custom update handler
 # +++++++++++++++++++++++++++
 
-user_guard: set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run", "rule_analysis", "summarization_notice", "prover_output", "cloud_polling"}
+user_guard: set[UserUpdateTy] = {"cex_analysis", "prover_result", "prover_run", "prover_link", "rule_analysis", "summarization_notice", "prover_output", "cloud_polling"}
 
 def is_user_update(x: AllUpdates) -> TypeGuard[ProgressUpdate]:
     return x["type"] in user_guard
@@ -116,6 +116,8 @@ def print_prover_updates(payload: ProgressUpdate) -> None:
         print(payload["line"])
     elif payload["type"] == "cloud_polling":
         print(f"Cloud: {payload['message']}")
+    elif payload["type"] == "prover_link":
+        print(f"Prover link: {payload['link']}")
     else:
         assert payload["type"] == "prover_run"
         print(f"Running prover with args: {' '.join(payload['args'])}")

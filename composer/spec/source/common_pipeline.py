@@ -24,6 +24,7 @@ from composer.spec.system_model import (
 )
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
+from composer.spec.source.prover import dump_final_conf
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -60,7 +61,7 @@ async def run_generation_pipeline(
     threat_model: Document | None,
     max_bug_rounds: int = 3,
 ) -> AutoProveResult:
-    
+
     contract_instance : ContractInstance
 
     ind = -1
@@ -71,7 +72,7 @@ async def run_generation_pipeline(
             break
     if ind == -1:
         raise ValueError("Component not found")
-    
+
     contract_instance = ContractInstance(
         ind, app=summary
     )
@@ -167,10 +168,18 @@ async def run_generation_pipeline(
         if isinstance(res, GaveUp):
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
-        certora_dir.mkdir(exist_ok=True, parents=True)
+        specs_dir = certora_dir / "specs"
+        specs_dir.mkdir(exist_ok=True, parents=True)
         base = batch_filename_bases[i]
-        (certora_dir / f"autospec_{base}.spec").write_text(res.cvl)
+        spec_name = f"autospec_{base}.spec"
+        (specs_dir / spec_name).write_text(res.cvl)
         (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
+        dump_final_conf(
+            project_root=source_input.project_root,
+            main_contract=source_input.contract_name,
+            task_id=f"cvl-{i}",
+            spec_name=spec_name,
+        )
         return res
 
     generation_results = await asyncio.gather(
