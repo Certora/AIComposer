@@ -2,9 +2,7 @@
 JSONL serialization for graph events.
 
 Renders each ``GraphEvents`` instance as a single-line JSON object suitable
-for streaming to the rotating ``composer.events`` logger. Large string
-fields in custom payloads are truncated so a chatty prover doesn't blow
-the rotation budget on a single rule.
+for streaming to the rotating ``composer.events`` logger.
 
 The serializer is best-effort: any unserializable payload is logged with
 ``kind=serialize_error`` rather than crashing the drainer.
@@ -12,45 +10,51 @@ The serializer is best-effort: any unserializable payload is logged with
 
 import json
 import logging
-import time
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
+from composer.diagnostics.logging_setup import EVENTS_LOGGER_NAME
 from composer.io.events import (
     Start, End, StateUpdate, NextCheckpoint, CustomUpdate, ProgressEvent, InnerEvent,
 )
 
 
-_MAX_STR = 2048
-_events_logger = logging.getLogger("composer.events")
+_events_logger = logging.getLogger(EVENTS_LOGGER_NAME)
 
 
-def _truncate(value: Any) -> Any:
-    if isinstance(value, str) and len(value) > _MAX_STR:
-        return value[:_MAX_STR] + f"…[+{len(value) - _MAX_STR} chars]"
-    if isinstance(value, dict):
-        return {k: _truncate(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_truncate(v) for v in value]
-    if isinstance(value, tuple):
-        return [_truncate(v) for v in value]
-    return value
+class _StateEntry(TypedDict):
+    node: str
+    tool_calls: NotRequired[list[str]]
+    list_len: NotRequired[int]
 
 
-def _compact_state(payload: dict) -> list[dict]:
+def _compact_state(payload: dict) -> list[_StateEntry]:
     """Render a StateUpdate payload as a compact summary of nodes + tool calls."""
-    out: list[dict] = []
+    out: list[_StateEntry] = []
     for node_name, update in payload.items():
-        if not isinstance(update, dict):
+        msgs_to_scan: list[Any] = []
+        list_len: int | None = None
+        if isinstance(update, dict):
+            msgs_to_scan = list(update.get("messages", []) or [])
+        elif isinstance(update, list):
+            list_len = len(update)
+            for item in update:
+                if isinstance(item, dict):
+                    msgs_to_scan.extend(item.get("messages", []) or [])
+                else:
+                    msgs_to_scan.append(item)
+        else:
             out.append({"node": str(node_name)})
             continue
         tool_names: list[str] = []
-        for msg in update.get("messages", []) or []:
+        for msg in msgs_to_scan:
             tc = getattr(msg, "tool_calls", None)
             if tc:
                 tool_names.extend(c["name"] for c in tc if isinstance(c, dict) and "name" in c)
-        entry: dict[str, Any] = {"node": node_name}
+        entry: _StateEntry = {"node": str(node_name)}
         if tool_names:
             entry["tool_calls"] = tool_names
+        if list_len is not None:
+            entry["list_len"] = list_len
         out.append(entry)
     return out
 
@@ -71,7 +75,7 @@ def _to_jsonable(value: Any) -> Any:
 def render(event: InnerEvent | ProgressEvent, path: list[str]) -> dict[str, Any]:
     """Render *event* (already path-unwrapped) into a JSON-serializable dict."""
     base: dict[str, Any] = {
-        "ts": time.time(),
+        "ts": event.ts,
         "path": path,
     }
     match event:
@@ -93,14 +97,14 @@ def render(event: InnerEvent | ProgressEvent, path: list[str]) -> dict[str, Any]
         case StateUpdate():
             base.update(kind="state_update", nodes=_compact_state(event.payload))
         case CustomUpdate():
-            payload = _truncate(_to_jsonable(event.payload))
+            payload = _to_jsonable(event.payload)
             base.update(
                 kind="custom",
                 checkpoint_id=event.checkpoint_id,
                 payload=payload,
             )
         case ProgressEvent():
-            base.update(kind="progress", payload=_truncate(_to_jsonable(event.payload)))
+            base.update(kind="progress", payload=_to_jsonable(event.payload))
     return base
 
 
@@ -113,7 +117,7 @@ def emit(event: InnerEvent | ProgressEvent, path: list[str]) -> None:
         try:
             _events_logger.info(
                 json.dumps({
-                    "ts": time.time(),
+                    "ts": event.ts,
                     "kind": "serialize_error",
                     "path": path,
                     "error": f"{type(exc).__name__}: {exc}",

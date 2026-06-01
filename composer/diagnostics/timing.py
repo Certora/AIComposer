@@ -5,19 +5,14 @@ A single ``RunSummary`` is installed into a ``ContextVar`` at pipeline
 entry. Phase orchestration (``run_task``) and slow operations (prover
 invocations) report their wall-clock numbers into it. At end-of-run the
 summary is formatted into a per-phase table.
-
-Designed to be safe to call from any thread / any coroutine: the
-underlying lock is asyncio-free (``threading.Lock``) so callbacks from
-subprocess I/O are fine too.
 """
 
-from __future__ import annotations
-
-import threading
+from contextlib import asynccontextmanager, contextmanager
+from logging import Logger
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import AsyncIterator, Callable, Iterable, Protocol
 
 
 @dataclass
@@ -38,7 +33,6 @@ class RunSummary:
     phases: list[PhaseRecord] = field(default_factory=list)
     prover_total_s: float = 0.0
     prover_total_calls: int = 0
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _active_prover_by_task: dict[str, tuple[float, int]] = field(default_factory=dict, repr=False)
     """Maps task_id -> (prover_s_accum, prover_calls) recorded while task is in flight."""
 
@@ -52,26 +46,24 @@ class RunSummary:
         queue_wait_s: float,
         error: str | None = None,
     ) -> None:
-        with self._lock:
-            prover_s, prover_calls = self._active_prover_by_task.pop(task_id, (0.0, 0))
-            self.phases.append(PhaseRecord(
-                task_id=task_id,
-                label=label,
-                phase=phase,
-                wall_s=wall_s,
-                queue_wait_s=queue_wait_s,
-                error=error,
-                prover_s=prover_s,
-                prover_calls=prover_calls,
-            ))
+        prover_s, prover_calls = self._active_prover_by_task.pop(task_id, (0.0, 0))
+        self.phases.append(PhaseRecord(
+            task_id=task_id,
+            label=label,
+            phase=phase,
+            wall_s=wall_s,
+            queue_wait_s=queue_wait_s,
+            error=error,
+            prover_s=prover_s,
+            prover_calls=prover_calls,
+        ))
 
     def add_prover_call(self, task_id: str | None, duration_s: float) -> None:
-        with self._lock:
-            self.prover_total_s += duration_s
-            self.prover_total_calls += 1
-            if task_id is not None:
-                prev_s, prev_n = self._active_prover_by_task.get(task_id, (0.0, 0))
-                self._active_prover_by_task[task_id] = (prev_s + duration_s, prev_n + 1)
+        self.prover_total_s += duration_s
+        self.prover_total_calls += 1
+        if task_id is not None:
+            prev_s, prev_n = self._active_prover_by_task.get(task_id, (0.0, 0))
+            self._active_prover_by_task[task_id] = (prev_s + duration_s, prev_n + 1)
 
     def total_wall_s(self) -> float:
         return time.perf_counter() - self.started_at_mono
@@ -94,13 +86,24 @@ def install_run_summary(summary: RunSummary) -> None:
     _run_summary.set(summary)
 
 
+def update_summary(l: Callable[[RunSummary], None]):
+    summary = get_run_summary()
+    if summary is not None:
+          l(summary)
+
+
 def get_current_task_id() -> str | None:
     """Return the task_id of the active ``run_task`` scope, if any."""
     return _current_task_id.get()
 
 
-def set_current_task_id(task_id: str) -> None:
-    _current_task_id.set(task_id)
+@contextmanager
+def set_current_task_id(task_id: str):
+    tok = _current_task_id.set(task_id)
+    try:
+        yield
+    finally:
+        _current_task_id.reset(tok)
 
 
 # ---------------------------------------------------------------------------
@@ -163,3 +166,59 @@ def _format_summary(summary: RunSummary) -> str:
         for p in failures:
             out.append(f"  - {p.phase}/{p.task_id} ({p.label}): {p.error}")
     return "\n".join(out)
+
+
+class StartLogger(Protocol):
+    def task_started(self) -> None:
+        ...
+
+@dataclass
+class _TaskLog:
+    t_running: float | None = None
+    def task_started(self):
+          self.t_running = time.perf_counter()
+
+@asynccontextmanager
+async def task_logger(
+    task_id: str,
+    label: str,
+    phase_name: str,
+    logger: Logger,
+) -> AsyncIterator[StartLogger]:
+    summary = get_run_summary()
+    if summary is None:
+          class Dummy():
+                 def task_started(self) -> None: ...
+          yield Dummy()
+          return
+    t_request = time.perf_counter()
+    log = _TaskLog()
+    tok = _current_task_id.set(task_id)
+    try:
+         yield log
+    except Exception as exc:
+        err_name = type(exc).__name__
+        elapsed = time.perf_counter() - t_request
+        queue_wait = (log.t_running - t_request) if log.t_running is not None else elapsed
+        logger.exception(
+            f"task failed: phase={phase_name} task_id={task_id} "
+            f"wall={elapsed:.2f}s queue_wait={queue_wait:.2f}s error={err_name}"
+        )
+        summary.record_phase(
+            task_id=task_id, label=label, phase=phase_name,
+            wall_s=elapsed, queue_wait_s=queue_wait, error=err_name,
+        )
+        raise exc
+    else:
+        elapsed = time.perf_counter() - t_request
+        queue_wait = (log.t_running - t_request) if log.t_running is not None else 0.0
+        logger.info(
+            f"task done: phase={phase_name} task_id={task_id} "
+            f"wall={elapsed:.2f}s queue_wait={queue_wait:.2f}s"
+        )
+        summary.record_phase(
+            task_id=task_id, label=label, phase=phase_name,
+            wall_s=elapsed, queue_wait_s=queue_wait, error=None,
+        )
+    finally:
+        _current_task_id.reset(tok)

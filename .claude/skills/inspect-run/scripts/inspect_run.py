@@ -248,7 +248,7 @@ async def cmd_summary(args: argparse.Namespace) -> int:
     events = resolve_events_file(args.log_path)
     threads = walk_threads(events)
 
-    top = sorted(
+    top_executions = sorted(
         [(p, info) for p, info in threads.items() if info["depth"] == 1],
         key=lambda x: x[1]["order"],
     )
@@ -259,12 +259,12 @@ async def cmd_summary(args: argparse.Namespace) -> int:
 
     print(f"# Run summary")
     print(f"events file: {events}")
-    print(f"threads in events: {len(threads)} ({len(top)} top-level, {len(subs)} subagent)")
+    print(f"threads in events: {len(threads)} ({len(top_executions)} top-level execution(s), {len(subs)} subagent)")
 
-    print(f"\n## Top-level thread(s)")
-    if not top:
+    print(f"\n## Top-level execution(s)")
+    if not top_executions:
         print("(none)")
-    for _, info in top:
+    for _, info in top_executions:
         tid = info["thread_id"]
         try:
             msgs = await fetch_messages(tid)
@@ -308,22 +308,22 @@ async def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
-def _default_top_thread(threads: dict[tuple[str, ...], dict[str, Any]]) -> str:
-    tops = [info for _, info in threads.items() if info["depth"] == 1]
-    if len(tops) == 0:
-        raise RuntimeError("No top-level threads found in events file.")
-    if len(tops) > 1:
-        ids = [t["thread_id"] for t in tops]
+def _default_thread_id(threads: dict[tuple[str, ...], dict[str, Any]]) -> str:
+    top_executions = [info for _, info in threads.items() if info["depth"] == 1]
+    if len(top_executions) == 0:
+        raise RuntimeError("No top-level executions found in events file.")
+    if len(top_executions) > 1:
+        ids = [t["thread_id"] for t in top_executions]
         raise RuntimeError(
-            f"Multiple top-level threads found; pass --thread explicitly. Choices: {ids}"
+            f"Multiple top-level executions found; pass --thread explicitly. Choices: {ids}"
         )
-    return tops[0]["thread_id"]
+    return top_executions[0]["thread_id"]
 
 
 async def cmd_messages(args: argparse.Namespace) -> int:
     events = resolve_events_file(args.log_path)
     threads = walk_threads(events)
-    thread_id = args.thread or _default_top_thread(threads)
+    thread_id = args.thread or _default_thread_id(threads)
 
     msgs = await fetch_messages(thread_id)
     if not msgs:
@@ -355,7 +355,7 @@ async def cmd_messages(args: argparse.Namespace) -> int:
 async def cmd_message(args: argparse.Namespace) -> int:
     events = resolve_events_file(args.log_path)
     threads = walk_threads(events)
-    thread_id = args.thread or _default_top_thread(threads)
+    thread_id = args.thread or _default_thread_id(threads)
 
     msgs = await fetch_messages(thread_id)
     if not msgs:
@@ -381,7 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser("messages", help="Print messages from a thread.")
     m.add_argument("log_path")
-    m.add_argument("--thread", help="thread_id (defaults to the run's top-level thread)")
+    m.add_argument("--thread", help="thread_id (defaults to the thread_id of the run's top-level execution)")
     m.add_argument("--range", help="A:B slice over message indices")
     m.add_argument("--errors-only", action="store_true", help="only tool-error messages")
     m.add_argument("--type", help="filter by class name (e.g. AIMessage, ToolMessage)")

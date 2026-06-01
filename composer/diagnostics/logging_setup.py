@@ -3,8 +3,8 @@ Logging setup for the autoprove pipeline.
 
 Configures two rotating log sinks under ``{project_root}/.certora_internal/autoProve/``:
 
-- ``{thread_id}.log`` — human-readable text log from the ``composer`` namespace
-- ``{thread_id}.events.jsonl`` — structured event stream (one JSON object per line)
+- ``{%Y-%m-%d_%H-%M-%S}.{thread_id}.log`` — human-readable text log from the ``composer`` namespace
+- ``{%Y-%m-%d_%H-%M-%S}.{thread_id}.events.jsonl`` — structured event stream (one JSON object per line)
 
 Both files rotate at 1 MiB with up to 5 backups. Third-party loggers
 (``langgraph``, ``httpx``, ``anthropic``) are pinned to ``WARNING`` so they
@@ -17,11 +17,10 @@ import time
 from logging.handlers import RotatingFileHandler
 
 
-_MAX_BYTES = 1 * 1024 * 1024
+_MAX_BYTES = 1024 * 1024
 _BACKUP_COUNT = 5
 
 EVENTS_LOGGER_NAME = "composer.events"
-PIPELINE_LOGGER_NAME = "composer.pipeline"
 
 _THIRD_PARTY_QUIET = ("langgraph", "httpx", "anthropic", "urllib3", "openai")
 
@@ -51,8 +50,8 @@ def setup_autoprove_logging(
     log_dir.mkdir(parents=True, exist_ok=True)
 
     stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-    text_path = log_dir / f"{stamp}.log"
-    events_path = log_dir / f"{stamp}.events.jsonl"
+    text_path = log_dir / f"{stamp}.{thread_id}.log"
+    events_path = log_dir / f"{stamp}.{thread_id}.events.jsonl"
 
     text_handler = RotatingFileHandler(
         text_path, maxBytes=_MAX_BYTES, backupCount=_BACKUP_COUNT, encoding="utf-8"

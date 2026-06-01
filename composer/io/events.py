@@ -11,7 +11,8 @@ more ``Nested`` envelopes carrying the parent's thread ID.  The
 drainer peels these off to reconstruct the full path.
 """
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -19,12 +20,16 @@ class StateUpdate:
     """A graph node produced new state (messages, tool results, etc.)."""
     payload: dict
     thread_id: str
+    ts: float = field(default_factory=time.time)
+    """``time.time()`` at emission — set when the event is pushed to the sink."""
 
 @dataclass
 class NextCheckpoint:
     """A new checkpoint was persisted."""
     thread_id: str
     checkpoint_id: str
+    ts: float = field(default_factory=time.time)
+    """``time.time()`` at emission — set when the event is pushed to the sink."""
 
 @dataclass
 class CustomUpdate:
@@ -32,6 +37,8 @@ class CustomUpdate:
     payload: dict
     thread_id: str
     checkpoint_id: str
+    ts: float = field(default_factory=time.time)
+    """``time.time()`` at emission — set when the event is pushed to the sink."""
 
 @dataclass
 class Start:
@@ -43,6 +50,8 @@ class Start:
     """``time.time()`` at start — for human-readable timestamps."""
     started_at_mono: float = 0.0
     """``time.perf_counter()`` at start — pair with End.duration_s for deltas."""
+    ts: float = field(default_factory=time.time)
+    """``time.time()`` at emission — set when the event is pushed to the sink."""
 
 @dataclass
 class End:
@@ -51,10 +60,14 @@ class End:
     duration_s: float = 0.0
     error: str | None = None
     """Exception class name if the graph raised; ``None`` on success."""
+    ts: float = field(default_factory=time.time)
+    """``time.time()`` at emission — set when the event is pushed to the sink."""
 
 @dataclass
 class ProgressEvent:
     payload: dict
+    ts: float = field(default_factory=time.time)
+    """``time.time()`` at emission — set when the event is pushed to the sink."""
 
 InnerEvent = StateUpdate | NextCheckpoint | CustomUpdate | Start | End
 

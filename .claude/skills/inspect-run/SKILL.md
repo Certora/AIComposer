@@ -12,7 +12,7 @@ description: Read the full LLM message history (inputs, outputs, tool calls, err
 This skill bundles a script that:
 
 1. Takes any of: a `.events.jsonl` file, the matching `.log`, the `autoProve/` folder, or a project root.
-2. Walks the events to discover every thread_id used in the run (top-level + subagents).
+2. Walks the events to discover every thread_id used in the run (both the top-level execution and any subagents).
 3. Pulls the message list for any thread from Postgres via langgraph's `AsyncPostgresSaver`.
 4. Prints a useful view (summary, filtered messages, or one full message).
 
@@ -42,13 +42,13 @@ python scripts/inspect_run.py <subcommand> <log-path> [flags]
 inspect_run.py summary <log-path>
 ```
 
-Shows: top-level thread(s) with message count, type breakdown, error count, max_tokens count; then a list of subagent threads with parent annotations.
+Shows: top-level execution(s) with message count, type breakdown, error count, max_tokens count; then a list of subagent threads with parent annotations.
 
 ```bash
 inspect_run.py messages <log-path> [--thread T] [--range A:B] [--errors-only] [--type AIMessage|ToolMessage|HumanMessage|SystemMessage] [--tool NAME] [--full]
 ```
 
-Lists messages with one-line previews by default. `--thread` defaults to the run's top-level thread; pass an explicit thread_id (from `summary`) to inspect a subagent. Use `--errors-only` to find tool failures; `--tool result` to find every invocation of a particular tool; `--full` to expand the listed messages with complete content + tool-call args.
+Lists messages with one-line previews by default. `--thread` defaults to the thread_id of the run's top-level execution; pass an explicit thread_id (from `summary`) to inspect a subagent. Use `--errors-only` to find tool failures; `--tool cvl_document_ref` to find every invocation of of the tool `cvl_document_ref`; `--full` to expand the listed messages with complete content + tool-call args.
 
 ```bash
 inspect_run.py message <log-path> <index> [--thread T]
@@ -67,7 +67,7 @@ The point of starting with `summary` is to anchor on real data before you reason
 
 ## Drilling into subagents
 
-`summary` lists subagent thread_ids like `code_explorer-205f3e052d064476` along with which top-level run created them. To inspect one:
+`summary` lists subagent thread_ids like `code_explorer-205f3e052d064476` along with their parent thread. To inspect one:
 
 ```bash
 inspect_run.py messages <log-path> --thread code_explorer-205f3e052d064476

@@ -95,7 +95,7 @@ class NatspecTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
 
     def format_hitl_prompt(self, ty: None) -> list[Text | str]:
         raise NotImplementedError("no hitl tools in this workflow")
-    
+
     @override
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         evt = cast(NatspecEvent, payload)

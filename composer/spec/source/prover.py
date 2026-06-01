@@ -35,7 +35,7 @@ from composer.diagnostics.stream import (
     CEXAnalysisStart, ProverRun, ProverResult
 )
 from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
-from composer.diagnostics.timing import get_run_summary, get_current_task_id
+from composer.diagnostics.timing import get_current_task_id, update_summary
 from graphcore.graph import tool_state_update
 from composer.spec.util import temp_certora_file
 
@@ -101,7 +101,7 @@ class _SpecCallbacks(ProverCallbacks):
             "rule_name": rule.path.pprint(),
             "tool_call_id": self._tool_call_id
         })
-    
+
     @override
     async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None:
         self._writer({
@@ -110,7 +110,7 @@ class _SpecCallbacks(ProverCallbacks):
             "tool_call_id": self._tool_call_id,
             "rule": rule.path.pprint()
         })
-    
+
     @override
     async def on_prover_run(self, args: list[str]) -> None:
         self._started_mono = time.perf_counter()
@@ -129,9 +129,7 @@ class _SpecCallbacks(ProverCallbacks):
             f"prover done tool_call={self._tool_call_id} "
             f"elapsed={elapsed:.1f}s status={status_summary}"
         )
-        summary = get_run_summary()
-        if summary is not None:
-            summary.add_prover_call(get_current_task_id(), elapsed)
+        update_summary(lambda s: s.add_prover_call(get_current_task_id(), elapsed))
         result_evt: ProverResult = {
             "type": "prover_result",
             "tool_call_id": self._tool_call_id,
@@ -218,7 +216,7 @@ def get_prover_tool(
 
             if rules:
                 config["rule"] = rules
-            
+
             with temp_certora_file(
                 root = project_root,
                 content=json.dumps(config, indent=2),
