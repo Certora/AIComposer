@@ -43,7 +43,13 @@ class TaskHandle[H]:
     on_done: Callable[[], None] = lambda: None
 
 
-type HandlerFactory[P: HasName, H] = Callable[[TaskInfo[P]], Awaitable[TaskHandle[H]]]
+class HandlerFactory[P: HasName, H](Protocol):
+    def __call__(
+        self,
+        /,
+        info: TaskInfo[P]
+    ) -> Awaitable[TaskHandle[H]]:
+        ...
 
 
 # ---------------------------------------------------------------------------
