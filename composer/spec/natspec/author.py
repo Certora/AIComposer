@@ -146,6 +146,7 @@ async def generate_cvl_batch(
             ],
             required_validations=["feedback"],
             skipped=[],
+            property_rules=[],
             validations={}
         ),
         ctxt=feedback_ctxt,

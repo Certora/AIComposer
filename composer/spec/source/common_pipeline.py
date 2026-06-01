@@ -1,6 +1,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+import json
 import pathlib
 
 from langchain_core.tools import BaseTool
@@ -22,11 +23,47 @@ from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
-from composer.spec.cvl_generation import GeneratedCVL
+from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
+
+
+def dump_properties(
+    certora_dir: pathlib.Path,
+    spec_stem: str,
+    props: list[PropertyFormulation],
+) -> None:
+    """Write the analysis-phase properties (title, sort, methods, description) to
+    ``{spec_stem}.properties.json``, named to accompany ``{spec_stem}.spec``. The array
+    order matches the 1-based numbering the agent sees; ``title`` is the cross-reference
+    key used by ``{spec_stem}.property_rules.json``."""
+    certora_dir.mkdir(exist_ok=True, parents=True)
+    properties_dump = [prop.model_dump() for prop in props]
+    (certora_dir / f"{spec_stem}.properties.json").write_text(
+        json.dumps(properties_dump, indent=2)
+    )
+
+
+def dump_property_rules(
+    certora_dir: pathlib.Path,
+    spec_stem: str,
+    props: list[PropertyFormulation],
+    property_rules: list[PropertyRuleMapping],
+) -> None:
+    """Write the property->rules mapping ``{property title: [rule names]}`` to
+    ``{spec_stem}.property_rules.json``, named to accompany ``{spec_stem}.spec``."""
+    mapping: dict[str, list[str]] = {}
+    for m in property_rules:
+        prop = props[m.property_index - 1]
+        key = prop.title
+        if key in mapping:
+            key = f"{prop.title}_{m.property_index}"
+        mapping[key] = m.rules
+    (certora_dir / f"{spec_stem}.property_rules.json").write_text(
+        json.dumps(mapping, indent=2)
+    )
 
 
 def _component_cache_key(
@@ -60,7 +97,7 @@ async def run_generation_pipeline(
     threat_model: Document | None,
     max_bug_rounds: int = 3,
 ) -> AutoProveResult:
-    
+
     contract_instance : ContractInstance
 
     ind = -1
@@ -71,7 +108,7 @@ async def run_generation_pipeline(
             break
     if ind == -1:
         raise ValueError("Component not found")
-    
+
     contract_instance = ContractInstance(
         ind, app=summary
     )
@@ -124,6 +161,12 @@ async def run_generation_pipeline(
         for s, b in zip(raw_slugs, component_batches)
     ]
 
+    # Dump the analysis-phase properties for each component now that the extraction
+    # phase is complete.
+    certora_dir = pathlib.Path(source_input.project_root) / "certora"
+    for base, batch in zip(batch_filename_bases, component_batches):
+        dump_properties(certora_dir, f"autospec_{base}", batch.props)
+
     # ------------------------------------------------------------------
     # Phase 6: Per-component CVL generation
     # ------------------------------------------------------------------
@@ -171,6 +214,7 @@ async def run_generation_pipeline(
         base = batch_filename_bases[i]
         (certora_dir / f"autospec_{base}.spec").write_text(res.cvl)
         (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
+        dump_property_rules(certora_dir, f"autospec_{base}", batch.props, res.property_rules)
         return res
 
     generation_results = await asyncio.gather(

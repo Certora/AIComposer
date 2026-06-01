@@ -52,6 +52,12 @@ class SkippedProperty(BaseModel):
     reason: str = Field(description="Justification for why this property was skipped")
 
 
+class PropertyRuleMapping(BaseModel):
+    """The rules/invariants in the spec that verify a given property."""
+    property_index: int = Field(description="1-indexed property number from the batch listing")
+    rules: list[str] = Field(description="The names of the rules/invariants in the spec that verify this property")
+
+
 class Rebuttal(BaseModel):
     """A rebuttal to a specific piece of feedback from a prior round, backed by evidence.
 
@@ -111,15 +117,25 @@ class GeneratedCVL(BaseModel):
     commentary: str
     cvl: str
     skipped: list[SkippedProperty] = Field(default_factory=list)
+    property_rules: list[PropertyRuleMapping] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # Completion validation
 # ---------------------------------------------------------------------------
 
+def _replace_rules(
+    _left: list[PropertyRuleMapping],
+    right: list[PropertyRuleMapping],
+) -> list[PropertyRuleMapping]:
+    """State reducer: the latest mapping wins (set wholesale by the result tool)."""
+    return right
+
+
 class CVLGenerationExtra(TypedDict):
     curr_spec: str | None
     skipped: Annotated[list[SkippedProperty], _merge_skips]
+    property_rules: Annotated[list[PropertyRuleMapping], _replace_rules]
     validations: Annotated[dict[str, str], merge_validation]
     required_validations: list[str]
 
@@ -145,6 +161,51 @@ def check_completion(
     for key in required:
         if key not in validations or validations[key] != digest:
             return f"Completion REJECTED: {key} validation not satisfied or stale."
+    return None
+
+
+def validate_property_rules(
+    property_rules: list[PropertyRuleMapping],
+    skipped: list[SkippedProperty],
+    num_props: int,
+) -> str | None:
+    """Validate the property->rules mapping declared at completion time.
+
+    Returns None if valid, otherwise a single message enumerating all problems. A mapping is
+    valid when every non-skipped property is mapped to at least one rule, no skipped
+    property is mapped, indices are in range, and no index is mapped twice.
+    """
+    skipped_indices = {s.property_index for s in skipped}
+    errors: list[str] = []
+    mapped: set[int] = set()
+    for m in property_rules:
+        if not (1 <= m.property_index <= num_props):
+            errors.append(
+                f"Property index {m.property_index} is out of range "
+                f"(must be between 1 and {num_props})."
+            )
+            continue
+        if m.property_index in mapped:
+            errors.append(f"Property {m.property_index} appears more than once in the mapping.")
+            continue
+        mapped.add(m.property_index)
+        if m.property_index in skipped_indices:
+            errors.append(
+                f"Property {m.property_index} is marked as skipped and must not appear "
+                "in the mapping (un-skip it or remove it)."
+            )
+            continue
+        if not any(r.strip() for r in m.rules):
+            errors.append(f"Property {m.property_index} must map to at least one non-empty rule name.")
+    for i in range(1, num_props + 1):
+        if i in skipped_indices or i in mapped:
+            continue
+        errors.append(f"Property {i} is neither skipped nor mapped to any rules.")
+    if errors:
+        return (
+            "Completion REJECTED: the property_rules mapping is invalid. Fix all of the "
+            "following and resubmit:\n- " + "\n- ".join(errors)
+        )
     return None
 
 
