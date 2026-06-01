@@ -124,6 +124,13 @@ class MessageRenderer(ToolCallRenderer):
                     widgets.append(
                         Collapsible(Static(full_text, markup=False), title="Thinking...", collapsed=True)
                     )
+                case "reasoning":
+                    # OpenAI o-series / gpt-5 Responses-API style reasoning
+                    # content block. Shape-detected, not provider-tagged.
+                    full_text = c.get("reasoning", "") or c.get("text", "")
+                    widgets.append(
+                        Collapsible(Static(full_text, markup=False), title="Reasoning...", collapsed=True)
+                    )
                 case "text":
                     text = c["text"]
                     if (stripped := text.strip()):
@@ -139,6 +146,12 @@ class MessageRenderer(ToolCallRenderer):
                         widgets.append(w)
                 case other:
                     widgets.append(Static(f"Unknown block: {other}"))
+
+        # OpenAI Chat-Completions-style reasoning content lives on
+        # additional_kwargs, not in the content array.
+        reasoning_extra = msg.additional_kwargs.get("reasoning_content") if isinstance(msg.additional_kwargs, dict) else None
+        if isinstance(reasoning_extra, str) and reasoning_extra.strip():
+            widgets.insert(0, Collapsible(Static(reasoning_extra, markup=False), title="Reasoning...", collapsed=True))
 
         return widgets
 

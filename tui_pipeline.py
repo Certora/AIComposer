@@ -8,23 +8,21 @@ import pathlib
 import uuid
 from typing import cast, Protocol
 
-
-from graphcore.tools.memory import async_memory_tool
-
 from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.workflow.services import create_llm, get_checkpointer, get_store, standard_connections
+from composer.workflow.services import standard_connections
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.spec.services import build_natspec_env
 
 from composer.spec.context import (
-    WorkflowContext, SystemDoc, get_system_doc,
+    WorkflowContext, SystemDoc,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline
 from composer.spec.util import string_hash
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
+from composer.spec.agent_index import agent_index_config_from_env
 
 from composer.ui.pipeline_app import PipelineApp
 
@@ -66,40 +64,37 @@ async def main() -> int:
 
     # Read input document (handles both text and PDF)
     input_path = pathlib.Path(args.input_file)
-    content = get_system_doc(input_path)
-    if content is None:
-        print(f"Error: cannot read {input_path}")
-        return 1
-    system_doc = SystemDoc(content=content)
-
-    # Set up services
-    llm = create_llm(args)
-    checkpointer = get_checkpointer()
-    store = get_store()
 
     model = get_model()
 
     async with (
-        standard_connections(embedder=DefaultEmbedder(model)) as conn,
+        standard_connections(args=args, embedder=DefaultEmbedder(model)) as conn,
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag
     ):
+        content = await conn.uploader.get_document(input_path)
+        if content is None:
+            print(f"Error: cannot read {input_path}")
+            return 1
+        system_doc = SystemDoc(content=content)
+
         env = build_natspec_env(
-            llm=llm,
+            llm=conn.llm,
             checkpoint=conn.checkpointer,
             db=rag,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
+            cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
             kb_ns=DEFAULT_KB_NS,
             store=conn.indexed_store,
             recursion_limit=args.recursion_limit,
+            provider=conn.provider,
         )
 
-        cache_root = (args.cache_ns, string_hash(str(system_doc.content))) if args.cache_ns else None
+        cache_root = (args.cache_ns, system_doc.content.to_digest()) if args.cache_ns else None
 
         thread_id = f"pipeline_{uuid.uuid4().hex[:12]}"
         ctx = WorkflowContext.create(
-            services=lambda ns: async_memory_tool(conn.memory(ns)),
+            services=conn.memory,
             thread_id=thread_id,
-            store=store,
+            store=conn.store,
             recursion_limit=args.recursion_limit,
             cache_namespace=cache_root,
             memory_namespace=args.memory_ns,
@@ -115,7 +110,7 @@ async def main() -> int:
                     solc_version=args.solc_version,
                     tool_env=env,
                     ctx=ctx,
-                    store=store,
+                    store=conn.store,
                     handler_factory=app.make_handler,
                     max_concurrent=args.max_concurrent,
                     max_bug_rounds=args.max_bug_rounds,

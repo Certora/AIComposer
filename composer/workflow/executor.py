@@ -1,4 +1,4 @@
-from typing import Optional, cast, Any
+from typing import Optional, Protocol, cast, Any, assert_never
 import logging
 import shlex
 import uuid
@@ -16,10 +16,11 @@ from langgraph._internal._typing import StateLike
 from langgraph.types import Checkpointer
 
 from graphcore.graph import Builder
-from graphcore.tools.memory import memory_tool
+from graphcore.tools.memory import memory_tool, openai_memory_tool
+from composer.workflow.provider import provider_for, ProviderKind
 from graphcore.tools.vfs import VFSState
 
-from composer.input.types import WorkflowOptions, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
+from composer.input.types import WorkflowOptions, ModelOptionsBase, InputData, ResumeFSData, ResumeIdData, ResumeInput, NativeFS
 from composer.kb.knowledge_base import DefaultEmbedder, kb_tools as make_kb_tools
 from composer.workflow.factories import get_cryptostate_builder, get_vfs_tools, get_memory_ns
 from composer.workflow.services import get_checkpointer, get_store, get_memory, get_indexed_store
@@ -46,6 +47,23 @@ from composer.workflow.services import checkpointer_context, memory_backend_cont
 
 
 _KB_NS = ("cvl",)
+
+
+class _ExecutorOptions(WorkflowOptions, ModelOptionsBase, Protocol):
+    """Combined runtime options consumed by the executor: workflow
+    config + model identification. Callers already pass dataclasses
+    that satisfy both protocols."""
+
+
+def _sync_memory_tool_for(provider: ProviderKind, backend) -> BaseTool:
+    """Construct a sync memory ``BaseTool`` with the right schema for ``provider``."""
+    match provider:
+        case "anthropic":
+            return memory_tool(backend)
+        case "openai":
+            return openai_memory_tool(backend)
+        case _:
+            assert_never(provider)
 
 
 @dataclass
@@ -189,7 +207,7 @@ async def execute_ai_composer_workflow(
     handler: CodeGenIOHandler,
     llm: BaseChatModel,
     input: InputData | ResumeFSData | ResumeIdData,
-    workflow_options: WorkflowOptions,
+    workflow_options: _ExecutorOptions,
     memory_namespace: str | None = None,
     resume_work_key: str | None = None,
 ) -> WorkflowResult:
@@ -258,6 +276,9 @@ async def execute_ai_composer_workflow(
         from_previous_ns
     )
 
+    provider = provider_for(workflow_options.model)
+    req_mem_tool = _sync_memory_tool_for(provider, req_memories)
+
     extra_reqs = store.get((thread_id,), "requirements")
     reqs_list : list[str] | None
     if extra_reqs is None:
@@ -278,7 +299,8 @@ async def execute_ai_composer_workflow(
                 llm,
                 system_doc,
                 spec_file,
-                req_memories,
+                req_mem_tool,
+                provider,
                 resume_art,
                 workflow_options.requirements_oracle
             )
@@ -293,7 +315,7 @@ async def execute_ai_composer_workflow(
     if reqs_list is not None:
         judge_tool = get_judge_tool(
             reqs=reqs_list,
-            mem=req_memories,
+            mem_tool=req_mem_tool,
             unbound=llm,
             vfs_tools=get_vfs_tools(
                 fs_layer=fs_layer, immutable=True
@@ -302,8 +324,11 @@ async def execute_ai_composer_workflow(
         extra_tools.append(judge_tool)
         extra_tools.append(requirements_relaxation)
 
-    if "context-management-2025-06-27" in getattr(llm, "betas"):
-        memory = memory_tool(get_memory(get_memory_ns(mem_root, "composer"), "composer"))
+    if workflow_options.memory_tool:
+        memory = _sync_memory_tool_for(
+            provider,
+            get_memory(get_memory_ns(mem_root, "composer"), "composer"),
+        )
         extra_tools.append(memory)
 
     # CVL research sub-agent — KB needs indexed store for semantic search
@@ -314,7 +339,7 @@ async def execute_ai_composer_workflow(
     ).with_loader(
         load_jinja_template
     ).with_tools(
-        cvl_manual_tools(rag_db)
+        cvl_manual_tools(rag_db, provider)
     ).with_checkpointer(
         checkpointer
     ).with_tools(
@@ -345,6 +370,7 @@ async def execute_ai_composer_workflow(
     (workflow_builder, materializer) = get_cryptostate_builder(
         llm=llm,
         fs_layer=fs_layer,
+        provider=provider,
     )
 
     workflow_graph = workflow_builder.with_tools(extra_tools).with_sys_prompt_template(

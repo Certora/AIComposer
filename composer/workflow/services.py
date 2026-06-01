@@ -1,5 +1,5 @@
 import psycopg
-from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager, TYPE_CHECKING
+from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager, TYPE_CHECKING, assert_never
 from typing_extensions import TypeVar
 import inspect
 import os
@@ -19,8 +19,10 @@ from langgraph.store.postgres.aio import AsyncPostgresStore
 # import inside the function body.
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.tools import BaseTool
 else:
     BaseChatModel = "BaseChatModel"
+    BaseTool = "BaseTool"
 
 from psycopg.rows import AsyncRowFactory
 from psycopg_pool.pool_async import AsyncConnectionPool as PGAsyncPool
@@ -37,7 +39,8 @@ else:
     AsyncPostgresBackend = "AsyncPostgresBackend"
 
 from composer.input.types import ModelOptions, ModelOptionsBase
-from composer.input.files import FileUploader
+from composer.input.files import FileUploader, fresh_uploader
+from composer.workflow.provider import ProviderKind, provider_for
 
 
 T = TypeVar("T")
@@ -429,9 +432,22 @@ async def memory_backend_context() -> AsyncIterator[MemoryBackendGenerator]:
 
 _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7"}
 
+# OpenAI model families that support the `reasoning_effort` knob (the
+# o-series and gpt-5+). Non-reasoning chat models reject the param, so we
+# only forward thinking_tokens on these.
+_OPENAI_REASONING_PREFIXES = ("o1-", "o2-", "o3-", "o4-", "o5-", "gpt-5")
 
-def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
-    """Create LLM; thinking disabled when args.thinking_tokens is None."""
+
+def _openai_reasoning_effort(thinking_tokens: int) -> Literal["low", "medium", "high"]:
+    """Map a thinking-token budget onto OpenAI's three-step effort knob."""
+    if thinking_tokens <= 2048:
+        return "low"
+    if thinking_tokens <= 8192:
+        return "medium"
+    return "high"
+
+
+def _create_anthropic_llm(args: ModelOptionsBase) -> "BaseChatModel":
     from langchain_anthropic import ChatAnthropic
 
     thinking: dict[str, Any] | None
@@ -461,6 +477,41 @@ def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
     )
 
 
+
+def _create_openai_llm(args: ModelOptionsBase) -> "BaseChatModel":
+    from langchain_openai import ChatOpenAI
+    kwargs: dict[str, Any] = {}
+    if args.thinking_tokens is not None and args.model.lower().startswith(
+        _OPENAI_REASONING_PREFIXES
+    ):
+        kwargs["reasoning_effort"] = _openai_reasoning_effort(args.thinking_tokens)
+    return ChatOpenAI(
+        model=args.model,
+        max_completion_tokens=args.tokens,
+        temperature=1,
+        timeout=None,
+        max_retries=2,
+        **kwargs,
+    )
+
+
+def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
+    """Create LLM; thinking disabled when args.thinking_tokens is None.
+
+    Dispatches by ``provider_for(args.model)``. Anthropic uses the
+    Files-API + context-management + interleaved-thinking betas;
+    OpenAI uses ``reasoning_effort`` on reasoning-capable model
+    families and no extra knobs elsewhere."""
+    provider = provider_for(args.model)
+    match provider:
+        case "anthropic":
+            return _create_anthropic_llm(args)
+        case "openai":
+            return _create_openai_llm(args)
+        case _:
+            assert_never(provider)
+
+
 def create_llm(args: ModelOptions) -> "BaseChatModel":
     """Create and configure the LLM. Backwards-compatible; thinking always enabled."""
     return create_llm_base(args)
@@ -468,48 +519,88 @@ def create_llm(args: ModelOptions) -> "BaseChatModel":
 
 @dataclass
 class StandardConnections:
+    """Bundle of every per-workflow service, plus the LLM and the
+    provider kind it speaks to.
+
+    ``standard_connections`` constructs the LLM and derives the
+    provider from the same ``args`` it gets, so consumers don't have
+    to re-derive either downstream — read them off the bundle."""
     checkpointer: AsyncPostgresSaver
     store: AsyncPostgresStore
-    memory: "Callable[[str], AsyncPostgresBackend]"
+    memory: "Callable[[str], BaseTool]"
     uploader: FileUploader
+    llm: BaseChatModel
+    provider: ProviderKind
 
 @dataclass
 class IndexedConnections(StandardConnections):
     indexed_store: AsyncPostgresStore
 
 
+def _memory_tool_factory(
+    provider: ProviderKind,
+    backend_factory: Callable[[str], AsyncPostgresBackend],
+) -> Callable[[str], BaseTool]:
+    """Wrap a backend factory into a provider-aware tool factory.
+
+    Closes over the provider so the rest of the codebase only sees
+    ``Callable[[ns], BaseTool]`` — the memory tool's shape is the
+    factory's secret."""
+    from graphcore.tools.memory import async_memory_tool, openai_async_memory_tool
+
+    match provider:
+        case "anthropic":
+            return lambda ns: async_memory_tool(backend_factory(ns))
+        case "openai":
+            return lambda ns: openai_async_memory_tool(backend_factory(ns))
+        case _:
+            assert_never(provider)
+
+
 @overload
-def standard_connections() -> AsyncContextManager[StandardConnections]:
+def standard_connections(
+    *, args: ModelOptionsBase
+) -> AsyncContextManager[StandardConnections]:
     ...
 
 @overload
-def standard_connections(*, embedder : Embeddings) -> AsyncContextManager[IndexedConnections]:
+def standard_connections(
+    *, args: ModelOptionsBase, embedder: Embeddings
+) -> AsyncContextManager[IndexedConnections]:
     ...
 
 @asynccontextmanager
 async def standard_connections(
     *,
-    embedder: Embeddings | None = None
+    args: ModelOptionsBase,
+    embedder: Embeddings | None = None,
 ) -> AsyncIterator[StandardConnections | IndexedConnections]:
-    uploader = await FileUploader.fresh()
+    provider = provider_for(args.model)
+    llm = create_llm_base(args)
+    uploader = await fresh_uploader(provider)
     async with (
         checkpointer_context() as check,
         memory_backend_context() as mem,
         store_context() as store
     ):
+        memory: Callable[[str], BaseTool] = _memory_tool_factory(provider, mem)
         if embedder is not None:
             async with indexed_store_context(embedder) as ind:
                 yield IndexedConnections(
                     checkpointer=check,
                     indexed_store=ind,
                     store=store,
-                    memory=mem,
+                    memory=memory,
                     uploader=uploader,
+                    llm=llm,
+                    provider=provider,
                 )
                 return
         yield StandardConnections(
             checkpointer=check,
             store=store,
-            memory=mem,
+            memory=memory,
             uploader=uploader,
+            llm=llm,
+            provider=provider,
         )

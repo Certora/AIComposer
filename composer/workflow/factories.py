@@ -8,6 +8,7 @@ from graphcore.graph import build_workflow, BoundLLM, Builder
 from graphcore.tools.vfs import vfs_tools, VFSAccessor, VFSToolConfig, VFSState
 
 from composer.workflow.types import PromptParams
+from composer.workflow.provider import ProviderKind
 from composer.core.context import AIComposerContext
 from composer.core.state import AIComposerState, AIComposerInput
 
@@ -55,6 +56,7 @@ def get_vfs_tools(
 def get_cryptostate_builder(
     llm: BaseChatModel,
     fs_layer: str | None,
+    provider: ProviderKind,
 ) -> tuple[Builder[AIComposerState, AIComposerContext, AIComposerInput], VFSAccessor[VFSState]]:
     (vfs_tooling, mat) = get_vfs_tools(fs_layer=fs_layer, immutable=False)
     # import here to avoid loading these for non-composer factory uses
@@ -71,7 +73,7 @@ def get_cryptostate_builder(
         propose_spec_change,
         human_in_the_loop,
         code_result,
-        cvl_manual_search(AIComposerContext),
+        cvl_manual_search(AIComposerContext, provider),
         *vfs_tooling,
         ReadWorkingSpec.as_tool("read_working_spec"),
         WriteWorkingSpec.as_tool("write_working_spec"),
