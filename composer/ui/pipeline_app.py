@@ -21,7 +21,7 @@ from composer.ui.ide_bridge import IDEBridge
 from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
-from composer.spec.natspec.pipeline import Phase, PipelineResult
+from composer.spec.natspec.pipeline import NatspecPhase, PipelineResult
 from composer.spec.natspec.pipeline_events import NatspecEvent
 
 
@@ -29,12 +29,12 @@ from composer.spec.natspec.pipeline_events import NatspecEvent
 # Phase labels and tool configs
 # ---------------------------------------------------------------------------
 
-PHASE_LABELS: dict[Phase, str] = {
-    "component_analysis": "Component Analysis",
-    "bug_analysis": "Property Extraction",
-    "interface_gen": "Interface & Stub Generation",
-    "stub_gen": "Interface & Stub Generation",
-    "cvl_gen": "CVL Generation",
+PHASE_LABELS: dict[NatspecPhase, str] = {
+    NatspecPhase.COMPONENT_ANALYSIS: "Component Analysis",
+    NatspecPhase.BUG_ANALYSIS: "Property Extraction",
+    NatspecPhase.INTERFACE_GEN: "Interface & Stub Generation",
+    NatspecPhase.STUB_GEN: "Interface & Stub Generation",
+    NatspecPhase.CVL_GEN: "CVL Generation",
 }
 
 _SECTION_ORDER: list[str] = [
@@ -45,24 +45,24 @@ _SECTION_ORDER: list[str] = [
 ]
 
 
-def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
+def tool_config_for_phase(phase: NatspecPhase) -> ToolDisplayConfig:
     """Return the appropriate ``ToolDisplayConfig`` for *phase*."""
     match phase:
-        case "component_analysis":
+        case NatspecPhase.COMPONENT_ANALYSIS:
             return ToolDisplayConfig(tool_display={
                 "result": CommonTools.result,
                 "memory": CommonTools.memory,
             })
-        case "bug_analysis":
+        case NatspecPhase.BUG_ANALYSIS:
             return ToolDisplayConfig(tool_display={
                 **CommonTools.rough_draft_displays(),
                 "result": CommonTools.result,
             })
-        case "interface_gen" | "stub_gen":
+        case NatspecPhase.INTERFACE_GEN | NatspecPhase.STUB_GEN:
             return ToolDisplayConfig(tool_display={
                 "result": CommonTools.result,
             })
-        case "cvl_gen":
+        case NatspecPhase.CVL_GEN:
             return ToolDisplayConfig(tool_display={
                 **CommonTools.cvl_research_displays(),
                 **CommonTools.cvl_manipulation(),
@@ -95,7 +95,7 @@ class NatspecTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
 
     def format_hitl_prompt(self, ty: None) -> list[Text | str]:
         raise NotImplementedError("no hitl tools in this workflow")
-    
+
     @override
     async def handle_event(self, payload: dict, path: list[str], checkpoint_id: str) -> None:
         evt = cast(NatspecEvent, payload)
@@ -115,7 +115,7 @@ class NatspecTaskHandler(MultiJobTaskHandler[None], NullEventHandler):
 # NatspecPipelineApp
 # ---------------------------------------------------------------------------
 
-class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
+class NatspecPipelineApp(MultiJobApp[NatspecPhase, NatspecTaskHandler]):
     """Textual TUI for the NatSpec multi-agent pipeline."""
 
     def __init__(self, ide: IDEBridge | None = None):
@@ -126,11 +126,11 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
             ide=ide,
         )
 
-    def create_task_handler(self, panel: VerticalScroll, info: TaskInfo[Phase]) -> NatspecTaskHandler:
+    def create_task_handler(self, panel: VerticalScroll, info: TaskInfo[NatspecPhase]) -> NatspecTaskHandler:
         tc = tool_config_for_phase(info.phase)
         return NatspecTaskHandler(info.task_id, info.label, panel, self, tc)
 
-    def create_event_handler(self, handler: NatspecTaskHandler, info: TaskInfo[Phase]) -> EventHandler:
+    def create_event_handler(self, handler: NatspecTaskHandler, info: TaskInfo[NatspecPhase]) -> EventHandler:
         return handler
 
     # ── Pipeline completion ───────────────────────────────────

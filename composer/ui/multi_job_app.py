@@ -1,7 +1,7 @@
 """
 Generic multi-job TUI base class.
 
-``MultiJobApp[P, T]`` manages multiple concurrent tasks with a summary
+``MultiJobApp[P: HasName, T]`` manages multiple concurrent tasks with a summary
 panel, per-task detail drill-down, HITL routing, and token tracking.
 
 Subclasses provide domain behavior by overriding ``create_task_handler``
@@ -16,7 +16,6 @@ import asyncio
 import enum
 from collections.abc import Callable, Coroutine
 from contextlib import asynccontextmanager, AbstractAsyncContextManager
-from dataclasses import dataclass
 from typing import Any, Protocol, AsyncIterator
 import asyncio
 
@@ -47,7 +46,7 @@ from composer.io.conversation import (
     StateUpdate
 )
 from composer.io.stream import AsyncDataQueue, ManagedQueue, managed_streamer, EndConversation, Checkpoint
-from composer.io.multi_job import TaskHandle, TaskInfo
+from composer.io.multi_job import HasName, TaskHandle, TaskInfo
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +163,7 @@ class _ConversationSession(ToolCallRenderer):
         done = asyncio.Event()
         self._queue.push(Checkpoint(done))
         await done.wait()
-    
+
     def render_ai_yapping(self, text: str) -> Static:
         return Static(dot("blue", Text.assemble(("AI: ", "bold blue"), text)))
 
@@ -461,7 +460,7 @@ class MultiJobTaskHandler[H]:
 # MultiJobApp — generic multi-job Textual app
 # ---------------------------------------------------------------------------
 
-class MultiJobApp[P, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, App):
+class MultiJobApp[P: HasName, T: MultiJobTaskHandler](LogViewerMixin, IDEContentMixin, App):
     """Generic multi-job TUI with summary panel, task drill-down, and HITL routing.
 
     Implements ``TaskHost`` so that task handlers interact through a

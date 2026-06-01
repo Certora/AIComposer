@@ -1,0 +1,30 @@
+name: Lockfile check
+
+on:
+  push:
+    branches: [ master, composer-stable ]
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+  pull_request:
+    branches: [ master, composer-stable ]
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-lock:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: astral-sh/setup-uv@v3
+
+    - name: Verify uv.lock is in sync with pyproject.toml
+      run: uv lock --check

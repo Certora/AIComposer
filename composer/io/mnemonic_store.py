@@ -1,10 +1,14 @@
 import json
+import logging
 import uuid
 
 from langgraph.store.base import BaseStore, PutOp
 from langgraph.store.postgres import AsyncPostgresStore
 
 from composer.ui.mnemonic import mnemonic_id
+
+
+_logger = logging.getLogger("composer.mnemonic")
 
 
 def _mnem_ns(base_ns: tuple[str, ...]) -> tuple[str, ...]:
@@ -76,6 +80,7 @@ async def _assign_pgsql_mnemonic(
         # ``tid`` could each have claimed a distinct mnem; on the ts-side
         # last-write-wins and the other mnem is left orphaned. Tolerable.
         await store.aput(ts, tid, {"mnem": cand})
+        _logger.info(f"assigned mnemonic {cand} to thread {tid}")
         return cand
 
     assert False, "Somehow, implausibly, failed to allocate a fresh UID"
@@ -117,6 +122,7 @@ async def assign_mnemonic(
                 value={"mnem": id}
             )
         ])
+        _logger.info(f"assigned mnemonic {id} to thread {tid}")
         return id
 
     assert False, "Somehow, implausibly, failed to allocate a fresh UID"

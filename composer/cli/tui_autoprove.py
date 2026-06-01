@@ -4,6 +4,7 @@ import asyncio
 
 import composer.bind as _
 
+from composer.diagnostics.timing import RunSummary
 from composer.ui.autoprove_app import AutoProveApp
 from composer.spec.source.autoprove_common import _entry_point
 
@@ -12,19 +13,20 @@ from composer.spec.source.autoprove_common import _entry_point
 # ---------------------------------------------------------------------------
 
 async def _main() -> int:
-    async with _entry_point() as pipeline:
+    summary = RunSummary()
+    async with _entry_point(summary) as pipeline:
         app = AutoProveApp()
 
         async def work():
             try:
                 result = await pipeline(app.make_handler)
-                summary = (
+                msg = (
                     f"Auto-prove complete: {result.n_components} components, "
                     f"{result.n_properties} properties"
                 )
                 if result.failures:
-                    summary += f", {len(result.failures)} failures"
-                app.notify(summary)
+                    msg += f", {len(result.failures)} failures"
+                app.notify(msg)
                 app._pipeline_done = True
             except Exception as exc:
                 app.notify(f"Pipeline failed: {exc}", severity="error")
@@ -32,6 +34,7 @@ async def _main() -> int:
 
         app.set_work(work)
         await app.run_async()
+        print(summary.format())
         return 0
 
 def main() -> int:

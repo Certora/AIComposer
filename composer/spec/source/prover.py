@@ -10,6 +10,8 @@ Provides get_prover_tool() which creates a verify_spec tool that:
 
 import asyncio
 import json
+import logging
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, override, AsyncContextManager
@@ -33,8 +35,12 @@ from composer.diagnostics.stream import (
     CEXAnalysisStart, ProverRun, ProverResult
 )
 from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
+from composer.diagnostics.timing import get_current_task_id, update_summary
 from graphcore.graph import tool_state_update
 from composer.spec.util import temp_certora_file
+
+
+_logger = logging.getLogger("composer.prover")
 
 DELETE_SKIP = "__delete_skip"
 
@@ -64,6 +70,7 @@ class _SpecCallbacks(ProverCallbacks):
     def __init__(self, writer: Callable[[ProverEvents], None], tool_call_id: str) -> None:
         self._writer = writer
         self._tool_call_id = tool_call_id
+        self._started_mono: float | None = None
 
     @override
     async def on_stdout_line(self, line: str) -> None:
@@ -75,6 +82,11 @@ class _SpecCallbacks(ProverCallbacks):
 
     @override
     async def on_cloud_poll(self, status: str, message: str) -> None:
+        elapsed = (time.perf_counter() - self._started_mono) if self._started_mono else 0.0
+        _logger.info(
+            f"cloud poll tool_call={self._tool_call_id} status={status} "
+            f"elapsed={elapsed:.1f}s msg={message}"
+        )
         self._writer({
             "type": "cloud_polling",
             "tool_call_id": self._tool_call_id,
@@ -89,7 +101,7 @@ class _SpecCallbacks(ProverCallbacks):
             "rule_name": rule.path.pprint(),
             "tool_call_id": self._tool_call_id
         })
-    
+
     @override
     async def on_analysis_complete(self, rule: RuleResult, analysis: str) -> None:
         self._writer({
@@ -98,9 +110,11 @@ class _SpecCallbacks(ProverCallbacks):
             "tool_call_id": self._tool_call_id,
             "rule": rule.path.pprint()
         })
-    
+
     @override
     async def on_prover_run(self, args: list[str]) -> None:
+        self._started_mono = time.perf_counter()
+        _logger.info(f"prover start tool_call={self._tool_call_id} args={args}")
         self._writer({
             "type": "prover_run",
             "tool_call_id": self._tool_call_id,
@@ -109,11 +123,19 @@ class _SpecCallbacks(ProverCallbacks):
 
     @override
     async def on_prover_result(self, results: dict[str, RuleResult]) -> None:
-        self._writer({
+        elapsed = (time.perf_counter() - self._started_mono) if self._started_mono else 0.0
+        status_summary = { k: v.status for (k,v) in results.items() }
+        _logger.info(
+            f"prover done tool_call={self._tool_call_id} "
+            f"elapsed={elapsed:.1f}s status={status_summary}"
+        )
+        update_summary(lambda s: s.add_prover_call(get_current_task_id(), elapsed))
+        result_evt: ProverResult = {
             "type": "prover_result",
             "tool_call_id": self._tool_call_id,
-            "status": { k: v.status for (k,v) in results.items() }
-        })
+            "status": { k: v.status for (k,v) in results.items() },
+        }
+        self._writer(result_evt)
 
 
 class VerifySpecSchema(BaseModel):
@@ -194,7 +216,7 @@ def get_prover_tool(
 
             if rules:
                 config["rule"] = rules
-            
+
             with temp_certora_file(
                 root = project_root,
                 content=json.dumps(config, indent=2),

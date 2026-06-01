@@ -73,7 +73,7 @@ Two subclass hooks:
 The contract between the pipeline orchestrator and the app:
 
 ```python
-type HandlerFactory[P] = Callable[[TaskInfo[P]], Awaitable[TaskHandle[Any, Any]]]
+type HandlerFactory[P: HasName] = Callable[[TaskInfo[P]], Awaitable[TaskHandle[Any, Any]]]
 ```
 
 `MultiJobApp.make_handler` is the concrete implementation. It

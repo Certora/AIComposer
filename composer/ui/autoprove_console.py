@@ -213,7 +213,7 @@ class AutoProveConsoleHandler(NullEventHandler):
             case "cex_analysis":
                 self._output(f"[{self._label(path)}]: rule analysis start -> {d['rule_name']}")
         return super().handle_event(payload, path, checkpoint_id)
-    
+
     @asynccontextmanager
     async def _start_conversation(self, initial: RenderableType) -> AsyncIterator[ConversationClient]:
         async with self._conversation_lock:

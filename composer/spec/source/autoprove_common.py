@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import pathlib
 import shlex
+import sys
 import uuid
 import os
 from contextlib import asynccontextmanager
@@ -11,6 +12,8 @@ from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
 from graphcore.tools.memory import async_memory_tool
 
+from composer.diagnostics.logging_setup import setup_autoprove_logging
+from composer.diagnostics.timing import RunSummary, install_run_summary
 from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
@@ -83,10 +86,10 @@ def _root_cache_key(
 # Main
 # ---------------------------------------------------------------------------
 
-type Executor = Callable[[HandlerFactory[AutoProvePhase, None]], Awaitable[AutoProveResult]]
+type Executor = Callable[[HandlerFactory[AutoProvePhase, None]], Awaitable[AutoProveResult]]  # pyright: ignore[reportInvalidTypeForm]
 
 @asynccontextmanager
-async def _entry_point() -> AsyncIterator[Executor]:
+async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
     parser = argparse.ArgumentParser(
         description="Auto-prove multi-agent pipeline TUI"
     )
@@ -134,6 +137,10 @@ async def _entry_point() -> AsyncIterator[Executor]:
         cache_root = user_ns(args.cache_ns, root_key)
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
+
+    text_log, events_log = setup_autoprove_logging(project_root, thread_id)
+    print(f"autoprove logs: {text_log}\n           events: {events_log}", file=sys.stderr)
+    install_run_summary(summary)
 
     async with (
         standard_connections(

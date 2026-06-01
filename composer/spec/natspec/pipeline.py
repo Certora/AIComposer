@@ -18,6 +18,7 @@ individual task event streams.
 
 import asyncio
 from dataclasses import dataclass, field
+import enum
 from typing import Literal, Awaitable
 
 from typing_extensions import TypedDict
@@ -53,13 +54,12 @@ from composer.spec.tool_env import ToolEnvironment
 # Phase type
 # ---------------------------------------------------------------------------
 
-type Phase = Literal[
-    "component_analysis",
-    "bug_analysis",
-    "interface_gen",
-    "stub_gen",
-    "cvl_gen",
-]
+class NatspecPhase(enum.Enum):
+    COMPONENT_ANALYSIS = "component_analysis"
+    BUG_ANALYSIS = "bug_analysis"
+    INTERFACE_GEN = "interface_gen"
+    STUB_GEN = "stub_gen"
+    CVL_GEN = "cvl_gen"
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ class ContractResult:
 class PipelineServices:
     sem: asyncio.Semaphore
     store: BaseStore
-    factory: HandlerFactory[Phase, None]
+    factory: HandlerFactory[NatspecPhase, None]
     env: ToolEnvironment
 
 class NatspecGenerationParams(TypedDict):
@@ -145,7 +145,7 @@ async def analyze_single_contract(
     stub: StubDeclaration,
     max_bug_rounds: int
 ) -> ContractResult:
-    
+
     contract_name = summary.contract.name
     handler_factory = services.factory
     store = services.store
@@ -153,7 +153,7 @@ async def analyze_single_contract(
     interface = intf
 
     doc_digest = system_doc.content.to_digest()
-    
+
     # ------------------------------------------------------------------
     # Shared artifacts for Phase 5
     # ------------------------------------------------------------------
@@ -191,7 +191,7 @@ async def analyze_single_contract(
 
         props = await run_task(
             handler_factory,
-            TaskInfo(f"bug-{summary.contract.name}-{component_idx}", name, "bug_analysis"),
+            TaskInfo(f"bug-{summary.contract.name}-{component_idx}", name, NatspecPhase.BUG_ANALYSIS),
             lambda: run_property_inference(feat_ctx, services.env, feat, max_rounds=max_bug_rounds),
             semaphore,
         )
@@ -250,7 +250,7 @@ async def analyze_single_contract(
         label = f"{contract_name} {batch.feat.component.name} ({len(batch.props)} properties)"
         return await run_task(
             handler_factory,
-            TaskInfo(f"cvl-{contract_name}-{batch_idx}", label, "cvl_gen"),
+            TaskInfo(f"cvl-{contract_name}-{batch_idx}", label, NatspecPhase.CVL_GEN),
             lambda: generate_cvl_batch(
                 stub_reader=lambda: stub_registry.read_stub(contract_name),
                 contract_name=contract_name,
@@ -300,7 +300,7 @@ async def run_natspec_pipeline(
     tool_env: ToolEnvironment,
     ctx: WorkflowContext[None],
     store: BaseStore,
-    handler_factory: HandlerFactory[Phase, None],
+    handler_factory: HandlerFactory[NatspecPhase, None],
     *,
     max_concurrent: int = 4,
     max_bug_rounds: int = 3,
@@ -339,7 +339,7 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
     summary = await run_task(
         handler_factory,
-        TaskInfo("component-analysis", SYSTEM_DESC, "component_analysis"),
+        TaskInfo("component-analysis", SYSTEM_DESC, NatspecPhase.COMPONENT_ANALYSIS),
         lambda: run_component_analysis(ctx, system_doc, tool_env),
     )
     if summary is None:
@@ -350,7 +350,7 @@ async def run_natspec_pipeline(
     # ------------------------------------------------------------------
     interface = await run_task(
         handler_factory,
-        TaskInfo("interface-gen", INTERFACE_GEN_DESC, "interface_gen"),
+        TaskInfo("interface-gen", INTERFACE_GEN_DESC, NatspecPhase.INTERFACE_GEN),
         lambda: generate_interface(ctx, summary, tool_env.builder, solc_version),
     )
 
@@ -362,7 +362,7 @@ async def run_natspec_pipeline(
     ) -> tuple[str, StubDeclaration]:
         res = await run_task(
             handler_factory,
-            TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", "stub_gen"),
+            TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", NatspecPhase.STUB_GEN),
             lambda: generate_stub(ctx, interface, contract_name, tool_env.builder, solc_version),
         )
         return (contract_name, res)
@@ -409,11 +409,11 @@ async def run_natspec_pipeline(
             stub=name_to_stub[contract.name],
             max_bug_rounds=max_bug_rounds
         )
-        
+
         tasks.append(cont)
     results = await asyncio.gather(*tasks)
 
-     
+
     to_ret : list[ContractFormulation] = []
     for (c, res) in zip(summary.contract_components, results):
         to_ret.append(ContractFormulation(

@@ -11,6 +11,7 @@ just writes events to the sink it is given.  The higher-level
 and connects it to the ``EventQueue`` / drainer infrastructure.
 """
 
+import time
 from typing import Any, Protocol, Callable, Awaitable, cast
 
 from composer.io.events import GraphEvents, NextCheckpoint, CustomUpdate, Start, End, StateUpdate
@@ -65,7 +66,15 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
     curr_config["configurable"] = config.copy()
 
     curr_checkpoint : str
-    event_sink(Start(tid, description=description, tool_id=within_tool))
+    mono_start = time.perf_counter()
+    event_sink(Start(
+        tid,
+        description=description,
+        tool_id=within_tool,
+        started_at_wall=time.time(),
+        started_at_mono=mono_start,
+    ))
+    err_name: str | None = None
     async with log_thread(
         description=description,
         runnable=run_conf,
@@ -102,15 +111,38 @@ async def run_graph[H, S: StateLike, I: StateLike, C: StateLike | None](
                             graph_input = Command(resume=human_response)
                             interrupted = True
                             break
-                        event_sink(
-                            StateUpdate(
-                                payload, thread_id=tid
+                        elif ty == "custom":
+                            event_sink(
+                                CustomUpdate(payload, thread_id=tid, checkpoint_id=curr_checkpoint) # pyright: ignore[reportPossiblyUnboundVariable]
                             )
-                        )
-                if interrupted:
-                    continue
+                        else:
+                            assert ty == "updates"
+                            if "__interrupt__" in payload:
+                                assert human_handler is not None
+                                if "configurable" in curr_config and "checkpoint_id" in curr_config["configurable"]:
+                                    del curr_config["configurable"]["checkpoint_id"]
+                                interrupt_data = cast(H, payload["__interrupt__"][0].value)
+                                curr_state = cast(S, (await graph.aget_state({"configurable": {"thread_id": tid}})).values)
+                                human_response = await human_handler(interrupt_data, curr_state)
+                                graph_input = Command(resume=human_response)
+                                interrupted = True
+                                break
+                            event_sink(
+                                StateUpdate(
+                                    payload, thread_id=tid
+                                )
+                            )
+                    if interrupted:
+                        continue
 
                 result_state = (await graph.aget_state({"configurable": {"thread_id": tid}})).values
                 return cast(S, result_state)
+        except BaseException as exc:
+            err_name = type(exc).__name__
+            raise
         finally:
-            event_sink(End(tid))
+            event_sink(End(
+                tid,
+                duration_s=time.perf_counter() - mono_start,
+                error=err_name,
+            ))
