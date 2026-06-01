@@ -187,12 +187,6 @@ async def task_logger(
     phase_name: str,
     logger: Logger,
 ) -> AsyncIterator[StartLogger]:
-    summary = get_run_summary()
-    if summary is None:
-          class Dummy():
-                 def task_started(self) -> None: ...
-          yield Dummy()
-          return
     t_request = time.perf_counter()
     log = _TaskLog()
     tok = _current_task_id.set(task_id)
@@ -206,9 +200,11 @@ async def task_logger(
             f"task failed: phase={phase_name} task_id={task_id} "
             f"wall={elapsed:.2f}s queue_wait={queue_wait:.2f}s error={err_name}"
         )
-        summary.record_phase(
-            task_id=task_id, label=label, phase=phase_name,
-            wall_s=elapsed, queue_wait_s=queue_wait, error=err_name,
+        update_summary(lambda summ:
+            summ.record_phase(
+                task_id=task_id, label=label, phase=phase_name,
+                wall_s=elapsed, queue_wait_s=queue_wait, error=err_name,
+            )
         )
         raise exc
     else:
@@ -218,9 +214,11 @@ async def task_logger(
             f"task done: phase={phase_name} task_id={task_id} "
             f"wall={elapsed:.2f}s queue_wait={queue_wait:.2f}s"
         )
-        summary.record_phase(
-            task_id=task_id, label=label, phase=phase_name,
-            wall_s=elapsed, queue_wait_s=queue_wait, error=None,
+        update_summary(lambda summary:
+            summary.record_phase(
+                task_id=task_id, label=label, phase=phase_name,
+                wall_s=elapsed, queue_wait_s=queue_wait, error=None,
+            )
         )
     finally:
         _current_task_id.reset(tok)
