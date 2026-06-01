@@ -110,7 +110,7 @@ async def generate_cvl_batch(
             f"The current typechecking stub for the {contract_name} stub is",
             stub_reader(),
             "For reference, the system document for the application is",
-            system_doc.content
+            system_doc.content.to_dict()
         ]
     )
 

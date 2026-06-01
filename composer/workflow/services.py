@@ -21,6 +21,8 @@ from psycopg.connection_async import AsyncConnection
 from graphcore.tools.memory import PostgresMemoryBackend, AsyncPostgresBackend
 
 from composer.input.types import ModelOptions, ModelOptionsBase
+from composer.input.files import FileUploader
+
 
 T = TypeVar("T")
 
@@ -448,6 +450,7 @@ class StandardConnections:
     checkpointer: AsyncPostgresSaver
     store: AsyncPostgresStore
     memory: Callable[[str], AsyncPostgresBackend]
+    uploader: FileUploader
 
 @dataclass
 class IndexedConnections(StandardConnections):
@@ -467,6 +470,7 @@ async def standard_connections(
     *,
     embedder: Embeddings | None = None
 ) -> AsyncIterator[StandardConnections | IndexedConnections]:
+    uploader = await FileUploader.fresh()
     async with (
         checkpointer_context() as check,
         memory_backend_context() as mem,
@@ -478,11 +482,13 @@ async def standard_connections(
                     checkpointer=check,
                     indexed_store=ind,
                     store=store,
-                    memory=mem
+                    memory=mem,
+                    uploader=uploader,
                 )
                 return
         yield StandardConnections(
             checkpointer=check,
             store=store,
-            memory=mem
+            memory=mem,
+            uploader=uploader,
         )

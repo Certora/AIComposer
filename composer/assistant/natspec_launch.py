@@ -11,12 +11,12 @@ from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.context import (
-    WorkflowContext, SystemDoc, get_document_input,
+    WorkflowContext, SystemDoc,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline, PipelineResult
-from composer.spec.util import string_hash
 from composer.workflow.services import create_llm, standard_connections, get_store
 from composer.spec.services import build_natspec_env
+from composer.spec.agent_index import agent_index_config_from_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 
 async def launch_natspec_workflow(
@@ -24,10 +24,6 @@ async def launch_natspec_workflow(
     ctx: OrchestratorContext,
 ) -> str:
     input_path = ctx.workspace / args.input_file
-    content = get_document_input(input_path)
-    if content is None:
-        return f"Error: cannot read {input_path}"
-    system_doc = SystemDoc(content=content)
 
     pipeline_llm = create_llm(ctx.config)
     the_model = get_model()
@@ -37,9 +33,13 @@ async def launch_natspec_workflow(
             the_model, ctx.config.rag_db
         ) as rag_db
     ):
+        content = await conn.uploader.get_document(input_path)
+        if content is None:
+            return f"Error: cannot read {input_path}"
+        system_doc = SystemDoc(content=content)
 
         thread_id = f"pipeline_{uuid.uuid4().hex[:12]}"
-        cache_root = (args.cache_namespace, string_hash(str(system_doc.content))) if args.cache_namespace else None
+        cache_root = (args.cache_namespace, system_doc.content.to_digest()) if args.cache_namespace else None
 
         wf_ctx = WorkflowContext.create(
             services=lambda ns: make_memory_tool(conn.memory(ns)),
@@ -57,7 +57,7 @@ async def launch_natspec_workflow(
             checkpoint=conn.checkpointer,
             kb_ns=("cvl",),
             store=conn.store,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
+            cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
             recursion_limit=ctx.config.recursion_limit,
         )
 

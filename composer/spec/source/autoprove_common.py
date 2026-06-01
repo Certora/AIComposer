@@ -6,6 +6,7 @@ import pathlib
 import shlex
 import sys
 import uuid
+import os
 from contextlib import asynccontextmanager
 from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
@@ -15,17 +16,19 @@ from composer.diagnostics.logging_setup import setup_autoprove_logging
 from composer.diagnostics.timing import RunSummary, install_run_summary
 from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
-from composer.kb.knowledge_base import DefaultEmbedder
+from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.workflow.services import create_llm, standard_connections
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, get_document_input,
+    WorkflowContext, SourceCode,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
 from composer.prover.core import make_prover_options
 from composer.spec.source.source_env import build_source_env
+from composer.spec.agent_index import agent_index_config_from_env
+from composer.core.user import get_uid, user_data_ns
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
@@ -33,6 +36,16 @@ from composer.ui.tool_display import async_tool_context
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.io.multi_job import HandlerFactory
 
+def user_ns(
+    *parts: str | tuple[str, ...]
+) -> tuple[str,...]:
+    to_ret : list[str] = []
+    for p in parts:
+        if isinstance(p, str):
+            to_ret.append(p)
+        else:
+            to_ret.extend(p)
+    return user_data_ns() + tuple(to_ret)
 
 # ---------------------------------------------------------------------------
 # Args
@@ -106,41 +119,27 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
 
     relative_path = str(full_contract_path.relative_to(project_root))
 
-    # Read input document
     sys_path = pathlib.Path(args.system_doc)
-    content = get_document_input(sys_path)
-    if content is None:
-        parser.error(f"cannot read {sys_path}")
-
-    system_doc = SourceCode(
-        content=content,
-        project_root=str(project_root),
-        contract_name=contract_name,
-        relative_path=relative_path,
-        forbidden_read=FS_FORBIDDEN_READ,
-    )
 
     # Set up services
     llm = create_llm(args)
     model = get_model()
 
 
-    cache_root: tuple[str, str] | None = None
+    cache_root: tuple[str, ...] | None = None
 
     root_key = _root_cache_key(
-            args.project_root, sys_path, relative_path, contract_name,
+            str(project_root), sys_path, relative_path, contract_name,
         )
 
     if args.cache_ns is not None:
-        cache_root = (args.cache_ns, root_key)
+        cache_root = user_ns(args.cache_ns, root_key)
 
     thread_id = f"autoprove_{uuid.uuid4().hex[:12]}"
 
     text_log, events_log = setup_autoprove_logging(project_root, thread_id)
     print(f"autoprove logs: {text_log}\n           events: {events_log}", file=sys.stderr)
     install_run_summary(summary)
-
-    threat_model = get_document_input(pathlib.Path(threat_path)) if (threat_path := args.threat_model) is not None else None
 
     async with (
         standard_connections(
@@ -149,25 +148,50 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context()
     ):
+        # Source-code agent caches are always per-user — the conventional
+        # ``user_data_ns(uid)`` prefix lives directly in the ns we pass
+        # so the AgentIndex runs single-pool (no overlay).
+        source_data_ns = user_ns("source_agent", "cache", root_key)
+        # Read input documents now that the uploader is available.
+        content = await conns.uploader.get_document(sys_path)
+        if content is None:
+            parser.error(f"cannot read {sys_path}")
+
+        system_doc = SourceCode(
+            content=content,
+            project_root=str(project_root),
+            contract_name=contract_name,
+            relative_path=relative_path,
+            forbidden_read=FS_FORBIDDEN_READ,
+        )
+
+        threat_model = (
+            await conns.uploader.get_document(pathlib.Path(threat_path))
+            if (threat_path := args.threat_model) is not None else None
+        )
         source_env = build_source_env(
             llm=llm,
             db=rag_db,
             checkpoint=conns.checkpointer,
             forbidden_read=FS_FORBIDDEN_READ,
-            kb_ns=("cvl",),
+            kb_ns=DEFAULT_KB_NS,
             root=args.project_root,
             store=conns.indexed_store,
-            cvl_cache_ns=DEFAULT_CVL_AGENT_INDEX_NS,
-            source_question_ns=("source_agent", "cache", root_key),
+            source_question_ns=source_data_ns,
             recursion_limit=args.recursion_limit,
+            cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
         )
+
+        memory_ns = args.memory_ns
+        if memory_ns:
+            memory_ns = get_uid() + "/" + memory_ns
         ctx = WorkflowContext.create(
             services=lambda namespace: async_memory_tool(conns.memory(namespace)),
             thread_id=thread_id,
             store=conns.store,
             recursion_limit=args.recursion_limit,
             cache_namespace=cache_root,
-            memory_namespace=args.memory_ns,
+            memory_namespace=memory_ns,
         )
 
         prover_opts = make_prover_options(

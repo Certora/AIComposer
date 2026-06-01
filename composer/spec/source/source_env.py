@@ -8,7 +8,7 @@ from composer.spec.tool_env import ToolEnvironment, SourceTools, BaseSourceTools
 from composer.spec.services import build_rag_tool_env, _BaseTools, RAGInputs
 from graphcore.tools.vfs import fs_tools
 from composer.spec.code_explorer import indexed_code_explorer_tool
-from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
+from composer.spec.agent_index import AgentIndex, AgentIndexConfig, RetrieveDocumentTool
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,14 @@ def build_source_tools(
     class _ExplorerEnv(_BaseTools, _BaseSourceTools):
         index: AgentIndex
 
-    ind = AgentIndex(store, cache_ns)
+    # Source-code agent caches are always per-user (no shared base);
+    # the caller is responsible for passing a ``cache_ns`` that's
+    # already user-scoped via ``user_data_ns(uid)``. The index runs
+    # single-pool: no overlay, base_layer == cache_ns.
+    ind = AgentIndex(
+        store=store,
+        config=AgentIndexConfig(base_layer=cache_ns),
+    )
 
     explorer_tool = indexed_code_explorer_tool(
         _ExplorerEnv(

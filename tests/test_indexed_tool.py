@@ -12,7 +12,7 @@ from pydantic import Field
 
 from langgraph.graph import MessagesState
 
-from composer.spec.agent_index import AgentIndex, IndexedTool
+from composer.spec.agent_index import AgentIndex, AgentIndexConfig, IndexedTool
 
 from graphcore.testing import Scenario, tool_call_raw, ToolCallDict, InitializedScenario
 
@@ -102,7 +102,10 @@ async def indexed_store(pg_database: PGAsyncPool, qna_fixture: QnATransformer) -
 
 @pytest_asyncio.fixture
 async def index(indexed_store: AsyncPostgresStore) -> AgentIndex:
-    return AgentIndex(indexed_store, ("test", "indexed_tool", uuid.uuid4().hex))
+    return AgentIndex(
+        indexed_store,
+        AgentIndexConfig(base_layer=("test", "indexed_tool", uuid.uuid4().hex)),
+    )
 
 # ---------------------------------------------------------------------------
 # Tool call constructors

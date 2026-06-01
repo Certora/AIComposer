@@ -1,4 +1,4 @@
-from typing import TypedDict, Unpack, Protocol
+from typing import NotRequired, TypedDict, Unpack, Protocol
 from dataclasses import dataclass
 from composer.rag.db import PostgreSQLRAGDatabase
 from langchain_core.tools import BaseTool
@@ -13,7 +13,7 @@ from composer.spec.tool_env import (
 from composer.spec.cvl_research import indexed_cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.tools.search import cvl_manual_tools
 from composer.kb.knowledge_base import kb_tools
-from composer.spec.agent_index import AgentIndex, RetrieveDocumentTool
+from composer.spec.agent_index import AgentIndex, AgentIndexConfig, RetrieveDocumentTool
 
 @dataclass(frozen=True)
 class _BasicLLM:
@@ -44,11 +44,11 @@ def build_rag_tools(
     s: BaseRAGTools,
     llm: BasicAgentTools,
     store: BaseStore,
-    cache_ns: tuple[str, ...],
     recursion_limit: int,
+    index_config: AgentIndexConfig,
 ) -> RAGTools:
-
-    ind = AgentIndex(store=store, cache_ns=cache_ns)
+    cfg = index_config
+    ind = AgentIndex(store=store, config=cfg)
 
     @dataclass(frozen=True)
     class _CVLResearchEnv(_BaseTools):
@@ -92,7 +92,7 @@ class RAGInputs(LLMInputs):
     db: PostgreSQLRAGDatabase
     store: BaseStore
     kb_ns: tuple[str, ...]
-    cvl_cache_ns: tuple[str, ...]
+    cvl_index_config: AgentIndexConfig
     recursion_limit: int
 
 class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
@@ -116,7 +116,7 @@ def build_rag_tool_env(
         llm=llm,
         s=rag_tools,
         store=params["store"],
-        cache_ns=params["cvl_cache_ns"],
+        index_config=params.get("cvl_index_config"),
         recursion_limit=params["recursion_limit"],
     )
 

@@ -83,14 +83,14 @@ def _get_empty_extra() -> AIComposerExtra:
 
 def get_fresh_input(input: InputData, workflow_options: WorkflowOptions) -> AIComposerInput:
     return AIComposerInput(input=[
-                input.intf.to_document_dict(),
-                input.spec.to_document_dict(),
-                input.system_doc.to_document_dict(),
+                input.intf.to_dict(),
+                input.spec.to_dict(),
+                input.system_doc.to_dict(),
                 {
                     "type": "text",
                     "text": get_reference_input(input_data=input, debug_prompt=workflow_options.debug_prompt_override)
                 }
-            ], vfs={"rules.spec": input.spec.read()}, **_get_empty_extra())
+            ], vfs={"rules.spec": input.spec.string_contents}, **_get_empty_extra())
 
 @dataclass
 class InputChangeDesc:
@@ -223,7 +223,7 @@ async def execute_ai_composer_workflow(
         case InputData():
             prompt_params = PromptParams(is_resume=False)
             flow_input = get_fresh_input(input, workflow_options)
-            system_doc = input.system_doc
+            system_doc = input.system_doc.to_file_like()
             interface_file = input.intf
             spec_file = input.spec
 
