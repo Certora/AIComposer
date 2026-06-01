@@ -85,7 +85,7 @@ def _root_cache_key(
 # Main
 # ---------------------------------------------------------------------------
 
-type Executor = Callable[[HandlerFactory[AutoProvePhase, None]], Awaitable[AutoProveResult]]
+type Executor = Callable[[HandlerFactory[AutoProvePhase, None]], Awaitable[AutoProveResult]]  # pyright: ignore[reportInvalidTypeForm]
 
 @asynccontextmanager
 async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
