@@ -1,4 +1,4 @@
-from typing import Literal, Generic, TypeVar, TypedDict, List, Dict, Optional, Annotated, Union
+from typing import Literal, Generic, TypeVar, TypedDict, List, Dict, NotRequired, Optional, Annotated, Union
 from pydantic import Discriminator
 from composer.prover.ptypes import StatusCodes
 from composer.rag.types import ManualRef
@@ -13,7 +13,7 @@ class UserUpdateData(TypedDict, Generic[UserUpdateTV]):
 
 class ProverRun(UserUpdateData[Literal["prover_run"]]):
     args: List[str]
-    config: Dict
+    config: NotRequired[Dict]
     tool_call_id: str
 
 class ProverLink(UserUpdateData[Literal["prover_link"]]):
