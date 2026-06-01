@@ -150,7 +150,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         async_tool_context(),
         thread_logger(conns.store, {
             "root_thread_id": thread_id
-        }, user_ns(DEFAULT_META_NS))
+        }, user_ns(DEFAULT_META_NS), run_id=summary.run_id)
     ):
         # Source-code agent caches are always per-user — the conventional
         # ``user_data_ns(uid)`` prefix lives directly in the ns we pass

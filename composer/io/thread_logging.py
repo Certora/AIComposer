@@ -139,9 +139,11 @@ async def log_thread(
 async def thread_logger(
     store: BaseStore,
     tags: dict[str, Any],
-    ns: tuple[str, ...]
+    ns: tuple[str, ...],
+    *,
+    run_id: str | None = None
 ) -> AsyncIterator[None]:
-    run_id = uuid4().hex
+    run_id = uuid4().hex if run_id is None else run_id
 
     run_meta : RunMeta = {
         "start_time": _time_string(),
