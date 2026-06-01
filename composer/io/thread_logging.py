@@ -29,6 +29,16 @@ class ThreadMeta(_WithTimings):
 
 DEFAULT_META_NS = ("logging",)
 
+
+def runs_ns(parent_ns: tuple[str, ...]) -> tuple[str, ...]:
+    """Sub-namespace under ``parent_ns`` where ``RunMeta`` records live."""
+    return parent_ns + ("runs",)
+
+
+def threads_ns(parent_ns: tuple[str, ...]) -> tuple[str, ...]:
+    """Sub-namespace under ``parent_ns`` where ``ThreadMeta`` records live."""
+    return parent_ns + ("threads",)
+
 def _time_string() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -138,10 +148,10 @@ async def thread_logger(
         "tags": tags,
         "end_time": None
     }
-    run_ns = ns + ("runs",)
+    run_ns = runs_ns(ns)
     await store.aput(run_ns, run_id, {**run_meta})
     tok = _logger.set(ThreadLogger(
-        store, run_id, ns + ("threads",)
+        store, run_id, threads_ns(ns)
     ))
     try:
         yield

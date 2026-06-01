@@ -30,16 +30,12 @@ from composer.diagnostics.handlers import normalize_content
 from composer.workflow.services import checkpointer_context, store_context
 from composer.spec.context import MNEMONIC_KEYS
 from composer.io.mnemonic_store import _mnem_ns
+from composer.core.user import user_data_ns
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
-async def _load_thread_from_mnemonic(mnemonic: str) -> str:
-    """Look up a snapshot by mnemonic and return its thread_id."""
+async def _resolve_thread_from_mnemonic(mnemonic: str) -> str:
     async with store_context() as store:
-        item = await store.aget(_mnem_ns(MNEMONIC_KEYS), mnemonic)
+        item = await store.aget(_mnem_ns(user_data_ns() + MNEMONIC_KEYS), mnemonic)
         if item is None:
             print(f"No snapshot found for mnemonic: {mnemonic}", file=sys.stderr)
             sys.exit(1)
