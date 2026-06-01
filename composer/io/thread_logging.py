@@ -18,11 +18,8 @@ class RunMeta(_WithTimings):
 class ThreadMeta(_WithTimings):
     run_id: str
     thread_id: str
-    start_time: str
     description: str
     from_tool_id: str | None
-
-    end_time: str | None
 
     start_checkpoint_id: str | None
     end_checkpoint_id: str | None
@@ -89,9 +86,12 @@ class ThreadLogger:
             "thread_id": thread_id,
             "description": description
         }
-        await self.store.aput(
-            self.ns, thread_run_id, {**staged}
-        )
+        try:
+            await self.store.aput(
+                self.ns, thread_run_id, {**staged}
+            )
+        except Exception:
+            pass # swallow
         return _ThreadRunHandle(
             _store=self.store,
             _partial=staged,
@@ -132,7 +132,7 @@ async def log_thread(
     finally:
         try:
             await handle.complete()
-        except:
+        except Exception:
             pass # swallow
 
 @asynccontextmanager
@@ -160,5 +160,5 @@ async def thread_logger(
         run_meta["end_time"] = _time_string()
         try:
             await store.aput(run_ns, run_id, {**run_meta})
-        except:
+        except Exception:
             pass
