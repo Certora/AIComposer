@@ -49,12 +49,17 @@ def dump_final_conf(
     main_contract: str,
     task_id: str,
     spec_name: Path,
+    conf: dict | None = None,
 ) -> None:
     """Write *task_id*'s last prover conf to ``certora/confs/{stem}.conf``,
     rewriting the ``verify`` line to point to the persisted ``certora/{spec_name}``.
-    No-op if no conf was recorded for the task.
+
+    ``conf`` may be supplied explicitly (e.g. a conf persisted in the generation cache so
+    a cache hit can still produce the conf); when omitted it falls back to the conf
+    recorded by a live prover run this session. No-op if neither is available.
     """
-    conf = get_run_summary().get_latest_conf(task_id=task_id)
+    if conf is None:
+        conf = get_run_summary().get_latest_conf(task_id=task_id)
     if conf is None:
         _logger.warning(f"Attempting to dump the conf for task_id {task_id} but it doesn't exist")
         return

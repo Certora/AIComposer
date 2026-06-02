@@ -214,6 +214,7 @@ async def run_autoprove_pipeline(
             main_contract=source_input.contract_name,
             task_id=inv_task_id,
             spec_name=Path(inv_spec_name),
+            conf=inv_cvl.conf,
         )
         resources.append(CVLResource(
             import_path=inv_spec_name,

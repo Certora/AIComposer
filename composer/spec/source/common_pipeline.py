@@ -180,6 +180,7 @@ async def run_generation_pipeline(
             main_contract=source_input.contract_name,
             task_id=task_id,
             spec_name=spec_name,
+            conf=res.conf,
         )
         return res
 

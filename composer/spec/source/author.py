@@ -19,6 +19,7 @@ from composer.spec.context import WorkflowContext, CVLGeneration, SourceCode
 from composer.spec.prop import PropertyFormulation
 from composer.spec.system_model import ContractComponentInstance
 from composer.spec.source.prover import ProverStateExtra, DELETE_SKIP, VALIDATION_KEY as PROVER_VALIDATION_KEY
+from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
 from composer.spec.gen_types import CVLResource, TypedTemplate
 from composer.spec.source.source_env import SourceEnvironment
@@ -385,9 +386,13 @@ async def batch_cvl_generation(
         return GaveUp(reason=res_state["result"])
     d = res_state["curr_spec"]
     assert d is not None
+    # Persist the final prover conf so a later cache hit (which skips the prover, and thus
+    # never re-records the conf) can still write certora/confs.
+    final_conf = get_run_summary().get_latest_conf()
     return GeneratedCVL(
         commentary=res_state["result"],
         cvl=d,
-        skipped=res_state["skipped"]
+        skipped=res_state["skipped"],
+        conf=final_conf,
     )
 
