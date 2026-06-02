@@ -129,7 +129,7 @@ async def run_generation_pipeline(
     # Phase 6: Per-component CVL generation
     # ------------------------------------------------------------------
     async def _generate_batch(
-        batch_idx: int,
+        task_id: str,
         batch: _ComponentBatch,
     ) -> BatchGeneratedCVLResult:
         batch_child = await batch.feat_ctx.child(
@@ -143,7 +143,7 @@ async def run_generation_pipeline(
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
         res = await run_task(
             handler_factory,
-            TaskInfo(f"cvl-{batch_idx}", label, AutoProvePhase.CVL_GEN),
+            TaskInfo(task_id, label, AutoProvePhase.CVL_GEN),
             lambda: batch_cvl_generation(
                 ctx=batch_ctx,
                 init_config=prover_config,
@@ -164,20 +164,21 @@ async def run_generation_pipeline(
     async def _generate_and_write_batch(
         i: int, batch: _ComponentBatch
     ) -> BatchGeneratedCVLResult:
-        res = await _generate_batch(batch_idx=i, batch=batch)
+        task_id = f"cvl-{i}"
+        res = await _generate_batch(task_id=task_id, batch=batch)
         if isinstance(res, GaveUp):
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
         specs_dir = certora_dir / "specs"
         specs_dir.mkdir(exist_ok=True, parents=True)
         base = batch_filename_bases[i]
-        spec_name = f"autospec_{base}.spec"
+        spec_name = pathlib.Path(f"autospec_{base}.spec")
         (specs_dir / spec_name).write_text(res.cvl)
         (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,
-            task_id=f"cvl-{i}",
+            task_id=task_id,
             spec_name=spec_name,
         )
         return res

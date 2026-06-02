@@ -48,7 +48,7 @@ def dump_final_conf(
     project_root: str,
     main_contract: str,
     task_id: str,
-    spec_name: str,
+    spec_name: Path,
 ) -> None:
     """Write *task_id*'s last prover conf to ``certora/confs/{stem}.conf``,
     rewriting the ``verify`` line to point to the persisted ``certora/{spec_name}``.
@@ -56,6 +56,7 @@ def dump_final_conf(
     """
     conf = get_run_summary().get_latest_conf(task_id=task_id)
     if conf is None:
+        _logger.warning(f"Attempting to dump the conf for task_id {task_id} but it doesn't exist")
         return
     conf["verify"] = f"{main_contract}:certora/{spec_name}"
     confs_dir = Path(project_root) / "certora" / "confs"

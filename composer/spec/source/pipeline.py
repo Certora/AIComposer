@@ -169,6 +169,7 @@ async def run_autoprove_pipeline(
     )
 
     if invariants.inv:
+        inv_task_id = "invariant-cvl"
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
         cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
 
@@ -186,7 +187,7 @@ async def run_autoprove_pipeline(
 
             inv_cvl_result = await run_task(
                 handler_factory,
-                TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
+                TaskInfo(inv_task_id, "Invariant CVL", AutoProvePhase.CVL_GEN),
                 lambda: batch_cvl_generation(
                     ctx=inv_cvl_ctx.abstract(CVLGeneration),
                     component=None,
@@ -211,8 +212,8 @@ async def run_autoprove_pipeline(
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,
-            task_id="invariant-cvl",
-            spec_name=inv_spec_name,
+            task_id=inv_task_id,
+            spec_name=Path(inv_spec_name),
         )
         resources.append(CVLResource(
             import_path=inv_spec_name,
