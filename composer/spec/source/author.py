@@ -18,7 +18,7 @@ from composer.spec.cvl_generation import (
 )
 from composer.spec.context import WorkflowContext, CVLGeneration, SourceCode
 from composer.spec.prop import PropertyFormulation
-from composer.spec.system_model import ContractComponentInstance
+from composer.spec.system_model import ContractComponentInstance, SolidityIdentifier
 from composer.spec.source.prover import ProverStateExtra, DELETE_SKIP, VALIDATION_KEY as PROVER_VALIDATION_KEY
 from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
@@ -198,12 +198,12 @@ that feedback.
 
 class AddFile(BaseModel):
     """
-    Add a new file to the input of the prover. If the name of the contract within the file does *NOT* match the file stem,
-    specify the contract name explicitly, otherwise leave it null.
+    Add a new file to the input of the prover. If the Solidity identifier of the contract within the file does *NOT* match the file stem,
+    specify it explicitly, otherwise leave it null.
     """
     type: Literal["add_file"]
     file_path: str = Field(description="The relative path to the file to include in the prover inputs")
-    contract_name: str | None = Field(description="The name of the contract within `file_path` to ingest into the prover, if does not match the file stem")
+    contract_name: SolidityIdentifier | None = Field(description="The Solidity identifier of the contract within `file_path` to ingest into the prover, if it does not match the file stem")
 
 class RemoveFile(BaseModel):
     """
@@ -225,16 +225,16 @@ class AddLink(BaseModel):
     to link fields in structs.
     """
     type: Literal["add_link"]
-    source_contract_name: str = Field(description="The name of the contract that is the source of the link")
+    source_contract_name: SolidityIdentifier = Field(description="The Solidity identifier of the contract that is the source of the link")
     link_field_name: str = Field(description="The storage field holding the link within `source_contract_name`")
-    target_contract_name : str = Field(description="The contract held in `link_field_name` of `source_contract_name`")
+    target_contract_name : SolidityIdentifier = Field(description="The Solidity identifier of the contract held in `link_field_name` of `source_contract_name`")
 
 class RemoveLink(BaseModel):
     """
     Remove a link from one contract to another.
     """
     type: Literal["remove_link"]
-    source_contract_name : str = Field(description="The name of the contract whose link should be removed")
+    source_contract_name : SolidityIdentifier = Field(description="The Solidity identifier of the contract whose link should be removed")
     link_field_name : str = Field(description="The storage field holding the link within `source_contract_name` that should be removed")
 
 type ConfigEdit = Annotated[RemoveLink | AddLink | AddFile | RemoveFile, Discriminator("type")]

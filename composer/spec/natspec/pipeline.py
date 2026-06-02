@@ -494,13 +494,14 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     # Phase 4: Initial stub generation (new contracts only)
     # ------------------------------------------------------------------
     async def gen_one_stub(
-        contract_name: str
+        contract_name: str,
+        solidity_identifier: str,
     ) -> tuple[str, StubDeclarationModel]:
         res = await run_task(
             handler_factory,
             TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", Phase.STUB_GEN),
             lambda: generate_stub(
-                ctx, interface, curr_env, contract_name, solc_version,
+                ctx, interface, curr_env, contract_name, solidity_identifier, solc_version,
                 materializer=mat,
                 description=mental_model.stub_desc,
             ),
@@ -508,7 +509,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
         return (contract_name, res)
 
     generated_stubs = await asyncio.gather(*[
-        gen_one_stub(c.name) for c in new_contracts
+        gen_one_stub(c.name, c.solidity_identifier) for c in new_contracts
     ])
 
     # ------------------------------------------------------------------
@@ -548,17 +549,12 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
         # Cached pre-validation runs may have produced stubs whose path stem
         # diverges from the declared Solidity identifier. Pin the
         # identifier explicitly when that's the case so Certora compiles the
-        # right type instead of guessing from the stem.
-        stub_stem = Path(stub.path).stem
-        ident_override = (
-            stub.solidity_identifier
-            if stub.solidity_identifier != stub_stem
-            else None
-        )
+        # Stub validator enforces ``path.stem == c.solidity_identifier``, so
+        # the bare path is sufficient — certora derives the identifier from
+        # the stem and produces the same prover arg either way.
         await file_registry.register(
             contract_name=c.name,
             path=stub.path,
-            solidity_identifier=ident_override,
         )
 
     serv = PipelineServices(

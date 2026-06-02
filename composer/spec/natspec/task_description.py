@@ -36,7 +36,7 @@ class InterfaceGenCallParams(TypedDict):
 
 
 class StubGenCallParams(TypedDict):
-    contract_name: str
+    solidity_identifier: str
     interface_name: str
     interface_path: str
     the_interface: str

@@ -40,6 +40,7 @@ async def generate_stub[S: StubDeclarationModel](
     interface: InterfaceResult,
     env: ServiceHost,
     contract_name: str,
+    solidity_identifier: str,
     solc_version: str,
     materializer: Assembler,
     description: AgentDescription[S, StubGenCallParams],
@@ -51,14 +52,19 @@ async def generate_stub[S: StubDeclarationModel](
     seeded with the candidate), then invoking solc inside the assembled project.
     ``description`` fixes the concrete stub subtype and the prompt (with any
     workflow-constant params pre-bound).
+
+    ``contract_name`` is the conceptual name used as the lookup key into
+    ``interface.name_to_interface``. ``solidity_identifier`` is the Solidity
+    identifier the stub MUST declare — caller-supplied (from the contract
+    record), validator-enforced.
     """
     stub_ty : type[S] = description.output_ty
 
     key = CacheKey[None, StubDeclarationModel](
-        f"stub-for-{string_hash(interface.model_dump_json())}-{contract_name}-{stub_ty.__name__}"
+        f"stub-for-{string_hash(interface.model_dump_json())}-{solidity_identifier}-{stub_ty.__name__}"
     )
 
-    child = await ctx.child(key, {"intf": interface.model_dump(), "contract": contract_name})
+    child = await ctx.child(key, {"intf": interface.model_dump(), "contract": solidity_identifier})
 
     if (c := await child.cache_get(stub_ty)) is not None:
         return cast(S, c)
@@ -83,10 +89,15 @@ async def generate_stub[S: StubDeclarationModel](
             interface_basename = pathlib.Path(interface_to_implement.path).name
             if interface_basename not in res.content:
                 return f"Stub must import the interface file ({interface_basename})."
-            if res.solidity_identifier not in res.content:
-                return f"Stub must declare a contract named {res.solidity_identifier}."
-            if pathlib.PurePosixPath(res.path).stem != res.solidity_identifier:
-                return f"Stub filename must match the declare solidity identifier: `{res.solidity_identifier}.sol`"
+            if res.solidity_identifier != solidity_identifier:
+                return (
+                    f"Stub must declare the contract with the exact identifier "
+                    f"`{solidity_identifier}` (got `{res.solidity_identifier}`)."
+                )
+            if f"contract {solidity_identifier}" not in res.content:
+                return f"Stub content must declare `contract {solidity_identifier}`."
+            if pathlib.PurePosixPath(res.path).stem != solidity_identifier:
+                return f"Stub filename must match the contract identifier: `{solidity_identifier}.sol`."
 
             try:
                 async with materializer.project_directory() as tmpdir:
@@ -115,7 +126,7 @@ async def generate_stub[S: StubDeclarationModel](
 
     final_prompt = description.prompt.inject(
         StubGenCallParams(
-            contract_name=contract_name,
+            solidity_identifier=solidity_identifier,
             interface_name=interface_name,
             interface_path=interface_to_implement.path,
             the_interface=interface_to_implement.content,

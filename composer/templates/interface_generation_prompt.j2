@@ -8,7 +8,7 @@ The Web3 application's type is: {{ summary.application_type }}. It is described 
 
 You are generating interfaces for the following contracts:
 {% for contract in target_contracts %}
-## Name: {{ contract.name }}
+## Contract `{{ contract.solidity_identifier }}`{% if contract.name != contract.solidity_identifier %} (conceptual name: {{ contract.name }}){% endif %}
 
 Description: {{ contract.description }}
 
@@ -54,14 +54,14 @@ and whose implementations are already available. Do **NOT** generate interfaces 
 listed here solely so you can reference them correctly in the interfaces you *are* generating.
 
 {% for c in existing_contracts %}
-- `{{ c.name }}` at `{{ c.path }}` — {{ c.description }}
+- `{{ c.solidity_identifier }}` at `{{ c.path }}` — {{ c.description }}
 {% endfor %}
 
 When an interface you are generating must accept or return an address of one of these existing
 contracts, import the contract directly from its source path (for example,
-`import { {{ existing_contracts[0].name }} } from "{{ existing_contracts[0].path }}";`) and use its
-actual contract name as the parameter type. Do **NOT** invent an `I<Name>` interface for these —
-they already have concrete source.
+`import { {{ existing_contracts[0].solidity_identifier }} } from "{{ existing_contracts[0].path }}";`) and
+use its actual Solidity identifier as the parameter type. Do **NOT** invent an `I<Name>` interface for
+these — they already have concrete source.
 {% endif %}
 </application>
 
@@ -123,7 +123,8 @@ identifier you choose.
 Deliver the complete Solidity interface source code using the result tool.
 The interfaces must compile successfully with solc{{ solc_version }}.
 
-The output is a mapping from the contract name to an interface description; include an entry **only** for each
+The output is a mapping from the contract's conceptual `name` (as listed above) to an interface description;
+use the conceptual `name` field for keys, not `solidity_identifier`. Include an entry **only** for each
 target contract listed above. Each interface description contains:
 * The Solidity identifier of the interface declared in the interface file
 * The source code of the interface declaration you authored

@@ -32,7 +32,7 @@ from composer.spec.service_host import ServiceHost
 from composer.spec.source.summarizer import setup_summaries
 from composer.spec.system_model import (
     HarnessedApplication, SourceExplicitContract,
-    HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
+    HarnessedExplicitContract, SourceExternalActor, HarnessDefinition, SolidityIdentifier
 )
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import get_prover_tool, dump_final_conf
@@ -95,7 +95,7 @@ async def run_autoprove_pipeline(
     if setup is None:
         raise ValueError("Project setup failed")
 
-    contract_to_harness : dict[str, list[HarnessDefinition]] = {}
+    contract_to_harness : dict[SolidityIdentifier, list[HarnessDefinition]] = {}
     for c in setup.system_description.transitive_closure:
         if not c.harness_definition:
             continue
@@ -103,7 +103,7 @@ async def run_autoprove_pipeline(
             contract_to_harness[c.harness_definition.harness_of] = []
         contract_to_harness[c.harness_definition.harness_of].append(
             HarnessDefinition(
-                name=c.name,
+                name=c.solidity_identifier,
                 path=c.path
             )
         )
@@ -116,10 +116,11 @@ async def run_autoprove_pipeline(
         comp.append(HarnessedExplicitContract(
             sort=c.sort,
             name=c.name,
+            solidity_identifier=c.solidity_identifier,
             components=c.components,
             description=c.description,
             path=c.path,
-            harnesses=contract_to_harness.get(c.name, [])
+            harnesses=contract_to_harness.get(c.solidity_identifier, [])
         ))
 
 

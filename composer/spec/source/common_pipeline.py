@@ -102,7 +102,7 @@ async def run_generation_pipeline(
     ind = -1
 
     for i, c in enumerate(summary.contract_components):
-        if c.name == source_input.contract_name:
+        if c.solidity_identifier == source_input.contract_name:
             ind = i
             break
     if ind == -1:

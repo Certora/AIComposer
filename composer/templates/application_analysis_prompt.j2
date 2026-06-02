@@ -61,10 +61,27 @@ Finally, for each such external actor, extract the assumptions/requirements abou
 
 In contrast, an "explicit contract" describes some smart contract that will be developed and deployed as part
 of this application. Each "explicit contract" roughly corresponds to some concrete
-Solidity `contract` type or `library`. Each such explicit contract should be given a name and a brief description
-of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier {% if sort == "greenfield" %}mentioned
-in the system document if possible, otherwise a suitably descriptive Solidity identifier should be chosen instead.{%else%}
-used in the implementation.{%endif%}
+Solidity `contract` type or `library`. Each such explicit contract is described with two name fields and a brief
+description of its role in the application:
+
+- `name`: a short conceptual label — the human-readable identifier you would use to refer to this contract in
+  design discussions. This may be the same as `solidity_identifier` when the design doc names the contract by
+  its Solidity identifier directly, but it does not have to be (e.g., "Token Vault" or "Stonks v2" are
+  acceptable conceptual names).
+- `solidity_identifier`: the contract's Solidity identifier as it will appear in source code. Must match
+  `[a-zA-Z_$][a-zA-Z0-9_$]*` (no spaces, no version suffixes like "v2", no other non-identifier characters).
+
+To derive `solidity_identifier`, prefer in priority order:
+- **Design doc**: a Solidity identifier directly mentioned in the design document for this contract (e.g.,
+  code-font names like `NESTController`).
+{%- if sort != "greenfield" %}
+- **Source tree**: the contract identifier as it appears in the source files — consult via `code_explorer` if
+  needed.
+{%- endif %}
+- **Last resort**: derive a sensible Solidity identifier from `name` by stripping spaces, version suffixes,
+  and other non-identifier characters.
+
+When `name` is already a valid Solidity identifier (the common case), the two fields may be identical.
 
 **Contract Sorts**: Each explicit contract in the application document should be given a specific "sort".
 The possible sorts are as follows:

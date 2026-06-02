@@ -26,23 +26,13 @@ Requirements:
 - Use parameter names in all function signatures, even if unused
 - Do NOT add any storage variables — those will be added later by the verification pipeline
 
-### Choosing the contract identifier
+### Contract identifier
 
-The contract you declare in the stub MUST be named **exactly `{{ contract_name }}`** — the same
-identifier as the component in the design document (and the same identifier as the interface
-you're implementing).
+The contract you declare in the stub MUST be named exactly `{{ solidity_identifier }}`. Use it
+verbatim — the downstream pipeline binds to this identifier. Emit `{{ solidity_identifier }}`
+both as the contract declaration's name and as the `solidity_identifier` field of your result.
 
-Do **NOT** append decorations like `Stub`, `Impl`, `Implementation`, `Mock`, `Fake`, `Base`, or
-any other suffix or prefix. Do **NOT** rename it to anything else "for clarity". The downstream
-formal-verification pipeline binds to the exact identifier `{{ contract_name }}`; any deviation
-silently breaks every spec that targets this contract.
-
-Correct: `contract {{ contract_name }} is {{ interface_name }} { ... }`
-Wrong:   `contract {{ contract_name }}Stub is {{ interface_name }} { ... }`
-Wrong:   `contract {{ contract_name }}Impl is {{ interface_name }} { ... }`
-
-This is non-negotiable. There is no situation in which decorating the identifier is the right
-call. If you feel tempted to add a suffix, you are wrong — use `{{ contract_name }}` verbatim.
+Correct: `contract {{ solidity_identifier }} is {{ interface_name }} { ... }`
 
 ### Choosing the stub file path
 
@@ -51,19 +41,17 @@ You must choose a project-relative path for the stub file. Before deciding, use 
 (`list_files`, `get_file`, `grep_files`) to inspect the existing project layout and follow
 whatever convention the codebase already uses for contract implementations — for example an
 existing `src/`, `contracts/`, or `src/contracts/` directory. The path must end in `.sol` and the
-basename MUST be `{{ contract_name }}.sol` (matching the mandated identifier above — no decoration
-on the filename either). If the project has no existing convention, place the stub at
-`src/contracts/{{ contract_name }}.sol`.
+basename MUST be `{{ solidity_identifier }}.sol`. If the project has no existing convention, place
+the stub at `src/contracts/{{ solidity_identifier }}.sol`.
 {% else %}
 The stub file location is assigned automatically — you do not need to choose a path. Focus on
-the stub content; the path will be populated from the mandated contract identifier
-(`{{ contract_name }}`).
+the stub content; the path will be populated from `{{ solidity_identifier }}`.
 {% endif %}
 
 ## Deliver
 
-Output the complete Solidity stub source code and your chosen contract identifier using the result tool.
-The stub must compile successfully with solc{{ solc_version }}.
+Output the complete Solidity stub source code using the result tool. The stub must compile
+successfully with solc{{ solc_version }}.
 </task>
 
 <guidance>

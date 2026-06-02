@@ -1,9 +1,19 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from functools import cached_property
 
 type ContractSort = Literal["dynamic", "singleton", "multiple"]
+
+# Nominal ``str`` subtype for Solidity identifiers — distinct at type-check time
+# (callers must construct explicitly via cast or SolidityIdentifier(...)),
+# transparent ``str`` at runtime so pydantic ``Field(pattern=...)`` validates
+# the value normally. Phantom-type pattern: TYPE_CHECKING block defines a true
+# subclass for the static checker; runtime branch is a plain alias.
+if TYPE_CHECKING:
+    class SolidityIdentifier(str): ...
+else:
+    SolidityIdentifier = str
 
 class ExternalDependency(BaseModel):
     external_actor: str = Field(description="The name of the external actor interacted with")
@@ -42,7 +52,19 @@ class ExplicitContract(BaseModel):
     sort: ContractSort = Field(description=("The sort of the contract. `dynamic` if instances of this type are "
         "dynamically created by the system itself. `multiple` if multiple instances are expected to be "
         "deployed by some external actor/administrator. `singleton` if only one instance will exist in a deployed system."))
-    name: str = Field(description="A short, unique identifier for this contract")
+    name: str = Field(description=(
+        "A short, conceptual label for this contract, used to refer to it across the "
+        "system description. May be the same as solidity_identifier when the design "
+        "doc names the contract by its Solidity identifier directly."
+    ))
+    solidity_identifier: SolidityIdentifier = Field(
+        pattern=r"^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+        description=(
+            "The Solidity identifier this contract will be deployed/compiled under. "
+            "Derived from authoritative sources where possible (see system analysis "
+            "prompt). Always a syntactically valid Solidity identifier."
+        ),
+    )
     description : str = Field(description="A short description of what this contract's role is in the system")
     components : list[ContractComponent] = Field(description="Components making up this contract.")
 
@@ -54,7 +76,7 @@ class SourceExplicitContract(ExplicitContract):
 
 class HarnessDefinition(BaseModel):
     path: str
-    name: str
+    name: SolidityIdentifier
 
 class HarnessedExplicitContract(SourceExplicitContract):
     harnesses: list[HarnessDefinition]

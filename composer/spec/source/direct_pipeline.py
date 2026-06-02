@@ -87,10 +87,11 @@ async def run_autoprove_pipeline(
         comp.append(HarnessedExplicitContract(
             sort=c.sort,
             name=c.name,
+            solidity_identifier=c.solidity_identifier,
             components=c.components,
             description=c.description,
             path=c.path,
-            harnesses=contract_to_harness.get(c.name, [])
+            harnesses=contract_to_harness.get(c.solidity_identifier, [])
         ))
 
 

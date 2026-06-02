@@ -10,7 +10,7 @@ import json
 import pathlib
 import subprocess
 import sys
-from typing import NotRequired, override
+from typing import NotRequired, override, Sequence
 
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
@@ -27,10 +27,10 @@ from composer.spec.gen_types import CVLResource
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import temp_certora_file, string_hash
 from composer.spec.service_host import ServiceHost
-from composer.spec.source.harness import ContractSetup, ExternalInterface, HarnessDef
+from composer.spec.source.harness import ContractSetup, ExternalInterface
 from composer.spec.system_model import HarnessedApplication, ExternalActor
 from composer.spec.gen_types import TypedTemplate
-from composer.ui.tool_display import tool_display, suppress_ack
+from composer.ui.tool_display import tool_display
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ class LocatedExternalInterface(ExternalInterface):
 
 class SummarizationParams(TypedDict):
     context: HarnessedApplication
-    erc20_contracts: list[str]
+    erc20_contracts: Sequence[str]
     interfaces: list[LocatedExternalInterface]
     contract_name: str
     contract_path: str
@@ -224,7 +224,7 @@ async def _setup_summaries_impl(
         "contract_path": source.relative_path,
         "erc20_contracts": setup.system_description.erc20_contracts,
         "included_contracts": [
-            c.name for c in setup.system_description.transitive_closure
+            c.solidity_identifier for c in setup.system_description.transitive_closure
         ],
         "interfaces": intf_summaries
     })
