@@ -91,6 +91,10 @@ class ProverCallbacks:
     async def on_stdout_line(self, line: str) -> None: pass
     async def on_cloud_poll(self, status: str, message: str) -> None: pass
     async def on_prover_run(self, args: list[str]) -> None: pass
+    async def on_prover_link(self, link: str) -> None: pass
+    """Fires once per run as soon as the prover emits its result link. For
+    cloud runs ``link`` is the prover UI URL; for local runs it is a
+    filesystem path to the results directory."""
     async def on_prover_result(self, results: dict[str, RuleResult]) -> None: pass
     async def on_analysis_start(self, rule: RuleResult) -> None: pass
     async def on_rule_result(self, rule: RuleResult, analysis: str | None) -> None: pass
@@ -212,18 +216,20 @@ async def run_prover(
         if proc.returncode != 0:
             _logger.error("Process failed %d\nstdout:%s\nstderr:%s", proc.returncode, stdout, stderr)
             return f"Verification failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
-        
+
         run_result = cast(ProverResult, json.load(output_file))
 
     if run_result is None or (run_result["sort"] == "success" and run_result["link"] is None):
         _logger.warning("Prover failed: %s", run_result)
         return f"Prover did not produce results.\nstdout:\n{stdout}"
-    
+
     if run_result["sort"] == "failure":
         _logger.info("Prover run failed: %s", run_result['exc_str'])
         return f"Certora prover raised exception: {run_result['exc_str']}\nstdout:\n{stdout}"
 
     assert run_result is not None and run_result["sort"] == "success" and run_result["link"] is not None
+
+    await callbacks.on_prover_link(run_result["link"])
 
     # 7. Result retrieval: cloud vs local
     if prover_opts.cloud:

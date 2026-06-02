@@ -1,5 +1,5 @@
 import psycopg
-from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager
+from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager, TYPE_CHECKING
 from typing_extensions import TypeVar
 import inspect
 import os
@@ -9,16 +9,32 @@ from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
-from langchain_anthropic import ChatAnthropic
 from langgraph.store.postgres import PostgresStore
 from langgraph.store.postgres.aio import AsyncPostgresStore
+
+# Deferred — pulling these in eagerly loads transformers/torch through
+# langchain_core.language_models.chat_models, ~1.7s of import time we don't
+# need until we actually construct an LLM. ``create_llm_base`` does the real
+# import inside the function body.
+if TYPE_CHECKING:
+    from langchain_core.language_models.chat_models import BaseChatModel
+else:
+    BaseChatModel = "BaseChatModel"
 
 from psycopg.rows import AsyncRowFactory
 from psycopg_pool.pool_async import AsyncConnectionPool as PGAsyncPool
 from psycopg.connection_async import AsyncConnection
-from graphcore.tools.memory import PostgresMemoryBackend, AsyncPostgresBackend
+# Deferred — ``graphcore.tools.memory`` transitively pulls
+# ``langgraph.prebuilt`` → ``chat_agent_executor`` → ``langchain_core.language_models.base``
+# (the GPT-2 fallback tokenizer chain), ~1.8s of import time. The actual
+# class constructions in this module are inside function bodies, so we just
+# fwd-ref the type names and lazy-import at call sites.
+if TYPE_CHECKING:
+    from graphcore.tools.memory import PostgresMemoryBackend, AsyncPostgresBackend
+else:
+    PostgresMemoryBackend = "PostgresMemoryBackend"
+    AsyncPostgresBackend = "AsyncPostgresBackend"
 
 from composer.input.types import ModelOptions, ModelOptionsBase
 from composer.input.files import FileUploader
@@ -386,13 +402,15 @@ async def get_async_indexed_store(embedder: Embeddings) -> AsyncPostgresStore:
     return store
 
 
-def get_memory(ns: str, init_from: str | None = None) -> PostgresMemoryBackend:
+def get_memory(ns: str, init_from: str | None = None) -> "PostgresMemoryBackend":
+    from graphcore.tools.memory import PostgresMemoryBackend
     conn = _get_composer_connection(
         **_DATABASE_CONFIGS["memory"]
     )
     return PostgresMemoryBackend(ns, conn, init_from)
 
-async def get_async_memory(ns : str, init_from : str | None = None) -> AsyncPostgresBackend:
+async def get_async_memory(ns : str, init_from : str | None = None) -> "AsyncPostgresBackend":
+    from graphcore.tools.memory import AsyncPostgresBackend
     conn = await _get_async_composer_pool(
         **_DATABASE_CONFIGS["memory"]
     )
@@ -401,18 +419,21 @@ async def get_async_memory(ns : str, init_from : str | None = None) -> AsyncPost
         await to_ret.init_from(init_from)
     return to_ret
 
-type MemoryBackendGenerator = Callable[[str], AsyncPostgresBackend]
+type MemoryBackendGenerator = Callable[[str], "AsyncPostgresBackend"]
 
 @asynccontextmanager
 async def memory_backend_context() -> AsyncIterator[MemoryBackendGenerator]:
+    from graphcore.tools.memory import AsyncPostgresBackend
     async with _async_memory_pool() as p:
         yield (lambda ns: AsyncPostgresBackend(ns, p))
 
-_ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6"}
+_ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7"}
 
 
-def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
+def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
     """Create LLM; thinking disabled when args.thinking_tokens is None."""
+    from langchain_anthropic import ChatAnthropic
+
     thinking: dict[str, Any] | None
     effective_interleaved = args.interleaved_thinking
     if args.thinking_tokens is None:
@@ -440,7 +461,7 @@ def create_llm_base(args: ModelOptionsBase) -> BaseChatModel:
     )
 
 
-def create_llm(args: ModelOptions) -> BaseChatModel:
+def create_llm(args: ModelOptions) -> "BaseChatModel":
     """Create and configure the LLM. Backwards-compatible; thinking always enabled."""
     return create_llm_base(args)
 
@@ -449,7 +470,7 @@ def create_llm(args: ModelOptions) -> BaseChatModel:
 class StandardConnections:
     checkpointer: AsyncPostgresSaver
     store: AsyncPostgresStore
-    memory: Callable[[str], AsyncPostgresBackend]
+    memory: "Callable[[str], AsyncPostgresBackend]"
     uploader: FileUploader
 
 @dataclass

@@ -206,6 +206,8 @@ class AutoProveConsoleHandler(NullEventHandler):
                 pass
             case "prover_run":
                 self._output(f"[{self._label(path)}]: prover start")
+            case "prover_link":
+                self._output(f"[{self._label(path)}]: prover link -> {d['link']}")
             case "prover_result":
                 self._output(f"[{self._label(path)}]; prover complete")
             case "rule_analysis":

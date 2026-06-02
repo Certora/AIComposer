@@ -25,6 +25,7 @@ from composer.spec.system_model import (
 )
 from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
+from composer.spec.source.prover import dump_final_conf
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -169,7 +170,7 @@ async def run_generation_pipeline(
     # Phase 6: Per-component CVL generation
     # ------------------------------------------------------------------
     async def _generate_batch(
-        batch_idx: int,
+        task_id: str,
         batch: _ComponentBatch,
     ) -> BatchGeneratedCVLResult:
         batch_child = await batch.feat_ctx.child(
@@ -183,7 +184,7 @@ async def run_generation_pipeline(
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
         res = await run_task(
             handler_factory,
-            TaskInfo(f"cvl-{batch_idx}", label, AutoProvePhase.CVL_GEN),
+            TaskInfo(task_id, label, AutoProvePhase.CVL_GEN),
             lambda: batch_cvl_generation(
                 ctx=batch_ctx,
                 init_config=prover_config,
@@ -204,17 +205,26 @@ async def run_generation_pipeline(
     async def _generate_and_write_batch(
         i: int, batch: _ComponentBatch
     ) -> BatchGeneratedCVLResult:
-        res = await _generate_batch(batch_idx=i, batch=batch)
+        task_id = f"cvl-{i}"
+        res = await _generate_batch(task_id=task_id, batch=batch)
         if isinstance(res, GaveUp):
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
-        certora_dir.mkdir(exist_ok=True, parents=True)
+        specs_dir = certora_dir / "specs"
+        specs_dir.mkdir(exist_ok=True, parents=True)
         properties_dir = certora_dir / "properties"
         properties_dir.mkdir(exist_ok=True, parents=True)
         base = batch_filename_bases[i]
-        (certora_dir / f"autospec_{base}.spec").write_text(res.cvl)
+        spec_name = pathlib.Path(f"autospec_{base}.spec")
+        (specs_dir / spec_name).write_text(res.cvl)
         (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
         dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
+        dump_final_conf(
+            project_root=source_input.project_root,
+            main_contract=source_input.contract_name,
+            task_id=task_id,
+            spec_name=spec_name,
+        )
         return res
 
     generation_results = await asyncio.gather(

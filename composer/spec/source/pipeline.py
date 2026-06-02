@@ -35,7 +35,7 @@ from composer.spec.system_model import (
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.prover import get_prover_tool
+from composer.spec.source.prover import get_prover_tool, dump_final_conf
 from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
@@ -169,6 +169,7 @@ async def run_autoprove_pipeline(
     )
 
     if invariants.inv:
+        inv_task_id = "invariant-cvl"
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
         cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
 
@@ -191,7 +192,7 @@ async def run_autoprove_pipeline(
         else:
             inv_cvl_result = await run_task(
                 handler_factory,
-                TaskInfo("invariant-cvl", "Invariant CVL", AutoProvePhase.CVL_GEN),
+                TaskInfo(inv_task_id, "Invariant CVL", AutoProvePhase.CVL_GEN),
                 lambda: batch_cvl_generation(
                     ctx=inv_cvl_ctx.abstract(CVLGeneration),
                     component=None,
@@ -214,6 +215,12 @@ async def run_autoprove_pipeline(
         inv_spec_name = "invariants.spec"
         (certora_dir / inv_spec_name).write_text(inv_cvl.cvl)
         dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
+        dump_final_conf(
+            project_root=source_input.project_root,
+            main_contract=source_input.contract_name,
+            task_id=inv_task_id,
+            spec_name=Path(inv_spec_name),
+        )
         resources.append(CVLResource(
             import_path=inv_spec_name,
             required=False,

@@ -1,19 +1,24 @@
-from typing import Literal, Generic, TypeVar, TypedDict, List, Dict, Optional, Annotated, Union
+from typing import Literal, Generic, TypeVar, TypedDict, List, Dict, NotRequired, Optional, Annotated, Union
 from pydantic import Discriminator
 from composer.prover.ptypes import StatusCodes
 from composer.rag.types import ManualRef
 
 
-UserUpdateTy = Literal["prover_result", "cex_analysis", "prover_run", "rule_analysis", "summarization_notice", "prover_output", "cloud_polling"]
+UserUpdateTy = Literal["prover_result", "cex_analysis", "prover_run", "prover_link", "rule_analysis", "summarization_notice", "prover_output", "cloud_polling"]
 
-UserUpdateTV = TypeVar("UserUpdateTV", Literal["prover_result"], Literal["prover_run"], Literal["cex_analysis"], Literal["rule_analysis"], Literal["summarization_notice"], Literal["prover_output"], Literal["cloud_polling"])
+UserUpdateTV = TypeVar("UserUpdateTV", Literal["prover_result"], Literal["prover_run"], Literal["prover_link"], Literal["cex_analysis"], Literal["rule_analysis"], Literal["summarization_notice"], Literal["prover_output"], Literal["cloud_polling"])
 
 class UserUpdateData(TypedDict, Generic[UserUpdateTV]):
     type: UserUpdateTV
 
 class ProverRun(UserUpdateData[Literal["prover_run"]]):
     args: List[str]
+    config: NotRequired[Dict]
     tool_call_id: str
+
+class ProverLink(UserUpdateData[Literal["prover_link"]]):
+    tool_call_id: str
+    link: str
 
 class ProverResult(UserUpdateData[Literal["prover_result"]]):
     tool_call_id: str
@@ -66,7 +71,7 @@ class ManualSearchResult(AuditResult[Literal["manual_search"]]):
     ref: ManualRef
 
 ProgressUpdate = Annotated[
-    Union[CEXAnalysisStart, ProverResult, ProverRun, RuleAnalysisResult, SummarizationNotice, ProverOutputEvent, CloudPollingEvent], Discriminator("type")
+    Union[CEXAnalysisStart, ProverResult, ProverRun, ProverLink, RuleAnalysisResult, SummarizationNotice, ProverOutputEvent, CloudPollingEvent], Discriminator("type")
 ]
 
 AuditUpdate = Annotated[

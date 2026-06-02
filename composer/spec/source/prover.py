@@ -32,15 +32,39 @@ from composer.prover.core import (
 from composer.ui.tool_display import tool_display
 from composer.diagnostics.stream import (
     ProverOutputEvent, CloudPollingEvent, RuleAnalysisResult,
-    CEXAnalysisStart, ProverRun, ProverResult
+    CEXAnalysisStart, ProverRun, ProverLink, ProverResult
 )
 from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
-from composer.diagnostics.timing import get_current_task_id, update_summary
+from composer.diagnostics.timing import RunSummary, get_run_summary
 from graphcore.graph import tool_state_update
 from composer.spec.util import temp_certora_file
 
 
 _logger = logging.getLogger("composer.prover")
+
+
+def dump_final_conf(
+    *,
+    project_root: str,
+    main_contract: str,
+    task_id: str,
+    spec_name: Path,
+) -> None:
+    """Write *task_id*'s last prover conf to ``certora/confs/{stem}.conf``,
+    rewriting the ``verify`` line to point to the persisted ``certora/{spec_name}``.
+    No-op if no conf was recorded for the task.
+    """
+    conf = get_run_summary().get_latest_conf(task_id=task_id)
+    if conf is None:
+        _logger.warning(f"Attempting to dump the conf for task_id {task_id} but it doesn't exist")
+        return
+    conf["verify"] = f"{main_contract}:certora/{spec_name}"
+    confs_dir = Path(project_root) / "certora" / "confs"
+    confs_dir.mkdir(parents=True, exist_ok=True)
+    out_path = confs_dir / f"{Path(spec_name).stem}.conf"
+    out_path.write_text(json.dumps(conf, indent=2))
+    _logger.info(f"wrote final conf for task={task_id} to {out_path}")
+
 
 DELETE_SKIP = "__delete_skip"
 
@@ -61,15 +85,23 @@ class ProverStateExtra(TypedDict):
     rule_skips: Annotated[dict[str, str], _merge_rule_skips]
     config: dict
 
-type ProverEvents = CEXAnalysisStart | CloudPollingEvent | ProverOutputEvent | RuleAnalysisResult | ProverRun | ProverResult
+type ProverEvents = CEXAnalysisStart | CloudPollingEvent | ProverOutputEvent | RuleAnalysisResult | ProverRun | ProverLink | ProverResult
 
 class StateWithSkips(CVLGenerationState, ProverStateExtra):
     pass
 
 class _SpecCallbacks(ProverCallbacks):
-    def __init__(self, writer: Callable[[ProverEvents], None], tool_call_id: str) -> None:
+    def __init__(
+        self,
+        writer: Callable[[ProverEvents], None],
+        tool_call_id: str,
+        summary: RunSummary,
+        config: dict,
+    ) -> None:
         self._writer = writer
         self._tool_call_id = tool_call_id
+        self._summary = summary
+        self._config = config
         self._started_mono: float | None = None
 
     @override
@@ -118,7 +150,18 @@ class _SpecCallbacks(ProverCallbacks):
         self._writer({
             "type": "prover_run",
             "tool_call_id": self._tool_call_id,
-            "args": args
+            "args": args,
+            "config": self._config,
+        })
+
+    @override
+    async def on_prover_link(self, link: str) -> None:
+        _logger.info(f"prover link tool_call={self._tool_call_id} link={link}")
+        self._summary.record_prover_link(link)
+        self._writer({
+            "type": "prover_link",
+            "tool_call_id": self._tool_call_id,
+            "link": link,
         })
 
     @override
@@ -129,7 +172,7 @@ class _SpecCallbacks(ProverCallbacks):
             f"prover done tool_call={self._tool_call_id} "
             f"elapsed={elapsed:.1f}s status={status_summary}"
         )
-        update_summary(lambda s: s.add_prover_call(get_current_task_id(), elapsed))
+        self._summary.add_prover_call(elapsed)
         result_evt: ProverResult = {
             "type": "prover_result",
             "tool_call_id": self._tool_call_id,
@@ -217,6 +260,9 @@ def get_prover_tool(
             if rules:
                 config["rule"] = rules
 
+            summary = get_run_summary()
+            summary.record_prover_conf(config)
+
             with temp_certora_file(
                 root = project_root,
                 content=json.dumps(config, indent=2),
@@ -229,7 +275,7 @@ def get_prover_tool(
                         [f"certora/{config_path}"],
                         tool_call_id,
                         prover_opts,
-                        _SpecCallbacks(get_stream_writer(), tool_call_id),
+                        _SpecCallbacks(get_stream_writer(), tool_call_id, summary, config),
                         DefaultCexHandler(llm, state, summarization_threshold=10)
                     )
 
