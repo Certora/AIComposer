@@ -43,11 +43,11 @@ _FEEDBACK_NAME = "feedback_tool"
 _RESULT_NAME = "result"
 _PUT_CVL = "put_cvl"
 
-def _skip(property_index: int, reason: str) -> ToolCallDict:
-    return tool_call_raw(name=_RECORD_SKIP_NAME, property_index=property_index, reason=reason)
+def _skip(property_title: str, reason: str) -> ToolCallDict:
+    return tool_call_raw(name=_RECORD_SKIP_NAME, property_title=property_title, reason=reason)
 
-def _unskip(property_index: int) -> ToolCallDict:
-    return tool_call_raw(_UNSKIP_NAME, property_index=property_index)
+def _unskip(property_title: str) -> ToolCallDict:
+    return tool_call_raw(_UNSKIP_NAME, property_title=property_title)
 
 def _feedback() -> ToolCallDict:
     return tool_call_raw(_FEEDBACK_NAME)
@@ -108,17 +108,17 @@ async def dummy_feedback(
     return Feedback(good=True, feedback="")
 
 def any_reason(
-    ind: int
+    title: str
 ):
-    return (ind, None)
+    return (title, None)
 
 def with_reason(
-    ind: int, reason: str
+    title: str, reason: str
 ):
-    return (ind, reason)
+    return (title, reason)
 
 def feedback_builder(
-    *reason_specs: tuple[int, str | None],
+    *reason_specs: tuple[str, str | None],
     accepted_cvl: str | Iterable[str] | Callable[[str], bool] | None = None,
 ) -> FeedbackToolImpl:
     skippable = {
@@ -132,9 +132,9 @@ def feedback_builder(
         within_tool: str,
     ) -> Feedback:
         for sk in skipped:
-            if sk.property_index not in skippable:
+            if sk.property_title not in skippable:
                 return Feedback(good=False, feedback="I don't like your skips")
-            reason = skippable[sk.property_index]
+            reason = skippable[sk.property_title]
             if reason is None:
                 continue
             if reason != sk.reason:
@@ -163,7 +163,7 @@ def scenario(
         property_rules=[],
         required_validations=required if required else [FEEDBACK_VALIDATION_KEY]
     ).with_context(FeedbackToolContext(
-        feedback_impl, num_props=num_props
+        feedback_impl, titles=[f"p{i}" for i in range(num_props)]
     ))
 
 
@@ -175,47 +175,47 @@ def scenario(
 class TestMergeSkipsViaGraph:
     async def test_adds_skip(self):
         result = await scenario(1).turn(
-            _skip(property_index=1, reason="too complex")
+            _skip(property_title="p0", reason="too complex")
         ).run()
         assert len(result["skipped"]) == 1
-        assert result["skipped"][0].property_index == 1
+        assert result["skipped"][0].property_title == "p0"
         assert result["skipped"][0].reason == "too complex"
 
     async def test_merges_two_skips(self):
         result = await scenario(4).turn(
-            _skip(property_index=1, reason="complex"),
-            _skip(property_index=3, reason="out of scope")
+            _skip(property_title="p0", reason="complex"),
+            _skip(property_title="p2", reason="out of scope")
         ).run()
         assert len(result["skipped"]) == 2
-        indices = sorted([s.property_index for s in result["skipped"]])
-        assert indices == [1, 3]  # sorted by index
+        titles = sorted([s.property_title for s in result["skipped"]])
+        assert titles == ["p0", "p2"]  # sorted by title
 
     async def test_overwrites_reason(self):
         result = await scenario(1).turn(
-            _skip(1, "old reason")
+            _skip("p0", "old reason")
         ).turn(
-            _skip(1, "new reason")
+            _skip("p0", "new reason")
         ).run()
         assert len(result["skipped"]) == 1
         assert result["skipped"][0].reason == "new reason"
 
     async def test_unskip(self):
         result = await scenario(1).turn(
-            _skip(1, "no real reason")
+            _skip("p0", "no real reason")
         ).turn(
-            _unskip(1)
+            _unskip("p0")
         ).run()
         assert len(result["skipped"]) == 0
 
     async def test_skip_is_merge(self):
         result = await scenario(2).turn(
-            _skip(1, "because")
+            _skip("p0", "because")
         ).turn(
-            _skip(2, "it's hard")
+            _skip("p1", "it's hard")
         ).run()
         assert len(result["skipped"]) == 2
-        assert result["skipped"][0].property_index == 1
-        assert result["skipped"][1].property_index == 2
+        assert result["skipped"][0].property_title == "p0"
+        assert result["skipped"][1].property_title == "p1"
 
     def skip_error_mapper(self, st: CVLTestState) -> tuple[str, list[SkippedProperty]]:
         return (
@@ -225,11 +225,11 @@ class TestMergeSkipsViaGraph:
 
     async def test_invalid_skip_reason(self):
         (msg, st) = await scenario(1).turn(
-            _skip(1, "too hard")
+            _skip("p0", "too hard")
         ).turn(
-            _skip(1, "")
+            _skip("p0", "")
         ).map(self.skip_error_mapper).run()
-        assert len(st) == 1 and st[0].property_index == 1
+        assert len(st) == 1 and st[0].property_title == "p0"
         assert "A non-empty justification is" in msg
 
 
@@ -299,9 +299,9 @@ class TestValidationLogic:
 
     async def test_changed_reason_no_result(self):
         assert await scenario(1, curr_spec="whatever").turns(
-            _skip(1, "reason 1"),
+            _skip("p0", "reason 1"),
             _feedback(),
-            _skip(1, "new reason"),
+            _skip("p0", "new reason"),
             _result("I'm done")
         ).map_run(is_result_rejection.check_reason(unsat_feedback_message))
 
@@ -314,11 +314,11 @@ class TestValidationLogic:
 
     async def test_no_validation_rollbacks(self):
         assert await scenario(1, curr_spec="whatever").turns(
-            _skip(1, "reason 1"),
+            _skip("p0", "reason 1"),
             _feedback(), # stamp reason 1
-            _skip(1, "reason 2"),
+            _skip("p0", "reason 2"),
             _feedback(), # stamp reason 2,
-            _skip(1, "reason 1"), # back to reason 1 digest
+            _skip("p0", "reason 1"), # back to reason 1 digest
             _result("I'm done") # should fail, current accepted version is reason 2 digest
         ).map_run(is_result_rejection.check_reason(unsat_feedback_message))
 
@@ -331,13 +331,13 @@ class TestValidationLogic:
 
     async def test_unskip_rollsback(self):
         assert await scenario(2, feedback_builder(
-            any_reason(1)
+            any_reason("p0")
         ), curr_spec="the spec").turns(
-            _skip(1, "doesn't matter"),
+            _skip("p0", "doesn't matter"),
             _feedback(), # should be accepted
-            _skip(2, "don't like this"),
+            _skip("p1", "don't like this"),
             _feedback(), # rejection
-            _unskip(2),
+            _unskip("p1"),
             _result("I'm done")
         ).map_run(result) == "I'm done"
 
@@ -353,10 +353,10 @@ class TestValidationLogic:
 class TestFeedbackIntegration:
     async def test_picky_skips(self):
         assert await scenario(1, feedback_impl=feedback_builder(
-            with_reason(1, "good reason")
+            with_reason("p0", "good reason")
         ), curr_spec="version 1").turns(
-            _skip(1, "good reason"),
+            _skip("p0", "good reason"),
             _feedback(),
-            _skip(1, "bad reason"),
+            _skip("p0", "bad reason"),
             _result("complete")
         ).map_run(is_result_rejection.check_reason(unsat_feedback_message))

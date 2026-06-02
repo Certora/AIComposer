@@ -99,17 +99,17 @@ class PublishResultTool(
     commentary: str = Field(description="Commentary on your generated spec")
     property_rules: list[PropertyRuleMapping] = Field(
         description="The property->rules mapping. For every property you did NOT skip "
-        "(referenced by its 1-indexed number from the batch listing), list the name(s) of "
-        "the rule(s)/invariant(s) in your spec that verify it. Every non-skipped property "
-        "must appear with at least one rule."
+        "(referenced by its unique snake_case title from the batch listing), list the "
+        "name(s) of the rule(s)/invariant(s) in your spec that verify it. Every non-skipped "
+        "property must appear with at least one rule."
     )
 
     @override
     def run(self) -> Command | str:
         if (err := check_completion(self.state)) is not None:
             return err
-        num_props = get_runtime(FeedbackToolContext).context.num_props
-        if (err := validate_property_rules(self.property_rules, self.state["skipped"], num_props)) is not None:
+        titles = get_runtime(FeedbackToolContext).context.titles
+        if (err := validate_property_rules(self.property_rules, self.state["skipped"], titles)) is not None:
             return err
         return tool_state_update(
             self.tool_call_id,

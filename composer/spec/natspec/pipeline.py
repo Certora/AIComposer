@@ -282,10 +282,12 @@ async def analyze_single_contract(
                     failures.append(PropertyFailure(prop=prop, reason=reason))
                 failures.append(PropertyFailure(prop=prop, reason=reason))
             case GenerationSuccess():
+                props_by_title = {p.title: p for p in batch.props}
                 for skip in result.skipped:
-                    if skip.property_index in range(1, len(batch.props) + 1):
+                    skipped_prop = props_by_title.get(skip.property_title)
+                    if skipped_prop is not None:
                         failures.append(PropertyFailure(
-                            prop=batch.props[skip.property_index - 1],
+                            prop=skipped_prop,
                             reason=f"Skipped: {skip.reason}",
                         ))
 

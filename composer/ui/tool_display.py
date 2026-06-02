@@ -211,11 +211,11 @@ class CommonTools:
         return {
             "feedback_tool": ToolDisplay("Getting feedback", "Feedback"),
             "record_skip": ToolDisplay(
-                lambda p: f"Skipping property #{p.get('property_index', '?')}",
+                lambda p: f"Skipping property `{p.get('property_title', '?')}`",
                 suppress_ack("Skip result", ("Recorded skip",)),
             ),
             "unskip_property": ToolDisplay(
-                lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
+                lambda p: f"Un-skipping property `{p.get('property_title', '?')}`",
                 suppress_ack("Unskip result", ("Removed skip",)),
             ),
         }

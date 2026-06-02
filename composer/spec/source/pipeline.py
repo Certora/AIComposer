@@ -213,7 +213,7 @@ async def run_autoprove_pipeline(
 
         inv_spec_name = "invariants.spec"
         (certora_dir / inv_spec_name).write_text(inv_cvl.cvl)
-        dump_property_rules(certora_dir, "invariants", inv_props, inv_cvl.property_rules)
+        dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
         resources.append(CVLResource(
             import_path=inv_spec_name,
             required=False,

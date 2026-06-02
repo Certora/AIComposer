@@ -49,18 +49,12 @@ def dump_properties(
 def dump_property_rules(
     certora_dir: pathlib.Path,
     spec_stem: str,
-    props: list[PropertyFormulation],
     property_rules: list[PropertyRuleMapping],
 ) -> None:
     """Write the property->rules mapping ``{property title: [rule names]}`` to
-    ``{spec_stem}.property_rules.json``, named to accompany ``{spec_stem}.spec``."""
-    mapping: dict[str, list[str]] = {}
-    for m in property_rules:
-        prop = props[m.property_index - 1]
-        key = prop.title
-        if key in mapping:
-            key = f"{prop.title}_{m.property_index}"
-        mapping[key] = m.rules
+    ``{spec_stem}.property_rules.json``, named to accompany ``{spec_stem}.spec``. Titles are
+    unique (enforced at extraction) and validated against the batch at completion."""
+    mapping = {m.property_title: m.rules for m in property_rules}
     (certora_dir / f"{spec_stem}.property_rules.json").write_text(
         json.dumps(mapping, indent=2)
     )
@@ -214,7 +208,7 @@ async def run_generation_pipeline(
         base = batch_filename_bases[i]
         (certora_dir / f"autospec_{base}.spec").write_text(res.cvl)
         (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
-        dump_property_rules(certora_dir, f"autospec_{base}", batch.props, res.property_rules)
+        dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
         return res
 
     generation_results = await asyncio.gather(
