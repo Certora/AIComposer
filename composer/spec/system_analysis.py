@@ -99,12 +99,12 @@ async def run_component_analysis[T: BaseApplication](
         FlowInput
     ).with_sys_prompt_template(
         "application_analysis_system.j2",
-        has_source=env.has_source
+        sort=env.sort,
     ).with_tools(
         [memory, *get_rough_draft_tools(AnalysisState), *env.system_analysis_tools]
     ).with_initial_prompt_template(
         "application_analysis_prompt.j2",
-        has_source=env.has_source
+        sort=env.sort,
     )
 
     graph = b.compile_async()

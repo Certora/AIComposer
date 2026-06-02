@@ -24,6 +24,7 @@ from composer.spec.prop import PropertyFormulation
 from composer.spec.system_model import ContractComponentInstance
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.tool_env import BasicAgentTools
+from composer.spec.service_host import Sort
 from composer.io.conversation import ConversationContextProvider
 from composer.spec.refinement import refinement_loop, EndConversation, SyncStateUpdateTool
 from composer.templates.loader import load_jinja_template
@@ -81,22 +82,18 @@ class BugEnvironment(BasicAgentTools, Protocol):
     def bug_analysis_tools(self) -> tuple[BaseTool, ...]:
         ...
 
-    @property
-    def has_source(self) -> bool:
-        ...
-
 class RefinementState(MessagesState):
     properties: list[PropertyFormulation]
 
 def _get_initial_prompt(
     context: ContractComponentInstance,
-    has_source: bool,
+    sort: Sort,
     prev_results: list[_AgentRoundResult]
 ) -> str:
     return load_jinja_template(
         "property_analysis_prompt.j2",
         context=context,
-        has_source=has_source,
+        sort=sort,
         prior_properties=prev_results
     )
 
@@ -290,13 +287,13 @@ async def _run_bug_round(
     ).with_input(
         BugAnalysisInput
     ).with_initial_prompt(
-        _get_initial_prompt(component, env.has_source, prev)
+        _get_initial_prompt(component, env.sort, prev)
     ).with_tools(
         get_rough_draft_tools(ST)
     ).with_tools(
         env.bug_analysis_tools
     ).with_sys_prompt_template(
-        "property_analysis_system_prompt.j2", has_source=env.has_source
+        "property_analysis_system_prompt.j2", sort=env.sort
     ).compile_async()
 
     flow_input: BugAnalysisInput = BugAnalysisInput(

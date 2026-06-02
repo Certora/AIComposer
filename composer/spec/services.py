@@ -10,6 +10,7 @@ from graphcore.graph import Builder
 from composer.spec.tool_env import (
     RAGTools, BaseRAGTools, BasicAgentTools, ToolEnvironment
 )
+from composer.spec.service_host import Sort
 from composer.spec.cvl_research import indexed_cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.tools.search import cvl_manual_tools
 from composer.kb.knowledge_base import kb_tools
@@ -18,7 +19,7 @@ from composer.spec.agent_index import AgentIndex, AgentIndexConfig, RetrieveDocu
 @dataclass(frozen=True)
 class _BasicLLM:
     llm: BaseChatModel
-    has_source: bool
+    sort: Sort
     _checkpointer: Checkpointer
 
     @property
@@ -32,7 +33,7 @@ class _BasicLLM:
 @dataclass(frozen=True)
 class _BaseTools:
     builder: Builder[None, None, None]
-    has_source: bool
+    sort: Sort
     llm: BaseChatModel
 
 
@@ -63,7 +64,7 @@ def build_rag_tools(
     cvl_researcher = indexed_cvl_research_tool(
         _CVLResearchEnv(
             builder=llm.builder,
-            has_source=llm.has_source,
+            sort=llm.sort,
             base_rag_tools=s.base_rag_tools,
             agent_index=ind,
             llm=llm.llm
@@ -99,11 +100,13 @@ class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
     pass
 
 def build_rag_tool_env(
+    *,
+    sort: Sort = "greenfield",
     **params: Unpack[RAGInputs],
 ) -> RagToolEnv:
     llm = _BasicLLM(
         llm=params["llm"],
-        has_source=False,
+        sort=sort,
         _checkpointer=params["checkpoint"],
     )
     rag_tools = build_basic_rag_tools(
@@ -126,7 +129,7 @@ def build_rag_tool_env(
 
     return ToRet(
         builder=llm.builder,
-        has_source=llm.has_source,
+        sort=llm.sort,
         base_rag_tools=rag_tools.base_rag_tools,
         rag_tools=full_rag_tools.rag_tools,
         llm=llm.llm,
@@ -166,8 +169,8 @@ def build_natspec_env(
             return common_rag.rag_tools
 
         @property
-        def has_source(self) -> bool:
-            return False
+        def sort(self) -> Sort:
+            return "greenfield"
         
         @property
         def system_analysis_tools(self) -> tuple[BaseTool, ...]:

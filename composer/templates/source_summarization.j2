@@ -1,6 +1,6 @@
 <background>
 You are analyzing a web3 application to extract summaries of its behavior.
-{% if has_source %}
+{% if sort != "greenfield" %}
 
 - **Contract**: {{ main_contract_name }} at {{ relative_path }}
 - **Source files**: Available via VFS tools
@@ -11,7 +11,7 @@ Use `list_files` and `get_file` to explore the source code.
 </background>
 
 <task>
-{% if has_source %}
+{% if sort != "greenfield" %}
 Input: A natural language design/system document for a Web3 application, and its implementation.
 Output: A summary of the main pieces of functionality in the application, and its intended high-level behavior.
 {% else %}
@@ -19,7 +19,7 @@ Input: A natural language design/system document for a Web3 application.
 Output: A summary of the main pieces of functionality in the application, and its intended high-level behavior.
 {% endif %}
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 1. Carefully analyze the source code and system document to understand the "type" of application you are analyzing
    (AMM, Staking Protocol, Liquidity pool, etc.)
 2. Using your results from step 1 to contextualize your analysis, identify the major components C of the application

@@ -2,18 +2,24 @@ from typing import Protocol
 from langchain_core.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
 from graphcore.graph import Builder
+from composer.spec.service_host import Sort
 
 class BasicAgentTools(Protocol):
     @property
     def llm(self) -> BaseChatModel:
         ...
-    
+
     @property
     def builder(self) -> Builder[None, None, None]:
         ...
 
     @property
-    def has_source(self) -> bool:
+    def sort(self) -> Sort:
+        """The workflow's relationship with the underlying source tree:
+        ``greenfield`` (no source yet), ``update`` (extending an existing
+        codebase), or ``existing`` (verifying as-is). Replaces the old
+        ``has_source: bool``: ``has_source`` == ``sort != "greenfield"``.
+        """
         ...
 
 class BaseRAGTools(Protocol):

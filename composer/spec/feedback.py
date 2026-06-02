@@ -1,6 +1,7 @@
 
 from typing import Callable, NotRequired, Protocol, Sequence, Any
 from typing_extensions import TypedDict
+from composer.spec.service_host import Sort
 
 from pydantic import BaseModel, Field
 
@@ -40,7 +41,13 @@ class Properties(TypedDict):
 
 class FeedbackInherentParams(TypedDict):
     context: ContractComponentInstance | None
-    has_source: bool
+    # Matches the tri-state on the env-level ``sort``:
+    #   ``greenfield`` — no pre-existing Solidity anywhere; everything is stubs.
+    #   ``update``     — pre-existing codebase being extended; target is a
+    #                    new-contract stub, others are stable source.
+    #   ``existing``   — pre-existing codebase being verified as-is; target
+    #                    has real immutable source.
+    sort: Sort
 
 FeedbackTemplate = TypedTemplate[FeedbackInherentParams]("property_judge_prompt.j2")
 

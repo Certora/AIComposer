@@ -27,6 +27,7 @@ from composer.spec.gen_types import CVLResource, TypedTemplate
 from composer.spec.source.source_env import SourceEnvironment
 from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
+from composer.spec.service_host import Sort
 from composer.ui.tool_display import tool_display
 
 from graphcore.graph import FlowInput
@@ -323,10 +324,10 @@ class ConfigEditTool(WithAsyncImplementation[Command | str], WithInjectedId, Wit
 
 _PropertyGenTemplate = TypedTemplate[PropertyGenParams]("property_generation_prompt.j2")
 
-class _HasSourceParams(TypedDict):
-    has_source: bool
+class _SortParams(TypedDict):
+    sort: Sort
 
-_PropertyJudgeSystemTemplate = TypedTemplate[_HasSourceParams]("property_judge_system_prompt.j2")
+_PropertyJudgeSystemTemplate = TypedTemplate[_SortParams]("property_judge_system_prompt.j2")
 
 async def batch_cvl_generation(
     ctx: WorkflowContext[CVLGeneration],
@@ -368,10 +369,10 @@ async def batch_cvl_generation(
 
     feedback_env = property_feedback_judge(
         ctx.child(CVL_JUDGE_KEY), env, FeedbackTemplate.bind({
-            "has_source": True,
+            "sort": "existing",
             "context": component
         }), props, system_prompt=_PropertyJudgeSystemTemplate.bind({
-            "has_source": True
+            "sort": "existing"
         })
     )
 

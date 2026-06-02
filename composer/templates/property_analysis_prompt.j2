@@ -39,7 +39,7 @@ answer.
 {% endif %}
 
 <task>
-{% if has_source %}
+{% if sort != "greenfield" %}
 Input: The implementation of the application, and a description of a specific component of that application
 {% else %}
 Input: A design document describing the application, and a description of a specific component of that application
@@ -50,7 +50,7 @@ Follow these steps exactly:
 
 ## Step 1
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 Analyze the provided implementation and component description and formulate a set of security properties that are PLAUSIBLE
 for this component. Each security property description must be precise and concise.
 {% else %}
@@ -69,7 +69,7 @@ Security properties fall into one of three categories:
     Good example: "A user should not be able to change anyone's balance but their own"
     Bad example: "A user should not be able to hack the protocol" (overly broad)
 3. Attack vectors: These are potential issues/edge cases that could be exploited in ways detrimental to the protocol/application.
-   IMPORTANT: you do *NOT* need to find evidence that these issues actually exists, simply that they are PLAUSIBLE given the {% if has_source %}current implementation{% else %}design{% endif %}.
+   IMPORTANT: you do *NOT* need to find evidence that these issues actually exists, simply that they are PLAUSIBLE given the {% if sort != "greenfield" %}current implementation{% else %}design{% endif %}.
    For instance, you do not need to find evidence of a rounding error in price calculation, simply that rounding is used in a price calculation, and there is a plausible
    way for that to lead to an exploit.
     Good example: "A malicious actor could manipulate a price oracle to unbalance the pool, allowing free minting"
@@ -106,18 +106,18 @@ Output the results of your analysis using the result tool.
 </task>
 
 <guidance>
-  {% if has_source %}
+  {% if sort != "greenfield" %}
   <hard_requirement>
      Derive your invariants and safety properties from first principles, relying as little as possible on the actual implementation.
      A safety property/invariant should state what the code SHOULD do, not what it CURRENTLY does.
   </hard_requirement>
-  {%endif %}
+  {% endif %}
   <hard_requirement>
     You do NOT need to find evidence that these safety properties/invariants *DEFINITELY* hold, simply that they, with extreme likelihood, *SHOULD* hold for a correct
     implementation.
   </hard_requirement>
   <reminder>
-     You do not need to find evidence that the attack vectors/issues actually exist in the {% if has_source %}implementation{% else %}design{% endif %},
-     simply that these bugs/attacks/etc. are *plausible* given the feature and its {% if has_source %}implementation{% else %}design{% endif %}.
+     You do not need to find evidence that the attack vectors/issues actually exist in the {% if sort != "greenfield" %}implementation{% else %}design{% endif %},
+     simply that these bugs/attacks/etc. are *plausible* given the feature and its {% if sort != "greenfield" %}implementation{% else %}design{% endif %}.
   </reminder>
 </guidance>

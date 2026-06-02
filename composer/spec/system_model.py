@@ -120,7 +120,52 @@ class HarnessedApplication(BaseApplication[HarnessedExplicitContract | SourceExt
         return to_ret
 
 
-type AnyApplication = Application | SourceApplication | HarnessedApplication
+class FromSourceContract(ExplicitContract):
+    """Base for contracts in the ``from-current-source`` (natspec
+    ``update``/``existing``) workflow.
+
+    Split into two concrete variants by relationship to the change being
+    built: :class:`ExistingFromSource` (contract is already in the source
+    tree, either untouched or being edited) and :class:`FreshFromSource`
+    (new contract being introduced by this task — no source path yet).
+    """
+
+
+class ExistingFromSource(FromSourceContract):
+    """An already-present contract in the source tree."""
+    path: str = Field(description="The relative path to the file defining this contract.")
+    tag: Literal["unchanged", "edited"] = Field(description=(
+        "Relationship of this contract to the change being built: "
+        "'unchanged' if it's an existing dependency left as-is, "
+        "'edited' if an existing contract is being modified for this task."
+    ))
+
+
+class FreshFromSource(FromSourceContract):
+    """A new contract being introduced by this task — no source path yet."""
+    tag: Literal["new"] = Field(description=(
+        "This contract is being introduced by this task; there is no existing "
+        "source file for it yet."
+    ))
+
+
+class FromSourceApplication(BaseApplication[ExistingFromSource | FreshFromSource | SourceExternalActor]):
+    """Application variant for the ``from-current-source`` workflow — each
+    explicit contract is tagged ``edited`` / ``unchanged`` / ``new`` via the
+    :class:`FromSourceContract` subtype split.
+    """
+    @cached_property
+    def contract_components(self) -> list[FromSourceContract]:
+        to_ret: list[FromSourceContract] = []
+        for c in self.components:
+            if not isinstance(c, FromSourceContract):
+                continue
+            to_ret.append(c)
+        return to_ret
+
+
+type NatspecApplication = FromSourceApplication | Application
+type AnyApplication = Application | SourceApplication | HarnessedApplication | FromSourceApplication
 
 @dataclass
 class ContractInstance:

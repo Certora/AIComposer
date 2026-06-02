@@ -6,6 +6,7 @@ from langgraph.store.base import BaseStore
 
 from composer.spec.tool_env import ToolEnvironment, SourceTools, BaseSourceTools, BasicAgentTools
 from composer.spec.services import build_rag_tool_env, _BaseTools, RAGInputs
+from composer.spec.service_host import Sort
 from graphcore.tools.vfs import fs_tools
 from composer.spec.code_explorer import indexed_code_explorer_tool
 from composer.spec.agent_index import AgentIndex, AgentIndexConfig, RetrieveDocumentTool
@@ -51,7 +52,7 @@ def build_source_tools(
     explorer_tool = indexed_code_explorer_tool(
         _ExplorerEnv(
             builder=llm.builder,
-            has_source=llm.has_source,
+            sort=llm.sort,
             base_source_tools=s.base_source_tools,
             index=ind,
             llm=llm.llm,
@@ -74,9 +75,11 @@ class SourceParams(RAGInputs):
     source_question_ns: tuple[str, ...]
 
 def build_source_env(
+    *,
+    sort: Sort = "existing",
     **params: Unpack[SourceParams]
 ) -> SourceEnvironment:
-    rag_env = build_rag_tool_env(**params)
+    rag_env = build_rag_tool_env(sort=sort, **params)
 
     basic_source = build_basic_source_tools(
         root=params["root"],
@@ -113,7 +116,7 @@ def build_source_env(
 
     return ToRet(
         builder=rag_env.builder,
-        has_source=True,
+        sort=rag_env.sort,
         rag_tools=rag_env.rag_tools,
         source_tools=full_source.source_tools,
         llm=rag_env.llm
