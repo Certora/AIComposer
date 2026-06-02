@@ -13,6 +13,7 @@ import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Iterable, Protocol
+import uuid
 
 
 @dataclass
@@ -35,6 +36,7 @@ class RunSummary:
     prover_total_s: float = 0.0
     prover_total_calls: int = 0
     _active_prover_by_task: dict[str, tuple[float, int]] = field(default_factory=dict, repr=False)
+    run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """Maps task_id -> (prover_s_accum, prover_calls) recorded while task is in flight."""
     _latest_link_by_task: dict[str, str] = field(default_factory=dict, repr=False)
     """Maps task_id -> link for the most recent prover run."""

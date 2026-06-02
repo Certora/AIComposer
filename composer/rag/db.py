@@ -14,11 +14,7 @@ from psycopg.rows import TupleRow
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 else:
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        # this is fine, SentenceTransformer is only used as a type annotation
-        SentenceTransformer = "SentenceTransformer"
+    SentenceTransformer = "SentenceTransformer"
 
 from numpy import ndarray
 

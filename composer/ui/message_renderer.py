@@ -17,7 +17,7 @@ from rich.text import Text
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from composer.diagnostics.handlers import normalize_content
+from composer.ui.content import normalize_content
 from composer.ui.tool_display import ToolDisplayConfig
 from composer.ui.tool_call_renderer import ToolCallRenderer
 

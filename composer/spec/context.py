@@ -19,6 +19,7 @@ from graphcore.graph import Builder
 
 from composer.input.files import Document
 from composer.io.mnemonic_store import assign_mnemonic
+from composer.core.user import user_data_ns
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +240,7 @@ class WorkflowContext[K: CacheTypes]:
     
     async def thread_and_mnemonic(self) -> tuple[str, str]:
         tid = self.thread_id
-        mnem = await assign_mnemonic(tid, self._store, MNEMONIC_KEYS)
+        mnem = await assign_mnemonic(tid, self._store, user_data_ns() + MNEMONIC_KEYS)
         return (tid, mnem)
 
 # ---------------------------------------------------------------------------

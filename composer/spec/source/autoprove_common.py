@@ -32,6 +32,7 @@ from composer.core.user import get_uid, user_data_ns
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
+from composer.io.thread_logging import thread_logger, DEFAULT_META_NS
 
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.io.multi_job import HandlerFactory
@@ -146,7 +147,10 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
             embedder=DefaultEmbedder(model)
         ) as conns,
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
-        async_tool_context()
+        async_tool_context(),
+        thread_logger(conns.store, {
+            "root_thread_id": thread_id
+        }, user_ns(DEFAULT_META_NS), run_id=summary.run_id)
     ):
         # Source-code agent caches are always per-user — the conventional
         # ``user_data_ns(uid)`` prefix lives directly in the ns we pass

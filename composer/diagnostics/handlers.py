@@ -3,23 +3,10 @@ from typing import cast, TypedDict, TypeGuard
 from composer.core.state import AIComposerState
 from graphcore.graph import INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE
 from composer.diagnostics.stream import AllUpdates, ProgressUpdate, AuditUpdate, UserUpdateTy, AuditUpdateTy
+from composer.ui.content import normalize_content as normalize_content  # re-exported for back-compat
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
 
 known_nodes = {INITIAL_NODE, TOOL_RESULT_NODE, TOOLS_NODE}
-
-def normalize_content(s: str | list[str | dict]) -> list[dict]:
-    l : list[str | dict]
-    if isinstance(s, str):
-        l = [s]
-    else:
-        l = s
-    to_ret = []
-    for r in l:
-        if isinstance(r, str):
-            to_ret.append({"type": "text", "text": r})
-        else:
-            to_ret.append(r)
-    return to_ret
 
 class CacheUsage(TypedDict):
     """
