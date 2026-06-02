@@ -1,6 +1,4 @@
-from typing import Any, Protocol
-
-from langchain_core.tools import BaseTool
+from typing import Any
 
 from composer.spec.context import (
     WorkflowContext, CacheKey,

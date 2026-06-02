@@ -1,24 +1,17 @@
-from typing import NotRequired, Protocol, Any
-
-from langchain_core.tools import BaseTool
+from typing import NotRequired, Any
 
 from graphcore.graph import MessagesState, FlowInput
 
 
 from composer.spec.context import (
-    WorkflowContext, CacheKey, SystemDoc
+    WorkflowContext, SystemDoc
 )
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.system_model import BaseApplication, ExplicitContract, ExternalActor, ExternalDependency
-from composer.spec.tool_env import BasicAgentTools
+from composer.spec.service_host import ServiceHost
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 
 DESCRIPTION = "Component analysis"
-
-class AnalysisEnv(BasicAgentTools, Protocol):
-    @property
-    def system_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
 
 def _validate_connectivity(
     _: Any, app: BaseApplication
@@ -39,12 +32,16 @@ def _validate_connectivity(
                 known_components[c.name].add(sub_comp.name)
         else:
             assert isinstance(c, ExternalActor)
+            if c.name in known_external:
+                errors.append(f"Duplicate external component name: {c.name}")
             known_external.add(c.name)
 
     for explicit in app.components:
+        contract_components = set()
         if not isinstance(explicit, ExplicitContract):
             continue
         for sub_comp in explicit.components:
+            contract_components.add(sub_comp)
             thing_interacts_with_str = f"Component {sub_comp.name} of {explicit.name} interacts with"
             for interaction in sub_comp.interactions:
                 if isinstance(interaction, ExternalDependency):
@@ -78,7 +75,7 @@ async def run_component_analysis[T: BaseApplication](
     ty: type[T],
     child_ctxt: WorkflowContext[T],
     input: SystemDoc,
-    env: AnalysisEnv,
+    env: ServiceHost,
     extra_input: list[str | dict]
 ) -> T | None:
     """Analyze application components from a system doc and optionally source code."""
@@ -101,7 +98,7 @@ async def run_component_analysis[T: BaseApplication](
         "application_analysis_system.j2",
         sort=env.sort,
     ).with_tools(
-        [memory, *get_rough_draft_tools(AnalysisState), *env.system_analysis_tools]
+        [memory, *get_rough_draft_tools(AnalysisState), *env.analysis_tools]
     ).with_initial_prompt_template(
         "application_analysis_prompt.j2",
         sort=env.sort,

@@ -4,7 +4,7 @@ Property generation agent: extracts security properties from application compone
 Parameterized by source availability via AnalysisInput tuple.
 """
 
-from typing import Any, Callable, NotRequired, Protocol, override, Literal, Sequence
+from typing import Any, Callable, NotRequired, override, Literal, Sequence
 import re
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
@@ -23,8 +23,7 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.prop import PropertyFormulation
 from composer.spec.system_model import ContractComponentInstance
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
-from composer.spec.tool_env import BasicAgentTools
-from composer.spec.service_host import Sort
+from composer.spec.service_host import Sort, ServiceHost
 from composer.io.conversation import ConversationContextProvider
 from composer.spec.refinement import refinement_loop, EndConversation, SyncStateUpdateTool
 from composer.templates.loader import load_jinja_template
@@ -76,11 +75,6 @@ def agent_round_key(
 AGENT_RESULT_KEY = CacheKey[_BugAnalysisCache, _AgentResult]("agent_bug_analysis")
 
 DESCRIPTION = "Property extraction"
-
-class BugEnvironment(BasicAgentTools, Protocol):
-    @property
-    def bug_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
 
 class RefinementState(MessagesState):
     properties: list[PropertyFormulation]
@@ -261,7 +255,7 @@ def _unique_titles_validator(
 
 
 async def _run_bug_round(
-    env: BugEnvironment,
+    env: ServiceHost,
     component: ContractComponentInstance,
     front_matter_items: Sequence[str | dict],
     ctx: WorkflowContext[_AgentResult],
@@ -291,7 +285,7 @@ async def _run_bug_round(
     ).with_tools(
         get_rough_draft_tools(ST)
     ).with_tools(
-        env.bug_analysis_tools
+        env.analysis_tools
     ).with_sys_prompt_template(
         "property_analysis_system_prompt.j2", sort=env.sort
     ).compile_async()
@@ -322,7 +316,7 @@ async def _run_bug_round(
 
 async def _run_bug_analysis_inner(
     agent_component_analysis: WorkflowContext[_AgentResult],
-    env: BugEnvironment,
+    env: ServiceHost,
     component: ContractComponentInstance,
     extra_input: Sequence[str | dict],
     threat_model: Document | None,
@@ -368,7 +362,7 @@ async def _run_bug_analysis_inner(
 
 async def run_property_inference(
     ctx: WorkflowContext[ComponentGroup],
-    env: BugEnvironment,
+    env: ServiceHost,
     component: ContractComponentInstance,
     extra_input : Sequence[str | dict] = tuple(),
     threat_model: Document | None = None,
@@ -449,7 +443,7 @@ async def run_property_inference(
             client=client,
             init_messages=edited_history,
             init_data=agent_attempt.items,
-            tools=[*env.bug_analysis_tools, Exit.as_tool("finalize_properties"), SetRequirements.as_tool("update_requirements")],
+            tools=[*env.analysis_tools, Exit.as_tool("finalize_properties"), SetRequirements.as_tool("update_requirements")],
             state_renderer=render_properties_as_md,
             diff_renderer=lambda a, b: \
                 Group(

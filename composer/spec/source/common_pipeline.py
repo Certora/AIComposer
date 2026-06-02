@@ -19,7 +19,7 @@ from composer.spec.util import string_hash, slugify_filename
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
@@ -86,7 +86,7 @@ async def run_generation_pipeline(
     source_input: SourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
     resources: list[CVLResource],

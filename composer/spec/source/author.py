@@ -24,7 +24,7 @@ from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
 from langgraph.runtime import get_runtime
 from composer.spec.gen_types import CVLResource, TypedTemplate
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
 from composer.spec.service_host import Sort
@@ -336,7 +336,7 @@ async def batch_cvl_generation(
     component: ContractComponentInstance | None,
     resources: list[CVLResource],
     prover_tool: BaseTool,
-    env: SourceEnvironment,
+    env: ServiceHost,
     description: str,
     source: SourceCode
 ) -> BatchGeneratedCVLResult:
@@ -348,7 +348,7 @@ async def batch_cvl_generation(
     })
 
     task_graph = env.builder.with_tools(
-        env.cvl_authorship_tools
+        env.all_tools
     ).with_tools(
         static_tools()
     ).with_tools(

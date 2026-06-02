@@ -217,27 +217,10 @@ async def generate_cvl_batch(
             system_doc.content.to_dict(),
         ]
 
-    class FeedbackEnv:
-        @property
-        def feedback_tools(self) -> tuple[BaseTool, ...]:
-            return env.all_tools
-
-        @property
-        def llm(self):
-            return env.llm
-
-        @property
-        def builder(self):
-            return env.builder
-
-        @property
-        def sort(self):
-            return env.sort
-    
     ctx = root_ctx.abstract(CVLGeneration)
 
     feedback_ctxt = property_feedback_judge(
-        ctx=ctx.child(CVL_JUDGE_KEY), env=FeedbackEnv(), prompt=FeedbackTemplate.bind({
+        ctx=ctx.child(CVL_JUDGE_KEY), env=env, prompt=FeedbackTemplate.bind({
             "context": component,
             "sort": env.sort,
         }).depends(Properties), props=props, extra_inputs=stub_feedback_extras

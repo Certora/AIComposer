@@ -70,10 +70,8 @@ def tool_config_for_phase(phase: Phase) -> ToolDisplayConfig:
             return ToolDisplayConfig(tool_display={
                 **CommonTools.cvl_research_displays(),
                 **CommonTools.cvl_manipulation(),
-                "publish_spec": ToolDisplay("Publishing to master spec", suppress_ack("Publish result")),
                 "give_up": ToolDisplay("Giving up on property", suppress_ack("Give up result")),
                 "record_skip": ToolDisplay(lambda d: f"Skipping Property `{d['property_title']}`: {d['reason']}", suppress_ack("Skip Request Result", ("Recorded skip", ))),
-                "read_stub": ToolDisplay("Reading verification stub", None),
                 "request_stub_field": ToolDisplay(
                     lambda d: f"Requesting stub field: {d["purpose"]}",
                     "Stub field result",

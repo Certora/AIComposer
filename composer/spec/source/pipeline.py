@@ -28,7 +28,7 @@ from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
 from composer.spec.source.harness import run_setup
 from composer.spec.source.system_analysis import run_component_analysis
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.source.summarizer import setup_summaries
 from composer.spec.system_model import (
     HarnessedApplication, SourceExplicitContract,
@@ -64,7 +64,7 @@ async def run_autoprove_pipeline(
     source_input: SourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     *,
     prover_opts: ProverOptions,
     max_concurrent: int = 4,

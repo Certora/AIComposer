@@ -8,7 +8,7 @@ covers all external entry points, and validates it with the Solidity compiler.
 import asyncio
 from collections.abc import Callable
 from logging import getLogger
-from typing import NotRequired, Protocol, cast, override
+from typing import NotRequired, cast, override
 
 from graphcore.graph import FlowInput
 from graphcore.tools.vfs import Materializer
@@ -30,25 +30,12 @@ from composer.spec.natspec.task_description import (
     resolve_extra_input,
 )
 from composer.spec.system_model import NatspecApplication
-from composer.spec.tool_env import BasicAgentTools
 from composer.spec.util import string_hash, uniq_thread_id
 from composer.spec.service_host import ServiceHost
 
 _logger = getLogger(__name__)
 
 DESCRIPTION = "Interface generation"
-
-
-class InterfaceGenEnv(BasicAgentTools, Protocol):
-    """Role-scoped env for the interface-generation agent: basic agent plumbing
-    plus ``interface_gen_tools`` (source tools when source is available, empty
-    otherwise — the agent uses them to explore the existing project layout
-    when deciding where to place generated interfaces).
-    """
-
-    @property
-    def interface_gen_tools(self) -> tuple[BaseTool, ...]:
-        ...
 
 
 async def generate_interface[I: InterfaceDeclModel](
@@ -161,7 +148,7 @@ async def generate_interface[I: InterfaceDeclModel](
     workflow = (
         env.builder
         .with_state(ST)
-        .with_tools([ResultTool.as_tool("result"), *(env.source_tools if env.sort != "greenfield" else [])])
+        .with_tools([ResultTool.as_tool("result"), *env.analysis_tools])
         .with_output_key("result")
         .with_default_summarizer()
         .with_input(FlowInput)

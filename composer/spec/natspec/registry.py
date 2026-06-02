@@ -409,6 +409,8 @@ class StubRegistry:
         produces the updated stub (validated by solc) and we write it to the store.
         Returns a description of the field to use, or a rejection message.
         """
+        if nm not in self._path_by_name:
+            return f"Error: unknown contract name: {nm}"
         async with self._lock:
             stub_content = self.read_stub(nm)
             stub_path = self._path_by_name[nm]

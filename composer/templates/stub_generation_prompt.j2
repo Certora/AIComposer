@@ -21,7 +21,7 @@ Given the interface file, generate a minimal stub implementation.
 Requirements:
 - Use pragma solidity ^0.{{ solc_version }};
 - Do *NOT* inline the interface, import it from `"{{ interface_path }}"` (use that exact path in
-  your import statement, resolved relative to the stub's own location as Solidity requires).
+  your import statement, it is resolved relative to the project root as required by Solidity).
 - Implement all interface functions with empty bodies (return default values as needed)
 - Use parameter names in all function signatures, even if unused
 - Do NOT add any storage variables — those will be added later by the verification pipeline

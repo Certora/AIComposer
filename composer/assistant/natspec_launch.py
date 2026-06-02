@@ -21,7 +21,6 @@ from composer.spec.util import string_hash
 from composer.workflow.services import create_llm, standard_connections
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.spec.services import build_rag_tool_env
-from composer.spec.service_host import ServiceHost
 from composer.spec.agent_index import agent_index_config_from_env
 from composer.cli.natspec_startup import make_source_factory, build_mental_model
 from composer.ui.tool_display import async_tool_context
@@ -59,7 +58,8 @@ async def launch_natspec_workflow(
             memory_namespace=args.memory_namespace or None,
         )
 
-        rag_env = build_rag_tool_env(
+        service_env = build_rag_tool_env(
+            sort="update" if args.source_root is not None else "greenfield",
             llm=pipeline_llm,
             checkpoint=conn.checkpointer,
             cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
@@ -67,14 +67,6 @@ async def launch_natspec_workflow(
             kb_ns=DEFAULT_KB_NS,
             store=conn.indexed_store,
             recursion_limit=ctx.config.recursion_limit,
-        )
-
-        service_env = ServiceHost(
-            builder=rag_env.builder,
-            cvl_tools=rag_env.rag_tools,
-            llm=rag_env.llm,
-            sort="update" if args.source_root is not None else "greenfield",
-            source_tools=tuple()
         )
 
 

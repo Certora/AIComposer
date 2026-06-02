@@ -26,7 +26,7 @@ from composer.cvl.tools import get_cvl, put_cvl, put_cvl_raw
 from composer.spec.gen_types import CVLResource
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import temp_certora_file, string_hash
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.source.harness import ContractSetup, ExternalInterface, HarnessDef
 from composer.spec.system_model import HarnessedApplication, ExternalActor
 from composer.spec.gen_types import TypedTemplate
@@ -179,7 +179,7 @@ _SummarizationTemplate = TypedTemplate[SummarizationParams]("cvl_setup_summariza
 
 async def _setup_summaries_impl(
     ctx: WorkflowContext["_SummaryCache"],
-    env: SourceEnvironment,
+    env: ServiceHost,
     setup: ContractSetup,
     application: HarnessedApplication,
     source: SourceCode
@@ -236,7 +236,7 @@ async def _setup_summaries_impl(
     ).inject(
         lambda g: bound.render_to(g.with_initial_prompt_template)
     ).with_tools(
-        [ctx.get_memory_tool(), *env.cvl_authorship_tools]
+        [ctx.get_memory_tool(), *env.all_tools]
     ).with_tools(
         tools
     ).with_input(Input).with_context(SummaryContext).compile_async()
@@ -285,7 +285,7 @@ def _summary_key(d: ContractSetup) -> CacheKey[None, _SummaryCache]:
 async def setup_summaries(
     ctx: WorkflowContext[None],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     config: ContractSetup,
     app: HarnessedApplication
 ) -> CVLResource:

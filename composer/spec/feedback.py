@@ -1,13 +1,12 @@
 
-from typing import Callable, NotRequired, Protocol, Sequence, Any
+from typing import Callable, NotRequired, Sequence, Any
 from typing_extensions import TypedDict
-from composer.spec.service_host import Sort
+from composer.spec.service_host import Sort, ServiceHost
 
 from pydantic import BaseModel, Field
 
 
 from langgraph.graph import MessagesState
-from langchain_core.tools import BaseTool
 
 from graphcore.graph import FlowInput
 
@@ -20,7 +19,6 @@ from composer.cvl.tools import get_cvl
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.gen_types import TemplateInstantiation, InjectedTemplate, TypedTemplate
 from composer.spec.cvl_generation import FeedbackToolContext, Rebuttal, SkippedProperty
-from composer.spec.tool_env import BasicAgentTools
 from composer.spec.system_model import ContractComponentInstance
 from composer.spec.util import uniq_thread_id
 
@@ -30,11 +28,6 @@ class PropertyFeedback(BaseModel):
     """
     good: bool = Field(description="Whether the properties are good as is, or if there is room for improvement")
     feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
-
-class FeedbackEnv(BasicAgentTools, Protocol):
-    @property
-    def feedback_tools(self) -> tuple[BaseTool, ...]:
-        ...
 
 class Properties(TypedDict):
     properties: list[PropertyFormulation]
@@ -55,7 +48,7 @@ FeedbackSystemTemplate = TypedTemplate[dict[str, Any]]("cvl_system_prompt.j2").b
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
-    env: FeedbackEnv,
+    env: ServiceHost,
     prompt: InjectedTemplate[Properties] | TemplateInstantiation,
     props: list[PropertyFormulation],
     *,
@@ -64,7 +57,7 @@ def property_feedback_judge(
 ) -> FeedbackToolContext:
 
     builder = env.builder.with_tools(
-        env.feedback_tools
+        env.all_tools
     )
 
     class JudgeExtra(RoughDraftState):

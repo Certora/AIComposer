@@ -33,7 +33,7 @@ from graphcore.tools.results import result_tool_generator
 
 from composer.spec.graph_builder import run_to_completion, bind_standard
 from composer.spec.source.autosetup import run_autosetup, SetupFailure, SetupSuccess
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
 from composer.spec.gen_types import TypedTemplate
@@ -125,7 +125,7 @@ async def classifier_agent(
     context: WorkflowContext[SystemDescriptionHarnessed],
     app: SourceApplication,
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
 ) -> AgentSystemDescription:
     child = context.child(HARNESS_ANALYSIS_KEY)
     if (cached := await child.cache_get(AgentSystemDescription)) is not None:
@@ -223,7 +223,7 @@ def harness_generation_key(
 
 async def generate_harnesses(
     context: WorkflowContext[SystemDescriptionHarnessed],
-    env: SourceEnvironment,
+    env: ServiceHost,
     source: SourceCode,
     application: SourceApplication,
     instructions: AgentSystemDescription
@@ -419,7 +419,7 @@ def apply_harness_result(
 async def run_setup_part1(
     context: WorkflowContext[ContractSetup],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     application_desc: SourceApplication
 ) -> SystemDescriptionHarnessed:
     setup_ctx = await context.child(system_setup_key(application_desc), application_desc.model_dump())
@@ -486,7 +486,7 @@ async def run_setup_part1(
 async def run_and_apply_part1(
     context: WorkflowContext[ContractSetup],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     application_desc: SourceApplication
 ) -> SystemDescriptionHarnessed:
     res = await run_setup_part1(context, source, env, application_desc)
@@ -505,7 +505,7 @@ _logger = getLogger(__name__)
 async def run_setup(
     context: WorkflowContext[None],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     application_desc: SourceApplication,
     prover_opts: ProverOptions,
 ) -> ContractSetup | None:
