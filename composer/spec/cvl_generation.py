@@ -118,6 +118,10 @@ class GeneratedCVL(BaseModel):
     cvl: str
     skipped: list[SkippedProperty] = Field(default_factory=list)
     property_rules: list[PropertyRuleMapping] = Field(default_factory=list)
+    # The final prover conf recorded during generation, persisted so that a cache hit
+    # (which skips the prover) can still write certora/confs. None for pre-existing cache
+    # entries or runs where the prover never ran.
+    conf: dict | None = Field(default=None)
 
 
 # ---------------------------------------------------------------------------
