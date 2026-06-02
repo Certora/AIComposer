@@ -36,12 +36,13 @@ def dump_properties(
     props: list[PropertyFormulation],
 ) -> None:
     """Write the analysis-phase properties (title, sort, methods, description) to
-    ``{spec_stem}.properties.json``, named to accompany ``{spec_stem}.spec``. The array
-    order matches the 1-based numbering the agent sees; ``title`` is the cross-reference
-    key used by ``{spec_stem}.property_rules.json``."""
-    certora_dir.mkdir(exist_ok=True, parents=True)
+    ``properties/{spec_stem}.properties.json`` under ``certora_dir``, accompanying
+    ``{spec_stem}.spec``. ``title`` is the cross-reference key used by
+    ``{spec_stem}.property_rules.json``."""
+    properties_dir = certora_dir / "properties"
+    properties_dir.mkdir(exist_ok=True, parents=True)
     properties_dump = [prop.model_dump() for prop in props]
-    (certora_dir / f"{spec_stem}.properties.json").write_text(
+    (properties_dir / f"{spec_stem}.properties.json").write_text(
         json.dumps(properties_dump, indent=2)
     )
 
@@ -52,10 +53,13 @@ def dump_property_rules(
     property_rules: list[PropertyRuleMapping],
 ) -> None:
     """Write the property->rules mapping ``{property title: [rule names]}`` to
-    ``{spec_stem}.property_rules.json``, named to accompany ``{spec_stem}.spec``. Titles are
-    unique (enforced at extraction) and validated against the batch at completion."""
+    ``properties/{spec_stem}.property_rules.json`` under ``certora_dir``, accompanying
+    ``{spec_stem}.spec``. Titles are unique (enforced at extraction) and validated against
+    the batch at completion."""
+    properties_dir = certora_dir / "properties"
+    properties_dir.mkdir(exist_ok=True, parents=True)
     mapping = {m.property_title: m.rules for m in property_rules}
-    (certora_dir / f"{spec_stem}.property_rules.json").write_text(
+    (properties_dir / f"{spec_stem}.property_rules.json").write_text(
         json.dumps(mapping, indent=2)
     )
 
@@ -205,9 +209,11 @@ async def run_generation_pipeline(
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
         certora_dir.mkdir(exist_ok=True, parents=True)
+        properties_dir = certora_dir / "properties"
+        properties_dir.mkdir(exist_ok=True, parents=True)
         base = batch_filename_bases[i]
         (certora_dir / f"autospec_{base}.spec").write_text(res.cvl)
-        (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
+        (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
         dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
         return res
 
