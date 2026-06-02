@@ -124,18 +124,10 @@ class GeneratedCVL(BaseModel):
 # Completion validation
 # ---------------------------------------------------------------------------
 
-def _replace_rules(
-    _left: list[PropertyRuleMapping],
-    right: list[PropertyRuleMapping],
-) -> list[PropertyRuleMapping]:
-    """State reducer: the latest mapping wins (set wholesale by the result tool)."""
-    return right
-
-
 class CVLGenerationExtra(TypedDict):
     curr_spec: str | None
     skipped: Annotated[list[SkippedProperty], _merge_skips]
-    property_rules: Annotated[list[PropertyRuleMapping], _replace_rules]
+    property_rules: list[PropertyRuleMapping]
     validations: Annotated[dict[str, str], merge_validation]
     required_validations: list[str]
 

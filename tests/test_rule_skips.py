@@ -99,6 +99,7 @@ def _scenario(
     return Scenario(StateWithSkips, *tools).init(
         curr_spec=curr_spec,
         skipped=[],
+        property_rules=[],
         validations={},
         required_validations=required if required is not None else [VALIDATION_KEY],
         rule_skips=rule_skips or {},

@@ -160,6 +160,7 @@ def scenario(
         curr_spec=curr_spec,
         validations={},
         skips=skips if skips else [],
+        property_rules=[],
         required_validations=required if required else [FEEDBACK_VALIDATION_KEY]
     ).with_context(FeedbackToolContext(
         feedback_impl, num_props=num_props
