@@ -4,7 +4,7 @@ Property generation agent: extracts security properties from application compone
 Parameterized by source availability via AnalysisInput tuple.
 """
 
-from typing import NotRequired, Protocol, override, Literal, Sequence
+from typing import Any, Callable, NotRequired, Protocol, override, Literal, Sequence
 import re
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
@@ -36,7 +36,7 @@ from rich.text import Text
 
 class _BugAnalysisCache(BaseModel):
     items: list[PropertyFormulation] = Field(description="The security properties you have extracted about the component. Do NOT include any properties " \
-    "mentioned in <prior_properties> (if any were provided to you. If you have not extracted any novel properties, return an empty list")
+    "mentioned in <prior_properties> (if any were provided to you). If you have not extracted any novel properties, return an empty list")
 
 
 class _AgentRoundResult(_BugAnalysisCache):
@@ -228,6 +228,41 @@ def _front_matter_message(items: Sequence[str | dict]) -> HumanMessage | None:
     return HumanMessage(content=[ *blocks ])
 
 
+def _unique_titles_validator(
+    prev: list[_AgentRoundResult],
+) -> Callable[[Any, _AgentRoundResult], str | None]:
+    """Validator for the property-extraction agent: every property title must be unique,
+    both within this round's output and against titles already extracted in prior rounds
+    (the agent cannot change prior rounds, so any clash must be resolved by renaming the
+    property it produced this round)."""
+    prior_titles = {p.title for r in prev for p in r.items}
+
+    def validate(_state: Any, result: _AgentRoundResult) -> str | None:
+        seen: set[str] = set()
+        dupes: set[str] = set()
+        clashes: set[str] = set()
+        for p in result.items:
+            if p.title in seen:
+                dupes.add(p.title)
+            seen.add(p.title)
+            if p.title in prior_titles:
+                clashes.add(p.title)
+        problems: list[str] = []
+        if dupes:
+            problems.append(f"used more than once in this round ({', '.join(sorted(dupes))})")
+        if clashes:
+            problems.append(f"already used by an earlier round ({', '.join(sorted(clashes))})")
+        if problems:
+            return (
+                "Property titles must be unique. The following are "
+                + "; ".join(problems)
+                + ". Rename the offending propert(ies) you produced this round and resubmit."
+            )
+        return None
+
+    return validate
+
+
 async def _run_bug_round(
     env: BugEnvironment,
     component: ContractComponentInstance,
@@ -250,7 +285,8 @@ async def _run_bug_round(
         result: NotRequired[_AgentRoundResult]
 
     d = bind_standard(
-        builder, ST, "The security properties you have extracted about the component"
+        builder, ST, "The security properties you have extracted about the component",
+        validator=_unique_titles_validator(prev),
     ).with_input(
         BugAnalysisInput
     ).with_initial_prompt(

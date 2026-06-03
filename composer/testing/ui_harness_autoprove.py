@@ -295,6 +295,7 @@ _CLASSIFIER_RESULT = {
 
 _BUG_ANALYSIS_PROPS = [
     {
+        "title": "count_increments_by_one",
         "methods": ["increment()"],
         "sort": "safety_property",
         "description": (
@@ -303,6 +304,7 @@ _BUG_ANALYSIS_PROPS = [
         ),
     },
     {
+        "title": "sender_increments_by_one",
         "methods": ["increment()"],
         "sort": "safety_property",
         "description": (
@@ -311,6 +313,7 @@ _BUG_ANALYSIS_PROPS = [
         ),
     },
     {
+        "title": "other_increments_by_one",
         "methods": ["incrementOther(address)"],
         "sort": "safety_property",
         "description": (
@@ -328,6 +331,7 @@ _BUG_ANALYSIS_PROPS = [
 
 _REFINED_BUG_ANALYSIS_PROPS = [
     {
+        "title": "count_increments_by_one",
         "methods": ["increment()"],
         "sort": "safety_property",
         "description": (
@@ -336,6 +340,7 @@ _REFINED_BUG_ANALYSIS_PROPS = [
         ),
     },
     {
+        "title": "sender_increments_by_one",
         "methods": ["increment()"],
         "sort": "safety_property",
         "description": (
@@ -344,6 +349,7 @@ _REFINED_BUG_ANALYSIS_PROPS = [
         ),
     },
     {
+        "title": "other_increments_by_one",
         "methods": ["incrementOther(address)"],
         "sort": "safety_property",
         "description": (
@@ -700,8 +706,8 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # all_verified) stamps prover. Any put_cvl_raw / record_skip /
     # unskip_property invalidates both stamps.
     #
-    # num_props=2 (2 invariants) — record_skip / unskip_property accept
-    # property_index in {1, 2}.
+    # 2 invariants — record_skip / unskip_property accept the property titles
+    # `increments_sum_is_count` and `zero_address_is_zero`.
 
     # Q1 — exercise the similarity + keyword search paths.
     _ai(
@@ -819,14 +825,14 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         _tc("put_cvl_raw", cvl_file=BAD_INV_CVL),
     ),
 
-    # Q7 — exercise get_cvl + record_skip. num_props=2 so property_index=1
-    # is valid.
+    # Q7 — exercise get_cvl + record_skip. The two invariant titles are
+    # `increments_sum_is_count` (1st) and `zero_address_is_zero` (2nd).
     _ai(
         "Reading back the draft + recording a tentative skip.",
         _tc("get_cvl"),
         _tc(
             "record_skip",
-            property_index=1,
+            property_title="increments_sum_is_count",
             reason=(
                 "Tentative — will be undone on the next turn to exercise "
                 "unskip_property."
@@ -838,7 +844,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # filters the entry out, so state["skipped"] returns to [].
     _ai(
         "Undoing the tentative skip.",
-        _tc("unskip_property", property_index=1),
+        _tc("unskip_property", property_title="increments_sum_is_count"),
     ),
 
     # Q9 — exercise expect_rule_failure + expect_rule_passage. The rule
@@ -1192,9 +1198,8 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # every tool. Tool coverage is satisfied by P4; P6 covers the
     # surface-a-real-bug path.
     #
-    # num_props=3 (refined properties from P5b) — record_skip would accept
-    # property_index ∈ {1, 2, 3}, but the tape doesn't exercise record_skip
-    # in this phase.
+    # 3 refined properties from P5b — record_skip would accept their titles,
+    # but the tape doesn't exercise record_skip in this phase.
     #
     # The spec contains three rules: two that hold against the
     # implementation and one (``incrementOther_credits_target_when_distinct``)

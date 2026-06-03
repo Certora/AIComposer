@@ -18,7 +18,7 @@ versa). Your task this round is to surface security properties that prior rounds
 {% for round_result in prior_properties %}
 ### Round {{ loop.index }} extracted properties:
 {% for p in round_result.items %}
-- [{{ p.sort }}] {{ p.description }}
+- [{{ p.sort }}] `{{ p.title }}`: {{ p.description }}
 {% endfor %}
 
 ### Round {{ loop.index }} reasoning:

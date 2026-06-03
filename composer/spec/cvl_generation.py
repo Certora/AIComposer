@@ -48,8 +48,14 @@ CVL_JUDGE_KEY = CacheKey[CVLGeneration, CVLJudge]("judge")
 
 class SkippedProperty(BaseModel):
     """A property the agent explicitly decided not to formalize."""
-    property_index: int = Field(description="1-indexed property number from the batch listing")
+    property_title: str = Field(description="The unique snake_case title of the property from the batch listing")
     reason: str = Field(description="Justification for why this property was skipped")
+
+
+class PropertyRuleMapping(BaseModel):
+    """The rules/invariants in the spec that verify a given property."""
+    property_title: str = Field(description="The unique snake_case title of the property (from the batch listing) that these rules verify")
+    rules: list[str] = Field(description="The names of the rules/invariants in the spec that verify this property")
 
 
 class Rebuttal(BaseModel):
@@ -93,17 +99,17 @@ def _merge_skips(
     left: list[SkippedProperty],
     right: list[SkippedProperty],
 ) -> list[SkippedProperty]:
-    """State reducer: merge by property_index (new justification replaces old).
+    """State reducer: merge by property_title (new justification replaces old).
 
     An entry with an empty reason is a sentinel for "unskipped" — it removes
     the property from the skip list.
     """
-    by_index = {s.property_index: s for s in left}
+    by_title = {s.property_title: s for s in left}
     for s in right:
-        by_index[s.property_index] = s
+        by_title[s.property_title] = s
     return sorted(
-        (s for s in by_index.values() if s.reason),
-        key=lambda s: s.property_index,
+        (s for s in by_title.values() if s.reason),
+        key=lambda s: s.property_title,
     )
 
 
@@ -111,6 +117,7 @@ class GeneratedCVL(BaseModel):
     commentary: str
     cvl: str
     skipped: list[SkippedProperty] = Field(default_factory=list)
+    property_rules: list[PropertyRuleMapping] = Field(default_factory=list)
     # The final prover conf recorded during generation, persisted so that a cache hit
     # (which skips the prover) can still write certora/confs. None for pre-existing cache
     # entries or runs where the prover never ran.
@@ -124,6 +131,7 @@ class GeneratedCVL(BaseModel):
 class CVLGenerationExtra(TypedDict):
     curr_spec: str | None
     skipped: Annotated[list[SkippedProperty], _merge_skips]
+    property_rules: list[PropertyRuleMapping]
     validations: Annotated[dict[str, str], merge_validation]
     required_validations: list[str]
 
@@ -132,7 +140,7 @@ def _compute_digest(curr_spec: str, skipped: list[SkippedProperty]) -> str:
     digester = hashlib.md5()
     digester.update(curr_spec.encode())
     for s in skipped:
-        digester.update(f"{s.property_index}:{s.reason}".encode())
+        digester.update(f"{s.property_title}:{s.reason}".encode())
     return digester.hexdigest()
 
 
@@ -149,6 +157,50 @@ def check_completion(
     for key in required:
         if key not in validations or validations[key] != digest:
             return f"Completion REJECTED: {key} validation not satisfied or stale."
+    return None
+
+
+def validate_property_rules(
+    property_rules: list[PropertyRuleMapping],
+    skipped: list[SkippedProperty],
+    titles: list[str],
+) -> str | None:
+    """Validate the property->rules mapping declared at completion time.
+
+    ``titles`` is the batch's full set of property titles. Returns None if valid, otherwise
+    a single message enumerating all problems. A mapping is valid when every non-skipped
+    property (referenced by its unique title) is mapped to at least one rule, no skipped
+    property is mapped, every referenced title exists, and no title is mapped twice.
+    """
+    valid_titles = set(titles)
+    skipped_titles = {s.property_title for s in skipped}
+    errors: list[str] = []
+    mapped: set[str] = set()
+    for m in property_rules:
+        if m.property_title not in valid_titles:
+            errors.append(f"Unknown property title {m.property_title!r} (not one of the batch's properties).")
+            continue
+        if m.property_title in mapped:
+            errors.append(f"Property {m.property_title!r} appears more than once in the mapping.")
+            continue
+        mapped.add(m.property_title)
+        if m.property_title in skipped_titles:
+            errors.append(
+                f"Property {m.property_title!r} is marked as skipped and must not appear "
+                "in the mapping (un-skip it or remove it)."
+            )
+            continue
+        if not any(r.strip() for r in m.rules):
+            errors.append(f"Property {m.property_title!r} must map to at least one non-empty rule name.")
+    for t in titles:
+        if t in skipped_titles or t in mapped:
+            continue
+        errors.append(f"Property {t!r} is neither skipped nor mapped to any rules.")
+    if errors:
+        return (
+            "Completion REJECTED: the property_rules mapping is invalid. Fix all of the "
+            "following and resubmit:\n- " + "\n- ".join(errors)
+        )
     return None
 
 
@@ -193,7 +245,10 @@ tool widget."""
 @dataclass
 class FeedbackToolContext:
     feedback_thunk: FeedbackToolImpl
-    num_props: int
+    # The batch's property titles (unique, enforced at extraction). Used to validate that
+    # the titles named by record_skip / unskip_property / the result mapping refer to real
+    # properties, and to check every non-skipped property is mapped.
+    titles: list[str]
 
 FEEDBACK_VALIDATION_KEY = "feedback"
 
@@ -240,18 +295,18 @@ class _FeedbackSchema(WithInjectedState[CVLGenerationState], WithInjectedId, Wit
         return tool_state_update(self.tool_call_id, msg)
 
 @tool_display(
-    lambda p: f"Skipping property #{p.get('property_index', '?')}",
+    lambda p: f"Skipping property `{p.get('property_title', '?')}`",
     suppress_ack("Skip result", ("Recorded skip",)),
 )
 class _RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, WithImplementation[Command]):
     """
     Declare that you are skipping a property from the batch.
-    You must provide the 1-indexed property number and a justification.
+    You must provide the property's title and a justification.
     The feedback judge will evaluate whether your justification is valid.
     Only use this after genuinely attempting to formalize the property.
     """
-    property_index: int = Field(
-        description="The 1-indexed property number from the batch listing"
+    property_title: str = Field(
+        description="The snake_case title of the property from the batch listing"
     )
     reason: str = Field(
         description="Justification for why this property cannot be formalized"
@@ -259,11 +314,11 @@ class _RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, W
 
     @override
     def run(self) -> Command:
-        num_props = get_runtime(FeedbackToolContext).context.num_props
-        if not (1 <= self.property_index <= num_props):
+        titles = get_runtime(FeedbackToolContext).context.titles
+        if self.property_title not in titles:
             return tool_state_update(
                 self.tool_call_id,
-                f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
+                f"Unknown property title {self.property_title!r}. Must be one of: {', '.join(titles)}.",
             )
         if not self.reason.strip():
             return tool_state_update(
@@ -271,17 +326,17 @@ class _RecordSkipSchema(WithInjectedState[CVLGenerationState], WithInjectedId, W
                 "A non-empty justification is required when skipping a property.",
             )
         skip = SkippedProperty(
-            property_index=self.property_index,
+            property_title=self.property_title,
             reason=self.reason,
         )
         return tool_state_update(
             self.tool_call_id,
-            f"Recorded skip for property {self.property_index}.",
+            f"Recorded skip for property {self.property_title}.",
             skipped=[skip],
         )
 
 @tool_display(
-    lambda p: f"Un-skipping property #{p.get('property_index', '?')}",
+    lambda p: f"Un-skipping property `{p.get('property_title', '?')}`",
     suppress_ack("Unskip result", ("Removed skip",)),
 )
 class _UnskipSchema(WithInjectedId, WithImplementation[Command]):
@@ -289,26 +344,26 @@ class _UnskipSchema(WithInjectedId, WithImplementation[Command]):
     Remove a previously declared skip for a property.
     Use this if you later find a way to formalize a property you previously skipped.
     """
-    property_index: int = Field(
-        description="The 1-indexed property number to un-skip"
+    property_title: str = Field(
+        description="The snake_case title of the property to un-skip"
     )
 
     @override
     def run(self) -> Command:
-        num_props = get_runtime(FeedbackToolContext).context.num_props
-        if not (1 <= self.property_index <= num_props):
+        titles = get_runtime(FeedbackToolContext).context.titles
+        if self.property_title not in titles:
             return tool_state_update(
                 self.tool_call_id,
-                f"Invalid property index {self.property_index}. Must be between 1 and {num_props}.",
+                f"Unknown property title {self.property_title!r}. Must be one of: {', '.join(titles)}.",
             )
         # Empty reason is the sentinel for "not skipped"
         skip = SkippedProperty(
-            property_index=self.property_index,
+            property_title=self.property_title,
             reason="",
         )
         return tool_state_update(
             self.tool_call_id,
-            f"Removed skip for property {self.property_index}.",
+            f"Removed skip for property {self.property_title}.",
             skipped=[skip],
         )
 

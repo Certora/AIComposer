@@ -41,7 +41,7 @@ Understand the properties being formalized:
 
 {% for prop in properties %}
 <{{ prop.sort }}>
-  Property {{ loop.index }}: {{ prop.description }}
+  Property {{ loop.index }} (`{{ prop.title }}`): {{ prop.description }}
   {% if prop.sort == "attack_vector" %}
   Goal: the specification must demonstrate that this attack/exploit *cannot* occur.
   {% else %}

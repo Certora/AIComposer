@@ -1,6 +1,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+import json
 import pathlib
 
 from langchain_core.tools import BaseTool
@@ -22,12 +23,46 @@ from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
-from composer.spec.cvl_generation import GeneratedCVL
+from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 from composer.spec.source.prover import dump_final_conf
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
+
+
+def dump_properties(
+    certora_dir: pathlib.Path,
+    spec_stem: str,
+    props: list[PropertyFormulation],
+) -> None:
+    """Write the analysis-phase properties (title, sort, methods, description) to
+    ``properties/{spec_stem}.properties.json`` under ``certora_dir``, accompanying
+    ``{spec_stem}.spec``. ``title`` is the cross-reference key used by
+    ``{spec_stem}.property_rules.json``."""
+    properties_dir = certora_dir / "properties"
+    properties_dir.mkdir(exist_ok=True, parents=True)
+    properties_dump = [prop.model_dump() for prop in props]
+    (properties_dir / f"{spec_stem}.properties.json").write_text(
+        json.dumps(properties_dump, indent=2)
+    )
+
+
+def dump_property_rules(
+    certora_dir: pathlib.Path,
+    spec_stem: str,
+    property_rules: list[PropertyRuleMapping],
+) -> None:
+    """Write the property->rules mapping ``{property title: [rule names]}`` to
+    ``properties/{spec_stem}.property_rules.json`` under ``certora_dir``, accompanying
+    ``{spec_stem}.spec``. Titles are unique (enforced at extraction) and validated against
+    the batch at completion."""
+    properties_dir = certora_dir / "properties"
+    properties_dir.mkdir(exist_ok=True, parents=True)
+    mapping = {m.property_title: m.rules for m in property_rules}
+    (properties_dir / f"{spec_stem}.property_rules.json").write_text(
+        json.dumps(mapping, indent=2)
+    )
 
 
 def _component_cache_key(
@@ -125,6 +160,12 @@ async def run_generation_pipeline(
         for s, b in zip(raw_slugs, component_batches)
     ]
 
+    # Dump the analysis-phase properties for each component now that the extraction
+    # phase is complete.
+    certora_dir = pathlib.Path(source_input.project_root) / "certora"
+    for base, batch in zip(batch_filename_bases, component_batches):
+        dump_properties(certora_dir, f"autospec_{base}", batch.props)
+
     # ------------------------------------------------------------------
     # Phase 6: Per-component CVL generation
     # ------------------------------------------------------------------
@@ -171,10 +212,13 @@ async def run_generation_pipeline(
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
         specs_dir = certora_dir / "specs"
         specs_dir.mkdir(exist_ok=True, parents=True)
+        properties_dir = certora_dir / "properties"
+        properties_dir.mkdir(exist_ok=True, parents=True)
         base = batch_filename_bases[i]
         spec_name = pathlib.Path(f"autospec_{base}.spec")
         (specs_dir / spec_name).write_text(res.cvl)
-        (certora_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
+        (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
+        dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,

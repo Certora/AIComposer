@@ -39,7 +39,7 @@ from composer.spec.source.prover import get_prover_tool, dump_final_conf
 from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
-from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
+from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult, dump_properties, dump_property_rules
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ async def run_autoprove_pipeline(
             ctx, source_input, env, s, prover_opts
         )
     )
-    
+
     if setup is None:
         raise ValueError("Project setup failed")
 
@@ -173,18 +173,23 @@ async def run_autoprove_pipeline(
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
         cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
 
+        inv_props = [
+            PropertyFormulation(
+                title=inv.name,
+                methods="invariant",
+                description=inv.description,
+                sort="invariant",
+            )
+            for inv in invariants.inv
+        ]
+
+        # Dump the analysis-phase invariant properties now that we have them.
+        certora_dir = Path(source_input.project_root) / "certora"
+        dump_properties(certora_dir, "invariants", inv_props)
+
         if cached_inv_cvl is not None:
             inv_cvl = cached_inv_cvl
         else:
-            inv_props = [
-                PropertyFormulation(
-                    methods="invariant",
-                    description=inv.description,
-                    sort="invariant",
-                )
-                for inv in invariants.inv
-            ]
-
             inv_cvl_result = await run_task(
                 handler_factory,
                 TaskInfo(inv_task_id, "Invariant CVL", AutoProvePhase.CVL_GEN),
@@ -208,7 +213,8 @@ async def run_autoprove_pipeline(
             await inv_cvl_ctx.cache_put(inv_cvl)
 
         inv_spec_name = "invariants.spec"
-        (Path(source_input.project_root) / "certora" / inv_spec_name).write_text(inv_cvl.cvl)
+        (certora_dir / inv_spec_name).write_text(inv_cvl.cvl)
+        dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,

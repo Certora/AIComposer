@@ -7,7 +7,7 @@ You must write a single CVL specification covering the following properties for 
 
 {% for prop in properties %}
 <{{ prop.sort }}>
-  Property {{ loop.index }}: {{ prop.description }}
+  Property {{ loop.index }} (`{{ prop.title }}`): {{ prop.description }}
   {% if prop.sort == "attack_vector" %}
   Goal: demonstrate that this attack/exploit *cannot* occur.
   {% else %}
@@ -128,6 +128,12 @@ for your result to be accepted, you *must* have run the `verify_spec` tool *with
 the most recent version of the spec. Similarly, you *must* have received positive feedback from the feedback judge
 on the most recent change to your spec.
 
+The `result` tool *also* requires a `property_rules` mapping: for every property you did NOT skip (referenced by
+its unique snake_case title from the batch listing above), list the name(s) of the rule(s)/invariant(s) in your
+spec that verify it. Every non-skipped property must appear in this mapping with at least one rule; skipped
+properties must NOT appear. The result tool will be rejected if this mapping is incomplete or references a
+skipped or unknown property title.
+
 To clarify: for your result to be accepted, all verification results from the prover must either be
 VERIFIED *or* that rule must be explicitly marked as "expected to fail" using the `expect_rule_failure` tool.
 
@@ -135,7 +141,7 @@ IMPORTANT: Do not try to reason yourself about whether any property is true or p
 
 <skipping>
 If you genuinely cannot formalize a property after thorough effort, use the `record_skip` tool to declare
-which property (by its number) you are skipping and why. The feedback judge will evaluate whether
+which property (by its title) you are skipping and why. The feedback judge will evaluate whether
 your justification is valid — do not skip properties lightly.
 
 You must attempt to formalize ALL properties before considering any skips.

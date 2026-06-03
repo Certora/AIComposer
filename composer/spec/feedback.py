@@ -108,7 +108,7 @@ def property_feedback_judge(
         if skipped:
             input_parts.append("The following properties were explicitly skipped by the author:")
             for s in skipped:
-                input_parts.append(f"  Property {s.property_index}: {s.reason}")
+                input_parts.append(f"  Property {s.property_title}: {s.reason}")
         if rebuttals:
             input_parts.append(
                 "The author has filed the following rebuttals against feedback from "
@@ -135,5 +135,5 @@ def property_feedback_judge(
         assert "result" in res
         return res["result"]
 
-    return FeedbackToolContext(feedback_thunk=the_tool, num_props=len(props))
+    return FeedbackToolContext(feedback_thunk=the_tool, titles=[p.title for p in props])
 

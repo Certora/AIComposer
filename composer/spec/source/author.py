@@ -13,7 +13,8 @@ from graphcore.summary import SummaryConfig
 
 from composer.spec.cvl_generation import (
     static_tools, CVLGenerationExtra, FeedbackToolContext, FEEDBACK_VALIDATION_KEY,
-    check_completion, CVL_JUDGE_KEY, run_cvl_generator, GeneratedCVL
+    check_completion, validate_property_rules, CVL_JUDGE_KEY, run_cvl_generator,
+    GeneratedCVL, PropertyRuleMapping
 )
 from composer.spec.context import WorkflowContext, CVLGeneration, SourceCode
 from composer.spec.prop import PropertyFormulation
@@ -21,6 +22,7 @@ from composer.spec.system_model import ContractComponentInstance
 from composer.spec.source.prover import ProverStateExtra, DELETE_SKIP, VALIDATION_KEY as PROVER_VALIDATION_KEY
 from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
+from langgraph.runtime import get_runtime
 from composer.spec.gen_types import CVLResource, TypedTemplate
 from composer.spec.source.source_env import SourceEnvironment
 from langgraph.types import Command
@@ -96,15 +98,25 @@ class PublishResultTool(
     Call to signal your completed cvl generation.
     """
     commentary: str = Field(description="Commentary on your generated spec")
+    property_rules: list[PropertyRuleMapping] = Field(
+        description="The property->rules mapping. For every property you did NOT skip "
+        "(referenced by its unique snake_case title from the batch listing), list the "
+        "name(s) of the rule(s)/invariant(s) in your spec that verify it. Every non-skipped "
+        "property must appear with at least one rule."
+    )
 
     @override
     def run(self) -> Command | str:
         if (err := check_completion(self.state)) is not None:
             return err
+        titles = get_runtime(FeedbackToolContext).context.titles
+        if (err := validate_property_rules(self.property_rules, self.state["skipped"], titles)) is not None:
+            return err
         return tool_state_update(
             self.tool_call_id,
             "Accepted",
             result=self.commentary,
+            property_rules=self.property_rules,
             failed=False,
         )
 
@@ -375,6 +387,7 @@ async def batch_cvl_generation(
             required_validations=[FEEDBACK_VALIDATION_KEY, PROVER_VALIDATION_KEY],
             rule_skips={},
             skipped=[],
+            property_rules=[],
             validations={},
             failed=None,
         )
@@ -393,6 +406,7 @@ async def batch_cvl_generation(
         commentary=res_state["result"],
         cvl=d,
         skipped=res_state["skipped"],
+        property_rules=res_state["property_rules"],
         conf=final_conf,
     )
 
