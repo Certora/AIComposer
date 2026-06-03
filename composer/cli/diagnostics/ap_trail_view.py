@@ -44,6 +44,7 @@ from composer.io.thread_logging import RunMeta, ThreadMeta
 from composer.io.thread_timeline import TimelineItem, load_timeline
 from composer.ui.thread_renderer import DescendableToolCall, ThreadRenderer
 from composer.workflow.services import checkpointer_context, store_context
+from .uid_bind import bind_uid_args
 
 
 # ---------------------------------------------------------------------------
@@ -359,11 +360,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Replay mode: load a gzipped export produced by `ap-trail export`.",
     )
-    parser.add_argument(
-        "--uid",
-        default=None,
-        help="User id (live mode only). Defaults to AUTOPROVER_USER_ID / _anonymous.",
-    )
+    bind_uid_args(parser)
 
 
 async def _main(args: argparse.Namespace) -> int:

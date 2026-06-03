@@ -7,15 +7,12 @@ import sys
 
 from composer.io.run_index import build_export, write_export
 from composer.workflow.services import checkpointer_context, store_context
+from .uid_bind import bind_uid_args
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("run_id", help="Run id to export (as shown by `ap-trail ls`).")
-    parser.add_argument(
-        "--uid",
-        default=None,
-        help="User id whose run to export. Defaults to AUTOPROVER_USER_ID / _anonymous.",
-    )
+    bind_uid_args(parser)
     parser.add_argument(
         "-o", "--output",
         default=None,

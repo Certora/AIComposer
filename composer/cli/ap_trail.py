@@ -12,7 +12,7 @@ Subcommands:
 import argparse
 import sys
 
-from composer.cli import ap_trail_export, ap_trail_ls, ap_trail_view
+from composer.cli.diagnostics import ap_trail_export, ap_trail_ls, ap_trail_view
 
 
 def main() -> int:

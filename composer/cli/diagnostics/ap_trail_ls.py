@@ -10,14 +10,11 @@ from rich.table import Table
 from composer.io.run_index import list_runs
 from composer.io.thread_logging import RunMeta
 from composer.workflow.services import store_context
+from .uid_bind import bind_uid_args
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--uid",
-        default=None,
-        help="User id to list runs for. Defaults to AUTOPROVER_USER_ID / _anonymous.",
-    )
+    bind_uid_args(parser)
     parser.add_argument(
         "--limit",
         type=int,
