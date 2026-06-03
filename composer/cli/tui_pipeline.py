@@ -113,11 +113,9 @@ async def _main() -> int:
     )
     parser.add_argument(
         "--output-root", default=None,
-        help="Directory to persist pipeline artifacts under. When the VS Code extension is "
-             "connected, writes `implementation_plan.json` here; generated files flow through "
-             "the extension's preview/accept flow instead. Without the extension, this is "
-             "where generated interfaces / stubs / specs are written (required to persist "
-             "anything in that mode).",
+        help="Directory under which to write the `natspec_output/` folder containing "
+             "every contract's generated interface, stub, and specs. Defaults to the "
+             "current working directory if not set.",
     )
 
     args = cast(PipelineArgs, parser.parse_args())
@@ -188,9 +186,6 @@ async def _main() -> int:
 
         # Set up TUI
         app = NatspecPipelineApp(
-            system_doc_path=input_path.resolve(),
-            source_root=source_root_path,
-            prover_conf=config_init,
             output_root=output_root_path,
         )
 

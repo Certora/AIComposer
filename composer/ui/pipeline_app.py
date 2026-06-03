@@ -5,7 +5,6 @@ Thin subclass of ``MultiJobApp`` that provides natspec-specific
 task handlers, event routing, tool configs, and completion behavior.
 """
 
-import json
 import pathlib
 import traceback
 from typing import cast, override
@@ -22,14 +21,8 @@ from composer.ui.ide_bridge import IDEBridge
 from composer.ui.multi_job_app import (
     MultiJobApp, MultiJobTaskHandler, TaskInfo,
 )
-from composer.spec.natspec.pipeline import Phase, PipelineResult
+from composer.spec.natspec.pipeline import Phase, PipelineResult, ContractFormulation
 from composer.spec.natspec.pipeline_events import NatspecEvent
-from composer.spec.natspec.codegen_export import (
-    ImplementationPlan,
-    build_implementation_plan,
-    plan_preview_files,
-    plan_to_json,
-)
 # ---------------------------------------------------------------------------
 # Phase labels and tool configs
 # ---------------------------------------------------------------------------
@@ -129,9 +122,6 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         self,
         ide: IDEBridge | None = None,
         *,
-        system_doc_path: pathlib.Path | None = None,
-        source_root: pathlib.Path | None = None,
-        prover_conf: dict | None = None,
         output_root: pathlib.Path | None = None,
     ):
         super().__init__(
@@ -140,11 +130,7 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
             header_text="NatSpec Pipeline | ESC: summary | q: quit (when done)",
             ide=ide,
         )
-        self._system_doc_path = system_doc_path
-        self._source_root = source_root
-        self._prover_conf = prover_conf
         self._output_root = output_root
-        self._plan: ImplementationPlan | None = None
 
     def create_task_handler(self, panel: VerticalScroll, info: TaskInfo[Phase]) -> NatspecTaskHandler:
         tc = tool_config_for_phase(info.phase)
@@ -156,50 +142,29 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
     # ── Pipeline completion ───────────────────────────────────
 
     async def on_pipeline_done(self, result: PipelineResult) -> None:
-        """Build the implementation plan, render a summary, and write the
-        generated interfaces / stubs / specs (plus the plan JSON) under
-        ``--output-root`` if set; otherwise emit a warning."""
+        """Render a completion summary and dump every contract's interface,
+        stub, and specs under ``<output_root>/natspec_output/`` (defaulting
+        to ``cwd/natspec_output/`` when no ``--output-root`` was passed).
+        """
         self._pipeline_done = True
 
         summary = self.query_one("#summary", VerticalScroll)
         switcher = self.query_one("#switcher", ContentSwitcher)
         switcher.current = "summary"
 
-        plan = build_implementation_plan(
-            result,
-            system_doc_path=self._system_doc_path or pathlib.Path("<unknown>"),
-            source_root=self._source_root,
-            prover_conf=self._prover_conf,
-        )
-        self._plan = plan
+        await summary.mount(Static(self._render_completion_banner(result)))
 
-        await summary.mount(Static(self._render_completion_banner(plan, result)))
-
-        files = plan_preview_files(plan)
-
-        plan_json_path = self._write_plan_json(plan)
-        if plan_json_path is not None:
-            await summary.mount(
-                Static(Text(f"Plan: {plan_json_path}", style="bold cyan"))
-            )
-
-        if self._output_root is not None:
-            written = self._write_files_under_output_root(files)
-            for path, content in sorted(written.items()):
-                lexer = self._guess_lang(path) or "text"
-                syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
-                coll = Collapsible(Static(syntax), title=path, collapsed=True)
-                await summary.mount(coll)
-            await summary.mount(Static(Text(
-                f"Wrote {len(written)} file(s) under {self._output_root}",
-                style="bold green",
-            )))
-        else:
-            await summary.mount(Static(Text(
-                "No --output-root set. No files written.\n"
-                "Rerun with --output-root <dir> to persist.",
-                style="bold yellow",
-            )))
+        out_root = (self._output_root or pathlib.Path.cwd()).resolve() / "natspec_output"
+        written = self._dump_to(out_root, result)
+        for path, content in sorted(written.items()):
+            lexer = self._guess_lang(path) or "text"
+            syntax = Syntax(content, lexer, theme="monokai", line_numbers=True)
+            coll = Collapsible(Static(syntax), title=path, collapsed=True)
+            await summary.mount(coll)
+        await summary.mount(Static(Text(
+            f"Wrote {len(written)} file(s) under {out_root}",
+            style="bold green",
+        )))
 
         await summary.mount(Static(Text("Press q to quit.", style="dim")))
 
@@ -224,83 +189,61 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
         banner.append("\nPress q to quit.", style="dim")
         await summary.mount(Static(banner))
 
-    def _render_completion_banner(
-        self,
-        plan: ImplementationPlan,
-        result: PipelineResult,
-    ) -> Text:
-        """Rich summary of the plan for the completion banner."""
+    def _render_completion_banner(self, result: PipelineResult) -> Text:
+        """Rich summary banner — one line per contract."""
         banner = Text()
         banner.append("\n━━ Pipeline Complete ━━\n", style="bold green")
+        banner.append(f"\nApp: {result.app.application_type}\n", style="bold")
+        banner.append(f"Contracts: {len(result.contracts)}\n")
 
-        if plan.cycles:
-            banner.append(
-                f"\n! {len(plan.cycles)} dependency cycle(s) detected - "
-                "those contracts are omitted from the plan order.\n",
-                style="bold yellow",
-            )
-            for cyc in plan.cycles:
-                banner.append(
-                    f"  cycle: {' -> '.join(cyc)} -> {cyc[0]}\n",
-                    style="yellow",
-                )
-
-        banner.append(f"\nApp: {plan.application_type}\n", style="bold")
-        banner.append(f"Contracts in dep order: {len(plan.contracts)}\n")
-
-        failures_by_name = {
-            c.name: len(c.spec_results.failures) for c in result.contracts
-        }
-
-        for i, c in enumerate(plan.contracts, 1):
-            n_fail = failures_by_name.get(c.name, 0)
+        for i, c in enumerate(result.contracts, 1):
+            n_specs = len(c.spec_results.specs)
+            n_fail = len(c.spec_results.failures)
             banner.append(f"\n  {i}. ")
             banner.append(c.name, style="bold")
-            if c.tag:
-                banner.append(f"  [{c.tag}]", style="dim")
-            if c.depends_on:
-                banner.append(f"  <- {', '.join(c.depends_on)}", style="dim")
+            if c.name != c.solidity_identifier:
+                banner.append(f"  ({c.solidity_identifier})", style="dim")
             banner.append("\n")
             banner.append(
-                f"     specs: {len(c.specs)}   "
-                f"stub fields: {len(c.required_stub_fields)}   "
-                f"failures: {n_fail}\n",
+                f"     specs: {n_specs}   failures: {n_fail}\n",
                 style="red" if n_fail else "dim",
             )
-
         return banner
 
-    def _write_plan_json(self, plan: ImplementationPlan) -> pathlib.Path | None:
-        """Write ``implementation_plan.json`` under ``--output-root`` if set.
-
-        Returns the absolute path written, or ``None`` if no output_root was
-        configured on this app.
-        """
-        if self._output_root is None:
-            return None
-        out = self._output_root.resolve()
-        out.mkdir(parents=True, exist_ok=True)
-        path = out / "implementation_plan.json"
-        path.write_text(json.dumps(plan_to_json(plan), indent=2, default=str))
-        return path
-
-
-    def _write_files_under_output_root(
-        self, files: dict[str, str]
+    def _dump_to(
+        self, out_root: pathlib.Path, result: PipelineResult
     ) -> dict[str, str]:
-        """Persist every file in the preview map under ``--output-root``.
+        """Write each contract's interface, stub, and specs under ``out_root``.
 
-        Called only when no IDE bridge is available. Returns the files that
-        were actually written (all of them; kept as a map for symmetry with
-        the preview flow).
+        Returns the ``{relative_path: content}`` map of what was written.
+        Relative paths are the agent-chosen ``interface.path`` / ``stub.path``
+        for greenfield, or workspace-relative for from-source mode. Spec
+        filenames come from the author's ``suggested_path`` (or a synthesized
+        ``<identifier>_<idx>.spec`` fallback).
         """
-        assert self._output_root is not None
-        root = self._output_root.resolve()
-        for path, content in files.items():
-            tgt = root / path
+        out_root.mkdir(parents=True, exist_ok=True)
+        written: dict[str, str] = {}
+        for c in result.contracts:
+            written[c.interface.path] = c.interface.content
+            written[c.stub.path] = c.stub.content
+            for spec in self._spec_files(c):
+                written[spec[0]] = spec[1]
+
+        for rel, content in written.items():
+            tgt = out_root / rel
             tgt.parent.mkdir(parents=True, exist_ok=True)
             tgt.write_text(content)
-        return files
+        return written
+
+    @staticmethod
+    def _spec_files(c: ContractFormulation) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for i, success in enumerate(c.spec_results.specs):
+            basename = success.suggested_path or f"{c.solidity_identifier}_{i}.spec"
+            if not basename.endswith(".spec"):
+                basename = f"{basename}.spec"
+            out.append((basename, success.spec))
+        return out
 
 # Backwards compat alias
 PipelineApp = NatspecPipelineApp

@@ -86,9 +86,6 @@ async def launch_natspec_workflow(
 
         app = PipelineApp(
             ide=ctx.ide,
-            system_doc_path=input_path.resolve(),
-            source_root=source_root_path,
-            prover_conf=args.prover_conf,
             output_root=output_root_path,
         )
         # don't let pyright conclude these variables remain None (they are mutated in work)

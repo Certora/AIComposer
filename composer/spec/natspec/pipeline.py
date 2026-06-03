@@ -44,7 +44,7 @@ from composer.spec.prop import PropertyFormulation
 from composer.spec.natspec.interface_gen import generate_interface, DESCRIPTION as INTERFACE_GEN_DESC
 from composer.spec.natspec.stub_gen import generate_stub
 from composer.spec.natspec.models import InterfaceDeclModel, StubDeclarationModel
-from composer.spec.natspec.registry import StubRegistry, FileRegistry, FieldSpec
+from composer.spec.natspec.registry import StubRegistry, FileRegistry
 from composer.spec.natspec.typecheck import make_typechecker
 from composer.spec.natspec.task_description import MentalModel, Assembler
 from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationSuccess, AuthorResult
@@ -128,20 +128,6 @@ class ContractFormulation:
 class PipelineResult:
     app: NatspecApplication
     contracts: list[ContractFormulation] = field(default_factory=list)
-    # Per-contract snapshot of stub fields requested during generation. Keyed by
-    # the Solidity identifier (matching ``ContractFormulation.solidity_identifier``);
-    # absent contracts received no field requests. Captured once at pipeline
-    # end so downstream consumers (codegen export, implementation plan) don't
-    # need live registry access.
-    stub_fields: dict[SolidityIdentifier, list[FieldSpec]] = field(default_factory=dict)
-    # Per-contract snapshot of registered .sol file paths from the
-    # ``FileRegistry``. Used by ``codegen_export`` to derive the
-    # implementation-plan dep graph: contract B depends on contract A iff
-    # A's ``stub.path`` appears in ``spec_file_paths[B]``. Path-based
-    # matching avoids assuming Solidity identifiers align with design-doc
-    # names. Keyed by Solidity identifier (matches FileRegistry's keying).
-    # Empty for contracts that registered nothing.
-    spec_file_paths: dict[SolidityIdentifier, list[str]] = field(default_factory=dict)
 
 
 
@@ -601,12 +587,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
             spec_results=res
         ))
 
-    stub_fields_snapshot = await registry.read_fields()
-    spec_file_paths_snapshot = await file_registry.read_all_paths()
-
     return PipelineResult(
         app=summary,
         contracts=to_ret,
-        stub_fields=stub_fields_snapshot,
-        spec_file_paths=spec_file_paths_snapshot,
     )

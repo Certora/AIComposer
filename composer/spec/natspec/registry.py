@@ -375,20 +375,6 @@ class StubRegistry:
         assert to_ret is not None
         return to_ret
 
-    async def read_fields(self) -> "dict[SolidityIdentifier, list[FieldSpec]]":
-        """Snapshot the registered field metadata for every stub.
-
-        Reads durable state directly (independent of in-memory ``_state_by_id``
-        so a re-run that resumed from cache still sees fields recorded by an
-        earlier run). Returns one entry per stub; empty list when no fields
-        were ever requested.
-        """
-        to_ret: "dict[SolidityIdentifier, list[FieldSpec]]" = {}
-        for id in self._state_by_id.keys():
-            durable = await self._read_metadata(id)
-            to_ret[id] = [f for f in durable.fields]
-        return to_ret
-    
     async def _write_metadata(
         self, id: SolidityIdentifier, st: _StubDurableState
     ):
@@ -578,19 +564,6 @@ class FileRegistry:
         whether a Solidity identifier was supplied at registration.
         """
         return [e.as_prover_arg() for e in await self._read_contract(contract_identifier)]
-
-    async def read_all_paths(self) -> dict[SolidityIdentifier, list[str]]:
-        """Read the full registration map (contract → list of registered
-        file paths). Used by ``codegen_export`` to derive the dep graph
-        by matching registered paths against each generated contract's
-        ``stub.path``. Path-based matching avoids assuming
-        ``path.stem == solidity_identifier``, which can drift as the stub
-        layout evolves."""
-        items = await self._store.asearch(self._namespace, limit=10_000)
-        return {
-            SolidityIdentifier(item.key): [e["path"] for e in item.value["files"]]
-            for item in items
-        }
 
     async def register(
         self,
