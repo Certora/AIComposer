@@ -120,7 +120,8 @@ class PropertyFailure:
 class ContractFormulation:
     interface: InterfaceDeclModel
     stub: StubDeclarationModel
-    name: str
+    name: ContractName
+    solidity_identifier: SolidityIdentifier
     spec_results: "ContractResult"
 
 @dataclass
@@ -128,18 +129,19 @@ class PipelineResult:
     app: NatspecApplication
     contracts: list[ContractFormulation] = field(default_factory=list)
     # Per-contract snapshot of stub fields requested during generation. Keyed by
-    # contract name (matching ``ContractFormulation.name``); absent contracts
-    # received no field requests. Captured once at pipeline end so downstream
-    # consumers (codegen export, implementation plan) don't need live registry
-    # access.
-    stub_fields: dict[str, list[FieldSpec]] = field(default_factory=dict)
+    # the Solidity identifier (matching ``ContractFormulation.solidity_identifier``);
+    # absent contracts received no field requests. Captured once at pipeline
+    # end so downstream consumers (codegen export, implementation plan) don't
+    # need live registry access.
+    stub_fields: dict[SolidityIdentifier, list[FieldSpec]] = field(default_factory=dict)
     # Per-contract snapshot of registered .sol file paths from the
     # ``FileRegistry``. Used by ``codegen_export`` to derive the
     # implementation-plan dep graph: contract B depends on contract A iff
     # A's ``stub.path`` appears in ``spec_file_paths[B]``. Path-based
     # matching avoids assuming Solidity identifiers align with design-doc
-    # names. Empty for contracts that registered nothing.
-    spec_file_paths: dict[ContractName, list[str]] = field(default_factory=dict)
+    # names. Keyed by Solidity identifier (matches FileRegistry's keying).
+    # Empty for contracts that registered nothing.
+    spec_file_paths: dict[SolidityIdentifier, list[str]] = field(default_factory=dict)
 
 
 
@@ -203,6 +205,7 @@ async def analyze_single_contract(
 ) -> ContractResult:
     
     contract_name = summary.contract.name
+    solidity_identifier = summary.contract.solidity_identifier
     handler_factory = services.factory
     semaphore = services.sem
 
@@ -241,7 +244,7 @@ async def analyze_single_contract(
         interactive = services.interactive
         props = await run_task(
             handler_factory,
-            TaskInfo(f"bug-{summary.contract.name}-{component_idx}", name, Phase.BUG_ANALYSIS),
+            TaskInfo(f"bug-{solidity_identifier}-{component_idx}", name, Phase.BUG_ANALYSIS),
             lambda conv: run_property_inference(
                 feat_ctx, services.env, feat,
                 refinement=conv if interactive else None,
@@ -278,22 +281,22 @@ async def analyze_single_contract(
         )
         batch_config_builder = services.mental_model.config_builder().with_solc(solc_version)
 
-        stub_tools = registry.get_tools(contract_name)
-        file_tools = services.file_registry.get_tools(contract_name)
+        stub_tools = registry.get_tools(solidity_identifier)
+        file_tools = services.file_registry.get_tools(solidity_identifier)
 
         typechecker = make_typechecker(
             files=services.file_registry,
             assembler=assembler,
             config_builder=batch_config_builder,
-            primary_contract=contract_name,
+            primary_contract=solidity_identifier,
         )
 
         label = f"{contract_name} {batch.feat.component.name} ({len(batch.props)} properties)"
         return await run_task(
             handler_factory,
-            TaskInfo(f"cvl-{contract_name}-{batch_idx}", label, Phase.CVL_GEN),
+            TaskInfo(f"cvl-{solidity_identifier}-{batch_idx}", label, Phase.CVL_GEN),
             lambda: generate_cvl_batch(
-                stub_reader=lambda: stub_registry.read_stub(contract_name),
+                stub_reader=lambda: stub_registry.read_stub(solidity_identifier),
                 contract_name=contract_name,
                 component=batch.feat,
                 root_ctx=batch_ctx,
@@ -463,7 +466,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
         raise ValueError("Component analysis produced no result — is the system doc empty?")
 
     new_contracts = [c for c in summary.contract_components if _is_new(c)]
-    new_names = {c.name for c in new_contracts}
+    new_identifiers = {c.solidity_identifier for c in new_contracts}
 
     # ------------------------------------------------------------------
     # Phase 3: Interface generation (new contracts only)
@@ -474,7 +477,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
         lambda: generate_interface(
             ctx, summary, curr_env, solc_version,
             description=mental_model.interface_desc,
-            target_names=new_names, materializer=mat
+            target_identifiers=new_identifiers, materializer=mat
         ),
     )
 
@@ -496,17 +499,21 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     async def gen_one_stub(
         contract_name: ContractName,
         solidity_identifier: SolidityIdentifier,
-    ) -> tuple[ContractName, StubDeclarationModel]:
+    ) -> tuple[SolidityIdentifier, StubDeclarationModel]:
         res = await run_task(
             handler_factory,
-            TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", Phase.STUB_GEN),
+            TaskInfo(
+                f"stub-gen-{solidity_identifier}",
+                f"Stub: {contract_name}",
+                Phase.STUB_GEN,
+            ),
             lambda: generate_stub(
                 ctx, interface, curr_env, contract_name, solidity_identifier, solc_version,
                 materializer=mat,
                 description=mental_model.stub_desc,
             ),
         )
-        return (contract_name, res)
+        return (solidity_identifier, res)
 
     generated_stubs = await asyncio.gather(*[
         gen_one_stub(c.name, c.solidity_identifier) for c in new_contracts
@@ -544,16 +551,12 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     for c in summary.contract_components:
         if not _is_new(c):
             continue
-        assert c.name in name_to_stub
-        stub = name_to_stub[c.name]
-        # Cached pre-validation runs may have produced stubs whose path stem
-        # diverges from the declared Solidity identifier. Pin the
-        # identifier explicitly when that's the case so Certora compiles the
+        stub = name_to_stub[c.solidity_identifier]
         # Stub validator enforces ``path.stem == c.solidity_identifier``, so
         # the bare path is sufficient — certora derives the identifier from
         # the stem and produces the same prover arg either way.
         await file_registry.register(
-            contract_name=c.name,
+            contract_identifier=c.solidity_identifier,
             path=stub.path,
         )
 
@@ -581,7 +584,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
             solc_version=solc_version,
             stub_registry=registry,
             summary=ContractInstance(ind=ind, app=summary),
-            stub=name_to_stub[contract.name],
+            stub=name_to_stub[contract.solidity_identifier],
             assembler=mat
         )
 
@@ -591,9 +594,10 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     to_ret : list[ContractFormulation] = []
     for ((_, c), res) in zip(new_contracts_with_ind, results):
         to_ret.append(ContractFormulation(
-            interface=interface.name_to_interface[c.name],
-            stub=name_to_stub[c.name],
+            interface=interface.name_to_interface[c.solidity_identifier],
+            stub=name_to_stub[c.solidity_identifier],
             name=c.name,
+            solidity_identifier=c.solidity_identifier,
             spec_results=res
         ))
 

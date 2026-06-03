@@ -23,7 +23,7 @@ from composer.spec.context import (
 from composer.spec.prop import PropertyFormulation
 from composer.spec.feedback import property_feedback_judge, Properties, FeedbackTemplate
 from composer.spec.gen_types import TypedTemplate
-from composer.spec.system_model import ContractComponentInstance
+from composer.spec.system_model import ContractComponentInstance, ContractName
 from composer.spec.cvl_generation import CVL_JUDGE_KEY, FeedbackToolContext, static_tools, SkippedProperty
 from composer.spec.service_host import ServiceHost
 from composer.ui.tool_display import tool_display, suppress_ack
@@ -37,7 +37,7 @@ class SourceGenerationParams(Properties):
 NoSourceGen = TypedTemplate[SourceGenerationParams]("nosource_property_generation_prompt.j2")
 
 class _CVLConfig(SummaryConfig[CVLGenerationState]):
-    def __init__(self, contract_name: str, stub_path: str):
+    def __init__(self, contract_name: ContractName, stub_path: str):
         super().__init__(enabled=True)
         self.contract_name = contract_name
         self.stub_path = stub_path
@@ -68,7 +68,7 @@ If your current task itself began with a summary, include the salient parts of t
         return f"""
 You are resuming this task already in progress. The current version of your spec (if any) is available via the `get_cvl` tool.
 
-The current content of the type checking stub for {self.contract_name} can be found at {self.stub_path}
+The current content of the type checking stub for the {self.contract_name} contract can be found at {self.stub_path}
 
 A summary of your work up until this point is as follows:
 
@@ -198,7 +198,7 @@ async def generate_cvl_batch(
 
     props: list[PropertyFormulation],
     component: ContractComponentInstance,
-    contract_name: str,
+    contract_name: ContractName,
 
     typechecker: TypeChecker,
 
@@ -211,7 +211,7 @@ async def generate_cvl_batch(
 
     def stub_feedback_extras() -> list[str | dict]:
         return [
-            f"The current typechecking stub for the {contract_name} stub is",
+            f"The current typechecking stub for the {contract_name} contract is",
             stub_reader(),
             "For reference, the system document for the application is",
             system_doc.content.to_dict(),
@@ -255,7 +255,7 @@ async def generate_cvl_batch(
         ctx, g, NatspecGenerationInput(
             curr_spec=None,
             input=[
-                f"The current stub implementation of the {contract_name} is",
+                f"The current stub implementation of the {contract_name} contract is",
                 stub_reader()
             ],
             required_validations=["feedback"],

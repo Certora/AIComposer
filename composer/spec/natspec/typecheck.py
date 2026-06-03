@@ -16,25 +16,21 @@ step). The typecheck tool is the only piece worth keeping from that module.
 import asyncio
 import pathlib
 import sys
-from typing import override, Callable, Awaitable
+from typing import Callable, Awaitable
 
-from langchain_core.tools import BaseTool
 
-from graphcore.tools.schemas import WithInjectedState, WithAsyncImplementation
 
-from composer.spec.system_model import ContractName
-from composer.spec.cvl_generation import CVLGenerationExtra
+from composer.spec.system_model import SolidityIdentifier
 from composer.spec.natspec.registry import FileRegistry
 from composer.spec.natspec.task_description import Assembler, ConfigurationBuilder
 from composer.spec.util import temp_certora_file
-from composer.ui.tool_display import tool_display
 
 
 async def typecheck_spec(
     files: list[str],
     *,
     spec: str,
-    primary_contract: str,
+    primary_contract: SolidityIdentifier,
     assembler: Assembler,
     config_builder: ConfigurationBuilder,
 ) -> str | None:
@@ -81,7 +77,7 @@ def make_typechecker(
     files: FileRegistry,
     assembler: Assembler,
     config_builder: ConfigurationBuilder,
-    primary_contract: ContractName
+    primary_contract: SolidityIdentifier
 ) -> TypeChecker:
     async def to_return(
         spec: str

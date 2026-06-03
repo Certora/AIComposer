@@ -7,6 +7,7 @@ task handlers, event routing, tool configs, and completion behavior.
 
 import json
 import pathlib
+import traceback
 from typing import cast, override
 
 from textual.containers import VerticalScroll
@@ -201,6 +202,27 @@ class NatspecPipelineApp(MultiJobApp[Phase, NatspecTaskHandler]):
             )))
 
         await summary.mount(Static(Text("Press q to quit.", style="dim")))
+
+    async def mount_error(self, exc: Exception) -> None:
+        """Display a fatal pipeline error in the summary pane and enable quit.
+
+        Called from the CLI entry point's outer ``except Exception`` when the
+        pipeline body raises. Switches the view to ``#summary`` (the same pane
+        ``on_pipeline_done`` uses) and renders the exception + traceback, so
+        per-task error panels stay visible alongside the top-level cause.
+        """
+        self._pipeline_done = True
+        summary = self.query_one("#summary", VerticalScroll)
+        switcher = self.query_one("#switcher", ContentSwitcher)
+        switcher.current = "summary"
+
+        tb = "".join(traceback.format_exception(exc))
+        banner = Text()
+        banner.append("\n━━ Pipeline Error ━━\n\n", style="bold red")
+        banner.append(f"{type(exc).__name__}: {exc}\n\n", style="red")
+        banner.append(tb, style="red dim")
+        banner.append("\nPress q to quit.", style="dim")
+        await summary.mount(Static(banner))
 
     def _render_completion_banner(
         self,

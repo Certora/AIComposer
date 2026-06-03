@@ -10,32 +10,30 @@ which is validated against the Solidity compiler before acceptance.
 
 import asyncio
 import logging
-import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from typing import Callable, NotRequired, override, Iterable
 import pathlib
 
 _log = logging.getLogger(__name__)
 
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel, Field as PydanticField, ValidationError
 
 from langchain_core.tools import BaseTool
 from langgraph.config import get_stream_writer
 from langgraph.graph import MessagesState
 from langgraph.store.base import BaseStore
+from langgraph.types import Command
 
-from graphcore.graph import FlowInput
+from graphcore.graph import FlowInput, tool_state_update
 from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 from graphcore.tools.vfs import Materializer
 
-from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
-from composer.spec.system_model import ContractName
-from composer.spec.graph_builder import bind_standard, run_to_completion
+from composer.spec.context import PlainBuilder, CVLOnlyBuilder
+from composer.spec.system_model import SolidityIdentifier
+from composer.spec.graph_builder import run_to_completion
 from composer.spec.natspec.pipeline_events import StubUpdate
 from composer.spec.natspec.models import (
     InterfaceResult,
-    LocatedStubDeclaration,
     StubDeclarationModel,
 )
 from composer.spec.util import uniq_thread_id
@@ -54,7 +52,7 @@ class FieldSpec(BaseModel):
 
 
 class FieldMetadata(BaseModel):
-    stub_fields: dict[str, list[FieldSpec]] = PydanticField(default_factory=dict)
+    stub_fields: dict[SolidityIdentifier, list[FieldSpec]] = PydanticField(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +92,9 @@ class RegistryResult(BaseModel):
 # Stub compilation check
 # ---------------------------------------------------------------------------
 
-def _compile_stub(
+async def _compile_stub(
     stub: str,
-    interfaces: InterfaceResult,
+    assembler: Assembler,
     solc_version: str,
     stub_path: str,
 ) -> str | None:
@@ -108,24 +106,23 @@ def _compile_stub(
     success, an error string on failure.
     """
     solc_name = f"solc{solc_version}"
-    with tempfile.TemporaryDirectory() as tmpdir:
-        root = pathlib.Path(tmpdir)
-        interfaces.dump_to_path(root)
-        stub_abs = root / stub_path
+    async with assembler.project_directory() as tmpdir:
+        stub_abs = tmpdir / stub_path
         stub_abs.parent.mkdir(parents=True, exist_ok=True)
         stub_abs.write_text(stub)
         try:
-            proc = subprocess.run(
-                [solc_name, stub_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+            proc = await asyncio.create_subprocess_exec(
+                solc_name, stub_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=tmpdir,
             )
+
+            stdout, stderr = await proc.communicate()
         except FileNotFoundError:
             return f"Solidity compiler {solc_name} not found"
         if proc.returncode != 0:
-            return f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+            return f"stdout:\n{stdout.decode()}\nstderr:\n{stderr.decode()}"
         return None
 
 
@@ -134,12 +131,11 @@ def _compile_stub(
 # ---------------------------------------------------------------------------
 
 async def run_registry_agent(
-    contract_name: ContractName,
     request: str,
     stub_content: str,
     stub_path: str,
-    field_metadata: FieldMetadata,
-    interface: InterfaceResult,
+    field_metadata: list[FieldSpec],
+    interface: str,
     solc_version: str,
     builder: PlainBuilder,
     assembler: Assembler,
@@ -157,7 +153,7 @@ async def run_registry_agent(
     class ST(MessagesState):
         result: NotRequired[RegistryResult]
 
-    def validate_result(_s: ST, res: RegistryResult) -> str | None:
+    async def validate_result(res: RegistryResult) -> str | None:
         if res.is_new:
             if not res.field_type:
                 return "When proposing a new field, you must provide field_type (the Solidity type)."
@@ -165,25 +161,42 @@ async def run_registry_agent(
                 return "When proposing a new field, you must provide field_description."
             if not res.updated_stub:
                 return "When proposing a new field, you must provide updated_stub (the complete source code)."
-            compile_err = _compile_stub(res.updated_stub, interface, solc_version, stub_path)
+            compile_err = _compile_stub(res.updated_stub, assembler, solc_version, stub_path)
             if compile_err is not None:
                 return (
                     f"The updated stub does not compile. Fix the issue and try again.\n"
                     f"{compile_err}"
                 )
         return None
+    
+    class RegistryResultTool(WithAsyncImplementation[Command | str], WithInjectedId, RegistryResult):
+        """
+        Call this tool with the result of your work
+        """
 
-    workflow = bind_standard(
-        builder, ST, validator=validate_result,
-    ).with_input(
-        FlowInput
-    ).with_sys_prompt(
-        "You are a Solidity stub field manager. You decide whether a requested "
-        "storage variable already exists in the stub (semantically equivalent) "
-        "or whether a new field needs to be added. When adding a new field, you "
-        "produce the complete updated stub source code."
-    ).with_initial_prompt_template(
-        "registry_prompt.j2",
+        async def run(self) -> Command | str:
+            if (err_msg := await validate_result(self)) is not None:
+                return err_msg
+            r = self.model_dump()
+            del r["tool_call_id"]
+            reg = RegistryResult.model_construct(**r)
+            return tool_state_update(self.tool_call_id, "Accepted", result=reg)
+
+    workflow = (
+        builder
+        .with_default_summarizer()
+        .with_state(ST)
+        .with_output_key("result")
+        .with_input(FlowInput)
+        .with_tools([RegistryResultTool.as_tool("result")])
+        .with_sys_prompt(
+            "You are a Solidity stub field manager. You decide whether a requested "
+            "storage variable already exists in the stub (semantically equivalent) "
+            "or whether a new field needs to be added. When adding a new field, you "
+            "produce the complete updated stub source code."
+        ).with_initial_prompt_template(
+            "registry_prompt.j2",
+        )
     ).compile_async()
 
     input_parts: list[str | dict] = [
@@ -192,13 +205,13 @@ async def run_registry_agent(
         "The current stub source code is:",
         stub_content,
         "The interface for this stub is",
-        interface.name_to_interface[contract_name].content
+        interface
     ]
 
-    if (flds := field_metadata.stub_fields.get(contract_name, [])):
+    if field_metadata:
         field_lines = "\n".join(
             f"  - `{f.type} {f.name}`: {f.description}"
-            for f in flds
+            for f in field_metadata
         )
         input_parts.extend([
             "The currently registered fields are:",
@@ -226,6 +239,35 @@ async def run_registry_agent(
 STUB_STORE_KEY = "stub_content"
 FIELDS_STORE_KEY = "stub_fields"
 
+STUB_STATE_KEY = "stub_state"
+
+@dataclass
+class _StubMemoryState:
+    _path: str
+    _content: str
+    _interface: str
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+class _StubDurableState(BaseModel):
+    fields: list[FieldSpec]
+    content: str
+
+def _stub_ns(ns: tuple[str, ...]) -> tuple[str, ...]:
+    return ns + (STUB_STATE_KEY,)
+
+async def _state_write(store: BaseStore, ns: tuple[str, ...], id: SolidityIdentifier, state: _StubDurableState):
+    await store.aput(
+        ns, id, state.model_dump()
+    )
+
+async def _state_read(store: BaseStore, ns: tuple[str, ...], id: SolidityIdentifier) -> _StubDurableState | None:
+    res = await store.aget(ns, id)
+    if res is None:
+        return None
+    try:
+        return _StubDurableState.model_validate(res.value)
+    except ValidationError:
+        return None
 
 @dataclass
 class StubRegistry:
@@ -236,14 +278,11 @@ class StubRegistry:
     """
     _store: BaseStore
     _builder: PlainBuilder | CVLOnlyBuilder
-    _interface: InterfaceResult
     _solc_version: str
     _assembler: Assembler
     _mirror_by_path: dict[str, str]
-    _mirror_by_name: dict[ContractName, str]
-    _path_by_name: dict[ContractName, str]
+    _state_by_id: dict[SolidityIdentifier, _StubMemoryState]
     _recursion_limit: int
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _namespace: tuple[str, ...] = ()
 
     @staticmethod
@@ -253,11 +292,13 @@ class StubRegistry:
         builder: PlainBuilder | CVLOnlyBuilder,
         interface: InterfaceResult,
         interface_only_mat: Assembler,
-        initial_stubs: dict[ContractName, StubDeclarationModel],
+        initial_stubs: dict[SolidityIdentifier, StubDeclarationModel],
         solc_version: str,
         *,
         recursion_limit: int,
     ) -> "StubRegistry":
+        ns = _stub_ns(namespace)
+
         """Create or resume a StubRegistry.
 
         If the store already contains stub content and field metadata for this
@@ -266,67 +307,39 @@ class StubRegistry:
         serialized as ``{"path", "content", "solidity_identifier"}``. Paths
         are fixed at initialization; only content changes during field updates.
         """
-        curr_res = await store.aget(namespace, STUB_STORE_KEY)
-        if curr_res is None:
-            _log.debug(
-                "StubRegistry.acreate: FRESH init ns=%r initial_stubs=%s",
-                namespace,
-                {nm: {"path": d.path, "ident": d.solidity_identifier}
-                 for nm, d in initial_stubs.items()},
+        async def _init_stub(id: SolidityIdentifier, init_stub: StubDeclarationModel) -> tuple[SolidityIdentifier, _StubMemoryState]:
+            curr = await _state_read(store, ns, id)
+            intf = interface.name_to_interface[id]
+            if curr is None:
+                await _state_write(store, ns, id, _StubDurableState(
+                    content=init_stub.content, fields=[]
+                ))
+                return (id, _StubMemoryState(_path=init_stub.path, _content=init_stub.content, _interface=intf))
+            else:
+                return (id, _StubMemoryState(
+                    _path=init_stub.path,
+                    _content=curr.content, _interface=intf
+                ))
+
+        state = dict(
+            *asyncio.gather(
+                *(_init_stub(id, init_stub) for (id, init_stub) in initial_stubs.items())
             )
-            await store.aput(namespace, STUB_STORE_KEY, {
-                nm: {
-                    "path": decl.path,
-                    "content": decl.content,
-                    "solidity_identifier": decl.solidity_identifier,
-                }
-                for nm, decl in initial_stubs.items()
-            })
-            curr_content_path = {
-                decl.path: decl.content for decl in initial_stubs.values()
-            }
-            curr_content_name = {
-                nm: decl.content for (nm, decl) in initial_stubs.items()
-            }
-            curr_path_by_name = {
-                nm: decl.path for (nm, decl) in initial_stubs.items()
-            }
-        else:
-            curr_content_path = {
-                t["path"]: t["content"] for t in curr_res.value.values()
-            }
-            curr_content_name = {
-                ContractName(nm): t["content"] for (nm, t) in curr_res.value.items()
-            }
-            curr_path_by_name = {
-                ContractName(nm): t["path"] for (nm, t) in curr_res.value.items()
-            }
-            _log.debug(
-                "StubRegistry.acreate: RESUMED ns=%r stored_stubs=%s "
-                "(initial_stubs ignored: %s)",
-                namespace,
-                {nm: {"path": t["path"], "ident": t.get("solidity_identifier")}
-                 for nm, t in curr_res.value.items()},
-                list(initial_stubs.keys()),
-            )
-        if await store.aget(namespace, FIELDS_STORE_KEY) is None:
-            await store.aput(namespace, FIELDS_STORE_KEY, {k: [] for k in initial_stubs.keys()})
-        _log.debug(
-            "StubRegistry.acreate: ready ns=%r path_by_name=%s "
-            "mirror_paths=%s",
-            namespace, curr_path_by_name, list(curr_content_path.keys()),
         )
+
+        by_path = {
+            s.path: s.content for s in state.values()
+        }
+
         return StubRegistry(
             _store=store,
             _builder=builder,
-            _interface=interface,
             _solc_version=solc_version,
             _assembler=interface_only_mat,
-            _namespace=namespace,
-            _mirror_by_path=curr_content_path,
-            _mirror_by_name=curr_content_name,
-            _path_by_name=curr_path_by_name,
+            _state_by_id=state,
+            _mirror_by_path=by_path,
             _recursion_limit=recursion_limit,
+            _namespace=ns
         )
     
     # FS backend stuff
@@ -349,60 +362,42 @@ class StubRegistry:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(v)
 
-    def read_stub(self, nm: ContractName) -> str:
+    def read_stub(self, nm: SolidityIdentifier) -> str:
         """Read current stub content (no lock needed)."""
-        return self._mirror_by_name[nm]
+        return self._state_by_id[nm]._content
 
-    async def read_all_stubs(self) -> dict[str, LocatedStubDeclaration]:
-        """Read every stub as full declarations. Empty dict if registry isn't initialized."""
-        item = await self._store.aget(self._namespace, STUB_STORE_KEY)
-        if item is None:
-            return {}
-        return {
-            nm: LocatedStubDeclaration(
-                path=entry["path"],
-                content=entry["content"],
-                solidity_identifier=entry["solidity_identifier"],
-            )
-            for nm, entry in item.value.items()
-        }
-
-    async def _read_field_metadata(self) -> FieldMetadata:
-        item = await self._store.aget(self._namespace, FIELDS_STORE_KEY)
-        if item is None:
-            return FieldMetadata()
-        return FieldMetadata.model_validate(item.value)
-
-    async def read_fields(self) -> dict[str, "list[FieldSpec]"]:
-        """Snapshot the per-contract stub fields requested during this pipeline run.
-
-        Returns ``{contract_name: [FieldSpec, ...]}``. Empty for contracts that never
-        received a field request. Safe to call at any point after ``acreate``; intended
-        for end-of-pipeline export so the codegen driver knows what storage layout
-        each contract's implementation must carry.
-        """
-        return (await self._read_field_metadata()).stub_fields
-
-    async def _write_field_metadata(self, metadata: FieldMetadata) -> None:
-        await self._store.aput(self._namespace, FIELDS_STORE_KEY, metadata.model_dump())
-
-    async def _write_stub(self, nm: ContractName, content: str) -> None:
-        """Update the stub content for ``nm`` in place. Path stays fixed."""
-        it = await self._store.aget(self._namespace, STUB_STORE_KEY)
-        assert it is not None
-        to_put = {k: dict(v) for k, v in it.value.items()}
-        to_put[nm]["content"] = content
-        self._mirror_by_name[nm] = content
-        self._mirror_by_path[to_put[nm]["path"]] = content
-        _log.debug(
-            "StubRegistry._write_stub: ns=%r nm=%s path=%s ident=%s",
-            self._namespace, nm, to_put[nm]["path"],
-            to_put[nm].get("solidity_identifier"),
+    async def _read_metadata(
+        self, id: SolidityIdentifier
+    ) -> _StubDurableState:
+        to_ret = await _state_read(
+            self._store, self._namespace, id
         )
-        await self._store.aput(self._namespace, STUB_STORE_KEY, to_put)
+        assert to_ret is not None
+        return to_ret
+
+    async def read_fields(self) -> "dict[SolidityIdentifier, list[FieldSpec]]":
+        """Snapshot the registered field metadata for every stub.
+
+        Reads durable state directly (independent of in-memory ``_state_by_id``
+        so a re-run that resumed from cache still sees fields recorded by an
+        earlier run). Returns one entry per stub; empty list when no fields
+        were ever requested.
+        """
+        to_ret: "dict[SolidityIdentifier, list[FieldSpec]]" = {}
+        for id in self._state_by_id.keys():
+            durable = await self._read_metadata(id)
+            to_ret[id] = [f for f in durable.fields]
+        return to_ret
+    
+    async def _write_metadata(
+        self, id: SolidityIdentifier, st: _StubDurableState
+    ):
+        await _state_write(
+            self._store, self._namespace, id, st
+        )
 
     async def request_field(
-        self, nm: ContractName, purpose: str, *, within_tool: str ,
+        self, nm: SolidityIdentifier, purpose: str, *, within_tool: str ,
     ) -> str:
         """Request a stub field for a given purpose. Serialized via lock.
 
@@ -410,20 +405,21 @@ class StubRegistry:
         produces the updated stub (validated by solc) and we write it to the store.
         Returns a description of the field to use, or a rejection message.
         """
-        if nm not in self._path_by_name:
-            return f"Error: unknown contract name: {nm}"
-        async with self._lock:
-            stub_content = self.read_stub(nm)
-            stub_path = self._path_by_name[nm]
-            field_metadata = await self._read_field_metadata()
+        if nm not in self._state_by_id:
+            return f"Error: unknown contract identifier: {nm}"
+        state = self._state_by_id[nm]
+        async with state._lock:
+            stub_content = state._content
+            stub_path = state._path
+            durable_state = await self._read_metadata(nm)
+            assert durable_state.content == stub_content
 
             result = await run_registry_agent(
-                contract_name=nm,
                 request=purpose,
                 stub_content=stub_content,
                 stub_path=stub_path,
-                field_metadata=field_metadata,
-                interface=self._interface,
+                field_metadata=durable_state.fields,
+                interface=state._interface,
                 solc_version=self._solc_version,
                 builder=self._builder,
                 assembler=self._assembler,
@@ -435,15 +431,15 @@ class StubRegistry:
                 return f"Field request was rejected: {result.description}"
 
             if result.is_new:
-                if nm not in field_metadata.stub_fields:
-                    field_metadata.stub_fields[nm] = []
-                field_metadata.stub_fields[nm].append(FieldSpec(
+                durable_state.fields.append(FieldSpec(
                     name=result.field_name,
                     type=result.field_type,
                     description=result.description,
                 ))
-                await self._write_field_metadata(field_metadata)
-                await self._write_stub(nm, result.updated_stub)
+                durable_state.content = result.updated_stub
+                state._content = result.updated_stub
+                self._mirror_by_path[state._path] = result.updated_stub
+                await self._write_metadata(nm, durable_state)
                 evt: StubUpdate = {
                     "type": "stub_update",
                     "contract_id": nm,
@@ -453,19 +449,19 @@ class StubRegistry:
 
             return f"Use field {result.field_name}"
 
-    def get_tools(self, contract_name: ContractName) -> "list[BaseTool]":
+    def get_tools(self, contract_identifier: SolidityIdentifier) -> "list[BaseTool]":
         """Return tools for injection into the property agent authoring the spec
-        for ``contract_name``. The agent is primarily responsible for its own
-        contract, but may read and request fields in any other contract's stub
-        to support cross-contract specs — so the tools take the target contract
-        name as an explicit LLM-visible parameter rather than closing over the
-        author's own name.
+        for ``contract_identifier``. The agent is primarily responsible for its
+        own contract, but may read and request fields in any other contract's
+        stub to support cross-contract specs — so the tools take the target
+        contract identifier as an explicit LLM-visible parameter rather than
+        closing over the author's own.
         """
         registry = self
-        home_contract = contract_name
+        home_contract = contract_identifier
 
         @tool_display(
-            lambda d: f"Requesting stub field in {d['contract_name']}: {d['purpose']}",
+            lambda d: f"Requesting stub field in {d['contract_identifier']}: {d['purpose']}",
             "Stub field result",
         )
         class RequestStubField(WithAsyncImplementation[str], WithInjectedId):
@@ -477,16 +473,16 @@ class StubRegistry:
             Returns the field name to use in your CVL specification.
 
             Pass your own contract name to add a field to your own stub; pass
-            another contract's name to request a field there (needed for
+            another contract's identifier to request a field there (needed for
             cross-contract specs that depend on state in a dependency).
 
             You may *NOT* use this tool to request any change to the stub besides a new storage field.
             """
-            contract_name: ContractName = PydanticField(
+            contract_identifier: SolidityIdentifier = PydanticField(
                 description=(
                     f"The contract whose stub should gain the field. You are "
-                    f"authoring the spec for '{home_contract}' — pass that name "
-                    f"for your own stub, or another registered contract's name "
+                    f"authoring the spec for '{home_contract}' — pass that identifier "
+                    f"for your own stub, or another registered contract's solidity identifier "
                     f"when the field belongs to a dependency."
                 )
             )
@@ -498,7 +494,7 @@ class StubRegistry:
             @override
             async def run(self) -> str:
                 return await registry.request_field(
-                    self.contract_name, self.purpose,
+                    self.contract_identifier, self.purpose,
                     within_tool=self.tool_call_id,
                 )
 
@@ -518,7 +514,7 @@ class FileEntry:
     to compile against. ``solidity_identifier=None`` means "use the file's stem
     as the identifier" (Certora's default behavior)."""
     path: str
-    solidity_identifier: str | None = None
+    solidity_identifier: SolidityIdentifier | None = None
 
     def as_prover_arg(self) -> str:
         if self.solidity_identifier is None:
@@ -549,24 +545,12 @@ class FileRegistry:
         namespace: tuple[str, ...],
         materializer: Materializer,
     ) -> "FileRegistry":
-        existing = await store.asearch(namespace, limit=10_000)
-        snapshot = {
-            item.key: [
-                {"path": e["path"], "ident": e["solidity_identifier"]}
-                for e in item.value["files"]
-            ]
-            for item in existing
-        }
-        _log.debug(
-            "FileRegistry.acreate: ns=%r existing_entries=%s",
-            namespace, snapshot,
-        )
         return FileRegistry(
             _store=store, _materializer=materializer, _namespace=namespace,
         )
 
-    async def _read_contract(self, contract_name: ContractName) -> list[FileEntry]:
-        item = await self._store.aget(self._namespace, contract_name)
+    async def _read_contract(self, contract_identifier: SolidityIdentifier) -> list[FileEntry]:
+        item = await self._store.aget(self._namespace, contract_identifier)
         if item is None:
             return []
         return [
@@ -574,61 +558,47 @@ class FileRegistry:
             for e in item.value["files"]
         ]
 
-    async def _write_contract(self, contract_name: ContractName, files: list[FileEntry]) -> None:
+    async def _write_contract(self, contract_identifier: SolidityIdentifier, files: list[FileEntry]) -> None:
         _log.debug(
             "FileRegistry._write_contract: ns=%r contract=%s entries=%s",
-            self._namespace, contract_name,
+            self._namespace, contract_identifier,
             [{"path": e.path, "ident": e.solidity_identifier} for e in files],
         )
-        await self._store.aput(self._namespace, contract_name, {
+        await self._store.aput(self._namespace, contract_identifier, {
             "files": [
                 {"path": e.path, "solidity_identifier": e.solidity_identifier}
                 for e in files
             ],
         })
 
-    async def read_all(self, contract_name: ContractName) -> list[str]:
-        """Read the prover-ready file arguments registered for ``contract_name``.
+    async def read_all(self, contract_identifier: SolidityIdentifier) -> list[str]:
+        """Read the prover-ready file arguments registered for ``contract_identifier``.
 
         Each entry is either ``path`` or ``path:Identifier`` depending on
         whether a Solidity identifier was supplied at registration.
         """
-        return [e.as_prover_arg() for e in await self._read_contract(contract_name)]
+        return [e.as_prover_arg() for e in await self._read_contract(contract_identifier)]
 
-    async def read_all_contracts(self) -> dict[ContractName, list[str]]:
-        """Read the full registration map (contract → prover-ready file args)."""
-        items = await self._store.asearch(self._namespace, limit=10_000)
-        return {
-            ContractName(item.key): [
-                FileEntry(
-                    path=e["path"],
-                    solidity_identifier=e["solidity_identifier"],
-                ).as_prover_arg()
-                for e in item.value["files"]
-            ]
-            for item in items
-        }
-
-    async def read_all_paths(self) -> dict[ContractName, list[str]]:
+    async def read_all_paths(self) -> dict[SolidityIdentifier, list[str]]:
         """Read the full registration map (contract → list of registered
         file paths). Used by ``codegen_export`` to derive the dep graph
         by matching registered paths against each generated contract's
         ``stub.path``. Path-based matching avoids assuming
-        ``path.stem == solidity_identifier == ExplicitContract.name``,
-        which can drift as the stub layout evolves."""
+        ``path.stem == solidity_identifier``, which can drift as the stub
+        layout evolves."""
         items = await self._store.asearch(self._namespace, limit=10_000)
         return {
-            ContractName(item.key): [e["path"] for e in item.value["files"]]
+            SolidityIdentifier(item.key): [e["path"] for e in item.value["files"]]
             for item in items
         }
 
     async def register(
         self,
-        contract_name: ContractName,
+        contract_identifier: SolidityIdentifier,
         path: str,
-        solidity_identifier: str | None = None,
+        solidity_identifier: SolidityIdentifier | None = None,
     ) -> str:
-        """Register ``path`` as a compilation-unit file for ``contract_name``.
+        """Register ``path`` as a compilation-unit file for ``contract_identifier``.
 
         Rejects paths that don't exist in the layered FS this registry closes
         over. If ``path`` is already registered for this contract, the
@@ -637,13 +607,13 @@ class FileRegistry:
         """
         _log.debug(
             "FileRegistry.register: ns=%r contract=%s path=%s ident=%s",
-            self._namespace, contract_name, path, solidity_identifier,
+            self._namespace, contract_identifier, path, solidity_identifier,
         )
         if self._materializer.get(path) is None:
             _log.debug(
                 "FileRegistry.register: REJECTED ns=%r contract=%s "
                 "path=%s (not in materializer)",
-                self._namespace, contract_name, path,
+                self._namespace, contract_identifier, path,
             )
             return (
                 f"Cannot register {path}: that file does not exist in the "
@@ -651,24 +621,24 @@ class FileRegistry:
                 f"`grep_files`) to find the correct path before registering."
             )
         async with self._lock:
-            files = await self._read_contract(contract_name)
+            files = await self._read_contract(contract_identifier)
             new_entry = FileEntry(path=path, solidity_identifier=solidity_identifier)
             for i, existing in enumerate(files):
                 if existing.path == path:
                     if existing == new_entry:
-                        return f"{new_entry.as_prover_arg()} is already registered for {contract_name}."
+                        return f"{new_entry.as_prover_arg()} is already registered for {contract_identifier}."
                     files[i] = new_entry
-                    await self._write_contract(contract_name, files)
+                    await self._write_contract(contract_identifier, files)
                     return (
-                        f"Updated {path} for {contract_name}: "
+                        f"Updated {path} for {contract_identifier}: "
                         f"{existing.as_prover_arg()} -> {new_entry.as_prover_arg()}."
                     )
             files.append(new_entry)
-            await self._write_contract(contract_name, files)
-        return f"Registered {new_entry.as_prover_arg()} for {contract_name}."
+            await self._write_contract(contract_identifier, files)
+        return f"Registered {new_entry.as_prover_arg()} for {contract_identifier}."
 
-    def get_tools(self, contract_name: ContractName) -> list[BaseTool]:
-        """Return tools scoped to ``contract_name`` for injection into that
+    def get_tools(self, contract_identifier: SolidityIdentifier) -> list[BaseTool]:
+        """Return tools scoped to ``contract_identifier`` for injection into that
         contract's property agents.
         """
         registry = self
@@ -695,17 +665,17 @@ class FileRegistry:
 
             @override
             async def run(self) -> str:
-                return await registry.register(contract_name, self.path)
+                return await registry.register(contract_identifier, self.path)
 
-        @tool_display("Listing registered spec files", None)
+        @tool_display("Listing registered source files", None)
         class ListSpecFiles(WithAsyncImplementation[str]):
             """List every Solidity source file currently registered for this
-            contract's spec compilation unit.
+            contract's verification unit unit.
             """
 
             @override
             async def run(self) -> str:
-                files = await registry.read_all(contract_name)
+                files = await registry.read_all(contract_identifier)
                 if not files:
                     return "No files registered yet."
                 return "\n".join(f"- {p}" for p in files)

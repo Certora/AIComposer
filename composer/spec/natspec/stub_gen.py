@@ -54,10 +54,11 @@ async def generate_stub[S: StubDeclarationModel](
     ``description`` fixes the concrete stub subtype and the prompt (with any
     workflow-constant params pre-bound).
 
-    ``contract_name`` is the conceptual name used as the lookup key into
-    ``interface.name_to_interface``. ``solidity_identifier`` is the Solidity
-    identifier the stub MUST declare — caller-supplied (from the contract
-    record), validator-enforced.
+    ``solidity_identifier`` is both the lookup key into
+    ``interface.name_to_interface`` and the Solidity identifier the stub MUST
+    declare — caller-supplied (from the contract record), validator-enforced.
+    ``contract_name`` is the conceptual label used only for the task
+    description string.
     """
     stub_ty : type[S] = description.output_ty
 
@@ -72,7 +73,7 @@ async def generate_stub[S: StubDeclarationModel](
 
     solc_name = f"solc{solc_version}"
 
-    interface_to_implement = interface.name_to_interface[contract_name]
+    interface_to_implement = interface.name_to_interface[solidity_identifier]
     interface_name = interface_to_implement.solidity_identifier
 
     ST = type("ST", (MessagesState,), {

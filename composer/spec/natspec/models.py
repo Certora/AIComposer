@@ -54,8 +54,8 @@ class AutoInterfaceDecl(InterfaceDeclModel):
 
 class InterfaceResult[T: InterfaceDeclModel](BaseModel):
     """The result of your interface generation."""
-    name_to_interface: dict[ContractName, T] = Field(
-        description="A mapping from the explicit contract's conceptual `name` to "
+    name_to_interface: dict[SolidityIdentifier, T] = Field(
+        description="A mapping from the explicit contract's solidity identifier to "
         "the interface describing the behavior of that component"
     )
 

@@ -26,8 +26,6 @@ materializes each contract's artifacts to disk on its side, and invokes
 ``python main.py --input-json <per-contract json>`` for each.
 """
 
-from __future__ import annotations
-
 import json
 import pathlib
 from dataclasses import dataclass, field
@@ -35,9 +33,11 @@ from typing import TYPE_CHECKING, Literal
 
 from composer.spec.natspec.registry import FieldSpec
 from composer.spec.system_model import (
+    ContractName,
     ExplicitContract,
     FreshFromSource,
     FromSourceApplication,
+    SolidityIdentifier,
 )
 
 if TYPE_CHECKING:
@@ -59,7 +59,8 @@ class SpecEntry:
 @dataclass
 class ContractPlan:
     """Everything the codegen driver needs to produce one contract."""
-    name: str
+    name: ContractName
+    solidity_identifier: SolidityIdentifier
     # From the from-source workflow; ``None`` in greenfield. When present,
     # indicates the contract is being freshly introduced into an existing
     # source tree.
@@ -77,9 +78,10 @@ class ContractPlan:
     required_stub_fields: list[FieldSpec] = field(default_factory=list)
     # Specs produced for this contract.
     specs: list[SpecEntry] = field(default_factory=list)
-    # Intra-application contracts this contract interacts with (by name).
-    # Drives the topological ordering.
-    depends_on: list[str] = field(default_factory=list)
+    # Intra-application contracts this contract interacts with, by conceptual
+    # name (for display). Drives the topological ordering; the graph itself
+    # is keyed by Solidity identifier internally.
+    depends_on: list[ContractName] = field(default_factory=list)
 
 
 @dataclass
@@ -113,7 +115,7 @@ class ImplementationPlan:
     # expected case for most apps). Non-empty entries indicate the
     # driver must decide how to break the cycle (e.g., by processing one
     # contract against its neighbours' stubs and backfilling later).
-    cycles: list[list[str]] = field(default_factory=list)
+    cycles: list[list[ContractName]] = field(default_factory=list)
     # External actors the application interacts with — surfaced here as
     # context for the codegen driver's mocking strategies. Not per-contract
     # because multiple contracts may interact with the same actor.
@@ -127,9 +129,16 @@ class ImplementationPlan:
 
 def _build_dep_graph(
     result: "PipelineResult",
-) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+) -> tuple[
+    dict[SolidityIdentifier, set[SolidityIdentifier]],
+    dict[SolidityIdentifier, set[SolidityIdentifier]],
+]:
     """Construct ``(forward, reverse)`` adjacency maps restricted to the
     contracts present in ``result.contracts`` (the ones that need codegen).
+
+    Keyed by Solidity identifier to match ``spec_file_paths`` and
+    ``FileRegistry``. The conceptual name is used only for display in the
+    final plan; the graph itself runs on identifiers.
 
     ``forward[X]`` is the set of generated contracts X depends on.
     ``reverse[X]`` is the set of generated contracts that depend on X.
@@ -138,55 +147,59 @@ def _build_dep_graph(
     ``result.spec_file_paths``: contract B depends on contract A iff A's
     ``stub.path`` appears in ``spec_file_paths[B]`` (i.e. B's spec
     explicitly registered A's stub for its verification compilation
-    unit). Path-based matching avoids assuming Solidity identifiers
-    align with design-doc names; the only authority is what the spec
-    author actually registered.
+    unit). Path-based matching avoids assuming the stub layout aligns
+    with the identifier; the only authority is what the spec author
+    actually registered.
 
     Pre-existing ``unchanged``/``edited`` contract registrations and
     external-actor references are dropped — those aren't nodes in
     *this* plan, they're fixed dependencies on the driver's side.
     """
-    # Path → name lookup for generated contracts. Built from the
-    # explicit ``stub.path`` on each ``ContractFormulation`` so we
-    # match on real persisted state, not derived state.
-    path_to_name: dict[str, str] = {
-        c.stub.path: c.name for c in result.contracts
+    # Path → solidity identifier lookup for generated contracts. Built
+    # from the explicit ``stub.path`` on each ``ContractFormulation`` so
+    # we match on real persisted state, not derived state.
+    path_to_identifier: dict[str, SolidityIdentifier] = {
+        c.stub.path: c.solidity_identifier for c in result.contracts
     }
 
-    forward: dict[str, set[str]] = {c.name: set() for c in result.contracts}
-    reverse: dict[str, set[str]] = {c.name: set() for c in result.contracts}
+    forward: dict[SolidityIdentifier, set[SolidityIdentifier]] = {
+        c.solidity_identifier: set() for c in result.contracts
+    }
+    reverse: dict[SolidityIdentifier, set[SolidityIdentifier]] = {
+        c.solidity_identifier: set() for c in result.contracts
+    }
 
-    for name, registered_paths in result.spec_file_paths.items():
-        if name not in forward:
+    for identifier, registered_paths in result.spec_file_paths.items():
+        if identifier not in forward:
             continue  # registration for a non-generated contract; skip
         for path in registered_paths:
-            target = path_to_name.get(path)
+            target = path_to_identifier.get(path)
             if target is None:
                 continue  # registered file isn't one of our stubs
-            if target == name:
+            if target == identifier:
                 continue  # self-registration (the contract's own stub)
-            forward[name].add(target)
-            reverse[target].add(name)
+            forward[identifier].add(target)
+            reverse[target].add(identifier)
 
     return forward, reverse
 
 
 def _topo_sort(
-    names: list[str],
-    forward: dict[str, set[str]],
-    reverse: dict[str, set[str]],
-) -> tuple[list[str], list[list[str]]]:
+    identifiers: list[SolidityIdentifier],
+    forward: dict[SolidityIdentifier, set[SolidityIdentifier]],
+    reverse: dict[SolidityIdentifier, set[SolidityIdentifier]],
+) -> tuple[list[SolidityIdentifier], list[list[SolidityIdentifier]]]:
     """Kahn's algorithm with cycle extraction.
 
     Returns ``(ordered, cycles)``.
-    - ``ordered`` is every name that could be drained (dependencies first).
+    - ``ordered`` is every identifier that could be drained (dependencies first).
     - ``cycles`` contains the strongly-connected remnant as separate lists
-      (one per cycle). Cycle names are NOT included in ``ordered``; the
+      (one per cycle). Cycle members are NOT included in ``ordered``; the
       caller decides what to do with them.
     """
-    indeg = {n: len(forward[n]) for n in names}
-    ready = sorted(n for n in names if indeg[n] == 0)
-    ordered: list[str] = []
+    indeg = {n: len(forward[n]) for n in identifiers}
+    ready = sorted(n for n in identifiers if indeg[n] == 0)
+    ordered: list[SolidityIdentifier] = []
     while ready:
         n = ready.pop(0)
         ordered.append(n)
@@ -196,15 +209,15 @@ def _topo_sort(
                 ready.append(dependent)
         ready.sort()
 
-    remaining = [n for n in names if n not in set(ordered)]
+    remaining = [n for n in identifiers if n not in set(ordered)]
     cycles = _extract_sccs(remaining, forward)
     return ordered, cycles
 
 
 def _extract_sccs(
-    remaining: list[str],
-    forward: dict[str, set[str]],
-) -> list[list[str]]:
+    remaining: list[SolidityIdentifier],
+    forward: dict[SolidityIdentifier, set[SolidityIdentifier]],
+) -> list[list[SolidityIdentifier]]:
     """Tarjan-lite SCC extraction over the sub-graph induced by ``remaining``.
 
     Every node in ``remaining`` is part of at least one cycle (since Kahn
@@ -218,13 +231,13 @@ def _extract_sccs(
 
     remaining_set = set(remaining)
     index_counter = [0]
-    stack: list[str] = []
-    on_stack: set[str] = set()
-    indices: dict[str, int] = {}
-    lowlinks: dict[str, int] = {}
-    sccs: list[list[str]] = []
+    stack: list[SolidityIdentifier] = []
+    on_stack: set[SolidityIdentifier] = set()
+    indices: dict[SolidityIdentifier, int] = {}
+    lowlinks: dict[SolidityIdentifier, int] = {}
+    sccs: list[list[SolidityIdentifier]] = []
 
-    def strongconnect(v: str) -> None:
+    def strongconnect(v: SolidityIdentifier) -> None:
         indices[v] = index_counter[0]
         lowlinks[v] = index_counter[0]
         index_counter[0] += 1
@@ -241,7 +254,7 @@ def _extract_sccs(
                 lowlinks[v] = min(lowlinks[v], indices[w])
 
         if lowlinks[v] == indices[v]:
-            scc: list[str] = []
+            scc: list[SolidityIdentifier] = []
             while True:
                 w = stack.pop()
                 on_stack.discard(w)
@@ -278,14 +291,14 @@ def _spec_entries_for(formulation) -> list[SpecEntry]:
         if not content:
             continue
         suggested = getattr(success, "suggested_path", None)
-        basename = suggested or f"{formulation.name}_{i}.spec"
+        basename = suggested or f"{formulation.solidity_identifier}_{i}.spec"
         if not basename.endswith(".spec"):
             basename = f"{basename}.spec"
         out.append(SpecEntry(filename=basename, content=content))
     return out
 
 
-def _tag_for(name: str, app) -> Literal["new"] | None:
+def _tag_for(identifier: SolidityIdentifier, app) -> Literal["new"] | None:
     """Return ``'new'`` for FreshFromSource contracts, ``None`` otherwise.
 
     Greenfield contracts have no tag semantics; only the from-source
@@ -294,7 +307,7 @@ def _tag_for(name: str, app) -> Literal["new"] | None:
     if not isinstance(app, FromSourceApplication):
         return None
     for c in app.contract_components:
-        if c.name == name and isinstance(c, FreshFromSource):
+        if c.solidity_identifier == identifier and isinstance(c, FreshFromSource):
             return "new"
     return None
 
@@ -349,35 +362,41 @@ def build_implementation_plan(
         DAG.
     """
     forward, reverse = _build_dep_graph(result)
-    ordered_names, cycles = _topo_sort(
-        [c.name for c in result.contracts], forward, reverse
+    ordered_identifiers, cycles = _topo_sort(
+        [c.solidity_identifier for c in result.contracts], forward, reverse
     )
 
     # Drop any cycle-participating contracts from the ordered list before
     # materializing ContractPlan entries; they still exist as raw pipeline
     # output but should not be surfaced as orderable codegen tasks until
     # the driver resolves the cycle.
-    in_cycle: set[str] = set()
+    in_cycle: set[SolidityIdentifier] = set()
     for cyc in cycles:
         in_cycle.update(cyc)
-    ordered_for_plan = [n for n in ordered_names if n not in in_cycle]
+    ordered_for_plan = [n for n in ordered_identifiers if n not in in_cycle]
 
-    by_name = {c.name: c for c in result.contracts}
+    by_identifier = {c.solidity_identifier: c for c in result.contracts}
+    id_to_name: dict[SolidityIdentifier, ContractName] = {
+        c.solidity_identifier: c.name for c in result.contracts
+    }
 
     contract_plans: list[ContractPlan] = []
-    for name in ordered_for_plan:
-        formulation = by_name[name]
+    for identifier in ordered_for_plan:
+        formulation = by_identifier[identifier]
         contract_plans.append(
             ContractPlan(
-                name=name,
-                tag=_tag_for(name, result.app),
+                name=formulation.name,
+                solidity_identifier=identifier,
+                tag=_tag_for(identifier, result.app),
                 interface_path=formulation.interface.path,
                 interface_source=formulation.interface.content,
                 stub_path=formulation.stub.path,
                 stub_source=formulation.stub.content,
-                required_stub_fields=list(result.stub_fields.get(name, [])),
+                required_stub_fields=list(result.stub_fields.get(identifier, [])),
                 specs=_spec_entries_for(formulation),
-                depends_on=sorted(forward.get(name, set())),
+                depends_on=sorted(
+                    id_to_name[d] for d in forward.get(identifier, set())
+                ),
             )
         )
 
@@ -388,7 +407,7 @@ def build_implementation_plan(
         source_root=str(source_root) if source_root is not None else None,
         prover_conf=prover_conf,
         contracts=contract_plans,
-        cycles=cycles,
+        cycles=[sorted(id_to_name[i] for i in cyc) for cyc in cycles],
         external_actors=_external_actors(result.app),
     )
 
@@ -409,6 +428,7 @@ def plan_to_json(plan: ImplementationPlan) -> dict:
         "contracts": [
             {
                 "name": c.name,
+                "solidity_identifier": c.solidity_identifier,
                 "tag": c.tag,
                 "interface_path": c.interface_path,
                 "interface_source": c.interface_source,
@@ -491,7 +511,10 @@ def plan_as_markdown(plan: ImplementationPlan) -> str:
     lines.append("Listed in dependency order — leaves first.")
     lines.append("")
     for i, c in enumerate(plan.contracts, 1):
-        lines.append(f"### {i}. `{c.name}`")
+        if c.name != c.solidity_identifier:
+            lines.append(f"### {i}. `{c.name}` (Solidity: `{c.solidity_identifier}`)")
+        else:
+            lines.append(f"### {i}. `{c.name}`")
         if c.tag:
             lines.append(f"*Tag:* `{c.tag}`")
         lines.append("")

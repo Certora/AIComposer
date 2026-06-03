@@ -1,12 +1,9 @@
 import contextlib
 import pathlib
-import shutil
-import tempfile
 from abc import ABC, abstractmethod
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, AsyncContextManager, AsyncIterator, Awaitable, ContextManager, Iterator, Mapping, Self, TypedDict
+from typing import Any, AsyncContextManager, Awaitable, ContextManager, Iterator, Mapping, Self, TypedDict
 
 from composer.spec.gen_types import InjectedTemplate
 from composer.spec.natspec.models import (
@@ -14,7 +11,7 @@ from composer.spec.natspec.models import (
     InterfaceResult,
     StubDeclarationModel,
 )
-from composer.spec.system_model import ExplicitContract, NatspecApplication
+from composer.spec.system_model import ExplicitContract, NatspecApplication, SolidityIdentifier
 from composer.spec.util import temp_certora_file
 
 
@@ -115,7 +112,7 @@ class ConfigurationBuilder:
     def with_files(self, files: list[str]) -> Self:
         return self._replace(files=list(files))
 
-    def with_verify(self, *, main_contract: str, spec_file: str) -> Self:
+    def with_verify(self, *, main_contract: SolidityIdentifier, spec_file: str) -> Self:
         return self._replace(verify=f"{main_contract}:certora/{spec_file}")
 
     def with_solc(self, version: str) -> Self:

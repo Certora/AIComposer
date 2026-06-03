@@ -6,14 +6,11 @@ covers all external entry points, and validates it with the Solidity compiler.
 """
 
 import asyncio
-from collections.abc import Callable
 from logging import getLogger
 from typing import NotRequired, cast, override
 
 from graphcore.graph import FlowInput
-from graphcore.tools.vfs import Materializer
 
-from langchain_core.tools import BaseTool
 from langgraph.graph import MessagesState
 
 from composer.spec.context import WorkflowContext, CacheKey
@@ -29,7 +26,7 @@ from composer.spec.natspec.task_description import (
     InterfaceGenCallParams,
     resolve_extra_input,
 )
-from composer.spec.system_model import NatspecApplication, ContractName
+from composer.spec.system_model import NatspecApplication, SolidityIdentifier
 from composer.spec.util import string_hash, uniq_thread_id
 from composer.spec.service_host import ServiceHost
 
@@ -46,7 +43,7 @@ async def generate_interface[I: InterfaceDeclModel](
     materializer: Assembler,
     description: AgentDescription[InterfaceResult[I], InterfaceGenCallParams],
     *,
-    target_names: set[ContractName] | None = None,
+    target_identifiers: set[SolidityIdentifier] | None = None,
 ) -> InterfaceResult[I]:
     """Generate a Solidity interface from component analysis and system document.
 
@@ -55,11 +52,11 @@ async def generate_interface[I: InterfaceDeclModel](
     inside the assembled project. ``description`` fixes the concrete decl
     subtype and the prompt (with any workflow-constant params pre-bound).
 
-    ``target_names`` restricts which contracts the agent is expected to
+    ``target_identifiers`` restricts which contracts the agent is expected to
     produce interfaces for. Defaults to every contract in ``summary`` (the
     greenfield case). In from-source mode the caller passes the subset of
-    contract names tagged ``new`` — contracts tagged ``unchanged``/``edited``
-    already have their interfaces in the source tree.
+    Solidity identifiers tagged ``new`` — contracts tagged
+    ``unchanged``/``edited`` already have their interfaces in the source tree.
     """
     result_ty = description.output_ty
 
@@ -75,9 +72,9 @@ async def generate_interface[I: InterfaceDeclModel](
     solc_name = f"solc{solc_version}"
 
     external_contracts = (
-        target_names
-        if target_names is not None
-        else {c.name for c in summary.contract_components}
+        target_identifiers
+        if target_identifiers is not None
+        else {c.solidity_identifier for c in summary.contract_components}
     )
 
     ST = type("ST", (MessagesState,), {
@@ -92,10 +89,10 @@ async def generate_interface[I: InterfaceDeclModel](
 
         @override
         async def validate(self, res: InterfaceResult[I]) -> str | None:
-            seen: set[ContractName] = set()
+            seen: set[SolidityIdentifier] = set()
             for nm, i in res.name_to_interface.items():
                 if nm not in external_contracts:
-                    return f"Invalid entry found; no external contract with name {nm} appears in input"
+                    return f"Invalid entry found; no external contract with solidity identifier {nm} appears in input"
                 if not i.path.endswith(".sol"):
                     return f"Interface path '{i.path}' for {nm} must end in '.sol'."
                 seen.add(nm)
@@ -130,10 +127,10 @@ async def generate_interface[I: InterfaceDeclModel](
             return None
 
     target_contracts = [
-        c for c in summary.contract_components if c.name in external_contracts
+        c for c in summary.contract_components if c.solidity_identifier in external_contracts
     ]
     existing_contracts = [
-        c for c in summary.contract_components if c.name not in external_contracts
+        c for c in summary.contract_components if c.solidity_identifier not in external_contracts
     ]
 
     final_prompt = description.prompt.inject(
