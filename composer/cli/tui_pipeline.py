@@ -10,14 +10,17 @@ import argparse
 import asyncio
 import json
 import pathlib
+import sys
 import uuid
 from typing import cast, Protocol
 
 
 from graphcore.tools.memory import async_memory_tool
 
+from composer.core.user import user_data_ns
 from composer.input.types import ModelOptions, RAGDBOptions, DEFAULT_RECURSION_LIMIT
 from composer.input.parsing import add_protocol_args
+from composer.io.thread_logging import DEFAULT_META_NS, thread_logger
 from composer.spec.agent_index import agent_index_config_from_env
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
@@ -29,7 +32,8 @@ from composer.spec.context import (
     WorkflowContext, SystemDoc,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline
-from composer.spec.util import string_hash, FS_FORBIDDEN_READ
+from composer.spec.natspec.run_tags import NatspecRunTags
+from composer.spec.util import FS_FORBIDDEN_READ
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.tool_display import async_tool_context
 
@@ -126,10 +130,13 @@ async def _main() -> int:
     llm = create_llm(args)
     model = get_model()
 
+    logging_ns = user_data_ns() + DEFAULT_META_NS
+    run_id = uuid.uuid4().hex
+
     async with (
         standard_connections(embedder=DefaultEmbedder(model)) as conn,
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag,
-        async_tool_context()
+        async_tool_context(),
     ):
         content = await conn.uploader.get_document(input_path)
         if content is None:
@@ -146,72 +153,87 @@ async def _main() -> int:
             args.forbidden_read or (FS_FORBIDDEN_READ if source_root_path else None)
         )
 
-        start_env = build_rag_tool_env(
-            sort=sort,
-            llm=llm,
-            checkpoint=conn.checkpointer,
-            db=rag,
-            cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
-            kb_ns=DEFAULT_KB_NS,
-            store=conn.indexed_store,
-            recursion_limit=args.recursion_limit,
-        )
-
-        source_factory = make_source_factory(source_root_path, forbidden_read)
-
-        config_init: dict | None = None
-        if args.prover_conf:
-            config_init = json.loads(pathlib.Path(args.prover_conf).read_text())
-
-        mental_model = build_mental_model(
-            source_root=source_root_path,
-            config_init=config_init,
-        )
-
-        cache_root = (args.cache_ns, system_doc.content.to_digest()) if args.cache_ns else None
-
         thread_id = f"pipeline_{uuid.uuid4().hex[:12]}"
-        ctx = WorkflowContext.create(
-            services=lambda ns: async_memory_tool(conn.memory(ns)),
-            thread_id=thread_id,
-            store=conn.store,
-            recursion_limit=args.recursion_limit,
-            cache_namespace=cache_root,
+        doc_digest = system_doc.content.to_digest()
+        run_tags = NatspecRunTags(
+            root_thread_id=thread_id,
+            doc_digest=doc_digest,
+            cache_namespace=args.cache_ns,
             memory_namespace=args.memory_ns,
+            from_source=source_root_path is not None,
+            interactive=args.interactive,
         )
 
-        output_root_path: pathlib.Path | None = None
-        if args.output_root:
-            output_root_path = pathlib.Path(args.output_root).resolve()
+        print(f"[natspec] run_id={run_id}  thread={thread_id}", file=sys.stderr)
 
-        # Set up TUI
-        app = NatspecPipelineApp(
-            output_root=output_root_path,
-        )
+        async with thread_logger(
+            conn.store, run_tags.model_dump(), logging_ns, run_id=run_id,
+        ):
+            start_env = build_rag_tool_env(
+                sort=sort,
+                llm=llm,
+                checkpoint=conn.checkpointer,
+                db=rag,
+                cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
+                kb_ns=DEFAULT_KB_NS,
+                store=conn.indexed_store,
+                recursion_limit=args.recursion_limit,
+            )
 
-        async def work():
-            try:
-                result = await run_natspec_pipeline(
-                    system_doc=system_doc,
-                    solc_version=args.solc_version,
-                    start_env=start_env,
-                    ctx=ctx,
-                    store=conn.store,
-                    handler_factory=app.make_handler,
-                    mental_model=mental_model,
-                    source_factory=source_factory,
-                    max_concurrent=args.max_concurrent,
-                    interactive=args.interactive,
-                    max_bug_rounds=args.max_bug_rounds,
-                )
-                await app.on_pipeline_done(result)
-            except Exception as exc:
-                app.notify(f"Pipeline failed: {exc}", severity="error")
-                await app.mount_error(exc)
-                app._pipeline_done = True
+            source_factory = make_source_factory(source_root_path, forbidden_read)
 
-        app.set_work(work)
-        await app.run_async()
+            config_init: dict | None = None
+            if args.prover_conf:
+                config_init = json.loads(pathlib.Path(args.prover_conf).read_text())
+
+            mental_model = build_mental_model(
+                source_root=source_root_path,
+                config_init=config_init,
+            )
+
+            cache_root = (args.cache_ns, doc_digest) if args.cache_ns else None
+
+            ctx = WorkflowContext.create(
+                services=lambda ns: async_memory_tool(conn.memory(ns)),
+                thread_id=thread_id,
+                store=conn.store,
+                recursion_limit=args.recursion_limit,
+                cache_namespace=cache_root,
+                memory_namespace=args.memory_ns,
+            )
+
+            output_root_path: pathlib.Path | None = None
+            if args.output_root:
+                output_root_path = pathlib.Path(args.output_root).resolve()
+
+            # Set up TUI
+            app = NatspecPipelineApp(
+                output_root=output_root_path,
+            )
+
+            async def work():
+                try:
+                    result = await run_natspec_pipeline(
+                        system_doc=system_doc,
+                        solc_version=args.solc_version,
+                        start_env=start_env,
+                        ctx=ctx,
+                        store=conn.store,
+                        handler_factory=app.make_handler,
+                        mental_model=mental_model,
+                        source_factory=source_factory,
+                        max_concurrent=args.max_concurrent,
+                        interactive=args.interactive,
+                        max_bug_rounds=args.max_bug_rounds,
+                    )
+                    await app.on_pipeline_done(result)
+                except Exception as exc:
+                    app.notify(f"Pipeline failed: {exc}", severity="error")
+                    await app.mount_error(exc)
+                    app._pipeline_done = True
+
+            app.set_work(work)
+            await app.run_async()
         return 0
 
 

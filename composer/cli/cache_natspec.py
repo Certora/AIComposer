@@ -5,13 +5,18 @@ Wired as ``cache-natspec`` in ``pyproject.toml``.
 
 Usage::
 
-    cache-natspec <input_file> --cache-ns <ns> [--memory-ns <ns>] [--from-source]
+    cache-natspec --run-id <run_id>
+
+The run id is printed at the start of every ``tui-natspec`` invocation.
+All cache-traversal inputs (cache namespace, memory namespace, doc digest,
+from-source flag) are recovered from the run's ``RunMeta.tags`` —
+``cache-natspec`` does not need the original input file or CLI args.
 """
 
 import argparse
+import asyncio
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from contextvars import ContextVar
 from contextlib import contextmanager, asynccontextmanager
 from typing import AsyncIterator
@@ -20,13 +25,15 @@ from pydantic import BaseModel
 
 from composer.ui.cache_explorer import (
     CacheNode, CacheExplorerApp, DummyServices, CacheTreeNode, OrgNode,
-    StoreNode, StoreSlot,
+    StoreNode,
 )
 from composer.input.types import DEFAULT_RECURSION_LIMIT
+from composer.io.run_index import get_run
 from composer.spec.context import (
     WorkflowContext, CacheKey, CVLGeneration,
     Contract, CacheTypes, Marker, ComponentGroup, Properties,
 )
+from composer.spec.natspec.run_tags import NatspecRunTags
 from composer.spec.system_model import (
     Application, FromSourceApplication, NatspecApplication,
     ExplicitContract, ExternalActor, FromSourceContract, ExistingFromSource,
@@ -188,11 +195,13 @@ async def build_component_tree(
     contract_ctx: WorkflowContext[Properties],
     key: CacheKey[Properties, ComponentGroup],
     comp,
+    *,
+    with_refinement: bool,
 ):
     async with node_for(contract_ctx, key, comp.name) as feat_ctx:
         # Bug analysis cache: aggregate (_BugAnalysisCache.items) → agent
         # result (_AgentResult) → per-round (_AgentRoundWithHistory).
-        bug_key = bug_analysis_key(None)
+        bug_key = bug_analysis_key(None, with_refinement=with_refinement)
         async with node_for(feat_ctx, bug_key, "Bug Analysis", _BugAnalysisCache) as bug_ctx:
             async with node_for(
                 bug_ctx, AGENT_RESULT_KEY, "Agent result", _AgentResult,
@@ -228,11 +237,15 @@ async def build_contract_tree(
     contract_ctx: WorkflowContext[Contract],
     contract: ExplicitContract,
     summ: NatspecApplication,
+    *,
+    with_refinement: bool,
 ):
     async with node_for(contract_ctx, PROPERTIES_KEY, "properties") as prop_ctx:
         for comp in contract.components:
             comp_key = _component_cache_key(comp, summ.application_type)
-            async for t in build_component_tree(prop_ctx, comp_key, comp):
+            async for t in build_component_tree(
+                prop_ctx, comp_key, comp, with_refinement=with_refinement,
+            ):
                 yield t
 
 
@@ -241,6 +254,7 @@ async def build_tree_inner(
     store,
     doc_digest: str,
     from_source: bool,
+    interactive: bool,
 ):
     # Source analysis: which Application subclass was used is determined by
     # whether the original pipeline run passed --source-root. Caller tells us.
@@ -312,17 +326,19 @@ async def build_tree_inner(
         intf_ctx = root_ctx.child(intf_key)
     yield CacheNode(label="interface", ctx=intf_ctx, value=cached_intf)
 
-    # Stubs — per-contract, also keyed on decl subtype suffix.
+    # Stubs — per-contract, also keyed on decl subtype suffix. The stub
+    # cache is keyed by Solidity identifier (matches ``generate_stub``).
     if cached_intf is not None:
         with section("Stubs"):
             intf_hash = string_hash(cached_intf.model_dump_json())
             for c in summary.contract_components:
                 if not _is_generated(c):
                     continue
+                ident = c.solidity_identifier
                 found = False
                 for decl_ty in _STUB_DECL_TYPES:
                     key = CacheKey[None, StubDeclarationModel](
-                        f"stub-for-{intf_hash}-{c.name}-{decl_ty.__name__}"
+                        f"stub-for-{intf_hash}-{ident}-{decl_ty.__name__}"
                     )
                     child_ctx = root_ctx.child(key)
                     value = await child_ctx.cache_get(decl_ty)
@@ -335,7 +351,7 @@ async def build_tree_inner(
                 if not found:
                     # Show a miss so the user can see the contract exists.
                     key = CacheKey[None, StubDeclarationModel](
-                        f"stub-for-{intf_hash}-{c.name}-<no-cache-hit>"
+                        f"stub-for-{intf_hash}-{ident}-<no-cache-hit>"
                     )
                     yield CacheNode[StubDeclarationModel](
                         label=f"Stub: {c.name}",
@@ -349,17 +365,26 @@ async def build_tree_inner(
             continue
         contract_key = CacheKey[None, Contract](string_hash(c.model_dump_json()))
         async with node_for(root_ctx, contract_key, f"Contract: {c.name}") as contract_ctx:
-            async for t in build_contract_tree(contract_ctx, c, summary):
+            async for t in build_contract_tree(
+                contract_ctx, c, summary, with_refinement=interactive,
+            ):
                 yield t
 
 
 async def build_tree(
-    root_ctx: WorkflowContext, store, doc_digest: str, from_source: bool,
+    root_ctx: WorkflowContext,
+    store,
+    doc_digest: str,
+    *,
+    from_source: bool,
+    interactive: bool,
 ) -> CacheNode[NatSpecCachedValue]:
     """Build the NatSpec pipeline cache tree by reading the store."""
     root: CacheNode[NatSpecCachedValue] = CacheNode(label="root", ctx=root_ctx)
     with node(root):
-        async for n in build_tree_inner(root_ctx, store, doc_digest, from_source):
+        async for n in build_tree_inner(
+            root_ctx, store, doc_digest, from_source, interactive,
+        ):
             curr_node = _node_context.get()
             assert curr_node is not None
             curr_node.children.append(n)  # type: ignore
@@ -389,7 +414,7 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
                         lines.append("")
                         lines.append(f"--- Skipped ({len(skipped)}) ---")
                         for s in skipped:
-                            lines.append(f"  Property {s.property_index}: {s.reason}")
+                            lines.append(f"  Property `{s.property_title}`: {s.reason}")
                 case GaveUp(reason=reason):
                     lines.append("--- Gave up ---")
                     lines.append(reason)
@@ -500,63 +525,87 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
 # CLI
 # ---------------------------------------------------------------------------
 
+async def _async_main(args: argparse.Namespace) -> int:
+    from composer.workflow.services import store_context
+
+    async with store_context() as store:
+        meta = await get_run(store, args.run_id, uid=args.uid)
+        if meta is None:
+            print(f"Error: no such run id: {args.run_id}", file=sys.stderr)
+            print(
+                "Run `ap-trail ls` to see available runs.", file=sys.stderr,
+            )
+            return 1
+
+        try:
+            tags = NatspecRunTags.model_validate(meta.get("tags") or {})
+        except Exception as exc:
+            print(
+                f"Error: run {args.run_id} does not look like a natspec run "
+                f"(failed to parse tags: {exc})",
+                file=sys.stderr,
+            )
+            return 1
+
+        if tags.cache_namespace is None:
+            print(
+                f"Error: run {args.run_id} ran without --cache-ns; there is "
+                "no persistent cache to explore.",
+                file=sys.stderr,
+            )
+            return 1
+
+        root_ns = (tags.cache_namespace, tags.doc_digest)
+        print(f"Root namespace: {root_ns}", file=sys.stderr)
+
+        root_ctx: WorkflowContext = WorkflowContext.create(
+            services=DummyServices(),  # type: ignore[arg-type]
+            thread_id="explorer",
+            store=store,
+            recursion_limit=DEFAULT_RECURSION_LIMIT,
+            memory_namespace=tags.memory_namespace,
+            cache_namespace=root_ns,
+        )
+
+        status = f"Cache NS: {root_ns}"
+        if tags.memory_namespace:
+            status += f"  |  Memory NS: {tags.memory_namespace}"
+        status += f"  |  from_source={tags.from_source}"
+        status += f"  |  interactive={tags.interactive}"
+
+        async def _do_build() -> CacheNode[NatSpecCachedValue]:
+            return await build_tree(
+                root_ctx, store, tags.doc_digest,
+                from_source=tags.from_source,
+                interactive=tags.interactive,
+            )
+
+        app = CacheExplorerApp(
+            build_tree=_do_build,
+            format_value=format_value,
+            store=store,
+            status=status,
+        )
+        await app.run_async()
+        return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Cache & Memory Explorer for NatSpec pipeline"
     )
-    parser.add_argument("input_file", help="Path to the design document (text or PDF)")
-    parser.add_argument("--cache-ns", required=True, dest="cache_ns",
-                        help="Cache namespace (same as passed to tui_pipeline)")
-    parser.add_argument("--memory-ns", dest="memory_ns", default=None,
-                        help="Memory namespace (enables memory browsing)")
-    parser.add_argument("--from-source", action="store_true",
-                        help="Set if the original pipeline run was invoked with "
-                             "--source-root (selects the FromSourceApplication "
-                             "model for cache lookups). Omit for greenfield runs.")
+    parser.add_argument(
+        "--run-id", required=True, dest="run_id",
+        help="The run id printed by tui-natspec at startup. All other "
+             "cache-traversal inputs are recovered from the run's tags.",
+    )
+    parser.add_argument(
+        "--uid", default=None,
+        help="User id to scope the lookup. Defaults to the current user.",
+    )
 
     args = parser.parse_args()
-
-    input_path = Path(args.input_file)
-    if not input_path.is_file():
-        print(f"Error: cannot read {input_path}")
-        return 1
-
-    from composer.workflow.services import get_store
-    store = get_store()
-
-    # Matches the digest computed by FileUploader.get_document() (see
-    # composer/input/files.py): sha256 of the raw file bytes, first 16
-    # hex chars. Holds for both text inputs (InMemoryTextFile, bytes =
-    # utf-8 encode of contents) and binary uploads (UploadedFile, bytes
-    # = raw file contents).
-    import hashlib
-    doc_digest = hashlib.sha256(input_path.read_bytes()).hexdigest()[:16]
-    root_ns = (args.cache_ns, doc_digest)
-    print(f"Root namespace: {root_ns}")
-
-    root_ctx: WorkflowContext = WorkflowContext.create(
-        services=DummyServices(),  # type: ignore[arg-type]
-        thread_id="explorer",
-        store=store,
-        recursion_limit=DEFAULT_RECURSION_LIMIT,
-        memory_namespace=args.memory_ns,
-        cache_namespace=root_ns,
-    )
-
-    status = f"Cache NS: {root_ns}"
-    if args.memory_ns:
-        status += f"  |  Memory NS: {args.memory_ns}"
-
-    app = CacheExplorerApp(
-        build_tree=lambda: build_tree(
-            root_ctx, store, doc_digest, from_source=args.from_source,
-        ),
-        format_value=format_value,
-        store=store,
-        status=status,
-    )
-    app.run()
-    return 0
+    return asyncio.run(_async_main(args))
 
 
 if __name__ == "__main__":

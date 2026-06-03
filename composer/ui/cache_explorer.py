@@ -11,7 +11,7 @@ See scripts/cache_explorer.py for the NatSpec pipeline entry point.
 from typing import Callable, Awaitable
 from dataclasses import dataclass, field
 
-from langgraph.store.postgres import PostgresStore
+from langgraph.store.base import BaseStore
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -215,7 +215,7 @@ class CacheExplorerApp[V](App):
         self,
         build_tree: Callable[[], Awaitable[CacheNode[V]]],
         format_value: Callable[[V], list[str]],
-        store: PostgresStore,
+        store: BaseStore,
         status: str,
     ):
         super().__init__()
@@ -374,7 +374,7 @@ class CacheExplorerApp[V](App):
             if self._selected_node:
                 self._show_detail(self._selected_node)
 
-    def action_delete_entry(self) -> None:
+    async def action_delete_entry(self) -> None:
         if self._selected_node is None:
             self.notify("No node selected", severity="warning")
             return
@@ -388,7 +388,7 @@ class CacheExplorerApp[V](App):
             self.notify("Node has no backing slot to delete", severity="error")
             return
         ns, key = slot
-        self._store.delete(ns, key)
+        await self._store.adelete(ns, key)
         node.value = None
         self.notify(f"Deleted: {node.label}")
 
