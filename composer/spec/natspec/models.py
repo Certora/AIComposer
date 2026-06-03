@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from composer.spec.system_model import ContractName, SolidityIdentifier
+
 
 # ---------------------------------------------------------------------------
 # Interface declaration models
@@ -25,7 +27,7 @@ class InterfaceDeclModel(BaseModel, ABC):
         description="The contents of `path`, which should hold a complete Solidity "
         "interface describing the external entry points of the described contract(s)"
     )
-    solidity_identifier: str = Field(description="The solidity identifier of the interface")
+    solidity_identifier: SolidityIdentifier = Field(description="The solidity identifier of the interface")
     if TYPE_CHECKING:
         @property
         @abstractmethod
@@ -52,9 +54,9 @@ class AutoInterfaceDecl(InterfaceDeclModel):
 
 class InterfaceResult[T: InterfaceDeclModel](BaseModel):
     """The result of your interface generation."""
-    name_to_interface: dict[str, T] = Field(
-        description="A mapping from the explicit contract name to the interface "
-        "describing the behavior of that component"
+    name_to_interface: dict[ContractName, T] = Field(
+        description="A mapping from the explicit contract's conceptual `name` to "
+        "the interface describing the behavior of that component"
     )
 
     def dump_to_path(self, p: pathlib.Path) -> list[pathlib.Path]:
@@ -76,8 +78,8 @@ class InterfaceResult[T: InterfaceDeclModel](BaseModel):
 
 class StubDeclarationModel(BaseModel, ABC):
     """The generated stub."""
-    solidity_identifier: str = Field(
-        description="The contract name (solidity identifier) chosen for the stub"
+    solidity_identifier: SolidityIdentifier = Field(
+        description="The contract identifier (solidity identifier) chosen for the stub"
     )
     content: str = Field(
         description="The complete Solidity file which declares the stub implementation"

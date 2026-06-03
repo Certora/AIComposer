@@ -22,6 +22,7 @@ from langchain_core.tools import BaseTool
 
 from graphcore.tools.schemas import WithInjectedState, WithAsyncImplementation
 
+from composer.spec.system_model import ContractName
 from composer.spec.cvl_generation import CVLGenerationExtra
 from composer.spec.natspec.registry import FileRegistry
 from composer.spec.natspec.task_description import Assembler, ConfigurationBuilder
@@ -80,7 +81,7 @@ def make_typechecker(
     files: FileRegistry,
     assembler: Assembler,
     config_builder: ConfigurationBuilder,
-    primary_contract: str
+    primary_contract: ContractName
 ) -> TypeChecker:
     async def to_return(
         spec: str

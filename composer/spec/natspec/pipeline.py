@@ -51,7 +51,7 @@ from composer.spec.natspec.author import generate_cvl_batch, GaveUp, GenerationS
 from composer.spec.natspec.system_analysis import run_component_analysis, DESCRIPTION as SYSTEM_DESC
 from composer.spec.system_model import (
     ContractInstance, ContractComponentInstance, ContractComponent,
-    ExplicitContract, NatspecApplication, ExistingFromSource,
+    ExplicitContract, NatspecApplication, ExistingFromSource, ContractName, SolidityIdentifier
 )
 from composer.spec.service_host import ServiceHost, PureServiceHost
 
@@ -139,7 +139,7 @@ class PipelineResult:
     # A's ``stub.path`` appears in ``spec_file_paths[B]``. Path-based
     # matching avoids assuming Solidity identifiers align with design-doc
     # names. Empty for contracts that registered nothing.
-    spec_file_paths: dict[str, list[str]] = field(default_factory=dict)
+    spec_file_paths: dict[ContractName, list[str]] = field(default_factory=dict)
 
 
 
@@ -494,9 +494,9 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     # Phase 4: Initial stub generation (new contracts only)
     # ------------------------------------------------------------------
     async def gen_one_stub(
-        contract_name: str,
-        solidity_identifier: str,
-    ) -> tuple[str, StubDeclarationModel]:
+        contract_name: ContractName,
+        solidity_identifier: SolidityIdentifier,
+    ) -> tuple[ContractName, StubDeclarationModel]:
         res = await run_task(
             handler_factory,
             TaskInfo(f"stub-gen-{contract_name}", f"Stub: {contract_name}", Phase.STUB_GEN),

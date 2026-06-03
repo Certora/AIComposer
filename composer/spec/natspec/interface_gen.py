@@ -29,7 +29,7 @@ from composer.spec.natspec.task_description import (
     InterfaceGenCallParams,
     resolve_extra_input,
 )
-from composer.spec.system_model import NatspecApplication
+from composer.spec.system_model import NatspecApplication, ContractName
 from composer.spec.util import string_hash, uniq_thread_id
 from composer.spec.service_host import ServiceHost
 
@@ -46,7 +46,7 @@ async def generate_interface[I: InterfaceDeclModel](
     materializer: Assembler,
     description: AgentDescription[InterfaceResult[I], InterfaceGenCallParams],
     *,
-    target_names: set[str] | None = None,
+    target_names: set[ContractName] | None = None,
 ) -> InterfaceResult[I]:
     """Generate a Solidity interface from component analysis and system document.
 
@@ -92,7 +92,7 @@ async def generate_interface[I: InterfaceDeclModel](
 
         @override
         async def validate(self, res: InterfaceResult[I]) -> str | None:
-            seen: set[str] = set()
+            seen: set[ContractName] = set()
             for nm, i in res.name_to_interface.items():
                 if nm not in external_contracts:
                     return f"Invalid entry found; no external contract with name {nm} appears in input"

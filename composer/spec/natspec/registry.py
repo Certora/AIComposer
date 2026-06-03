@@ -30,6 +30,7 @@ from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 from graphcore.tools.vfs import Materializer
 
 from composer.spec.context import WorkflowContext, PlainBuilder, CVLOnlyBuilder
+from composer.spec.system_model import ContractName
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.natspec.pipeline_events import StubUpdate
 from composer.spec.natspec.models import (
@@ -133,7 +134,7 @@ def _compile_stub(
 # ---------------------------------------------------------------------------
 
 async def run_registry_agent(
-    contract_name: str,
+    contract_name: ContractName,
     request: str,
     stub_content: str,
     stub_path: str,
@@ -239,8 +240,8 @@ class StubRegistry:
     _solc_version: str
     _assembler: Assembler
     _mirror_by_path: dict[str, str]
-    _mirror_by_name: dict[str, str]
-    _path_by_name: dict[str, str]
+    _mirror_by_name: dict[ContractName, str]
+    _path_by_name: dict[ContractName, str]
     _recursion_limit: int
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _namespace: tuple[str, ...] = ()
@@ -252,7 +253,7 @@ class StubRegistry:
         builder: PlainBuilder | CVLOnlyBuilder,
         interface: InterfaceResult,
         interface_only_mat: Assembler,
-        initial_stubs: dict[str, StubDeclarationModel],
+        initial_stubs: dict[ContractName, StubDeclarationModel],
         solc_version: str,
         *,
         recursion_limit: int,
@@ -295,10 +296,10 @@ class StubRegistry:
                 t["path"]: t["content"] for t in curr_res.value.values()
             }
             curr_content_name = {
-                nm: t["content"] for (nm, t) in curr_res.value.items()
+                ContractName(nm): t["content"] for (nm, t) in curr_res.value.items()
             }
             curr_path_by_name = {
-                nm: t["path"] for (nm, t) in curr_res.value.items()
+                ContractName(nm): t["path"] for (nm, t) in curr_res.value.items()
             }
             _log.debug(
                 "StubRegistry.acreate: RESUMED ns=%r stored_stubs=%s "
@@ -348,7 +349,7 @@ class StubRegistry:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(v)
 
-    def read_stub(self, nm: str) -> str:
+    def read_stub(self, nm: ContractName) -> str:
         """Read current stub content (no lock needed)."""
         return self._mirror_by_name[nm]
 
@@ -385,7 +386,7 @@ class StubRegistry:
     async def _write_field_metadata(self, metadata: FieldMetadata) -> None:
         await self._store.aput(self._namespace, FIELDS_STORE_KEY, metadata.model_dump())
 
-    async def _write_stub(self, nm: str, content: str) -> None:
+    async def _write_stub(self, nm: ContractName, content: str) -> None:
         """Update the stub content for ``nm`` in place. Path stays fixed."""
         it = await self._store.aget(self._namespace, STUB_STORE_KEY)
         assert it is not None
@@ -401,7 +402,7 @@ class StubRegistry:
         await self._store.aput(self._namespace, STUB_STORE_KEY, to_put)
 
     async def request_field(
-        self, nm: str, purpose: str, *, within_tool: str ,
+        self, nm: ContractName, purpose: str, *, within_tool: str ,
     ) -> str:
         """Request a stub field for a given purpose. Serialized via lock.
 
@@ -452,7 +453,7 @@ class StubRegistry:
 
             return f"Use field {result.field_name}"
 
-    def get_tools(self, contract_name: str) -> "list[BaseTool]":
+    def get_tools(self, contract_name: ContractName) -> "list[BaseTool]":
         """Return tools for injection into the property agent authoring the spec
         for ``contract_name``. The agent is primarily responsible for its own
         contract, but may read and request fields in any other contract's stub
@@ -481,7 +482,7 @@ class StubRegistry:
 
             You may *NOT* use this tool to request any change to the stub besides a new storage field.
             """
-            contract_name: str = PydanticField(
+            contract_name: ContractName = PydanticField(
                 description=(
                     f"The contract whose stub should gain the field. You are "
                     f"authoring the spec for '{home_contract}' — pass that name "
@@ -564,7 +565,7 @@ class FileRegistry:
             _store=store, _materializer=materializer, _namespace=namespace,
         )
 
-    async def _read_contract(self, contract_name: str) -> list[FileEntry]:
+    async def _read_contract(self, contract_name: ContractName) -> list[FileEntry]:
         item = await self._store.aget(self._namespace, contract_name)
         if item is None:
             return []
@@ -573,7 +574,7 @@ class FileRegistry:
             for e in item.value["files"]
         ]
 
-    async def _write_contract(self, contract_name: str, files: list[FileEntry]) -> None:
+    async def _write_contract(self, contract_name: ContractName, files: list[FileEntry]) -> None:
         _log.debug(
             "FileRegistry._write_contract: ns=%r contract=%s entries=%s",
             self._namespace, contract_name,
@@ -586,7 +587,7 @@ class FileRegistry:
             ],
         })
 
-    async def read_all(self, contract_name: str) -> list[str]:
+    async def read_all(self, contract_name: ContractName) -> list[str]:
         """Read the prover-ready file arguments registered for ``contract_name``.
 
         Each entry is either ``path`` or ``path:Identifier`` depending on
@@ -594,11 +595,11 @@ class FileRegistry:
         """
         return [e.as_prover_arg() for e in await self._read_contract(contract_name)]
 
-    async def read_all_contracts(self) -> dict[str, list[str]]:
+    async def read_all_contracts(self) -> dict[ContractName, list[str]]:
         """Read the full registration map (contract → prover-ready file args)."""
         items = await self._store.asearch(self._namespace, limit=10_000)
         return {
-            item.key: [
+            ContractName(item.key): [
                 FileEntry(
                     path=e["path"],
                     solidity_identifier=e["solidity_identifier"],
@@ -608,7 +609,7 @@ class FileRegistry:
             for item in items
         }
 
-    async def read_all_paths(self) -> dict[str, list[str]]:
+    async def read_all_paths(self) -> dict[ContractName, list[str]]:
         """Read the full registration map (contract → list of registered
         file paths). Used by ``codegen_export`` to derive the dep graph
         by matching registered paths against each generated contract's
@@ -617,13 +618,13 @@ class FileRegistry:
         which can drift as the stub layout evolves."""
         items = await self._store.asearch(self._namespace, limit=10_000)
         return {
-            item.key: [e["path"] for e in item.value["files"]]
+            ContractName(item.key): [e["path"] for e in item.value["files"]]
             for item in items
         }
 
     async def register(
         self,
-        contract_name: str,
+        contract_name: ContractName,
         path: str,
         solidity_identifier: str | None = None,
     ) -> str:
@@ -666,7 +667,7 @@ class FileRegistry:
             await self._write_contract(contract_name, files)
         return f"Registered {new_entry.as_prover_arg()} for {contract_name}."
 
-    def get_tools(self, contract_name: str) -> list[BaseTool]:
+    def get_tools(self, contract_name: ContractName) -> list[BaseTool]:
         """Return tools scoped to ``contract_name`` for injection into that
         contract's property agents.
         """

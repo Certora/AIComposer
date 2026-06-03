@@ -23,6 +23,7 @@ from composer.spec.natspec.models import (
     InterfaceResult,
     StubDeclarationModel,
 )
+from composer.spec.system_model import ContractName, SolidityIdentifier
 from composer.spec.natspec.task_description import (
     AgentDescription,
     Assembler,
@@ -39,8 +40,8 @@ async def generate_stub[S: StubDeclarationModel](
     ctx: WorkflowContext[None],
     interface: InterfaceResult,
     env: ServiceHost,
-    contract_name: str,
-    solidity_identifier: str,
+    contract_name: ContractName,
+    solidity_identifier: SolidityIdentifier,
     solc_version: str,
     materializer: Assembler,
     description: AgentDescription[S, StubGenCallParams],

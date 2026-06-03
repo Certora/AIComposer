@@ -5,22 +5,33 @@ from functools import cached_property
 
 type ContractSort = Literal["dynamic", "singleton", "multiple"]
 
-# Nominal ``str`` subtype for Solidity identifiers — distinct at type-check time
-# (callers must construct explicitly via cast or SolidityIdentifier(...)),
-# transparent ``str`` at runtime so pydantic ``Field(pattern=...)`` validates
-# the value normally. Phantom-type pattern: TYPE_CHECKING block defines a true
-# subclass for the static checker; runtime branch is a plain alias.
+# Nominal ``str`` subtypes for the two distinct contract-identity fields.
+# Both phantom-typed (TYPE_CHECKING-only subclass; ``str`` at runtime) so they
+# remain distinct at static-check time but pydantic ``Field`` validates them
+# as plain strings.
+#
+# ``SolidityIdentifier``: a Solidity contract identifier (regex-validated where
+# stored on a pydantic field).
+# ``ContractName``: the conceptual / design-doc-readable name of a contract.
+# May be a Solidity identifier when the design doc names contracts that way,
+# but allowed to be anything human-readable.
+#
+# The two are **siblings under str**, not in a subtype relation with each
+# other — passing a ``SolidityIdentifier`` where ``ContractName`` is expected
+# (or vice-versa) is a type error, even though both are ``str`` at runtime.
 if TYPE_CHECKING:
     class SolidityIdentifier(str): ...
+    class ContractName(str): ...
 else:
     SolidityIdentifier = str
+    ContractName = str
 
 class ExternalDependency(BaseModel):
     external_actor: str = Field(description="The name of the external actor interacted with")
     description : str = Field(description="A description of the interaction with the external actor")
 
 class ComponentInteraction(BaseModel):
-    contract_name: str = Field(description="The name of the contract interacted with")
+    contract_name: ContractName = Field(description="The conceptual name of the contract interacted with (matching the `name` field of an ExplicitContract in the application)")
     component : str | None = Field(description="The specific component within that contract interacted with")
     description : str = Field(description="A description of the interaction with the contract component.")
 
@@ -52,7 +63,7 @@ class ExplicitContract(BaseModel):
     sort: ContractSort = Field(description=("The sort of the contract. `dynamic` if instances of this type are "
         "dynamically created by the system itself. `multiple` if multiple instances are expected to be "
         "deployed by some external actor/administrator. `singleton` if only one instance will exist in a deployed system."))
-    name: str = Field(description=(
+    name: ContractName = Field(description=(
         "A short, conceptual label for this contract, used to refer to it across the "
         "system description. May be the same as solidity_identifier when the design "
         "doc names the contract by its Solidity identifier directly."
