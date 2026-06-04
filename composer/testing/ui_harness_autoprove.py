@@ -1064,16 +1064,22 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     ),
 
     # Q17 — final result. Both validations current, curr_spec unchanged
-    # since Q14 / J3. result schema is (str, "Commentary on your
-    # generated spec") so args are {"value": "..."}.
+    # since Q14 / J3. PublishResultTool requires `commentary` plus a
+    # `property_rules` mapping covering every (non-skipped) batch title —
+    # here the two invariant titles, each verified by the invariant of the
+    # same name in GOOD_INV_CVL.
     _ai(
         "Finalizing the invariant CVL.",
         _tc(
             "result",
-            value=(
+            commentary=(
                 "Formalized the two structural invariants (increments_sum_is_count, "
                 "zero_address_is_zero)."
             ),
+            property_rules=[
+                {"property_title": "increments_sum_is_count", "rules": ["increments_sum_is_count"]},
+                {"property_title": "zero_address_is_zero", "rules": ["zero_address_is_zero"]},
+            ],
         ),
     ),
 
@@ -1358,7 +1364,7 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
         "Finalizing the component CVL.",
         _tc(
             "result",
-            value=(
+            commentary=(
                 "Formalized all three extracted safety properties as "
                 "pre/post equalities. The two increment() rules verify. "
                 "The incrementOther rule is left in place and marked "
@@ -1367,6 +1373,11 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
                 "sender] instead of increments[other]. The spec is "
                 "correct; the implementation needs to be fixed."
             ),
+            property_rules=[
+                {"property_title": "count_increments_by_one", "rules": ["increment_increases_count"]},
+                {"property_title": "sender_increments_by_one", "rules": ["increment_increases_sender_tally"]},
+                {"property_title": "other_increments_by_one", "rules": ["incrementOther_credits_target_when_distinct"]},
+            ],
         ),
     ),
 ]
