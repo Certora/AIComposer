@@ -2,12 +2,16 @@
 Auto-prove multi-agent pipeline orchestration.
 
 Phases:
-1. Harness setup — classify external contracts, generate harness files
-2. Custom summaries — generate CVL summaries for SUMMARIZABLE contracts
-3. Structural invariants — formulate and generate CVL for structural invariants
-4. Component analysis
-5. Per-component property extraction (parallel)
-6. Per-component CVL generation (parallel, semaphore-bounded)
+1. Component analysis
+2. Harness creation — classify external contracts, generate harness files
+3. In parallel, after harness creation:
+     - AutoSetup (compilation config + summaries), then custom summaries
+     - Structural-invariant formulation
+     - Per-component property extraction ("bug analysis")
+4. Staged CVL-generation join:
+     - Stage 1: structural-invariant CVL (writes invariants.spec)
+     - Stage 2: per-component CVL (parallel, imports invariants.spec as
+       assumable preconditions)
 """
 
 import asyncio
@@ -26,7 +30,7 @@ from composer.spec.context import (
 )
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
-from composer.spec.source.harness import run_setup
+from composer.spec.source.harness import run_harness_creation, run_autosetup_phase, ContractSetup
 from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.summarizer import setup_summaries
@@ -39,7 +43,7 @@ from composer.spec.source.prover import get_prover_tool, dump_final_conf
 from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
-from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult, dump_properties, dump_property_rules
+from composer.spec.source.common_pipeline import extract_all_components, generate_all_component_cvl, AutoProveResult, dump_properties, dump_property_rules
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +79,9 @@ async def run_autoprove_pipeline(
     """Run the auto-prove multi-agent pipeline."""
     semaphore = asyncio.Semaphore(max_concurrent)
 
+    # ------------------------------------------------------------------
+    # Phase 1: Component analysis
+    # ------------------------------------------------------------------
     s = await run_task(
         handler_factory,
         TaskInfo("system-analysis", "System Analysis", AutoProvePhase.COMPONENT_ANALYSIS),
@@ -84,19 +91,19 @@ async def run_autoprove_pipeline(
     if s is None:
         raise ValueError("System analysis failed")
 
-    setup = await run_task(
+    # ------------------------------------------------------------------
+    # Phase 2: Harness creation. Prerequisite for AutoSetup (which reads the
+    # generated harness files) and for the invariant/bug branch (both consume
+    # harnessed_app, built from harness creation + component analysis).
+    # ------------------------------------------------------------------
+    sys_desc = await run_task(
         handler_factory,
-        TaskInfo("setup", "Auto Setup", AutoProvePhase.HARNESS),
-        lambda: run_setup(
-            ctx, source_input, env, s, prover_opts
-        )
+        TaskInfo("harness", "Harness Creation", AutoProvePhase.HARNESS),
+        lambda: run_harness_creation(ctx, source_input, env, s),
     )
 
-    if setup is None:
-        raise ValueError("Project setup failed")
-
     contract_to_harness : dict[str, list[HarnessDefinition]] = {}
-    for c in setup.system_description.transitive_closure:
+    for c in sys_desc.transitive_closure:
         if not c.harness_definition:
             continue
         if c.harness_definition.harness_of not in contract_to_harness:
@@ -129,45 +136,84 @@ async def run_autoprove_pipeline(
         components=comp
     )
 
-    # Build initial resources from AutoSetup-generated summaries
-    resources: list[CVLResource] = [
-        CVLResource(
-            import_path=str(setup.config.summaries_path),
-            required=True,
-            description="AutoSetup-generated summaries",
-            sort="import",
-        ),
-    ]
-
-    if setup.system_description.erc20_contracts or setup.system_description.external_interfaces:
-        summary_resource : CVLResource = await run_task(
-            handler_factory,
-            TaskInfo("summaries", "Custom Summaries", AutoProvePhase.SUMMARIES),
-            lambda: setup_summaries(
-                ctx=ctx,
-                app=harnessed_app,
-                config=setup,
-                env=env,
-                source=source_input
-            )
-        )
-        resources.append(summary_resource)
-
-    # Build prover tool (needs config from phase 1)
+    # Prover tool is stateless with respect to setup, so build it now; it is
+    # shared by every CVL-generation call below.
     prover_tool = get_prover_tool(
         llm, source_input.contract_name,
         source_input.project_root, prover_opts=prover_opts,
     )
 
     # ------------------------------------------------------------------
-    # Phase 3: Structural invariants
+    # Phase 3 (parallel branches, joined below):
+    #   A) AutoSetup → custom summaries  (produces prover config + resources)
+    #   B) structural-invariant formulation
+    #   C) per-component property extraction ("bug analysis")
+    # B and C are independent of A; they only need harnessed_app + source.
     # ------------------------------------------------------------------
-    invariants = await run_task(
-        handler_factory,
-        TaskInfo("invariants", "Structural Invariants", AutoProvePhase.INVARIANTS),
-        lambda: get_invariant_formulation(ctx, source_input, env, harnessed_app),
+    async def stream_autosetup():
+        setup_config = await run_task(
+            handler_factory,
+            TaskInfo("autosetup", "AutoSetup", AutoProvePhase.AUTOSETUP),
+            lambda: run_autosetup_phase(ctx, source_input, sys_desc, s, prover_opts),
+        )
+        resources: list[CVLResource] = [
+            CVLResource(
+                import_path=str(setup_config.summaries_path),
+                required=True,
+                description="AutoSetup-generated summaries",
+                sort="import",
+            ),
+        ]
+        if sys_desc.erc20_contracts or sys_desc.external_interfaces:
+            summary_resource = await run_task(
+                handler_factory,
+                TaskInfo("summaries", "Custom Summaries", AutoProvePhase.SUMMARIES),
+                lambda: setup_summaries(
+                    ctx=ctx,
+                    app=harnessed_app,
+                    config=ContractSetup(system_description=sys_desc, config=setup_config),
+                    env=env,
+                    source=source_input
+                )
+            )
+            resources.append(summary_resource)
+        return setup_config, resources
+
+    async def stream_invariants():
+        return await run_task(
+            handler_factory,
+            TaskInfo("invariants", "Structural Invariants", AutoProvePhase.INVARIANTS),
+            lambda: get_invariant_formulation(ctx, source_input, env, harnessed_app),
+        )
+
+    async def stream_bugs():
+        return await extract_all_components(
+            source_input=source_input,
+            prop_context=ctx.child(PROPERTIES_KEY),
+            handler_factory=handler_factory,
+            env=env,
+            summary=harnessed_app,
+            semaphore=semaphore,
+            interactive=interactive,
+            threat_model=threat_model,
+            max_bug_rounds=max_bug_rounds,
+        )
+
+    (setup_config, resources), invariants, component_batches = await asyncio.gather(
+        stream_autosetup(),
+        stream_invariants(),
+        stream_bugs(),
     )
 
+    if not component_batches:
+        raise ValueError("No properties extracted from any component.")
+
+    certora_dir = Path(source_input.project_root) / "certora"
+
+    # ------------------------------------------------------------------
+    # Join, stage 1: structural-invariant CVL. Runs before the per-component
+    # CVL so invariants.spec exists and can be imported as preconditions.
+    # ------------------------------------------------------------------
     if invariants.inv:
         inv_task_id = "invariant-cvl"
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
@@ -184,7 +230,6 @@ async def run_autoprove_pipeline(
         ]
 
         # Dump the analysis-phase invariant properties now that we have them.
-        certora_dir = Path(source_input.project_root) / "certora"
         dump_properties(certora_dir, "invariants", inv_props)
 
         if cached_inv_cvl is not None:
@@ -198,7 +243,7 @@ async def run_autoprove_pipeline(
                     component=None,
                     props=inv_props,
                     env=env,
-                    init_config=setup.config.prover_config,
+                    init_config=setup_config.prover_config,
                     prover_tool=prover_tool,
                     resources=resources,
                     description="Structural invariant CVL",
@@ -222,6 +267,9 @@ async def run_autoprove_pipeline(
             spec_name=Path(inv_spec_name),
             conf=inv_cvl.conf,
         )
+        # All three streams have already joined, so `resources` is no longer
+        # shared with any running task: this append is race-free, and the
+        # stage-2 component CVLs below will see invariants.spec.
         resources.append(CVLResource(
             import_path=inv_spec_name,
             required=False,
@@ -229,20 +277,17 @@ async def run_autoprove_pipeline(
             sort="import",
         ))
 
-    prop_context = ctx.child(PROPERTIES_KEY)
-
-    res = await run_generation_pipeline(
+    # ------------------------------------------------------------------
+    # Join, stage 2: per-component CVL (parallel, semaphore-bounded). Imports
+    # invariants.spec (if any) as assumable preconditions.
+    # ------------------------------------------------------------------
+    return await generate_all_component_cvl(
         source_input=source_input,
-        env=env,
+        component_batches=component_batches,
         handler_factory=handler_factory,
-        prop_context=prop_context,
-        prover_config=setup.config.prover_config,
+        env=env,
         prover_tool=prover_tool,
+        prover_config=setup_config.prover_config,
         resources=resources,
         semaphore=semaphore,
-        summary=harnessed_app,
-        threat_model=threat_model,
-        interactive=interactive,
-        max_bug_rounds=max_bug_rounds,
     )
-    return res
