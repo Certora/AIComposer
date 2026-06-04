@@ -121,10 +121,14 @@ async def with_handler(
     try:
         yield
     finally:
-        background_task.cancel()
+        # Drain events still queued when the scope exits (e.g. AutoSetup's
+        # completion event, emitted just before its run_task returns with no
+        # further await to let the drainer catch up) instead of cancelling the
+        # drainer and dropping them. Fall back to cancellation if a handler hangs.
+        ev_queue.close()
         try:
-            await background_task
-        except asyncio.CancelledError:
+            await asyncio.wait_for(background_task, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         _io_handler.reset(tok)
 
