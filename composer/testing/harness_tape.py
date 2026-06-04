@@ -1,4 +1,5 @@
 from typing import Any, Callable, Sequence, override
+from dataclasses import dataclass
 import random
 import asyncio
 
@@ -14,6 +15,7 @@ from langchain_core.runnables import RunnableConfig
 from composer.diagnostics.timing import get_current_task_id
 
 
+@dataclass(frozen=True)
 class LaneMarker:
     """Sentinel placed in a flat tape list to mark where a new lane begins.
 
@@ -26,10 +28,7 @@ class LaneMarker:
     order is preserved exactly as before.
     """
 
-    __slots__ = ("task_id",)
-
-    def __init__(self, task_id: str) -> None:
-        self.task_id = task_id
+    task_id: str
 
 
 def partition_tape(
