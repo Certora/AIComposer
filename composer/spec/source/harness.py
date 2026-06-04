@@ -506,11 +506,11 @@ _logger = getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Split phases.
 #
-# ``run_setup`` (below) fuses harness creation and AutoSetup into one task.
-# These two functions expose them separately so the pipeline can run AutoSetup
-# in parallel with invariant/bug analysis. They share the ``config_key`` parent
-# context, so existing harness-creation caches (keyed by ``system_setup_key``)
-# still hit; only the new AutoSetup result is cached under its own key.
+# Harness creation and AutoSetup are exposed as two separate, independently
+# cached steps so the pipeline can run AutoSetup in parallel with invariant/bug
+# analysis. They share the ``config_key`` parent context, so existing
+# harness-creation caches (keyed by ``system_setup_key``) still hit; the
+# AutoSetup result is cached under its own key.
 # ---------------------------------------------------------------------------
 
 async def run_harness_creation(
@@ -552,8 +552,7 @@ async def run_autosetup_phase(
     return the compilation config + summaries. Depends on harness creation
     having run first: it reads the transitive-closure file paths from disk.
 
-    Cache hits are guarded by the on-disk existence of ``summaries_path``,
-    mirroring the guard the fused ``run_setup`` used."""
+    Cache hits are guarded by the on-disk existence of ``summaries_path``."""
     config_ctxt = context.child(config_key)
     cache = await config_ctxt.child(
         autosetup_key(application_desc, prover_opts),
@@ -580,42 +579,4 @@ async def run_autosetup_phase(
 
     await cache.cache_put(setup_result)
     return setup_result
-
-
-async def run_setup(
-    context: WorkflowContext[None],
-    source: SourceCode,
-    env: SourceEnvironment,
-    application_desc: SourceApplication,
-    prover_opts: ProverOptions,
-) -> ContractSetup | None:
-    config_ctxt = context.child(config_key)
-    if (cached := await config_ctxt.cache_get(ContractSetup)) is not None:
-        if (Path(source.project_root) / "certora"  / cached.config.summaries_path).exists():
-            return cached
-
-    sys_desc = await run_and_apply_part1(config_ctxt, source, env, application_desc)
-
-    extra_files = [
-        c.path for c in sys_desc.transitive_closure if c.name != source.contract_name
-    ]
-
-    setup_result = await run_autosetup(
-        Path(source.project_root),
-        source.relative_path,
-        source.contract_name,
-        prover_opts,
-        *extra_files,
-    )
-
-    if isinstance(setup_result, SetupFailure):
-        raise RuntimeError(f"Auto setup failed: {setup_result.error}\nProc stderr:\n{setup_result.stderr}")
-
-    to_ret = ContractSetup(
-        system_description=sys_desc,
-        config=setup_result
-    )
-
-    await config_ctxt.cache_put(to_ret)
-    return to_ret
 

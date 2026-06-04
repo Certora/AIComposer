@@ -36,7 +36,8 @@ type.
 Global call order across phases:
 
     run_component_analysis
-      → run_setup / classifier_agent
+      → run_harness_creation / classifier_agent
+      → run_autosetup_phase
       → get_invariant_formulation
           └─ invariant_feedback sub-agent ×3
       → batch_cvl_generation (invariant CVL)
@@ -471,7 +472,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     ),
 
     # ───────────────────────────────────────────────────────────────────
-    # P2. Classifier agent (run_setup → classifier_agent →
+    # P2. Classifier agent (run_harness_creation → classifier_agent →
     #     AgentSystemDescription)
     # ───────────────────────────────────────────────────────────────────
     # Tools available: memory, source_tools, result.
