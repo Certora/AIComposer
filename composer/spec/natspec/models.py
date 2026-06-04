@@ -105,4 +105,4 @@ class AutoStubDeclaration(StubDeclarationModel):
 
     @property
     def path(self) -> str:
-        return f"src/contracts/{self.solidity_identifier}.sol"
+        return f"{self.solidity_identifier}.sol"

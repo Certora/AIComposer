@@ -158,7 +158,7 @@ INITIAL_STUB = """\
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.29;
 
-import "../ICounter.sol";
+import "./ICounter.sol";
 
 contract Counter is ICounter {
     function increment() external override {}
@@ -172,7 +172,7 @@ UPDATED_STUB = """\
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.29;
 
-import "../ICounter.sol";
+import "./ICounter.sol";
 
 contract Counter is ICounter {
     uint256 internal ghost_count;
@@ -325,12 +325,14 @@ _COUNTER_TAPE: list[BaseMessage] = [
         "Interface drafted.",
         _tc(
             "result",
-            name_to_interface={
-                "Counter": {
-                    "content": INTERFACE_SOURCE,
-                    "solidity_identifier": "ICounter",
+            value={
+                "name_to_interface": {
+                    "Counter": {
+                        "content": INTERFACE_SOURCE,
+                        "solidity_identifier": "ICounter",
+                    }
                 }
-            },
+            }
         ),
     ),
 
@@ -350,8 +352,10 @@ _COUNTER_TAPE: list[BaseMessage] = [
         "Stub drafted.",
         _tc(
             "result",
-            solidity_identifier="Counter",
-            content=INITIAL_STUB,
+            value=dict(
+                solidity_identifier="Counter",
+                content=INITIAL_STUB,
+            )
         ),
     ),
 

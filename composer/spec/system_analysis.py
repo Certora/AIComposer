@@ -87,6 +87,9 @@ async def run_component_analysis[T: BaseApplication](
 
     memory = child_ctxt.get_memory_tool()
 
+    class AnalysisInput(RoughDraftState, FlowInput):
+        pass
+
     AnalysisState = type("AnalysisState", (MessagesState, RoughDraftState), {
         "__annotations__": {"result": NotRequired[ty]}
     })
@@ -96,7 +99,7 @@ async def run_component_analysis[T: BaseApplication](
         state_type=AnalysisState,
         validator=_validate_connectivity
     ).with_input(
-        FlowInput
+        AnalysisInput
     ).with_sys_prompt_template(
         "application_analysis_system.j2",
         sort=env.sort,
@@ -114,7 +117,7 @@ async def run_component_analysis[T: BaseApplication](
         *extra_input
     ]
 
-    flow_input = FlowInput(input=inputs)
+    flow_input = AnalysisInput(input=inputs, did_read=False, memory=None)
 
     res = await run_to_completion(
         graph,
