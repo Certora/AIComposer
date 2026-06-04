@@ -61,6 +61,10 @@ from typing import Any
 import uuid
 
 from composer.testing.harness_tape import HarnessFakeLLM, LaneMarker, partition_tape
+from composer.spec.source.task_ids import (
+    SYSTEM_ANALYSIS_TASK_ID, HARNESS_TASK_ID, INVARIANTS_TASK_ID,
+    INVARIANT_CVL_TASK_ID, bug_analysis_task_id, cvl_gen_task_id,
+)
 
 
 def _lane(task_id: str) -> LaneMarker:
@@ -383,7 +387,7 @@ _REFINED_BUG_ANALYSIS_PROPS = [
 
 _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
 
-    _lane("system-analysis"),
+    _lane(SYSTEM_ANALYSIS_TASK_ID),
 
     # ───────────────────────────────────────────────────────────────────
     # P1. Component analysis (run_component_analysis → SourceApplication)
@@ -501,7 +505,7 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # phase — it's a real `python -m orchestrator` call and does not
     # consume LLM calls.
 
-    _lane("harness"),
+    _lane(HARNESS_TASK_ID),
 
     # P2.1 — exercise list_files in this agent's thread (different from
     # the P1 thread, so the listing call re-runs against the real fs).
@@ -533,7 +537,7 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # the NOT_INDUCTIVE → resubmit recovery path, and delivers 2 invariants
     # in the final result.
 
-    _lane("invariants"),
+    _lane(INVARIANTS_TASK_ID),
 
     # P3.1 — exercise source_tools in the main invariant agent.
     _ai(
@@ -725,7 +729,7 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # 2 invariants — record_skip / unskip_property accept the property titles
     # `increments_sum_is_count` and `zero_address_is_zero`.
 
-    _lane("invariant-cvl"),
+    _lane(INVARIANT_CVL_TASK_ID),
 
     # Q1 — exercise the similarity + keyword search paths.
     _ai(
@@ -1095,7 +1099,7 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # `refinement` is None from the pipeline, so there is NO refinement-loop
     # conversation after this — once `result` fires, the phase ends.
 
-    _lane("bug-0"),
+    _lane(bug_analysis_task_id(0)),
 
     # P5.1 — exercise source_tools + rough_draft. No did_read requirement,
     # kept for coverage.
@@ -1235,7 +1239,7 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # then re-runs the prover with the rule excluded so
     # ``validations[prover]`` can be stamped.
 
-    _lane("cvl-0"),
+    _lane(cvl_gen_task_id(0)),
 
     # R1 — put the three-rule component spec. Typechecks; covers all three
     # refined props.
@@ -1403,8 +1407,7 @@ def get_autoprove_llm() -> HarnessFakeLLM:
     cross-contamination.
     """
     lanes = partition_tape(_AUTOPROVE_TAPE)
-    flat = [msg for msgs in lanes.values() for msg in msgs]
-    return HarnessFakeLLM(responses=flat, lanes=lanes)
+    return HarnessFakeLLM(lanes=lanes)
 
 
 def install_harness_tape() -> HarnessFakeLLM:

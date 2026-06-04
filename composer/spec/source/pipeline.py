@@ -44,6 +44,10 @@ from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
 from composer.spec.source.common_pipeline import extract_all_components, generate_all_component_cvl, AutoProveResult, dump_properties, dump_property_rules
+from composer.spec.source.task_ids import (
+    SYSTEM_ANALYSIS_TASK_ID, HARNESS_TASK_ID, AUTOSETUP_TASK_ID,
+    SUMMARIES_TASK_ID, INVARIANTS_TASK_ID, INVARIANT_CVL_TASK_ID,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +88,7 @@ async def run_autoprove_pipeline(
     # ------------------------------------------------------------------
     s = await run_task(
         handler_factory,
-        TaskInfo("system-analysis", "System Analysis", AutoProvePhase.COMPONENT_ANALYSIS),
+        TaskInfo(SYSTEM_ANALYSIS_TASK_ID, "System Analysis", AutoProvePhase.COMPONENT_ANALYSIS),
         lambda: run_component_analysis(ctx, source_input, env=env)
     )
 
@@ -98,7 +102,7 @@ async def run_autoprove_pipeline(
     # ------------------------------------------------------------------
     sys_desc = await run_task(
         handler_factory,
-        TaskInfo("harness", "Harness Creation", AutoProvePhase.HARNESS),
+        TaskInfo(HARNESS_TASK_ID, "Harness Creation", AutoProvePhase.HARNESS),
         lambda: run_harness_creation(ctx, source_input, env, s),
     )
 
@@ -153,7 +157,7 @@ async def run_autoprove_pipeline(
     async def stream_autosetup():
         setup_config = await run_task(
             handler_factory,
-            TaskInfo("autosetup", "AutoSetup", AutoProvePhase.AUTOSETUP),
+            TaskInfo(AUTOSETUP_TASK_ID, "AutoSetup", AutoProvePhase.AUTOSETUP),
             lambda: run_autosetup_phase(ctx, source_input, sys_desc, s, prover_opts),
         )
         resources: list[CVLResource] = [
@@ -167,7 +171,7 @@ async def run_autoprove_pipeline(
         if sys_desc.erc20_contracts or sys_desc.external_interfaces:
             summary_resource = await run_task(
                 handler_factory,
-                TaskInfo("summaries", "Custom Summaries", AutoProvePhase.SUMMARIES),
+                TaskInfo(SUMMARIES_TASK_ID, "Custom Summaries", AutoProvePhase.SUMMARIES),
                 lambda: setup_summaries(
                     ctx=ctx,
                     app=harnessed_app,
@@ -182,7 +186,7 @@ async def run_autoprove_pipeline(
     async def stream_invariants():
         return await run_task(
             handler_factory,
-            TaskInfo("invariants", "Structural Invariants", AutoProvePhase.INVARIANTS),
+            TaskInfo(INVARIANTS_TASK_ID, "Structural Invariants", AutoProvePhase.INVARIANTS),
             lambda: get_invariant_formulation(ctx, source_input, env, harnessed_app),
         )
 
@@ -215,7 +219,7 @@ async def run_autoprove_pipeline(
     # CVL so invariants.spec exists and can be imported as preconditions.
     # ------------------------------------------------------------------
     if invariants.inv:
-        inv_task_id = "invariant-cvl"
+        inv_task_id = INVARIANT_CVL_TASK_ID
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
         cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
 

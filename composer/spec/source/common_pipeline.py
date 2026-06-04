@@ -26,6 +26,7 @@ from composer.spec.system_model import (
 from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 from composer.spec.source.prover import dump_final_conf
+from composer.spec.source.task_ids import bug_analysis_task_id, cvl_gen_task_id
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -135,7 +136,7 @@ async def extract_all_components(
 
         props = await run_task(
             handler_factory,
-            TaskInfo(f"bug-{component_idx}", name, AutoProvePhase.BUG_ANALYSIS),
+            TaskInfo(bug_analysis_task_id(component_idx), name, AutoProvePhase.BUG_ANALYSIS),
             lambda conv: run_property_inference(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model, max_rounds=max_bug_rounds),
             semaphore,
         )
@@ -222,7 +223,7 @@ async def generate_all_component_cvl(
     async def _generate_and_write_batch(
         i: int, batch: _ComponentBatch
     ) -> BatchGeneratedCVLResult:
-        task_id = f"cvl-{i}"
+        task_id = cvl_gen_task_id(i)
         res = await _generate_batch(task_id=task_id, batch=batch)
         if isinstance(res, GaveUp):
             return res

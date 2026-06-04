@@ -101,6 +101,9 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
 
     thinking: Any = None
     betas: list[str] = []
+    # Override the base's required field with a default: lane routing serves
+    # from `lanes`, so `responses` is only consulted on the legacy fallback path.
+    responses: list[BaseMessage] = Field(default_factory=list)
     # task_id -> ordered scripted responses for that lane.
     lanes: dict[str, list[BaseMessage]] = Field(default_factory=dict)
     # task_id -> next index. Mutated in place; each instance owns its own dict.
