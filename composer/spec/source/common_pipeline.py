@@ -82,25 +82,38 @@ class AutoProveResult:
     n_properties: int
     failures: list[str] = field(default_factory=list)
 
-async def run_generation_pipeline(
+@dataclass
+class _ComponentBatch:
+    feat: ContractComponentInstance
+    props: list[PropertyFormulation]
+    feat_ctx: WorkflowContext[ComponentGroup]
+    # Filename base (slug, suffixed on collision) shared by the analysis-phase
+    # dump and the CVL-phase outputs. Assigned during extraction once the full
+    # batch is known, since collision suffixing needs every component name.
+    base: str = ""
+
+
+async def extract_all_components(
+    *,
     source_input: SourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
     env: SourceEnvironment,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
-    resources: list[CVLResource],
-    prover_tool: BaseTool,
-    prover_config: dict,
     interactive: bool,
     threat_model: Document | None,
     max_bug_rounds: int = 3,
-) -> AutoProveResult:
+) -> list[_ComponentBatch]:
+    """Phase 5 — per-component property extraction ("bug analysis").
 
-    contract_instance : ContractInstance
-
+    Runs ``run_property_inference`` for every component in parallel
+    (semaphore-bounded), assigns each surviving batch its filename ``base``, and
+    dumps the analysis-phase properties. Returns the batches that yielded
+    properties; an empty list means nothing was extracted (the caller decides
+    how to react).
+    """
     ind = -1
-
     for i, c in enumerate(summary.contract_components):
         if c.name == source_input.contract_name:
             ind = i
@@ -108,18 +121,7 @@ async def run_generation_pipeline(
     if ind == -1:
         raise ValueError("Component not found")
 
-    contract_instance = ContractInstance(
-        ind, app=summary
-    )
-
-    # ------------------------------------------------------------------
-    # Phase 5: Per-component property extraction
-    # ------------------------------------------------------------------
-    @dataclass
-    class _ComponentBatch:
-        feat: ContractComponentInstance
-        props: list[PropertyFormulation]
-        feat_ctx: WorkflowContext[ComponentGroup]
+    contract_instance = ContractInstance(ind, app=summary)
 
     async def _analyze_component(component_idx: int) -> _ComponentBatch | None:
         feat = ContractComponentInstance(_contract=contract_instance, ind=component_idx)
@@ -147,28 +149,43 @@ async def run_generation_pipeline(
     ])
 
     component_batches = [b for b in extraction_results if b is not None]
-
     if not component_batches:
-        raise ValueError("No properties extracted from any component.")
+        return []
 
     raw_slugs = [slugify_filename(b.feat.component.name) for b in component_batches]
     slug_counts: dict[str, int] = {}
     for s in raw_slugs:
         slug_counts[s] = slug_counts.get(s, 0) + 1
-    batch_filename_bases = [
-        f"{s}_{b.feat.ind}" if slug_counts[s] > 1 else s
-        for s, b in zip(raw_slugs, component_batches)
-    ]
+    for s, batch in zip(raw_slugs, component_batches):
+        batch.base = f"{s}_{batch.feat.ind}" if slug_counts[s] > 1 else s
 
-    # Dump the analysis-phase properties for each component now that the extraction
-    # phase is complete.
+    # Dump the analysis-phase properties for each component now that the
+    # extraction phase is complete.
     certora_dir = pathlib.Path(source_input.project_root) / "certora"
-    for base, batch in zip(batch_filename_bases, component_batches):
-        dump_properties(certora_dir, f"autospec_{base}", batch.props)
+    for batch in component_batches:
+        dump_properties(certora_dir, f"autospec_{batch.base}", batch.props)
 
-    # ------------------------------------------------------------------
-    # Phase 6: Per-component CVL generation
-    # ------------------------------------------------------------------
+    return component_batches
+
+
+async def generate_all_component_cvl(
+    *,
+    source_input: SourceCode,
+    component_batches: list[_ComponentBatch],
+    handler_factory: HandlerFactory[AutoProvePhase, None],
+    env: SourceEnvironment,
+    prover_tool: BaseTool,
+    prover_config: dict,
+    resources: list[CVLResource],
+    semaphore: asyncio.Semaphore,
+) -> AutoProveResult:
+    """Phase 6 — per-component CVL generation.
+
+    Generates and writes a spec for each extracted batch in parallel
+    (semaphore-bounded). ``resources`` is consumed read-only; callers that want
+    the structural invariants assumed as preconditions must include
+    ``invariants.spec`` in ``resources`` before calling.
+    """
     async def _generate_batch(
         task_id: str,
         batch: _ComponentBatch,
@@ -214,7 +231,7 @@ async def run_generation_pipeline(
         specs_dir.mkdir(exist_ok=True, parents=True)
         properties_dir = certora_dir / "properties"
         properties_dir.mkdir(exist_ok=True, parents=True)
-        base = batch_filename_bases[i]
+        base = batch.base
         spec_name = pathlib.Path(f"autospec_{base}.spec")
         (specs_dir / spec_name).write_text(res.cvl)
         (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
@@ -249,4 +266,50 @@ async def run_generation_pipeline(
         n_components=len(component_batches),
         n_properties=n_properties,
         failures=failures,
+    )
+
+
+async def run_generation_pipeline(
+    source_input: SourceCode,
+    prop_context: WorkflowContext[Properties],
+    handler_factory: HandlerFactory[AutoProvePhase, None],
+    env: SourceEnvironment,
+    summary: HarnessedApplication,
+    semaphore: asyncio.Semaphore,
+    resources: list[CVLResource],
+    prover_tool: BaseTool,
+    prover_config: dict,
+    interactive: bool,
+    threat_model: Document | None,
+    max_bug_rounds: int = 3,
+) -> AutoProveResult:
+    """Property extraction followed by CVL generation for every component.
+
+    Thin wrapper over ``extract_all_components`` + ``generate_all_component_cvl``
+    for callers that run the two phases back-to-back (e.g. ``direct_pipeline``).
+    The staged pipeline calls the two halves directly so it can interleave other
+    phases (autosetup, invariant CVL) between them.
+    """
+    component_batches = await extract_all_components(
+        source_input=source_input,
+        prop_context=prop_context,
+        handler_factory=handler_factory,
+        env=env,
+        summary=summary,
+        semaphore=semaphore,
+        interactive=interactive,
+        threat_model=threat_model,
+        max_bug_rounds=max_bug_rounds,
+    )
+    if not component_batches:
+        raise ValueError("No properties extracted from any component.")
+    return await generate_all_component_cvl(
+        source_input=source_input,
+        component_batches=component_batches,
+        handler_factory=handler_factory,
+        env=env,
+        prover_tool=prover_tool,
+        prover_config=prover_config,
+        resources=resources,
+        semaphore=semaphore,
     )
