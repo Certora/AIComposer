@@ -19,9 +19,14 @@ def _validate_connectivity(
     errors: list[str] = []
     known_components: dict[str, set[str]] = {}
     known_external: set[str] = set()
+    known_solidity_ids : set[str] = set()
 
     for c in app.components:
         if isinstance(c, ExplicitContract):
+            if c.solidity_identifier in known_solidity_ids:
+                errors.append(f"Duplicate solidity identifier: {c.solidity_identifier}")
+            else:
+                known_solidity_ids.add(c.solidity_identifier)
             if c.name in known_components:
                 errors.append(f"Duplicate contract names: {c.name}")
             else:
@@ -37,11 +42,9 @@ def _validate_connectivity(
             known_external.add(c.name)
 
     for explicit in app.components:
-        contract_components = set()
         if not isinstance(explicit, ExplicitContract):
             continue
         for sub_comp in explicit.components:
-            contract_components.add(sub_comp)
             thing_interacts_with_str = f"Component {sub_comp.name} of {explicit.name} interacts with"
             for interaction in sub_comp.interactions:
                 if isinstance(interaction, ExternalDependency):

@@ -161,7 +161,7 @@ async def run_registry_agent(
                 return "When proposing a new field, you must provide field_description."
             if not res.updated_stub:
                 return "When proposing a new field, you must provide updated_stub (the complete source code)."
-            compile_err = _compile_stub(res.updated_stub, assembler, solc_version, stub_path)
+            compile_err = await _compile_stub(res.updated_stub, assembler, solc_version, stub_path)
             if compile_err is not None:
                 return (
                     f"The updated stub does not compile. Fix the issue and try again.\n"
@@ -309,26 +309,26 @@ class StubRegistry:
         """
         async def _init_stub(id: SolidityIdentifier, init_stub: StubDeclarationModel) -> tuple[SolidityIdentifier, _StubMemoryState]:
             curr = await _state_read(store, ns, id)
-            intf = interface.name_to_interface[id]
+            intf_source = interface.name_to_interface[id].content
             if curr is None:
                 await _state_write(store, ns, id, _StubDurableState(
                     content=init_stub.content, fields=[]
                 ))
-                return (id, _StubMemoryState(_path=init_stub.path, _content=init_stub.content, _interface=intf))
+                return (id, _StubMemoryState(_path=init_stub.path, _content=init_stub.content, _interface=intf_source))
             else:
                 return (id, _StubMemoryState(
                     _path=init_stub.path,
-                    _content=curr.content, _interface=intf
+                    _content=curr.content, _interface=intf_source
                 ))
-
-        state = dict(
-            *asyncio.gather(
+            
+        state = {
+            k: v for (k,v) in (await asyncio.gather(
                 *(_init_stub(id, init_stub) for (id, init_stub) in initial_stubs.items())
-            )
-        )
+            ))
+        }
 
         by_path = {
-            s.path: s.content for s in state.values()
+            s._path: s._content for s in state.values()
         }
 
         return StubRegistry(

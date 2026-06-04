@@ -375,6 +375,13 @@ class CacheExplorerApp[V](App):
                 self._show_detail(self._selected_node)
 
     async def action_delete_entry(self) -> None:
+        # In memory view, `d` deletes the currently-selected memory file.
+        # In cache view, it deletes the selected cache slot. Same key, two
+        # contexts — the visible tree disambiguates for the user.
+        if self._showing_memory:
+            self._delete_memory_file()
+            return
+
         if self._selected_node is None:
             self.notify("No node selected", severity="warning")
             return
@@ -395,6 +402,22 @@ class CacheExplorerApp[V](App):
         tree = self.query_one("#cache-tree", Tree)
         self._update_tree_node_label(tree.root, node)
         self._show_detail(node)
+
+    def _delete_memory_file(self) -> None:
+        if not self._editing_file or not self._editing_ns:
+            self.notify("Select a memory file first", severity="warning")
+            return
+        if self._editing:
+            self._cancel_edit_mode()
+        backend = _get_memory_backend(self._editing_ns)
+        path = self._editing_file
+        backend.delete(path)
+        self.notify(f"Deleted memory file: {path}")
+        # Refresh the memory pane so the deleted file disappears from the tree.
+        self._editing_file = None
+        if self._selected_node is not None:
+            self._show_memory(self._selected_node)
+        self.query_one("#memory-content", Static).update("Select a memory file")
 
     def _update_tree_node_label(self, tree_node: TreeNode, target: CacheNode[V] | StoreNode[V]) -> bool:
         if tree_node.data is target:
@@ -431,7 +454,11 @@ class CacheExplorerApp[V](App):
             return
 
         backend = _get_memory_backend(self._editing_ns)
-        content = backend.view(self._editing_file, None)
+        # ``backend.view`` decorates every line with a ``"   N: "`` gutter for
+        # the LLM's benefit. Loading that into the editor and saving back
+        # through ``backend.create`` would persist the gutter into the file
+        # and re-gutter it on the next round-trip. Read raw bytes instead.
+        content = backend.read_file(self._editing_file) or ""
 
         self._editing = True
         self.query_one("#memory-content", Static).add_class("hidden")
