@@ -2,17 +2,80 @@ from typing import Any, Callable, Sequence, override
 import random
 import asyncio
 
+from pydantic import Field
 from langchain_core.language_models.fake_chat_models import (
     FakeMessagesListChatModel,
 )
 from langchain_core.prompt_values import PromptValue
 from langchain_core.tools import BaseTool
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
+
+from composer.diagnostics.timing import get_current_task_id
+
+
+class LaneMarker:
+    """Sentinel placed in a flat tape list to mark where a new lane begins.
+
+    A "lane" is the ``run_task`` ``task_id`` under which a contiguous group of
+    LLM calls executes (e.g. ``"invariants"``, ``"bug-0"``). The pipeline now
+    runs several phases concurrently (``asyncio.gather``), so a single positional
+    cursor can no longer serve their interleaved calls — calls from different
+    phases would steal each other's scripted responses. Routing each call to a
+    per-``task_id`` cursor restores determinism; within a lane the authored
+    order is preserved exactly as before.
+    """
+
+    __slots__ = ("task_id",)
+
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+
+
+def partition_tape(
+    tape: Sequence[BaseMessage | LaneMarker],
+) -> dict[str, list[BaseMessage]]:
+    """Split a flat, marker-delimited tape into per-lane response lists.
+
+    Order within each lane is preserved. Every response must be preceded by a
+    ``LaneMarker``; a response before the first marker is a tape-authoring error.
+    """
+    lanes: dict[str, list[BaseMessage]] = {}
+    current: str | None = None
+    for item in tape:
+        if isinstance(item, LaneMarker):
+            current = item.task_id
+            lanes.setdefault(current, [])
+            continue
+        if current is None:
+            raise ValueError("tape has a response before its first LaneMarker")
+        lanes[current].append(item)
+    return lanes
+
+
+def _prompt_preview(model_input: Any) -> str:
+    """A short, safe description of the incoming prompt, to make a missing or
+    mis-lane'd tape entry easy to locate when authoring."""
+    try:
+        if isinstance(model_input, PromptValue):
+            msgs: list[Any] = list(model_input.to_messages())
+        elif isinstance(model_input, (list, tuple)):
+            msgs = list(model_input)
+        else:
+            return repr(model_input)[:160]
+        if not msgs:
+            return "<empty prompt>"
+        last = msgs[-1]
+        content = getattr(last, "content", last)
+        return f"{type(last).__name__}: {str(content)[:160]}"
+    except Exception:
+        return "<unpreviewable prompt>"
+
 
 class HarnessFakeLLM(FakeMessagesListChatModel):
     """``FakeMessagesListChatModel`` tolerant of the specific shape of attribute
-    access the codegen workflow performs on the bound LLM.
+    access the codegen workflow performs on the bound LLM, with per-lane tape
+    routing.
 
     Two compatibility shims:
 
@@ -24,10 +87,27 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
       ``getattr(llm, "betas")``. An empty list keeps the memory-tool
       beta branch off, so the main codegen agent's tool list matches
       what the tape expects.
+
+    Lane routing: when ``lanes`` is non-empty, each call is served from the
+    per-lane cursor for the active ``run_task`` ``task_id``
+    (``composer.diagnostics.timing.get_current_task_id``). The task_id is read in
+    the async ``ainvoke`` body, where the ContextVar that ``run_task`` set is
+    visible (reading it inside the synchronous ``_generate``, which the base
+    runs in an executor thread, would not see it). This keeps the tape
+    deterministic even though the pipeline runs phases concurrently. When
+    ``lanes`` is empty the model falls back to the legacy single positional
+    cursor.
     """
 
     thinking: Any = None
     betas: list[str] = []
+    # task_id -> ordered scripted responses for that lane.
+    lanes: dict[str, list[BaseMessage]] = Field(default_factory=dict)
+    # task_id -> next index. Mutated in place; each instance owns its own dict.
+    lane_cursors: dict[str, int] = Field(default_factory=dict, exclude=True)
+    # Simulate LLM latency so the TUI renders concurrent progress. Disable in
+    # unit tests to avoid the per-call sleep.
+    jitter: bool = True
 
     @override
     def bind_tools(
@@ -38,7 +118,7 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
         **kwargs: Any,
     ):
         return self
-    
+
     async def ainvoke(
         self,
         input: PromptValue | str | Sequence[BaseMessage | list[str] | tuple[str, str] | str | dict[str, Any]],
@@ -46,7 +126,34 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
         *,
         stop: list[str] | None = None,
         **kwargs: Any
-    ) -> AIMessage:
-        delay = random.random() * 1.5 + 1.0
-        await asyncio.sleep(delay)
-        return await super().ainvoke(input, config, stop=stop, **kwargs)
+    ) -> BaseMessage:
+        if self.jitter:
+            await asyncio.sleep(random.random() * 1.5 + 1.0)
+
+        if not self.lanes:
+            # Legacy single-cursor behaviour.
+            return await super().ainvoke(input, config, stop=stop, **kwargs)
+
+        task_id = get_current_task_id()
+        if task_id is None:
+            raise RuntimeError(
+                "HarnessFakeLLM: LLM call outside any run_task scope, so it "
+                "cannot be routed to a tape lane. "
+                f"Prompt -> {_prompt_preview(input)}"
+            )
+        lane = self.lanes.get(task_id)
+        if lane is None:
+            raise RuntimeError(
+                f"HarnessFakeLLM: no tape lane for task_id {task_id!r}. "
+                f"Known lanes: {sorted(self.lanes)}. "
+                f"Prompt -> {_prompt_preview(input)}"
+            )
+        i = self.lane_cursors.get(task_id, 0)
+        if i >= len(lane):
+            raise RuntimeError(
+                f"HarnessFakeLLM: tape lane {task_id!r} exhausted after "
+                f"{len(lane)} response(s) — the pipeline issued an extra call in "
+                f"this phase. Prompt -> {_prompt_preview(input)}"
+            )
+        self.lane_cursors[task_id] = i + 1
+        return lane[i]
