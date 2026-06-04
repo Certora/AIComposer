@@ -87,29 +87,23 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
       beta branch off, so the main codegen agent's tool list matches
       what the tape expects.
 
-    Lane routing: when ``lanes`` is non-empty, each call is served from the
-    per-lane cursor for the active ``run_task`` ``task_id``
-    (``composer.diagnostics.timing.get_current_task_id``). The task_id is read in
-    the async ``ainvoke`` body, where the ContextVar that ``run_task`` set is
-    visible (reading it inside the synchronous ``_generate``, which the base
-    runs in an executor thread, would not see it). This keeps the tape
-    deterministic even though the pipeline runs phases concurrently. When
-    ``lanes`` is empty the model falls back to the legacy single positional
-    cursor.
+    Lane routing: each call is served from the per-lane cursor for the active
+    ``run_task`` ``task_id`` (``composer.diagnostics.timing.get_current_task_id``).
+    The task_id is read in the async ``ainvoke`` body, where the ContextVar that
+    ``run_task`` set is visible (reading it inside the synchronous ``_generate``,
+    which the base runs in an executor thread, would not see it). This keeps the
+    tape deterministic even though the pipeline runs phases concurrently.
     """
 
     thinking: Any = None
     betas: list[str] = []
-    # Override the base's required field with a default: lane routing serves
-    # from `lanes`, so `responses` is only consulted on the legacy fallback path.
+    # The base requires `responses`, but lane routing serves from `lanes` and
+    # never reads it; default it so callers construct with `lanes=` alone.
     responses: list[BaseMessage] = Field(default_factory=list)
     # task_id -> ordered scripted responses for that lane.
     lanes: dict[str, list[BaseMessage]] = Field(default_factory=dict)
     # task_id -> next index. Mutated in place; each instance owns its own dict.
     lane_cursors: dict[str, int] = Field(default_factory=dict, exclude=True)
-    # Simulate LLM latency so the TUI renders concurrent progress. Disable in
-    # unit tests to avoid the per-call sleep.
-    jitter: bool = True
 
     @override
     def bind_tools(
@@ -129,12 +123,8 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
         stop: list[str] | None = None,
         **kwargs: Any
     ) -> BaseMessage:
-        if self.jitter:
-            await asyncio.sleep(random.random() * 1.5 + 1.0)
-
-        if not self.lanes:
-            # Legacy single-cursor behaviour.
-            return await super().ainvoke(input, config, stop=stop, **kwargs)
+        # Simulate LLM latency so the TUI renders concurrent progress.
+        await asyncio.sleep(random.random() * 1.5 + 1.0)
 
         task_id = get_current_task_id()
         if task_id is None:
