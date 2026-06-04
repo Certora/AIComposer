@@ -502,6 +502,86 @@ config_key = CacheKey[None, ContractSetup]("config")
 from logging import getLogger
 _logger = getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Split phases.
+#
+# ``run_setup`` (below) fuses harness creation and AutoSetup into one task.
+# These two functions expose them separately so the pipeline can run AutoSetup
+# in parallel with invariant/bug analysis. They share the ``config_key`` parent
+# context, so existing harness-creation caches (keyed by ``system_setup_key``)
+# still hit; only the new AutoSetup result is cached under its own key.
+# ---------------------------------------------------------------------------
+
+async def run_harness_creation(
+    context: WorkflowContext[None],
+    source: SourceCode,
+    env: SourceEnvironment,
+    application_desc: SourceApplication,
+) -> SystemDescriptionHarnessed:
+    """Classify external contracts, generate harness files, and write them to
+    disk. ``run_and_apply_part1`` re-writes the harness files on every call
+    (idempotent), so they are guaranteed present for the AutoSetup phase even on
+    a cache hit."""
+    config_ctxt = context.child(config_key)
+    return await run_and_apply_part1(config_ctxt, source, env, application_desc)
+
+
+def autosetup_key(
+    app: SourceApplication,
+    prover_opts: ProverOptions,
+) -> CacheKey[ContractSetup, SetupSuccess]:
+    """Cache key for the AutoSetup phase. Includes ``prover_opts`` so cloud and
+    local configurations never collide (the old composite ``config_key`` omitted
+    them, which could reuse a stale config across modes)."""
+    return CacheKey[ContractSetup, SetupSuccess](
+        "autosetup-" + string_hash(
+            app.model_dump_json() + "\x00" + "\x00".join(prover_opts.extra_args)
+        )
+    )
+
+
+async def run_autosetup_phase(
+    context: WorkflowContext[None],
+    source: SourceCode,
+    sys_desc: SystemDescriptionHarnessed,
+    application_desc: SourceApplication,
+    prover_opts: ProverOptions,
+) -> SetupSuccess:
+    """Run AutoSetup compilation against the (already written) harness files and
+    return the compilation config + summaries. Depends on harness creation
+    having run first: it reads the transitive-closure file paths from disk.
+
+    Cache hits are guarded by the on-disk existence of ``summaries_path``,
+    mirroring the guard the fused ``run_setup`` used."""
+    config_ctxt = context.child(config_key)
+    cache = await config_ctxt.child(
+        autosetup_key(application_desc, prover_opts),
+        application_desc.model_dump(),
+    )
+    if (cached := await cache.cache_get(SetupSuccess)) is not None:
+        if (Path(source.project_root) / "certora" / cached.summaries_path).exists():
+            return cached
+
+    extra_files = [
+        c.path for c in sys_desc.transitive_closure if c.name != source.contract_name
+    ]
+
+    setup_result = await run_autosetup(
+        Path(source.project_root),
+        source.relative_path,
+        source.contract_name,
+        prover_opts,
+        *extra_files,
+    )
+
+    if isinstance(setup_result, SetupFailure):
+        raise RuntimeError(f"Auto setup failed: {setup_result.error}\nProc stderr:\n{setup_result.stderr}")
+
+    await cache.cache_put(setup_result)
+    return setup_result
+
+
 async def run_setup(
     context: WorkflowContext[None],
     source: SourceCode,
