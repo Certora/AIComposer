@@ -35,17 +35,6 @@ from langchain_core.tools import BaseTool
 Sort = Literal["greenfield", "existing", "update"]
 
 
-class ServiceHostProtocol(Protocol):
-    """Structural minimum a concrete environment must expose so that
-    :meth:`ServiceHost.from_protocol` can synthesize a host from it."""
-
-    @property
-    def llm(self) -> LLM: ...
-
-    @property
-    def builder(self) -> Builder[None, None, None]: ...
-
-
 @dataclass
 class PureServiceHost:
     """``ServiceHost`` without source tools — the pre-stub natspec phase
@@ -84,22 +73,6 @@ class ServiceHost(PureServiceHost):
     """
 
     source_tools: tuple[BaseTool, ...]
-
-    @classmethod
-    def from_protocol[T: ServiceHostProtocol](
-        cls,
-        p: T,
-        src: Callable[[T], tuple[BaseTool, ...]],
-        cvl: Callable[[T], tuple[BaseTool, ...]],
-        sort: Sort = "update",
-    ) -> "ServiceHost":
-        return ServiceHost(
-            llm=p.llm,
-            builder=p.builder,
-            sort=sort,
-            rag_tools=cvl(p),
-            source_tools=src(p),
-        )
 
     @property
     def all_tools(self) -> tuple[BaseTool, ...]:

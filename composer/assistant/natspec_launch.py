@@ -128,12 +128,6 @@ async def launch_natspec_workflow(
                 f"{type(captured_error).__name__}: {captured_error}\n"
                 f"Traceback:\n{tb}"
             )
-        plan_path = output_root_path / "implementation_plan.json"
-        plan_info = (
-            f" Plan written to: {plan_path}"
-            if plan_path.is_file()
-            else " (plan was not persisted; check pipeline logs)"
-        )
 
         if pipeline_result is not None:
             failures_obj: list[ComponentGenerationFailure] = []
@@ -143,13 +137,13 @@ async def launch_natspec_workflow(
             if len(failures_obj) == 0:
                 return (
                     "NatSpec pipeline completed successfully. All properties "
-                    f"formalized.{plan_info}"
+                    f"formalized."
                 )
             failures = "; ".join(
                 f"{f.component}: {f.reason}" for f in failures_obj
             )
             return (
                 f"NatSpec pipeline completed with {len(failures_obj)} failure(s): "
-                f"{failures}.{plan_info}"
+                f"{failures}."
             )
         return "NatSpec pipeline finished without producing a result."
