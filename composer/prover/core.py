@@ -6,6 +6,7 @@ Both callers become thin wrappers that define callbacks and call run_prover().
 """
 
 import asyncio
+import os
 import sys
 import tempfile
 from contextlib import asynccontextmanager
@@ -34,6 +35,42 @@ _logger = logging.getLogger(__name__)
 
 
 DEFAULT_GLOBAL_TIMEOUT: float = 1200.0
+
+# Map the AISS login environment to certoraRun's --server vocabulary.
+# Mirrors prover_output_utility.resolve_login_env / Autosetup's
+# _SERVER_BY_LOGIN_ENV so cloud submissions target the same environment the
+# rest of the toolchain authenticates against. Note: 'dev' -> 'vaas-dev'.
+_SERVER_BY_AISS_ENV: dict[str, str] = {
+    "prod": "production",
+    "stg": "staging",
+    "dev": "vaas-dev",
+}
+
+
+def resolve_cloud_server() -> str:
+    """Resolve the certoraRun --server value from the active login environment.
+
+    Precedence (matches prover_output_utility.resolve_login_env):
+      1. ``AISS_ENV`` if set — must be one of {dev, stg, prod}.
+      2. Legacy ``GITHUB_ENVIRONMENT`` fallback: staging -> staging,
+         development -> vaas-dev, anything else -> production.
+    """
+    aiss_env = os.environ.get("AISS_ENV")
+    if aiss_env is not None:
+        try:
+            return _SERVER_BY_AISS_ENV[aiss_env]
+        except KeyError:
+            raise ValueError(
+                f"Invalid AISS_ENV={aiss_env!r}; expected one of "
+                f"{sorted(_SERVER_BY_AISS_ENV)}"
+            ) from None
+
+    github_env = os.environ.get("GITHUB_ENVIRONMENT", "")
+    if github_env == "staging":
+        return "staging"
+    if github_env == "development":
+        return "vaas-dev"
+    return "production"
 
 
 @dataclass
@@ -66,7 +103,7 @@ def make_prover_options(
         if not has_timeout:
             extras = ["--global_timeout", str(int(DEFAULT_GLOBAL_TIMEOUT))] + extras
         if not has_server:
-            extras = ["--server", "prover"] + extras
+            extras = ["--server", resolve_cloud_server()] + extras
     return ProverOptions(extra_args=extras)
 
 @dataclass
