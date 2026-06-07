@@ -63,16 +63,11 @@ so their responses live in the parent's lane.
 from typing import Any
 import uuid
 
-from composer.testing.harness_tape import HarnessFakeLLM, LaneMarker, partition_tape
+from composer.testing.harness_tape import HarnessFakeLLM
 from composer.spec.source.task_ids import (
     SYSTEM_ANALYSIS_TASK_ID, HARNESS_TASK_ID, INVARIANTS_TASK_ID,
     INVARIANT_CVL_TASK_ID, bug_analysis_task_id, cvl_gen_task_id,
 )
-
-
-def _lane(task_id: str) -> LaneMarker:
-    """Mark the start of a tape lane (a run_task task_id). See LaneMarker."""
-    return LaneMarker(task_id)
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.messages.tool import ToolCall
@@ -382,15 +377,14 @@ _REFINED_BUG_ANALYSIS_PROPS = [
 # The tape
 # ---------------------------------------------------------------------------
 #
-# Global call order (section headers mark boundaries, NOT separate tapes).
-# Every AIMessage below is popped by ``FakeMessagesListChatModel`` on a
-# single LLM call, in order. If the real pipeline issues a call not shown
-# here, the fake runs off the end and raises. If real dispatch order drifts
-# from this layout, edit the tape — that's the cheap loop.
+# Authored as one list per phase ("lane"), assembled into the per-lane
+# ``_AUTOPROVE_TAPE`` dict at the bottom. HarnessFakeLLM serves each LLM call
+# from its lane's cursor (keyed by run_task task_id), so the scripted responses
+# stay correct even though the pipeline runs phases concurrently. Within a lane,
+# entries are popped in order; if the pipeline issues a call the lane doesn't
+# have, the fake raises. Editing the tape is the cheap loop.
 
-_AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
-
-    _lane(SYSTEM_ANALYSIS_TASK_ID),
+_SYSTEM_ANALYSIS_TAPE: list[BaseMessage] = [
 
     # ───────────────────────────────────────────────────────────────────
     # P1. Component analysis (run_component_analysis → SourceApplication)
@@ -508,7 +502,9 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # phase — it's a real `python -m orchestrator` call and does not
     # consume LLM calls.
 
-    _lane(HARNESS_TASK_ID),
+]
+
+_HARNESS_TAPE: list[BaseMessage] = [
 
     # P2.1 — exercise list_files in this agent's thread (different from
     # the P1 thread, so the listing call re-runs against the real fs).
@@ -540,7 +536,9 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # the NOT_INDUCTIVE → resubmit recovery path, and delivers 2 invariants
     # in the final result.
 
-    _lane(INVARIANTS_TASK_ID),
+]
+
+_INVARIANTS_TAPE: list[BaseMessage] = [
 
     # P3.1 — exercise source_tools in the main invariant agent.
     _ai(
@@ -732,7 +730,9 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # 2 invariants — record_skip / unskip_property accept the property titles
     # `increments_sum_is_count` and `zero_address_is_zero`.
 
-    _lane(INVARIANT_CVL_TASK_ID),
+]
+
+_INVARIANT_CVL_TAPE: list[BaseMessage] = [
 
     # Q1 — exercise the similarity + keyword search paths.
     _ai(
@@ -1102,7 +1102,9 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # `refinement` is None from the pipeline, so there is NO refinement-loop
     # conversation after this — once `result` fires, the phase ends.
 
-    _lane(bug_analysis_task_id(0, "Increment")),  # the Counter contract's sole component
+]
+
+_BUG_TAPE: list[BaseMessage] = [
 
     # P5.1 — exercise source_tools + rough_draft. No did_read requirement,
     # kept for coverage.
@@ -1242,7 +1244,9 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
     # then re-runs the prover with the rule excluded so
     # ``validations[prover]`` can be stamped.
 
-    _lane(cvl_gen_task_id(0, "Increment")),  # the Counter contract's sole component
+]
+
+_CVL_TAPE: list[BaseMessage] = [
 
     # R1 — put the three-rule component spec. Typechecks; covers all three
     # refined props.
@@ -1390,6 +1394,20 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
 ]
 
 
+# The tape, as a per-phase lane map keyed by run_task task_id. HarnessFakeLLM
+# serves each LLM call from its lane's cursor, so the scripted responses stay
+# correct even though the pipeline runs phases concurrently. The Counter
+# scenario has one component, "Increment".
+_AUTOPROVE_TAPE: dict[str, list[BaseMessage]] = {
+    SYSTEM_ANALYSIS_TASK_ID: _SYSTEM_ANALYSIS_TAPE,
+    HARNESS_TASK_ID: _HARNESS_TAPE,
+    INVARIANTS_TASK_ID: _INVARIANTS_TAPE,
+    INVARIANT_CVL_TASK_ID: _INVARIANT_CVL_TAPE,
+    bug_analysis_task_id(0, "Increment"): _BUG_TAPE,
+    cvl_gen_task_id(0, "Increment"): _CVL_TAPE,
+}
+
+
 # ---------------------------------------------------------------------------
 # Install / configuration API
 # ---------------------------------------------------------------------------
@@ -1403,14 +1421,10 @@ _AUTOPROVE_TAPE: list[BaseMessage | LaneMarker] = [
 def get_autoprove_llm() -> HarnessFakeLLM:
     """Return a fresh fake LLM loaded with the autoprove counter tape.
 
-    The flat ``_AUTOPROVE_TAPE`` is partitioned into per-phase lanes (keyed by
-    ``run_task`` task_id) so the fake stays deterministic even though the
-    pipeline runs phases concurrently. Each call returns an independent instance
-    with its own per-lane cursors, so tests can run multiple scenarios without
-    cross-contamination.
+    Each call returns an independent instance with its own per-lane cursors, so
+    tests can run multiple scenarios without cross-contamination.
     """
-    lanes = partition_tape(_AUTOPROVE_TAPE)
-    return HarnessFakeLLM(lanes=lanes)
+    return HarnessFakeLLM(lanes=_AUTOPROVE_TAPE)
 
 
 def install_harness_tape() -> HarnessFakeLLM:

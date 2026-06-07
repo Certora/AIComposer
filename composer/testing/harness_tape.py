@@ -1,5 +1,4 @@
 from typing import Any, Callable, Sequence, override
-from dataclasses import dataclass
 import random
 import asyncio
 
@@ -13,43 +12,6 @@ from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
 
 from composer.diagnostics.timing import get_current_task_id
-
-
-@dataclass(frozen=True)
-class LaneMarker:
-    """Sentinel placed in a flat tape list to mark where a new lane begins.
-
-    A "lane" is the ``run_task`` ``task_id`` under which a contiguous group of
-    LLM calls executes (e.g. ``"invariants"``, ``"bug-0"``). The pipeline now
-    runs several phases concurrently (``asyncio.gather``), so a single positional
-    cursor can no longer serve their interleaved calls — calls from different
-    phases would steal each other's scripted responses. Routing each call to a
-    per-``task_id`` cursor restores determinism; within a lane the authored
-    order is preserved exactly as before.
-    """
-
-    task_id: str
-
-
-def partition_tape(
-    tape: Sequence[BaseMessage | LaneMarker],
-) -> dict[str, list[BaseMessage]]:
-    """Split a flat, marker-delimited tape into per-lane response lists.
-
-    Order within each lane is preserved. Every response must be preceded by a
-    ``LaneMarker``; a response before the first marker is a tape-authoring error.
-    """
-    lanes: dict[str, list[BaseMessage]] = {}
-    current: str | None = None
-    for item in tape:
-        if isinstance(item, LaneMarker):
-            current = item.task_id
-            lanes.setdefault(current, [])
-            continue
-        if current is None:
-            raise ValueError("tape has a response before its first LaneMarker")
-        lanes[current].append(item)
-    return lanes
 
 
 def _prompt_preview(model_input: Any) -> str:
