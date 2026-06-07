@@ -85,7 +85,7 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
         stop: list[str] | None = None,
         **kwargs: Any
     ) -> BaseMessage:
-        # Simulate LLM latency so the TUI renders concurrent progress.
+        # Simulate LLM latency to keep the TUI from filling all at once to give some ability to judge the "feel" of the UI.
         await asyncio.sleep(random.random() * 1.5 + 1.0)
 
         task_id = get_current_task_id()

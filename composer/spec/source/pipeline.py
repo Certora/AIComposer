@@ -22,6 +22,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from composer.io.multi_job import (
     TaskInfo, HandlerFactory, run_task,
 )
+from composer.spec.source.autosetup import SetupSuccess
 from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.input.files import Document
@@ -154,7 +155,7 @@ async def run_autoprove_pipeline(
     #   C) per-component property extraction ("bug analysis")
     # B and C are independent of A; they only need harnessed_app + source.
     # ------------------------------------------------------------------
-    async def stream_autosetup():
+    async def stream_autosetup() -> tuple[SetupSuccess, list[CVLResource]]:
         setup_config = await run_task(
             handler_factory,
             TaskInfo(AUTOSETUP_TASK_ID, "AutoSetup", AutoProvePhase.AUTOSETUP),
