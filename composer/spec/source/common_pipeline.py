@@ -131,7 +131,7 @@ async def extract_all_components(
 
         props = await run_task(
             handler_factory,
-            TaskInfo(bug_analysis_task_id(component_idx), name, AutoProvePhase.BUG_ANALYSIS),
+            TaskInfo(bug_analysis_task_id(component_idx, feat.slugified_name), name, AutoProvePhase.BUG_ANALYSIS),
             lambda conv: run_property_inference(feat_ctx, env, feat, refinement=conv if interactive else None, threat_model=threat_model, max_rounds=max_bug_rounds),
             semaphore,
         )
@@ -209,9 +209,9 @@ async def generate_all_component_cvl(
         return res
 
     async def _generate_and_write_batch(
-        i: int, batch: _ComponentBatch
+        batch: _ComponentBatch
     ) -> BatchGeneratedCVLResult:
-        task_id = cvl_gen_task_id(i)
+        task_id = cvl_gen_task_id(batch.feat.ind, batch.feat.slugified_name)
         res = await _generate_batch(task_id=task_id, batch=batch)
         if isinstance(res, GaveUp):
             return res
@@ -236,8 +236,8 @@ async def generate_all_component_cvl(
 
     generation_results = await asyncio.gather(
         *[
-            _generate_and_write_batch(i, batch)
-            for i, batch in enumerate(component_batches)
+            _generate_and_write_batch(batch)
+            for batch in component_batches
         ],
         return_exceptions=True,
     )

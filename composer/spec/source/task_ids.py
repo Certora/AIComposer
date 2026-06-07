@@ -16,11 +16,11 @@ INVARIANTS_TASK_ID = "invariants"
 INVARIANT_CVL_TASK_ID = "invariant-cvl"
 
 
-def bug_analysis_task_id(component_idx: int) -> str:
+def bug_analysis_task_id(component_idx: int, slug: str) -> str:
     """task_id for a component's property-extraction ("bug analysis") phase."""
-    return f"bug-{component_idx}"
+    return f"bug-{component_idx}-{slug}"
 
 
-def cvl_gen_task_id(component_idx: int) -> str:
+def cvl_gen_task_id(component_idx: int, slug: str) -> str:
     """task_id for a component's CVL-generation phase."""
-    return f"cvl-{component_idx}"
+    return f"cvl-{component_idx}-{slug}"
