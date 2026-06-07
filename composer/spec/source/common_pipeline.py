@@ -15,7 +15,7 @@ from composer.input.files import Document
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
-from composer.spec.util import string_hash, slugify_filename
+from composer.spec.util import string_hash
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import CVLResource
@@ -88,10 +88,6 @@ class _ComponentBatch:
     feat: ContractComponentInstance
     props: list[PropertyFormulation]
     feat_ctx: WorkflowContext[ComponentGroup]
-    # Filename base (slug, suffixed on collision) shared by the analysis-phase
-    # dump and the CVL-phase outputs. Assigned during extraction once the full
-    # batch is known, since collision suffixing needs every component name.
-    base: str = ""
 
 
 async def extract_all_components(
@@ -109,10 +105,9 @@ async def extract_all_components(
     """Phase 5 — per-component property extraction ("bug analysis").
 
     Runs ``run_property_inference`` for every component in parallel
-    (semaphore-bounded), assigns each surviving batch its filename ``base``, and
-    dumps the analysis-phase properties. Returns the batches that yielded
-    properties; an empty list means nothing was extracted (the caller decides
-    how to react).
+    (semaphore-bounded) and dumps the analysis-phase properties. Returns the
+    batches that yielded properties; an empty list means nothing was extracted
+    (the caller decides how to react).
     """
     ind = -1
     for i, c in enumerate(summary.contract_components):
@@ -153,18 +148,11 @@ async def extract_all_components(
     if not component_batches:
         return []
 
-    raw_slugs = [slugify_filename(b.feat.component.name) for b in component_batches]
-    slug_counts: dict[str, int] = {}
-    for s in raw_slugs:
-        slug_counts[s] = slug_counts.get(s, 0) + 1
-    for s, batch in zip(raw_slugs, component_batches):
-        batch.base = f"{s}_{batch.feat.ind}" if slug_counts[s] > 1 else s
-
     # Dump the analysis-phase properties for each component now that the
     # extraction phase is complete.
     certora_dir = pathlib.Path(source_input.project_root) / "certora"
     for batch in component_batches:
-        dump_properties(certora_dir, f"autospec_{batch.base}", batch.props)
+        dump_properties(certora_dir, f"autospec_{batch.feat.slugified_name}", batch.props)
 
     return component_batches
 
@@ -232,7 +220,7 @@ async def generate_all_component_cvl(
         specs_dir.mkdir(exist_ok=True, parents=True)
         properties_dir = certora_dir / "properties"
         properties_dir.mkdir(exist_ok=True, parents=True)
-        base = batch.base
+        base = batch.feat.slugified_name
         spec_name = pathlib.Path(f"autospec_{base}.spec")
         (specs_dir / spec_name).write_text(res.cvl)
         (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)

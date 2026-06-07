@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 from pydantic import BaseModel, Field
 from functools import cached_property
+from composer.spec.util import slugify_filename
 
 type ContractSort = Literal["dynamic", "singleton", "multiple"]
 
@@ -165,6 +166,19 @@ class ContractComponentInstance:
     @property
     def component(self) -> ContractComponent:
         return self.contract.components[self.ind]
+
+    @property
+    def slugified_name(self) -> str:
+        """Filesystem-safe, collision-free slug for this component, used as an
+        output filename base. Component names are unique within a contract, but
+        slugifying can map distinct names onto the same slug, so the component
+        index disambiguates when (and only when) the slug collides with a
+        sibling's."""
+        slug = slugify_filename(self.component.name)
+        sibling_slugs = [slugify_filename(c.name) for c in self.contract.components]
+        if sibling_slugs.count(slug) > 1:
+            return f"{slug}_{self.ind}"
+        return slug
 
     @staticmethod
     def from_app(
