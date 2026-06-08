@@ -15,10 +15,10 @@ from composer.input.files import Document
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
-from composer.spec.util import string_hash, slugify_filename
+from composer.spec.util import string_hash, slugify_filename, ensure_dir
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
-from composer.spec.gen_types import CVLResource
+from composer.spec.gen_types import CVLResource, CERTORA_DIR, SPECS_DIR, under_project
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
@@ -40,8 +40,7 @@ def dump_properties(
     ``properties/{spec_stem}.properties.json`` under ``certora_dir``, accompanying
     ``{spec_stem}.spec``. ``title`` is the cross-reference key used by
     ``{spec_stem}.property_rules.json``."""
-    properties_dir = certora_dir / "properties"
-    properties_dir.mkdir(exist_ok=True, parents=True)
+    properties_dir = ensure_dir(certora_dir / "properties")
     properties_dump = [prop.model_dump() for prop in props]
     (properties_dir / f"{spec_stem}.properties.json").write_text(
         json.dumps(properties_dump, indent=2)
@@ -57,8 +56,7 @@ def dump_property_rules(
     ``properties/{spec_stem}.property_rules.json`` under ``certora_dir``, accompanying
     ``{spec_stem}.spec``. Titles are unique (enforced at extraction) and validated against
     the batch at completion."""
-    properties_dir = certora_dir / "properties"
-    properties_dir.mkdir(exist_ok=True, parents=True)
+    properties_dir = ensure_dir(certora_dir / "properties")
     mapping = {m.property_title: m.rules for m in property_rules}
     (properties_dir / f"{spec_stem}.property_rules.json").write_text(
         json.dumps(mapping, indent=2)
@@ -162,7 +160,7 @@ async def run_generation_pipeline(
 
     # Dump the analysis-phase properties for each component now that the extraction
     # phase is complete.
-    certora_dir = pathlib.Path(source_input.project_root) / "certora"
+    certora_dir = under_project(source_input.project_root, CERTORA_DIR)
     for base, batch in zip(batch_filename_bases, component_batches):
         dump_properties(certora_dir, f"autospec_{base}", batch.props)
 
@@ -194,7 +192,8 @@ async def run_generation_pipeline(
                 prover_tool=prover_tool,
                 resources=resources,
                 description=label,
-                source=source_input
+                source=source_input,
+                spec_dir=SPECS_DIR,
             ),
             semaphore,
         )
@@ -209,21 +208,22 @@ async def run_generation_pipeline(
         res = await _generate_batch(task_id=task_id, batch=batch)
         if isinstance(res, GaveUp):
             return res
-        certora_dir = pathlib.Path(source_input.project_root) / "certora"
-        specs_dir = certora_dir / "specs"
-        specs_dir.mkdir(exist_ok=True, parents=True)
-        properties_dir = certora_dir / "properties"
-        properties_dir.mkdir(exist_ok=True, parents=True)
+        certora_dir = under_project(source_input.project_root, CERTORA_DIR)
+        specs_dir = ensure_dir(certora_dir / "specs")  # absolute (project_root/certora/specs)
+        properties_dir = ensure_dir(certora_dir / "properties")
         base = batch_filename_bases[i]
         spec_name = pathlib.Path(f"autospec_{base}.spec")
         (specs_dir / spec_name).write_text(res.cvl)
+        # Canonical (project-root-relative) path of the persisted spec, used for
+        # the conf's verify entry.
+        spec_path = SPECS_DIR / spec_name
         (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
         dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,
             task_id=task_id,
-            spec_name=spec_name,
+            spec_path=spec_path,
             conf=res.conf,
         )
         return res
