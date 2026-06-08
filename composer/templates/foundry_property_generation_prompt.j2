@@ -1,0 +1,138 @@
+<background>
+You have been tasked with authoring foundry tests for a set of security
+properties of a Web3 application.
+</background>
+
+<task>
+You must write a single foundry test file covering the following properties
+for the contract `{{ contract_name }}`:
+
+{% for prop in properties %}
+<{{ prop.sort }}>
+  Property {{ loop.index }} (`{{ prop.title }}`): {{ prop.description }}
+  {% if prop.sort == "attack_vector" %}
+  Goal: demonstrate that this attack/exploit *cannot* occur.
+  {% else %}
+  Goal: demonstrate that this property holds.
+  {% endif %}
+</{{ prop.sort }}>
+{% endfor %}
+
+Follow this procedure exactly:
+
+## Step 0 — gather context
+
+Read the relevant portions of the source code to understand how each
+property is realized by the implementation. When you need a cheatcode
+or foundry idiom you're not certain about, search the cheatcodes
+documentation (`foundry_cheatcodes_manual_search`,
+`foundry_cheatcodes_get_section`) rather than guessing.
+
+Do NOT speculate about whether the property is true. Your job is to
+write tests that *demonstrate* the property; the runner will tell you
+whether your demonstration actually holds.
+
+## Step 1 — author the test file
+
+Write a single foundry test contract that imports `forge-std/Test.sol`
+and covers every non-skipped property with at least one `test_*`
+function. Put it on the buffer with `put_test_raw`.
+
+For each property:
+
+* Pick the foundry idiom that maps best: a positive `test_*` (passes
+  iff the property holds), a `test_RevertWhen_*` / `test_RevertIf_*`
+  using `vm.expectRevert`, a fuzz test `testFuzz_*`, or an invariant
+  `invariant_*` with `targetContract` if the property is genuinely an
+  invariant.
+* If multiple properties share setup, factor it into `setUp()` or
+  helper functions on the test contract.
+* Cross-reference the property's `title` somewhere in the test's
+  comments so the property→test mapping is traceable.
+
+You are allowed to make multiple `put_test_raw` calls as you iterate;
+each call replaces the buffer wholesale, so emit the complete file every
+time.
+
+## Step 2 — run forge test
+
+Call `forge_test()`. It will stage your buffer under
+`<project>/test/` and run `forge test --match-path` on it.
+
+* If the run is fully green (excluding any tests you've marked via
+  `expect_test_failure`), the publish gate is stamped and you can
+  proceed to Step 3.
+* If a test fails unexpectedly, the runner returns the full output.
+  Diagnose the failure and revise:
+  - Compile error → fix the syntax / import / pragma issue.
+  - Assertion failure → either the property genuinely doesn't hold,
+    or your test is wrong. Investigate before changing the test.
+  - Fuzz failure → use `vm.assume` to rule out invalid inputs, or
+    pick a different precondition.
+  - Cheatcode misuse → look up the cheatcode with the search tools
+    and re-read the parameter shape.
+* If a test is *supposed* to fail (the failure itself proves an
+  attack vector exists), mark it via `expect_test_failure` and
+  re-run `forge_test`. The runner excludes expected-fail tests from
+  the all-green check.
+
+A subsequent `put_test_raw` invalidates any prior `forge_test` stamp,
+so always finish with a clean `forge_test` run after the *latest* edit.
+
+## Step 3 — publish
+
+Call `result(commentary, property_tests)`. The publish gate requires:
+
+* `forge_test` stamped the current buffer (i.e., a green run after the
+  most recent `put_test_raw`).
+* Every non-skipped property is claimed by at least one test function
+  name in `property_tests`. Skipped properties must NOT appear.
+
+If your `result` call is rejected, the rejection message names the
+specific gate that failed; fix it and call `result` again.
+
+<skipping>
+If you genuinely cannot formalize a property as a foundry test after
+serious effort, use `record_skip(property_title, reason)`. Skipped
+properties don't appear in the property→test mapping.
+
+You must attempt to formalize ALL properties before considering any
+skips. Skipping is for properties that are genuinely unspecifiable in
+this framework — e.g., a temporal property about block-level ordering
+that foundry cannot directly express. Do NOT skip a property merely
+because the test would be tedious.
+
+If you hit an environment issue that blocks all progress (forge
+binary missing, project structure broken, required dependency
+unbuildable), call `give_up(reason)` with a specific explanation so
+the environment can be fixed and the task re-run.
+</skipping>
+</task>
+
+{% if context %}
+<context>
+  {% include "application_context_new.j2" %}
+</context>
+{% endif %}
+
+<state>
+Use the available memory tools to track your progress, any non-obvious
+foundry patterns you've learned, and any decisions about skips /
+expected-failures. Update your memory before calling `forge_test` (so
+a context reset can rebuild) and definitely before calling `result`.
+</state>
+
+## Rerun
+
+If your memory indicates this task already completed successfully and
+you have access to the prior attempt, you may assume nothing has
+changed. Follow this procedure:
+
+1. `put_test_raw` your last-attempt test source.
+2. Reapply any skips your memory recorded.
+3. Reapply any `expect_test_failure` markings your memory recorded.
+4. Run `forge_test` to re-stamp the publish gate.
+5. Deliver via `result`.
+
+Do NOT skip step 4 — the publish gate requires a stamp on the *current*
+buffer.

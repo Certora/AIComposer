@@ -48,6 +48,7 @@ _RAG_HOST = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
 _RAG_PORT = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
 DEFAULT_CONNECTION: str = f"postgresql://rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/rag_db"
 SANITY_DEFAULT_CONNECTION: str = f"postgresql://extended_rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/extended_rag_db"
+FOUNDRY_DEFAULT_CONNECTION: str = f"postgresql://rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/foundry_rag_db"
 
 
 type _RagHeader = str | None
@@ -186,8 +187,8 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
         await cur.execute("""
             CREATE TABLE IF NOT EXISTS documents (
                 id SERIAL PRIMARY KEY,
-                content TEXT,
-                embedding vector(768),
+                content TEXT NOT NULL,
+                embedding vector(768) NOT NULL,
                 h1 TEXT,
                 h2 TEXT,
                 h3 TEXT,
@@ -196,24 +197,12 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 h6 TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             );
-
-            CREATE TABLE IF NOT EXISTS code_refs (
-                id SERIAL PRIMARY KEY,
-                ref_number INTEGER,
-                code_body TEXT,
-                parent_doc integer REFERENCES documents(id)
-            );
         """)
 
         # Create indexes
         await cur.execute("""
             CREATE INDEX IF NOT EXISTS documents_embedding_idx
             ON documents USING hnsw (embedding vector_cosine_ops);
-        """)
-
-
-        await cur.execute("""
-            CREATE INDEX IF NOT EXISTS code_refs_lkp ON code_refs(parent_doc);
         """)
 
         await cur.execute("""
@@ -238,6 +227,7 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                 created_at TIMESTAMP DEFAULT NOW(),
                 CONSTRAINT parts_unique UNIQUE (h1, h2, h3, h4, h5, h6, part)
             );
+
             CREATE INDEX IF NOT EXISTS manual_ts_idx ON manual_sections USING gin(
                 to_tsvector('english', content)
             );
@@ -305,7 +295,10 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
             for chunk, embedding in zip(chunks, embeddings):
                 try:
                     headers = self._normalize_head(chunk.headers)
-                    payload = (chunk.chunk, embedding.tolist()) + headers
+                    to_store_text = chunk.chunk
+                    for (i, cr) in enumerate(chunk.code_refs):
+                        to_store_text = to_store_text.replace(code_ref_tag(i), cr)
+                    payload = (to_store_text, embedding.tolist()) + headers
                     await cur.execute("""
                         INSERT INTO documents
                         (content, embedding, h1, h2, h3, h4, h5, h6)
@@ -315,13 +308,6 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                     insert_res = await cur.fetchone()
                     if insert_res is None:
                         raise Exception("Insertion didn't return any data")
-                    new_id = insert_res[0]
-                    for (i, code) in enumerate(chunk.code_refs):
-                        await cur.execute("""
-                            INSERT INTO code_refs (ref_number, code_body, parent_doc) VALUES (%s, %s, %s)
-                        """, (
-                            i, code, new_id
-                        ))
                 except Exception as e:
                     logger.error(f"Failed to insert chunk {chunk}: {e}")
                     continue
@@ -365,16 +351,6 @@ class PostgreSQLRAGDatabase(ComposerRAGDB):
                             break
                         assert isinstance(i, str)
                         header.append(i)
-                    await cur.execute(
-                        """
-                            SELECT ref_number, code_body FROM
-                            code_refs WHERE parent_doc = %s
-                        """, (row[0], )
-                    )
-                    async for code_row in cur:
-                        id = code_row[0]
-                        to_replace = code_ref_tag(id)
-                        body = body.replace(to_replace, code_row[1])
                     to_ret.append(ManualRef(headers=header, content=body, similarity=similarity))
                 return to_ret
 
