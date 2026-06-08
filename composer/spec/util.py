@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 from typing import Iterator
 
+from composer.spec.gen_types import CERTORA_DIR
+
 
 def string_hash(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
@@ -19,6 +21,13 @@ def slugify_filename(name: str) -> str:
     return slug or "unnamed"
 
 
+def ensure_dir(path: Path) -> Path:
+    """``mkdir -p`` *path* (no-op if it already exists) and return it, so it can be
+    used inline, e.g. ``ensure_dir(certora_dir / "specs") / spec_name``."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 @contextlib.contextmanager
 def temp_certora_file(
     *,
@@ -26,7 +35,7 @@ def temp_certora_file(
     ext: str,
     content: str,
     prefix: str = "generated",
-    dest_dir: str = "certora",
+    dest_dir: Path = CERTORA_DIR,
 ) -> Iterator[str]:
     """Write a temp file under ``<root>/<dest_dir>``, yield its path **relative to
     the project root**, and clean it up.
@@ -39,12 +48,11 @@ def temp_certora_file(
     verify-time and after persistence.
     """
     tmp_name = f"{prefix}_{uuid.uuid1().hex[:16]}.{ext}"
-    target_dir = Path(root) / dest_dir
-    target_dir.mkdir(exist_ok=True, parents=True)
+    target_dir = ensure_dir(Path(root) / dest_dir)
     tgt = target_dir / tmp_name
     tgt.write_text(content)
     try:
-        yield f"{dest_dir}/{tmp_name}"
+        yield (dest_dir / tmp_name).as_posix()
     finally:
         os.unlink(tgt)
 

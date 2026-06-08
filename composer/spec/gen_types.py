@@ -1,6 +1,6 @@
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Literal, Mapping, Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -16,14 +16,22 @@ from pydantic import BaseModel, Field
 # statements are derived with :func:`import_statement_for` (the prover reads
 # those relative to the importing spec's own directory).
 # ---------------------------------------------------------------------------
-CERTORA_DIR = "certora"
+CERTORA_DIR = Path("certora")
 #: Generated specs (the "importers") are written here.
-SPECS_DIR = f"{CERTORA_DIR}/specs"
+SPECS_DIR = CERTORA_DIR / "specs"
 #: AutoSetup / custom summaries live here.
-SUMMARIES_DIR = f"{SPECS_DIR}/summaries"
+SUMMARIES_DIR = SPECS_DIR / "summaries"
 
 
-def certora_relative_to_project(p: str) -> str:
+def under_project(project_root: "str | Path", rel: "str | Path") -> Path:
+    """Resolve a project-root-relative path (e.g. :data:`CERTORA_DIR`,
+    :data:`SPECS_DIR`, or a canonical spec path) to an absolute path under
+    *project_root*. The single place the canonical layout meets a concrete root.
+    """
+    return Path(project_root) / rel
+
+
+def certora_relative_to_project(p: str) -> Path:
     """Express *p* -- a path relative to the ``certora/`` directory -- relative to
     the project root, by prefixing ``certora/``.
 
@@ -35,13 +43,13 @@ def certora_relative_to_project(p: str) -> str:
     silently producing a ``certora/certora/...`` path downstream.
     """
     pp = PurePosixPath(p)
-    assert pp.parts[:1] != (CERTORA_DIR,), (
+    assert pp.parts[:len(CERTORA_DIR.parts)] != CERTORA_DIR.parts, (
         f"expected a certora/-relative path, got project-root-relative {p!r}"
     )
-    return (PurePosixPath(CERTORA_DIR) / pp).as_posix()
+    return CERTORA_DIR / p
 
 
-def import_statement_for(resource_path: str, importer_dir: str) -> str:
+def import_statement_for(resource_path: Path, importer_dir: Path) -> str:
     """CVL import path to *resource_path* as seen from a spec located in
     *importer_dir* (both project-root-relative).
 
@@ -59,7 +67,7 @@ def import_statement_for(resource_path: str, importer_dir: str) -> str:
 # ---------------------------------------------------------------------------
 
 class CVLResource(BaseModel):
-    path: str = Field(description="path to the resource file, relative to the project root (e.g. `certora/specs/invariants.spec`)")
+    path: Path = Field(description="path to the resource file, relative to the project root (e.g. `certora/specs/invariants.spec`)")
     required: bool = Field(description="whether this resource *must* be used in the verification process")
     description: str = Field(description="A description of this resource")
     sort: Literal["import"]

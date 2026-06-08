@@ -23,6 +23,7 @@ from composer.spec.source.prover import ProverStateExtra, DELETE_SKIP, VALIDATIO
 from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
 from langgraph.runtime import get_runtime
+from pathlib import Path
 from composer.spec.gen_types import CVLResource, TypedTemplate, import_statement_for
 from composer.spec.source.source_env import SourceEnvironment
 from langgraph.types import Command
@@ -345,7 +346,7 @@ async def batch_cvl_generation(
     env: SourceEnvironment,
     description: str,
     source: SourceCode,
-    spec_dir: str,
+    spec_dir: Path,
 ) -> BatchGeneratedCVLResult:
     # *spec_dir* (project-root-relative) is where the caller will persist the spec
     # authored here. The prover resolves the spec's CVL imports relative to its own

@@ -37,8 +37,8 @@ from composer.diagnostics.stream import (
 from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
 from composer.diagnostics.timing import RunSummary, get_run_summary
 from graphcore.graph import tool_state_update
-from composer.spec.util import temp_certora_file
-from composer.spec.gen_types import SPECS_DIR
+from composer.spec.util import temp_certora_file, ensure_dir
+from composer.spec.gen_types import CERTORA_DIR, SPECS_DIR, under_project
 
 
 _logger = logging.getLogger("composer.prover")
@@ -69,8 +69,7 @@ def dump_final_conf(
         _logger.warning(f"Attempting to dump the conf for task_id {task_id} but it doesn't exist")
         return
     conf["verify"] = f"{main_contract}:{spec_path}"
-    confs_dir = Path(project_root) / "certora" / "confs"
-    confs_dir.mkdir(parents=True, exist_ok=True)
+    confs_dir = ensure_dir(under_project(project_root, CERTORA_DIR / "confs"))
     out_path = confs_dir / f"{Path(spec_path).stem}.conf"
     out_path.write_text(json.dumps(conf, indent=2))
     _logger.info(f"wrote final conf for task={task_id} to {out_path}")

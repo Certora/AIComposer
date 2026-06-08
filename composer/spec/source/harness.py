@@ -36,7 +36,7 @@ from composer.spec.source.autosetup import run_autosetup, SetupFailure, SetupSuc
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
-from composer.spec.gen_types import TypedTemplate, certora_relative_to_project
+from composer.spec.gen_types import TypedTemplate, certora_relative_to_project, under_project
 from composer.spec.system_model import SourceApplication, SourceExternalActor, SourceExplicitContract
 
 def system_setup_key(s: SourceApplication) -> CacheKey["ContractSetup", "SystemDescriptionHarnessed"]:
@@ -511,7 +511,7 @@ async def run_setup(
 ) -> ContractSetup | None:
     config_ctxt = context.child(config_key)
     if (cached := await config_ctxt.cache_get(ContractSetup)) is not None:
-        if (Path(source.project_root) / certora_relative_to_project(cached.config.summaries_path)).exists():
+        if under_project(source.project_root, certora_relative_to_project(cached.config.summaries_path)).exists():
             return cached
 
     sys_desc = await run_and_apply_part1(config_ctxt, source, env, application_desc)

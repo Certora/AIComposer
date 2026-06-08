@@ -23,9 +23,9 @@ from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithI
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.cvl.tools import get_cvl, put_cvl, put_cvl_raw
-from composer.spec.gen_types import CVLResource, SUMMARIES_DIR
+from composer.spec.gen_types import CVLResource, SUMMARIES_DIR, under_project
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
-from composer.spec.util import temp_certora_file, string_hash
+from composer.spec.util import temp_certora_file, string_hash, ensure_dir
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.harness import ContractSetup, ExternalInterface, HarnessDef
 from composer.spec.system_model import HarnessedApplication, ExternalActor
@@ -120,9 +120,9 @@ class _TypeChecker(
                 root=source.project_root,
                 ext="conf",
                 content=json.dumps(to_check),
-            ) as conf_file:
+            ) as conf_path:
                 res = subprocess.run([
-                    sys.executable, str(typechecker), conf_file
+                    sys.executable, str(typechecker), conf_path
                 ], cwd=source.project_root, capture_output=True, text=True)
                 if res.returncode == 0:
                     return tool_state_update(
@@ -308,9 +308,9 @@ async def setup_summaries(
     """
 
     summary_context = ctx.child(_summary_key(config))
-    custom_summaries_path = f"{SUMMARIES_DIR}/custom_summaries.spec"  # project-root-relative
-    result_path = pathlib.Path(source.project_root) / custom_summaries_path
-    result_path.parent.mkdir(parents=True, exist_ok=True)
+    custom_summaries_path = SUMMARIES_DIR / "custom_summaries.spec"  # project-root-relative
+    result_path = under_project(source.project_root, custom_summaries_path)
+    ensure_dir(result_path.parent)
 
     to_ret = CVLResource(
         path=custom_summaries_path,
