@@ -25,16 +25,26 @@ def temp_certora_file(
     root: str,
     ext: str,
     content: str,
-    prefix: str = "generated"
+    prefix: str = "generated",
+    dest_dir: str = "certora",
 ) -> Iterator[str]:
-    """Write a temp file into the project's certora/ dir, yield its name, clean up."""
+    """Write a temp file under ``<root>/<dest_dir>``, yield its path **relative to
+    the project root**, and clean it up.
+
+    *dest_dir* is itself project-root-relative (default ``certora``). The yielded
+    path uses the same project-root-relative convention as the persisted artifacts,
+    so callers use it verbatim (no ``certora/`` prefixing). Materializing a spec in
+    the same directory it will ultimately be dumped to (e.g. ``certora/specs``)
+    makes the prover resolve the spec's CVL ``import`` statements identically at
+    verify-time and after persistence.
+    """
     tmp_name = f"{prefix}_{uuid.uuid1().hex[:16]}.{ext}"
-    certora_dir = Path(root) / "certora"
-    certora_dir.mkdir(exist_ok=True, parents=True)
-    tgt = certora_dir / tmp_name
+    target_dir = Path(root) / dest_dir
+    target_dir.mkdir(exist_ok=True, parents=True)
+    tgt = target_dir / tmp_name
     tgt.write_text(content)
     try:
-        yield tmp_name
+        yield f"{dest_dir}/{tmp_name}"
     finally:
         os.unlink(tgt)
 

@@ -25,7 +25,7 @@ from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties, CVLGeneration,
 )
 from composer.spec.prop import PropertyFormulation
-from composer.spec.gen_types import CVLResource
+from composer.spec.gen_types import CVLResource, SPECS_DIR, certora_relative_to_project
 from composer.spec.source.harness import run_setup
 from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.source.source_env import SourceEnvironment
@@ -132,7 +132,7 @@ async def run_autoprove_pipeline(
     # Build initial resources from AutoSetup-generated summaries
     resources: list[CVLResource] = [
         CVLResource(
-            import_path=str(setup.config.summaries_path),
+            path=certora_relative_to_project(setup.config.summaries_path),
             required=True,
             description="AutoSetup-generated summaries",
             sort="import",
@@ -202,7 +202,8 @@ async def run_autoprove_pipeline(
                     prover_tool=prover_tool,
                     resources=resources,
                     description="Structural invariant CVL",
-                    source=source_input
+                    source=source_input,
+                    spec_dir=SPECS_DIR,
                 ),
             )
             if isinstance(inv_cvl_result, GaveUp):
@@ -212,18 +213,23 @@ async def run_autoprove_pipeline(
             inv_cvl = inv_cvl_result
             await inv_cvl_ctx.cache_put(inv_cvl)
 
-        inv_spec_name = "invariants.spec"
-        (certora_dir / inv_spec_name).write_text(inv_cvl.cvl)
+        specs_dir = Path(SPECS_DIR)
+        specs_dir.mkdir(exist_ok=True, parents=True)
+        # Canonical (project-root-relative) path of the persisted spec. The file
+        # write and the conf's verify entry derive from it; the CVL import path is
+        # derived (relative to certora/specs/) where the import is emitted.
+        inv_spec_path = specs_dir / "invariants.spec"
+        (Path(source_input.project_root) / inv_spec_path).write_text(inv_cvl.cvl)
         dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,
             task_id=inv_task_id,
-            spec_name=Path(inv_spec_name),
+            spec_path=inv_spec_path,
             conf=inv_cvl.conf,
         )
         resources.append(CVLResource(
-            import_path=inv_spec_name,
+            path=str(inv_spec_path),
             required=False,
             description="Structural invariants that may be assumed as preconditions",
             sort="import",

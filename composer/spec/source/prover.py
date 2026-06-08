@@ -38,6 +38,7 @@ from composer.spec.cvl_generation import CVLGenerationState, make_validation_sta
 from composer.diagnostics.timing import RunSummary, get_run_summary
 from graphcore.graph import tool_state_update
 from composer.spec.util import temp_certora_file
+from composer.spec.gen_types import SPECS_DIR
 
 
 _logger = logging.getLogger("composer.prover")
@@ -48,11 +49,15 @@ def dump_final_conf(
     project_root: str,
     main_contract: str,
     task_id: str,
-    spec_name: Path,
+    spec_path: Path,
     conf: dict | None = None,
 ) -> None:
     """Write *task_id*'s last prover conf to ``certora/confs/{stem}.conf``,
-    rewriting the ``verify`` line to point to the persisted ``certora/{spec_name}``.
+    rewriting the ``verify`` line to point at *spec_path*.
+
+    *spec_path* is the path to the persisted spec **relative to the project root**
+    (e.g. ``certora/specs/invariants.spec``). It is used verbatim in the conf's
+    ``verify`` entry, which the prover resolves relative to the project root.
 
     ``conf`` may be supplied explicitly (e.g. a conf persisted in the generation cache so
     a cache hit can still produce the conf); when omitted it falls back to the conf
@@ -63,10 +68,10 @@ def dump_final_conf(
     if conf is None:
         _logger.warning(f"Attempting to dump the conf for task_id {task_id} but it doesn't exist")
         return
-    conf["verify"] = f"{main_contract}:certora/{spec_name}"
+    conf["verify"] = f"{main_contract}:{spec_path}"
     confs_dir = Path(project_root) / "certora" / "confs"
     confs_dir.mkdir(parents=True, exist_ok=True)
-    out_path = confs_dir / f"{Path(spec_name).stem}.conf"
+    out_path = confs_dir / f"{Path(spec_path).stem}.conf"
     out_path.write_text(json.dumps(conf, indent=2))
     _logger.info(f"wrote final conf for task={task_id} to {out_path}")
 
@@ -213,11 +218,15 @@ def tmp_spec(
     content: str,
     prefix: str = "generated"
 ) -> Iterator[str]:
+    # Materialize under the canonical specs dir -- the same directory the spec is
+    # ultimately persisted to -- so the prover resolves the spec's CVL imports
+    # (e.g. ``summaries/X.spec``) identically at verify-time and after dumping.
     with temp_certora_file(
         root=root,
         ext="spec",
         content=content,
-        prefix=prefix
+        prefix=prefix,
+        dest_dir=SPECS_DIR,
     ) as tmp:
         yield tmp
 
@@ -256,7 +265,7 @@ def get_prover_tool(
         with tmp_spec(root=project_root, content=state["curr_spec"]) as generated:
             config = {
                 **conf,
-                "verify": f"{main_contract}:certora/{generated}",
+                "verify": f"{main_contract}:{generated}",
                 "parametric_contracts": main_contract,
                 "optimistic_loop": True,
                 "rule_sanity": "basic",
@@ -277,7 +286,7 @@ def get_prover_tool(
                 async with sem:
                     result = await run_prover(
                         Path(project_root),
-                        [f"certora/{config_path}"],
+                        [config_path],
                         tool_call_id,
                         prover_opts,
                         _SpecCallbacks(get_stream_writer(), tool_call_id, summary, config),

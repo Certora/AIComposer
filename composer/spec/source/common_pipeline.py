@@ -18,7 +18,7 @@ from composer.spec.context import (
 from composer.spec.util import string_hash, slugify_filename
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
-from composer.spec.gen_types import CVLResource
+from composer.spec.gen_types import CVLResource, SPECS_DIR
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
@@ -194,7 +194,8 @@ async def run_generation_pipeline(
                 prover_tool=prover_tool,
                 resources=resources,
                 description=label,
-                source=source_input
+                source=source_input,
+                spec_dir=SPECS_DIR,
             ),
             semaphore,
         )
@@ -210,20 +211,23 @@ async def run_generation_pipeline(
         if isinstance(res, GaveUp):
             return res
         certora_dir = pathlib.Path(source_input.project_root) / "certora"
-        specs_dir = certora_dir / "specs"
+        specs_dir = pathlib.Path(SPECS_DIR)
         specs_dir.mkdir(exist_ok=True, parents=True)
         properties_dir = certora_dir / "properties"
         properties_dir.mkdir(exist_ok=True, parents=True)
         base = batch_filename_bases[i]
         spec_name = pathlib.Path(f"autospec_{base}.spec")
         (specs_dir / spec_name).write_text(res.cvl)
+        # Canonical (project-root-relative) path of the persisted spec, used for
+        # the conf's verify entry.
+        spec_path = specs_dir / spec_name
         (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
         dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,
             task_id=task_id,
-            spec_name=spec_name,
+            spec_path=spec_path,
             conf=res.conf,
         )
         return res
