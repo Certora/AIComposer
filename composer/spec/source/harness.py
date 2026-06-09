@@ -36,7 +36,7 @@ from composer.spec.source.autosetup import run_autosetup, SetupFailure, SetupSuc
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
-from composer.spec.gen_types import TypedTemplate
+from composer.spec.gen_types import TypedTemplate, certora_relative_to_project, under_project
 from composer.spec.system_model import SourceApplication, SourceExternalActor, SourceExplicitContract
 
 def system_setup_key(s: SourceApplication) -> CacheKey["ContractSetup", "SystemDescriptionHarnessed"]:
@@ -559,7 +559,7 @@ async def run_autosetup_phase(
         application_desc.model_dump(),
     )
     if (cached := await cache.cache_get(SetupSuccess)) is not None:
-        if (Path(source.project_root) / "certora" / cached.summaries_path).exists():
+        if under_project(source.project_root, certora_relative_to_project(cached.summaries_path)).exists():
             return cached
 
     extra_files = [
