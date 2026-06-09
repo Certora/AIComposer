@@ -22,6 +22,11 @@ SPECS_DIR = CERTORA_DIR / "specs"
 #: AutoSetup / custom summaries live here.
 SUMMARIES_DIR = SPECS_DIR / "summaries"
 
+#: Internal autoProve run artifacts (rotating logs, events.jsonl, run-link
+#: dumps). NOT part of the certora/ deliverable layout above — these are
+#: diagnostics/scratch outputs under the project root.
+AUTOPROVE_INTERNAL_DIR = Path(".certora_internal") / "autoProve"
+
 
 def under_project(project_root: "str | Path", rel: "str | Path") -> Path:
     """Resolve a project-root-relative path (e.g. :data:`CERTORA_DIR`,

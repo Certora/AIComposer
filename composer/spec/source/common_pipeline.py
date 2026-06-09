@@ -18,7 +18,9 @@ from composer.spec.context import (
 from composer.spec.util import string_hash, ensure_dir
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
-from composer.spec.gen_types import CVLResource, CERTORA_DIR, SPECS_DIR, under_project
+from composer.spec.gen_types import (
+    CVLResource, CERTORA_DIR, SPECS_DIR, AUTOPROVE_INTERNAL_DIR, under_project,
+)
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
@@ -67,9 +69,6 @@ def dump_property_rules(
     )
 
 
-_AUTOPROVE_INTERNAL_DIR = pathlib.Path(".certora_internal") / "autoProve"
-
-
 def _output_link(link: str) -> str:
     """Rewrite a prover ``/jobStatus/`` URL to its ``/output/`` view. Local
     result-directory paths (which contain neither) pass through unchanged."""
@@ -85,7 +84,7 @@ def dump_component_runs(
     ``project_root``. Keys are each component's slug (the ``autospec_{slug}`` spec
     stem) plus ``"invariants"`` for the structural-invariant spec; the link is the
     URL (cloud) or local results directory (local) of that spec's last prover run."""
-    out_dir = ensure_dir(under_project(project_root, _AUTOPROVE_INTERNAL_DIR))
+    out_dir = ensure_dir(under_project(project_root, AUTOPROVE_INTERNAL_DIR))
     (out_dir / "components_to_prover_runs.json").write_text(
         json.dumps(component_runs, indent=2)
     )
