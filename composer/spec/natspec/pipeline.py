@@ -338,7 +338,7 @@ async def analyze_single_contract(
                         ))
                     skipped.add(skip.property_title)
                 succ_props = [
-                    l for (i, l) in enumerate(batch.props, start=1) if i not in skipped
+                    l for l in batch.props if l.title not in skipped 
                 ]
                 succ.append(ComponentGenerationSuccess(
                     commentary=result.commentary,

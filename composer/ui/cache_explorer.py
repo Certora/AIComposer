@@ -8,8 +8,12 @@ tree builder and value formatter.
 See scripts/cache_explorer.py for the NatSpec pipeline entry point.
 """
 
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from contextlib import contextmanager, asynccontextmanager
+from contextvars import ContextVar
+
+from pydantic import BaseModel
 
 from langgraph.store.base import BaseStore
 
@@ -19,7 +23,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Header, Footer, Tree, Static, Label, TextArea
 from textual.widgets.tree import TreeNode
 
-from composer.spec.context import WorkflowContext
+from composer.spec.context import WorkflowContext, CacheKey, CacheTypes, Marker
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +119,92 @@ def icon[V](node: CacheTreeNode[V]) -> str:
 
 def node_label[V](node: CacheTreeNode[V]) -> str:
     return f"{icon(node)}  {node.label}"
+
+
+# ---------------------------------------------------------------------------
+# Tree-building helpers
+#
+# Workflow-specific explorers assemble their cache tree from these. The tree is
+# built imperatively: ``node``/``section``/``node_for`` push a parent onto a
+# ContextVar-backed stack so nested ``async with`` blocks attach to the right
+# parent, while ``leaf``/``memory`` produce leaf nodes that an async generator
+# yields out for ``collect_tree`` to drain into the current parent. (A generator
+# that ``.set()``s a ContextVar leaks the change to its driver, which is exactly
+# how the pushed parent reaches ``collect_tree``'s ``async for``.)
+# ---------------------------------------------------------------------------
+
+_node_context: ContextVar["CacheTreeNode | None"] = ContextVar("_node_context", default=None)
+
+
+@contextmanager
+def node(c: "CacheTreeNode") -> Iterator[None]:
+    """Push ``c`` as the current parent for the block, attaching it to the
+    enclosing parent (if any)."""
+    prev = _node_context.get()
+    if prev is not None:
+        prev.children.append(c)
+    tok = _node_context.set(c)
+    try:
+        yield
+    finally:
+        _node_context.reset(tok)
+
+
+@contextmanager
+def section(label: str) -> Iterator[None]:
+    """A purely-organizational parent node with no backing cache slot."""
+    with node(OrgNode(label)):
+        yield
+
+
+@asynccontextmanager
+async def node_for[T: CacheTypes, S: CacheTypes](
+    ctx: WorkflowContext[T],
+    child: CacheKey[T, S],
+    label: str,
+    ty: type[S] | None = None,
+) -> AsyncIterator[WorkflowContext[S]]:
+    """A cache-backed parent node, yielding the child context for nesting. When
+    ``ty`` is given the node's value is fetched from the cache for display."""
+    child_ctx = ctx.child(child)
+    value: S | None = await child_ctx.cache_get(ty) if ty is not None else None
+    with node(CacheNode(label=label, ctx=child_ctx, value=value)):
+        yield child_ctx
+
+
+async def leaf[T: CacheTypes, S: BaseModel](
+    ctx: WorkflowContext[T],
+    child: CacheKey[T, S],
+    label: str,
+    ty: type[S],
+) -> CacheNode[S]:
+    """A cache-backed leaf node with its value fetched eagerly."""
+    child_ctx = ctx.child(child)
+    value: S | None = await child_ctx.cache_get(ty)
+    return CacheNode[S](label=label, value=value, ctx=child_ctx)
+
+
+def memory[T: CacheTypes, S: Marker](
+    ctx: WorkflowContext[T], child: CacheKey[T, S], label: str,
+) -> CacheNode[S]:
+    """A node pointing at a memory marker (no cached value to fetch)."""
+    return CacheNode[S](label=label, value=None, ctx=ctx.child(child))
+
+
+async def collect_tree[V](
+    root_label: str,
+    root_ctx: WorkflowContext,
+    nodes: AsyncIterator["CacheTreeNode[V]"],
+) -> CacheNode[V]:
+    """Drain an async generator of leaf nodes into a tree rooted at
+    ``root_label``, honoring the ``node``/``section``/``node_for`` parent stack."""
+    root: CacheNode[V] = CacheNode(label=root_label, ctx=root_ctx)
+    with node(root):
+        async for n in nodes:
+            curr = _node_context.get()
+            assert curr is not None
+            curr.children.append(n)
+    return root
 
 
 # ---------------------------------------------------------------------------

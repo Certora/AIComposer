@@ -17,21 +17,16 @@ import argparse
 import asyncio
 import sys
 from dataclasses import dataclass
-from contextvars import ContextVar
-from contextlib import contextmanager, asynccontextmanager
-from typing import AsyncIterator
-
-from pydantic import BaseModel
 
 from composer.ui.cache_explorer import (
-    CacheNode, CacheExplorerApp, DummyServices, CacheTreeNode, OrgNode,
-    StoreNode,
+    CacheNode, CacheExplorerApp, DummyServices, StoreNode,
+    node, section, node_for, leaf, memory, collect_tree,
 )
 from composer.input.types import DEFAULT_RECURSION_LIMIT
 from composer.io.run_index import get_run
 from composer.spec.context import (
     WorkflowContext, CacheKey, CVLGeneration,
-    Contract, CacheTypes, Marker, ComponentGroup, Properties,
+    Contract, ComponentGroup, Properties,
 )
 from composer.spec.natspec.run_tags import NatspecRunTags
 from composer.spec.system_model import (
@@ -55,7 +50,7 @@ from composer.spec.natspec.pipeline import (
     PROPERTIES_KEY, _component_cache_key, _batch_cache_key,
     STUB_NS, FILES_NS,
 )
-from composer.spec.natspec.registry import STUB_STORE_KEY, FIELDS_STORE_KEY
+from composer.spec.natspec.registry import stub_state_namespace
 from composer.spec.natspec.author import AuthorResult, GenerationSuccess, GaveUp
 from composer.spec.util import string_hash
 
@@ -83,7 +78,7 @@ class RegistryRaw:
     KV slots — these aren't BaseModels (the registries persist plain dicts),
     so we display them via a dedicated ``format_value`` case rather than
     rehydrating into a typed model."""
-    kind: str  # "stub_content" | "stub_fields" | "file_registry_contract"
+    kind: str  # "stub_state" | "file_registry_contract"
     payload: dict
 
 # Cache-key literal used by source_analysis — same across mental models.
@@ -127,58 +122,6 @@ def _is_generated(c: ExplicitContract) -> bool:
 # ---------------------------------------------------------------------------
 # Tree construction
 # ---------------------------------------------------------------------------
-
-_node_context = ContextVar[CacheTreeNode[NatSpecCachedValue] | None]("_node_context", default=None)
-
-
-@contextmanager
-def node(c: CacheTreeNode[NatSpecCachedValue]):
-    prev = _node_context.get()
-    if prev is not None:
-        prev.children.append(c)
-    tok = _node_context.set(c)
-    try:
-        yield
-    finally:
-        _node_context.reset(tok)
-
-
-@contextmanager
-def section(s: str):
-    with node(OrgNode(s)):
-        yield
-
-
-@asynccontextmanager
-async def node_for[T: CacheTypes, S: CacheTypes](
-    ctx: WorkflowContext[T],
-    child: CacheKey[T, S],
-    label: str,
-    ty: type[S] | None = None,
-) -> AsyncIterator[WorkflowContext[S]]:
-    child_ctx = ctx.child(child)
-    value: S | None = None
-    if ty is not None:
-        value = await child_ctx.cache_get(ty)
-    new_node = CacheNode(label=label, ctx=child_ctx, value=value)
-    with node(new_node):  # type: ignore
-        yield child_ctx
-
-
-async def leaf[T: CacheTypes, S: BaseModel](
-    ctx: WorkflowContext[T],
-    child: CacheKey[T, S],
-    label: str,
-    ty: type[S],
-) -> CacheNode[S]:
-    child_ctx = ctx.child(child)
-    value: S | None = await child_ctx.cache_get(ty)
-    return CacheNode[S](label=label, value=value, ctx=child_ctx)
-
-
-def memory[T: CacheTypes, S: Marker](ctx: WorkflowContext[T], child: CacheKey[T, S], label: str):
-    return CacheNode[S](label=label, value=None, ctx=ctx.child(child))
-
 
 async def build_cvl_generation_node(ctx: WorkflowContext[CVLGeneration]):
     """Children of the per-batch CVL-generation subtree.
@@ -270,14 +213,24 @@ async def build_tree_inner(
     # the StubRegistry's ``stub_fields`` slot when a re-run sees the
     # cached "field already exists" answer for a stub that was wiped.
     with section("Registries"):
-        stub_ns = STUB_NS + (doc_digest,)
-        for slot_key in (STUB_STORE_KEY, FIELDS_STORE_KEY):
-            item = await store.aget(stub_ns, slot_key)
+        # The StubRegistry persists one ``_StubDurableState`` ({fields, content})
+        # per Solidity identifier under its own namespace — enumerate them
+        # rather than probing fixed keys.
+        stub_ns = stub_state_namespace(STUB_NS + (doc_digest,))
+        stub_items = await store.asearch(stub_ns, limit=10_000)
+        if stub_items:
+            with section("StubRegistry"):
+                for item in stub_items:
+                    yield StoreNode[NatSpecCachedValue](
+                        label=f"Stub: {item.key}",
+                        slot=(stub_ns, item.key),
+                        value=RegistryRaw(kind="stub_state", payload=item.value),
+                    )
+        else:
             yield StoreNode[NatSpecCachedValue](
-                label=f"StubRegistry: {slot_key}",
-                slot=(stub_ns, slot_key),
-                value=RegistryRaw(kind=slot_key, payload=item.value)
-                      if item is not None else None,
+                label="StubRegistry: (empty)",
+                slot=(stub_ns, "<empty>"),
+                value=None,
             )
 
         files_ns = FILES_NS + (doc_digest,)
@@ -380,15 +333,10 @@ async def build_tree(
     interactive: bool,
 ) -> CacheNode[NatSpecCachedValue]:
     """Build the NatSpec pipeline cache tree by reading the store."""
-    root: CacheNode[NatSpecCachedValue] = CacheNode(label="root", ctx=root_ctx)
-    with node(root):
-        async for n in build_tree_inner(
-            root_ctx, store, doc_digest, from_source, interactive,
-        ):
-            curr_node = _node_context.get()
-            assert curr_node is not None
-            curr_node.children.append(n)  # type: ignore
-    return root
+    return await collect_tree(
+        "root", root_ctx,
+        build_tree_inner(root_ctx, store, doc_digest, from_source, interactive),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -491,24 +439,17 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
             lines.append("--- Last attempt CVL ---")
             lines.append(cvl)
 
-        case RegistryRaw(kind="stub_content", payload=payload):
-            lines.append(f"Stubs ({len(payload)}):")
-            for nm, entry in payload.items():
+        case RegistryRaw(kind="stub_state", payload=payload):
+            fields = payload.get("fields", [])
+            lines.append(f"Registered fields ({len(fields)}):")
+            for f in fields:
                 lines.append(
-                    f"  - {nm}: path={entry.get('path')} "
-                    f"ident={entry.get('solidity_identifier')}"
+                    f"  - {f.get('name')}: {f.get('type')}  "
+                    f"({f.get('description')})"
                 )
-
-        case RegistryRaw(kind="stub_fields", payload=payload):
-            fields_by_contract = payload.get("stub_fields", payload)
-            lines.append(f"Field metadata ({len(fields_by_contract)} contracts):")
-            for nm, fields in fields_by_contract.items():
-                lines.append(f"  {nm}: {len(fields)} field(s)")
-                for f in fields:
-                    lines.append(
-                        f"    - {f.get('name')}: {f.get('type')}  "
-                        f"({f.get('description')})"
-                    )
+            lines.append("")
+            lines.append("--- Stub content ---")
+            lines.append(payload.get("content", ""))
 
         case RegistryRaw(kind="file_registry_contract", payload=payload):
             entries = payload.get("files", [])

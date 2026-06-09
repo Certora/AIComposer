@@ -15,7 +15,7 @@ DESCRIPTION = "Component analysis"
 def source_analysis_key[A: NatspecApplication](
     s: MentalModel[A, Any, Any]
 ) -> CacheKey[None, A]:
-    return CacheKey[None, A]("source-analysis")
+    return CacheKey[None, A]("source-analysis-" + s.model_ty.__name__)
 
 async def run_component_analysis[A: NatspecApplication](
     context: WorkflowContext[None],

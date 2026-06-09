@@ -18,7 +18,9 @@ async def run_component_analysis(
         child_ctxt=child_ctx,
         env=env,
         extra_input=[
-            f"The main entry point of this application has been explicitly identified as {input.contract_name} at relative path {input.relative_path}"
+            f"The main entry point of this application has been explicitly identified as {input.contract_name} at relative path {input.relative_path}. "
+            "Your output MUST contain an explicit contract instance with this solidity identifier."
         ],
         input=input,
+        expected_main_id=input.contract_name
     )

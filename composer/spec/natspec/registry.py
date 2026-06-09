@@ -236,9 +236,6 @@ async def run_registry_agent(
 # StubRegistry — serializes stub edits
 # ---------------------------------------------------------------------------
 
-STUB_STORE_KEY = "stub_content"
-FIELDS_STORE_KEY = "stub_fields"
-
 STUB_STATE_KEY = "stub_state"
 
 @dataclass
@@ -252,7 +249,10 @@ class _StubDurableState(BaseModel):
     fields: list[FieldSpec]
     content: str
 
-def _stub_ns(ns: tuple[str, ...]) -> tuple[str, ...]:
+def stub_state_namespace(ns: tuple[str, ...]) -> tuple[str, ...]:
+    """The store namespace the StubRegistry persists its per-identifier
+    ``_StubDurableState`` records under. Exposed so the cache explorer reads
+    the same layout the registry writes, rather than re-deriving it."""
     return ns + (STUB_STATE_KEY,)
 
 async def _state_write(store: BaseStore, ns: tuple[str, ...], id: SolidityIdentifier, state: _StubDurableState):
@@ -297,7 +297,7 @@ class StubRegistry:
         *,
         recursion_limit: int,
     ) -> "StubRegistry":
-        ns = _stub_ns(namespace)
+        ns = stub_state_namespace(namespace)
 
         """Create or resume a StubRegistry.
 

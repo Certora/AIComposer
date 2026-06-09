@@ -7,14 +7,14 @@ from composer.spec.context import (
     WorkflowContext, SystemDoc
 )
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.system_model import BaseApplication, ExplicitContract, ExternalActor, ExternalDependency
+from composer.spec.system_model import BaseApplication, ExplicitContract, ExternalActor, ExternalDependency, SolidityIdentifier
 from composer.spec.service_host import ServiceHost
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 
 DESCRIPTION = "Component analysis"
 
 def _validate_connectivity(
-    _: Any, app: BaseApplication
+    app: BaseApplication, expected_main_id: SolidityIdentifier | None
 ) -> str | None:
     errors: list[str] = []
     known_components: dict[str, set[str]] = {}
@@ -40,6 +40,9 @@ def _validate_connectivity(
             if c.name in known_external:
                 errors.append(f"Duplicate external component name: {c.name}")
             known_external.add(c.name)
+    
+    if expected_main_id is not None and expected_main_id not in known_solidity_ids:
+        errors.append(f"Expected an explicit contract instance with solidity identifier: {expected_main_id}")
 
     for explicit in app.components:
         if not isinstance(explicit, ExplicitContract):
@@ -79,7 +82,8 @@ async def run_component_analysis[T: BaseApplication](
     child_ctxt: WorkflowContext[T],
     input: SystemDoc,
     env: ServiceHost,
-    extra_input: list[str | dict]
+    extra_input: list[str | dict],
+    expected_main_id: SolidityIdentifier | None = None,
 ) -> T | None:
     """Analyze application components from a system doc and optionally source code."""
     if (cached := await child_ctxt.cache_get(ty)) is not None:
@@ -94,10 +98,15 @@ async def run_component_analysis[T: BaseApplication](
         "__annotations__": {"result": NotRequired[ty]}
     })
 
+    def _validation_wrapper(
+        _: Any, app: BaseApplication
+    ) -> str | None:
+        return _validate_connectivity(app, expected_main_id)
+
     b = bind_standard(
         builder=env.builder,
         state_type=AnalysisState,
-        validator=_validate_connectivity
+        validator=_validation_wrapper
     ).with_input(
         AnalysisInput
     ).with_sys_prompt_template(

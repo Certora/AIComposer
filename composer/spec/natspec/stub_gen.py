@@ -159,6 +159,10 @@ async def generate_stub[S: StubDeclarationModel](
         description=f"{DESCRIPTION}: {contract_name}",
     )
     assert "result" in res
-    res_value = cast(S, res["result"])
+    output = res["result"]
+    if isinstance(output, dict):
+        res_value = stub_ty.model_validate(output)
+    else:
+        res_value = cast(S, output)
     await child.cache_put(res_value)
     return res_value
