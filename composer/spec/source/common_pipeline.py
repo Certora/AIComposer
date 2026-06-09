@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import dataclass, field
 import json
+import logging
 import pathlib
 
 from langchain_core.tools import BaseTool
@@ -29,9 +30,13 @@ from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 from composer.spec.source.prover import dump_final_conf
 from composer.spec.source.task_ids import (
-    bug_analysis_task_id, cvl_gen_task_id, INVARIANT_CVL_TASK_ID,
+    bug_analysis_task_id, cvl_gen_task_id, INVARIANT_CVL_TASK_ID, REPORT_TASK_ID,
 )
+from composer.spec.source.report.build import run_autoprove_report
+from composer.spec.source.report.collect import ComponentInput
 from composer.diagnostics.timing import get_run_summary
+
+_log = logging.getLogger(__name__)
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -283,6 +288,34 @@ async def generate_all_component_cvl(
     if inv_link := link_by_task.get(INVARIANT_CVL_TASK_ID):
         component_runs["invariants"] = _output_link(inv_link)
     dump_component_runs(source_input.project_root, component_runs)
+
+    # Final, best-effort phase: turn the property dumps + per-component prover
+    # verdicts into certora/ap_report/report.json. A failure here must never
+    # fail the run, so the whole phase is guarded.
+    try:
+        report_components = [
+            ComponentInput(
+                name=batch.feat.component.name,
+                stem=f"autospec_{batch.feat.slugified_name}",
+                prover_link=component_runs.get(batch.feat.slugified_name),
+            )
+            for batch in component_batches
+        ]
+        report_components.append(
+            ComponentInput("Structural Invariants", "invariants", component_runs.get("invariants"))
+        )
+        await run_task(
+            handler_factory,
+            TaskInfo(REPORT_TASK_ID, "Report", AutoProvePhase.REPORT),
+            lambda: run_autoprove_report(
+                project_root=source_input.project_root,
+                contract_name=source_input.contract_name,
+                components=report_components,
+                llm=env.llm,
+            ),
+        )
+    except Exception:
+        _log.warning("autoprove report phase failed (continuing)", exc_info=True)
 
     failures: list[str] = []
     n_properties = 0
