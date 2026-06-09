@@ -14,6 +14,7 @@ AUTOSETUP_TASK_ID = "autosetup"
 SUMMARIES_TASK_ID = "summaries"
 INVARIANTS_TASK_ID = "invariants"
 INVARIANT_CVL_TASK_ID = "invariant-cvl"
+REPORT_TASK_ID = "report"
 
 
 def bug_analysis_task_id(component_idx: int, slug: str) -> str:

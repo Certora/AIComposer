@@ -21,6 +21,10 @@ CERTORA_DIR = Path("certora")
 SPECS_DIR = CERTORA_DIR / "specs"
 #: AutoSetup / custom summaries live here.
 SUMMARIES_DIR = SPECS_DIR / "summaries"
+#: The autoprove run report (report.json, the optional rendered HTML, and the
+#: canonical slug<->id map) lives here -- a dedicated subdir so a consumer can
+#: include or exclude the human-facing report independently of the specs.
+AP_REPORT_DIR = CERTORA_DIR / "ap_report"
 
 #: Internal autoProve run artifacts (rotating logs, events.jsonl, run-link
 #: dumps). NOT part of the certora/ deliverable layout above — these are
