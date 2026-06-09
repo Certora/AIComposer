@@ -26,7 +26,10 @@ from composer.spec.system_model import (
 from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 from composer.spec.source.prover import dump_final_conf
-from composer.spec.source.task_ids import bug_analysis_task_id, cvl_gen_task_id
+from composer.spec.source.task_ids import (
+    bug_analysis_task_id, cvl_gen_task_id, INVARIANT_CVL_TASK_ID,
+)
+from composer.diagnostics.timing import get_run_summary
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -61,6 +64,30 @@ def dump_property_rules(
     mapping = {m.property_title: m.rules for m in property_rules}
     (properties_dir / f"{spec_stem}.property_rules.json").write_text(
         json.dumps(mapping, indent=2)
+    )
+
+
+_AUTOPROVE_INTERNAL_DIR = pathlib.Path(".certora_internal") / "autoProve"
+
+
+def _output_link(link: str) -> str:
+    """Rewrite a prover ``/jobStatus/`` URL to its ``/output/`` view. Local
+    result-directory paths (which contain neither) pass through unchanged."""
+    return link.replace("/jobStatus/", "/output/")
+
+
+def dump_component_runs(
+    project_root: str,
+    component_runs: dict[str, str],
+) -> None:
+    """Write the ``{component: final prover run link}`` mapping to
+    ``.certora_internal/autoProve/components_to_prover_runs.json`` under
+    ``project_root``. Keys are each component's slug (the ``autospec_{slug}`` spec
+    stem) plus ``"invariants"`` for the structural-invariant spec; the link is the
+    URL (cloud) or local results directory (local) of that spec's last prover run."""
+    out_dir = ensure_dir(under_project(project_root, _AUTOPROVE_INTERNAL_DIR))
+    (out_dir / "components_to_prover_runs.json").write_text(
+        json.dumps(component_runs, indent=2)
     )
 
 
@@ -241,6 +268,22 @@ async def generate_all_component_cvl(
         ],
         return_exceptions=True,
     )
+
+    # Dump the final prover run link for each component (and the structural
+    # invariant, which ran earlier in the staged pipeline) now that every CVL
+    # generation task has completed — each link is recorded into the run summary
+    # when its task's phase is finalized.
+    link_by_task = {
+        p.task_id: p.final_link for p in get_run_summary().phases if p.final_link
+    }
+    component_runs = {
+        batch.feat.slugified_name: _output_link(link)
+        for batch in component_batches
+        if (link := link_by_task.get(cvl_gen_task_id(batch.feat.ind, batch.feat.slugified_name)))
+    }
+    if inv_link := link_by_task.get(INVARIANT_CVL_TASK_ID):
+        component_runs["invariants"] = _output_link(inv_link)
+    dump_component_runs(source_input.project_root, component_runs)
 
     failures: list[str] = []
     n_properties = 0
