@@ -19,13 +19,14 @@ a ``GeneratedFoundryTest`` (commentary + source + skips + mapping) or a
 ``GaveUp``.
 """
 
-from typing import Callable, Protocol, override
+from typing import Protocol, override
+from typing_extensions import TypedDict
 
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
-from graphcore.graph import Builder, tool_state_update
+from graphcore.graph import tool_state_update
 from graphcore.summary import SummaryConfig
 from graphcore.tools.schemas import (
     WithImplementation, WithInjectedId, WithInjectedState,
@@ -34,9 +35,11 @@ from graphcore.tools.schemas import (
 from composer.spec.cvl_generation import (
     PropertyRuleMapping, SkippedProperty, validate_property_rules,
 )
+from composer.spec.gen_types import TypedTemplate
 from composer.spec.graph_builder import run_to_completion
 from composer.spec.prop import PropertyFormulation
 from composer.spec.context import WorkflowContext, CVLGeneration
+from composer.spec.system_model import ContractComponentInstance
 from composer.spec.tool_env import BasicAgentTools, RAGTools, SourceTools
 from composer.ui.tool_display import tool_display
 
@@ -216,18 +219,29 @@ directly with addressing them.
 # ---------------------------------------------------------------------------
 
 
+class FoundryPropertyGenParams(TypedDict):
+    """Per-batch render variables for ``foundry_property_generation_prompt.j2``.
+    Mirror of ``PropertyGenParams`` in the CVL author, minus ``resources``
+    (no CVL-importable resource concept here)."""
+    context: ContractComponentInstance | None
+    properties: list[PropertyFormulation]
+    contract_name: str
+
+
+_FoundryPropertyGenTemplate = TypedTemplate[FoundryPropertyGenParams](
+    "foundry_property_generation_prompt.j2"
+)
+
+
 async def batch_foundry_test_generation(
     ctx: WorkflowContext[CVLGeneration],
     *,
     project_root: str,
+    contract_name: str,
     props: list[PropertyFormulation],
+    component: ContractComponentInstance | None,
     env: _FoundryEnv,
     description: str,
-    inject_initial_prompt: Callable[
-        [Builder[FoundryGenerationState, FoundryGenerationContext, FoundryGenerationInput]],
-        Builder[FoundryGenerationState, FoundryGenerationContext, FoundryGenerationInput],
-    ],
-    system_prompt_template: str = "foundry_property_generation_system_prompt.j2",
     forge_binary: str = "forge",
     forge_timeout_s: int = 600,
 ) -> BatchFoundryResult:
@@ -243,20 +257,11 @@ async def batch_foundry_test_generation(
       ``foundry.toml`` and any required deps under ``lib/``). The author
       stages its draft into ``<project_root>/test/`` and deletes the
       staged file after each ``forge test`` invocation.
-    * ``env`` is a ``ToolEnvironment``-ish object whose ``rag_tools`` slot
-      has been populated with the foundry cheatcode tools (typically via
-      ``composer.tools.foundry_rag.get_tools``). The caller chooses what
-      RAG surface to bind — the author makes no assumption beyond
-      ``rag_tools + builder``.
-    * ``inject_initial_prompt`` is a builder-mutation that installs the
-      per-batch initial prompt (template + binding). Mirrors the pattern
-      used by ``batch_cvl_generation``'s ``_PropertyGenTemplate.bind(...)
-      .render_to(d.with_initial_prompt_template)`` but pushed out to the
-      caller since the foundry prompt template is workflow-specific.
-    * ``system_prompt_template`` is the system-prompt jinja template
-      installed via ``with_sys_prompt_template``. Defaults to
-      ``foundry_property_generation_system_prompt.j2`` — the caller
-      must ensure that template exists in the loader's search path.
+    * ``env`` carries the foundry RAG (``rag_tools``) + project source
+      tools (``source_tools``). Typically built via
+      ``composer.foundry.env.build_foundry_env``.
+    * ``contract_name`` / ``component`` / ``props`` are bound into the
+      initial prompt (``foundry_property_generation_prompt.j2``).
 
     Reuses ``CVLGeneration`` as the cache marker for the workflow context
     purely because that's what the surrounding ``WorkflowContext`` API
@@ -266,6 +271,12 @@ async def batch_foundry_test_generation(
     forge_test_tool = get_forge_test_tool(
         project_root, forge_binary=forge_binary, timeout_s=forge_timeout_s,
     )
+
+    bound_template = _FoundryPropertyGenTemplate.bind({
+        "context": component,
+        "properties": props,
+        "contract_name": contract_name,
+    })
 
     builder = (
         env.builder
@@ -282,8 +293,8 @@ async def batch_foundry_test_generation(
             GiveUpTool.as_tool("give_up"),
             ctx.get_memory_tool(),
         ])
-        .with_sys_prompt_template(system_prompt_template)
-        .inject(inject_initial_prompt)
+        .with_sys_prompt_template("foundry_property_generation_system_prompt.j2")
+        .inject(lambda b: bound_template.render_to(b.with_initial_prompt_template))
         .with_summary_config(FoundryGenerationSummaryConfig())
     )
     graph = builder.compile_async()

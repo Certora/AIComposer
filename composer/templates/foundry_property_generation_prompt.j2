@@ -102,6 +102,15 @@ this framework — e.g., a temporal property about block-level ordering
 that foundry cannot directly express. Do NOT skip a property merely
 because the test would be tedious.
 
+**Do NOT skip a property because it is universally quantified** ("for
+all inputs", "for all reachable states", "the invariant holds at every
+step"). Foundry's whole purpose for such properties is to *approximate*
+them via `testFuzz_*` or `invariant_*` — sampling does not give a proof,
+but a clean campaign is empirical evidence the property holds and a
+failing campaign surfaces a concrete counterexample. Both are valuable.
+Universally-quantified properties are exactly the shape these test forms
+are built for; pick the appropriate test form and write it.
+
 If you hit an environment issue that blocks all progress (forge
 binary missing, project structure broken, required dependency
 unbuildable), call `give_up(reason)` with a specific explanation so

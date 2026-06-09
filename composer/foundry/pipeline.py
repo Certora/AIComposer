@@ -40,49 +40,33 @@ from composer.spec.system_analysis import run_component_analysis
 # surface so the extraction agent doesn't propose properties that are
 # unrealistic to formalize as ``forge test`` runs.
 FOUNDRY_BACKEND_GUIDANCE: str = """\
-You *must* limit your invariants/vectors/properties to those that can be
-plausibly demonstrated by a foundry test. Foundry's verification model is
-*bounded random testing* — concrete sequences of EVM transactions whose
-post-state is checked by Solidity assertions and cheatcodes — and is
-strongest on properties that can be reduced to "for some concrete
-trace, P(state) holds / does not hold" or, via stateful invariant
-testing, "for randomly-explored traces of bounded depth, P(state) holds
-at every step".
+These properties will be checked using Foundry. Foundy,
+as a unit testing/fuzzing framework, cannot *prove*
+universally quantified properties or invariants.
+However, it can approximate these properties (via fuzz tests
+and the like) and *refutations* of these universal properties
+(surfaced by failures of Foundry tests) are extremely valuable.
 
-The following are types of properties that are difficult or impossible
-to demonstrate with foundry tests:
+Accordingly, you *should* freely write universally quantified properties
+without taking into considerations the fundamental limitations of Foundry
+as a verification backend. Do *not* artificially restrict the
+space of properties you write simply because Foundry cannot *definitively*
+prove them to be true; as mentioned above, the approximation of the
+property is still valuable.
 
-1. Properties that require exhaustive symbolic reasoning over all
-   reachable states. Foundry's invariant runner explores a *random*
-   subset of states (bounded by ``runs`` × ``depth``); it can refute an
-   invariant by finding a counterexample, but it cannot *prove* the
-   invariant holds for all states.
-2. Properties that reference off-chain events (key compromise, phishing,
+However, a handful of categories are genuinely a poor fit for Foundry:
+
+1. Properties that reference off-chain events (key compromise, phishing,
    social-engineering attacks, oracle manipulation outside the test's
    modeled actors).
-3. Properties about hash function behavior or hash collisions
-   ("invalid signatures should be rejected" can sometimes be tested
-   with mocked signatures, but proving the absence of collisions is
-   out of scope).
-4. Properties over unbounded numerical / quantifier ranges. Foundry's
-   fuzzer samples; it does not enumerate. A property of the form "for
-   all uint256 x, P(x)" can be falsified by sampling but not proven.
+2. Properties whose only meaningful content is hash-collision
+   resistance — "no two inputs ever collide" is unprovable by
+   sampling. (Note: signature validity, signer authorization, and
+   similar crypto-adjacent properties are NOT in this category.)
 
 In addition, due to the advent of checked arithmetic, properties that
 assert no overflow are uninteresting. Properties implied by the type
 system (a uint256 being non-negative, etc.) are also uninteresting.
-
-Conversely, foundry IS well-suited to:
-
-* Concrete revert behavior under specific preconditions
-  (``vm.expectRevert``).
-* Stateful invariants verified across random call sequences against a
-  handler-shaped wrapper (e.g. "sum of user balances == total supply"
-  after any sequence of deposits / withdrawals).
-* Fuzzed safety properties parameterized on a small number of inputs
-  (``testFuzz_*``).
-* Properties involving cheatcodes the EVM can simulate (``vm.warp``,
-  ``vm.prank``, ``vm.mockCall``, etc.).
 """
 from composer.spec.system_model import (
     ContractComponentInstance, ContractInstance, SourceApplication,
@@ -262,27 +246,17 @@ async def run_foundry_pipeline(
 
         label = f"{batch.feat.component.name} ({len(batch.props)} properties)"
 
-        def _inject_prompt(builder):
-            # Initial prompt template installs the per-batch property list
-            # and contract context. The caller of batch_foundry_test_generation
-            # is on the hook for setting up the bind — this is the spot.
-            return builder.with_initial_prompt_template(
-                "foundry_property_generation_prompt.j2",
-                properties=batch.props,
-                contract_name=source_input.contract_name,
-                context=batch.feat,
-            )
-
         res = await run_task(
             handler_factory,
             TaskInfo(f"foundry-{i}", label, AutoProvePhase.CVL_GEN),
             lambda: batch_foundry_test_generation(
                 ctx=batch_ctx,
                 project_root=source_input.project_root,
+                contract_name=source_input.contract_name,
                 props=batch.props,
+                component=batch.feat,
                 env=env,
                 description=label,
-                inject_initial_prompt=_inject_prompt,
                 forge_binary=forge_binary,
                 forge_timeout_s=forge_timeout_s,
             ),
