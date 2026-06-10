@@ -19,7 +19,7 @@ from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.workflow.services import create_llm, standard_connections
+from composer.workflow.services import standard_connections
 
 from composer.spec.context import (
     WorkflowContext, SourceCode,
@@ -123,7 +123,6 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
     sys_path = pathlib.Path(args.system_doc)
 
     # Set up services
-    llm = create_llm(args)
     model = get_model()
 
 
@@ -144,7 +143,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
 
     async with (
         standard_connections(
-            embedder=DefaultEmbedder(model)
+            args=args, embedder=DefaultEmbedder(model)
         ) as conns,
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context(),
@@ -174,7 +173,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
             if (threat_path := args.threat_model) is not None else None
         )
         source_env = build_source_env(
-            llm=llm,
+            llm=conns.llm,
             db=rag_db,
             checkpoint=conns.checkpointer,
             forbidden_read=FS_FORBIDDEN_READ,
@@ -184,13 +183,14 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
             source_question_ns=source_data_ns,
             recursion_limit=args.recursion_limit,
             cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
+            provider=conns.provider,
         )
 
         memory_ns = args.memory_ns
         if memory_ns:
             memory_ns = get_uid() + "/" + memory_ns
         ctx = WorkflowContext.create(
-            services=lambda namespace: async_memory_tool(conns.memory(namespace)),
+            services=conns.memory,
             thread_id=thread_id,
             store=conns.store,
             recursion_limit=args.recursion_limit,
@@ -205,7 +205,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
 
         async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
             return await run_autoprove_pipeline(
-                    llm=llm,
+                    llm=conns.llm,
                     ctx=ctx,
                     source_input=system_doc,
                     env=source_env,

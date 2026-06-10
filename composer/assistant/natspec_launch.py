@@ -2,8 +2,6 @@ import traceback
 import uuid
 
 
-from graphcore.tools.memory import async_memory_tool as make_memory_tool
-
 from composer.assistant.launch_args import LaunchNatSpecArgs
 from composer.assistant.types import OrchestratorContext
 from composer.ui.pipeline_app import PipelineApp
@@ -14,7 +12,7 @@ from composer.spec.context import (
     WorkflowContext, SystemDoc,
 )
 from composer.spec.natspec.pipeline import run_natspec_pipeline, PipelineResult
-from composer.workflow.services import create_llm, standard_connections, get_store
+from composer.workflow.services import standard_connections, get_store
 from composer.spec.services import build_natspec_env
 from composer.spec.agent_index import agent_index_config_from_env
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
@@ -25,10 +23,11 @@ async def launch_natspec_workflow(
 ) -> str:
     input_path = ctx.workspace / args.input_file
 
-    pipeline_llm = create_llm(ctx.config)
     the_model = get_model()
     async with (
-        standard_connections(embedder=DefaultEmbedder(the_model)) as conn,
+        standard_connections(
+            args=ctx.config, embedder=DefaultEmbedder(the_model)
+        ) as conn,
         PostgreSQLRAGDatabase.rag_context(
             the_model, ctx.config.rag_db
         ) as rag_db
@@ -42,7 +41,7 @@ async def launch_natspec_workflow(
         cache_root = (args.cache_namespace, system_doc.content.to_digest()) if args.cache_namespace else None
 
         wf_ctx = WorkflowContext.create(
-            services=lambda ns: make_memory_tool(conn.memory(ns)),
+            services=conn.memory,
             thread_id=thread_id,
             store=conn.store,
             recursion_limit=ctx.config.recursion_limit,
@@ -52,13 +51,14 @@ async def launch_natspec_workflow(
 
 
         env = build_natspec_env(
-            llm=pipeline_llm,
+            llm=conn.llm,
             db=rag_db,
             checkpoint=conn.checkpointer,
             kb_ns=("cvl",),
             store=conn.store,
             cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
             recursion_limit=ctx.config.recursion_limit,
+            provider=conn.provider,
         )
 
         app = PipelineApp(ide=ctx.ide)

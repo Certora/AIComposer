@@ -1,14 +1,16 @@
 from graphcore.graph import WithToolCallId
 from pydantic import BaseModel, Field
-from typing import Annotated, cast, Literal, TypedDict, Protocol, ClassVar, Any, Callable, overload
+from typing import Annotated, cast, Literal, TypedDict, Protocol, ClassVar, Any, Callable, overload, assert_never
 
 from langchain_core.tools import tool, InjectedToolCallId, BaseTool
 from langgraph.config import get_stream_writer
 from langgraph.runtime import get_runtime
 from composer.diagnostics.stream import ManualSearchResult
 from composer.rag.db import ComposerRAGDB
+from composer.rag.types import ManualRef
 from dataclasses import Field as DField
 from composer.ui.tool_display import tool_display_of, CommonTools
+from composer.workflow.provider import ProviderKind
 
 class RAGDBContext(Protocol):
     __dataclass_fields__: ClassVar[dict[str, DField[Any]]]
@@ -52,8 +54,42 @@ class CVLManualSearchSchema(WithToolCallId):
         Field(default=[], description="A list of manual sections to search. "
               "If specified, at least one section heading must match at least one of the values provided here")
 
+def _anthropic_format_results(refs: list[ManualRef]) -> list[dict]:
+    """Render CVL search hits as Anthropic ``search_result`` content
+    blocks so the model can cite back to specific sections."""
+    out: list[SearchResultSchema] = []
+    for t in refs:
+        out.append({
+            "type": "search_result",
+            "source": "CVL Manual",
+            "title": " / ".join(t.headers),
+            "content": [
+                {"type": "text", "text": t.content + f"\n (Similarity: {t.similarity})"}
+            ],
+        })
+    return cast(list[dict], out)
+
+
+def _openai_format_results(refs: list[ManualRef]) -> str:
+    """Render CVL search hits as a plain pretty-printed string.
+
+    OpenAI has no native search-result content block. Returning text
+    keeps the schema simple and avoids confusing the model with a
+    half-supported shape."""
+    if not refs:
+        return "No matching sections found."
+    blocks: list[str] = []
+    for t in refs:
+        title = " / ".join(t.headers)
+        blocks.append(
+            f"## {title}\n\n{t.content}\n\n— similarity: {t.similarity:.4f}"
+        )
+    return "\n\n---\n\n".join(blocks)
+
+
 def _cvl_manual_search_factory(
-    db_provider: Callable[[], ComposerRAGDB]
+    db_provider: Callable[[], ComposerRAGDB],
+    provider: ProviderKind,
 ) -> BaseTool:
     @tool_display_of(CommonTools.cvl_manual)
     @tool("cvl_manual_search", args_schema=CVLManualSearchSchema)
@@ -69,23 +105,26 @@ def _cvl_manual_search_factory(
         writer = get_stream_writer()
 
         try:
-            to_ret: list[SearchResultSchema] = []
-            for t in await rag_db.find_refs(query=question, similarity_cutoff=similarity_cutoff, top_k=max_results, manual_section=manual_section):
-                upd : ManualSearchResult = {
+            refs = await rag_db.find_refs(
+                query=question,
+                similarity_cutoff=similarity_cutoff,
+                top_k=max_results,
+                manual_section=manual_section,
+            )
+            for t in refs:
+                upd: ManualSearchResult = {
                     "type": "manual_search",
                     "tool_id": tool_call_id,
-                    "ref": t
+                    "ref": t,
                 }
                 writer(upd)
-                to_ret.append({
-                    "type": "search_result",
-                    "source": "CVL Manual",
-                    "title": " / ".join(t.headers),
-                    "content": [
-                        {"type": "text", "text": t.content + f"\n (Similarity: {t.similarity})"}
-                    ]
-                })
-            return cast(list[dict], to_ret)
+            match provider:
+                case "anthropic":
+                    return _anthropic_format_results(refs)
+                case "openai":
+                    return _openai_format_results(refs)
+                case _:
+                    assert_never(provider)
         except Exception as e:
             return f"Failed to search CVL manual: {str(e)}"
     return _cvl_manual_search
@@ -164,13 +203,19 @@ def _get_provider(ctxt: type[RAGDBContext] | ComposerRAGDB) -> Callable[[], Comp
     else:
         return lambda: get_runtime(ctxt).context.rag_db
 
-def cvl_manual_search(ctxt: type[RAGDBContext] | ComposerRAGDB) -> BaseTool:
-    return _cvl_manual_search_factory(_get_provider(ctxt))
+def cvl_manual_search(
+    ctxt: type[RAGDBContext] | ComposerRAGDB,
+    provider: ProviderKind,
+) -> BaseTool:
+    return _cvl_manual_search_factory(_get_provider(ctxt), provider)
 
-def cvl_manual_tools(ctxt: type[RAGDBContext] | ComposerRAGDB) -> list[BaseTool]:
-    provider = _get_provider(ctxt)
+def cvl_manual_tools(
+    ctxt: type[RAGDBContext] | ComposerRAGDB,
+    provider: ProviderKind,
+) -> list[BaseTool]:
+    db_provider = _get_provider(ctxt)
     return [
-        _cvl_manual_search_factory(provider),
-        _cvl_keyword_search_factory(provider),
-        _cvl_get_section_factory(provider),
+        _cvl_manual_search_factory(db_provider, provider),
+        _cvl_keyword_search_factory(db_provider),
+        _cvl_get_section_factory(db_provider),
     ]

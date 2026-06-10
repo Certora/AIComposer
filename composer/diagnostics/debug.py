@@ -6,6 +6,7 @@ from langchain_core.runnables import RunnableConfig
 
 from composer.input.types import CommandLineArgs
 from composer.workflow.factories import get_cryptostate_builder
+from composer.workflow.provider import provider_for
 from composer.workflow.services import get_checkpointer
 
 
@@ -21,6 +22,7 @@ def dump_fs(args: CommandLineArgs, llm: BaseChatModel) -> int:
     workflow = get_cryptostate_builder(
         llm=llm,
         fs_layer=None,
+        provider=provider_for(args.model),
     )[0]
     config: RunnableConfig = {
         "configurable": {

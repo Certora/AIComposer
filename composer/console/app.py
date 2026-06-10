@@ -371,25 +371,12 @@ class DebugConsole(App):
                     content = self._format_text_content(text_content)
                     renderables.extend([header, content])
                     
-                elif item_type == "tool_use":
-                    # Tool use block
-                    header = Text("🔧 Tool Use:", style="bold green")
-                    tool_info = Text()
-                    tool_name = item.get("name", "unknown")
-                    tool_id = item.get("id", "")
-                    tool_info.append(f"Tool: {tool_name}\n", style="cyan")
-                    if tool_id:
-                        tool_info.append(f"ID: {tool_id}\n", style="dim")
-                    
-                    # Show input parameters if present
-                    input_data = item.get("input", {})
-                    if input_data:
-                        tool_info.append("Parameters:\n", style="bold")
-                        for key, value in input_data.items():
-                            tool_info.append(f"  {key}: ", style="cyan")
-                            tool_info.append(f"{value}\n")
-
-                    renderables.extend([header, tool_info])
+                elif item_type in ("tool_use", "function_call"):
+                    # Skip — tool calls come from ``message.tool_calls``
+                    # (langchain's provider-normalized field). Anthropic
+                    # mirrors them into both ``content`` and
+                    # ``tool_calls``; rendering both would double up.
+                    pass
 
                 else:
                     # Unknown structured block
@@ -405,7 +392,27 @@ class DebugConsole(App):
                 header = Text(f"⚠️ Unknown Content ({type(item).__name__}):", style="bold red")
                 content = Text(repr(item))
                 renderables.extend([header, content])
-        
+
+        # Tool calls come from ``message.tool_calls`` — langchain's
+        # provider-normalized field — not from content blocks.
+        tool_calls = getattr(message, "tool_calls", None) or []
+        for tc in tool_calls:
+            if renderables:
+                renderables.append(Text("-" * 60, style="dim"))
+            header = Text("🔧 Tool Use:", style="bold green")
+            tool_info = Text()
+            tool_info.append(f"Tool: {tc.get('name', 'unknown')}\n", style="cyan")
+            tool_id = tc.get("id") or ""
+            if tool_id:
+                tool_info.append(f"ID: {tool_id}\n", style="dim")
+            args = tc.get("args", {}) or {}
+            if args:
+                tool_info.append("Parameters:\n", style="bold")
+                for key, value in args.items():
+                    tool_info.append(f"  {key}: ", style="cyan")
+                    tool_info.append(f"{value}\n")
+            renderables.extend([header, tool_info])
+
         # Use Rich's Group to combine all renderables
         return Group(*renderables)
 

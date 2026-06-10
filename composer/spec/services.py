@@ -12,6 +12,7 @@ from composer.spec.tool_env import (
 )
 from composer.spec.cvl_research import indexed_cvl_research_tool, CVL_RESEARCH_BASE_DOC
 from composer.tools.search import cvl_manual_tools
+from composer.workflow.provider import ProviderKind
 from composer.kb.knowledge_base import kb_tools
 from composer.spec.agent_index import AgentIndex, AgentIndexConfig, RetrieveDocumentTool
 
@@ -76,10 +77,11 @@ def build_rag_tools(
 def build_basic_rag_tools(
     db: PostgreSQLRAGDatabase,
     store: BaseStore,
-    kb_ns: tuple[str, ...]
+    kb_ns: tuple[str, ...],
+    provider: ProviderKind,
 ) -> BaseRAGTools:
     return _BaseRAGTools(
-        tuple(cvl_manual_tools(db)) + tuple(kb_tools(
+        tuple(cvl_manual_tools(db, provider)) + tuple(kb_tools(
             store, kb_ns, read_only=True
         ))
     )
@@ -94,6 +96,7 @@ class RAGInputs(LLMInputs):
     kb_ns: tuple[str, ...]
     cvl_index_config: AgentIndexConfig
     recursion_limit: int
+    provider: ProviderKind
 
 class RagToolEnv(BasicAgentTools, RAGTools, BaseRAGTools, Protocol):
     pass
@@ -109,7 +112,8 @@ def build_rag_tool_env(
     rag_tools = build_basic_rag_tools(
         db=params["db"],
         kb_ns=params["kb_ns"],
-        store=params["store"]
+        store=params["store"],
+        provider=params["provider"],
     )
 
     full_rag_tools = build_rag_tools(

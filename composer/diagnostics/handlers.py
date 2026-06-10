@@ -51,12 +51,17 @@ def summarize_update(
                             match c["type"]:
                                 case "thinking":
                                     buff.append("Thinking...")
+                                case "reasoning":
+                                    buff.append("Reasoning...")
                                 case "text":
                                     buff.append("Text: " + c["text"])
                                 case "tool_use":
-                                    buff.append("Call tool: " + c["name"])
+                                    # Skip — captured via ``m.tool_calls`` below
+                                    pass
                                 case _:
                                     buff.append("Unknown action: " + c["type"])
+                        for tc in m.tool_calls:
+                            buff.append("Call tool: " + tc["name"])
                         print("[AI turn]")
                         print("\n".join([f" > {t}" for t in buff]))
                         if isinstance(m.response_metadata, dict) and "usage" in m.response_metadata:

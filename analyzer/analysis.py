@@ -263,7 +263,8 @@ async def _analyze_core(
         from composer.tools.search import cvl_manual_search
         from composer.rag.models import get_model
         from composer.rag.db import get_rag_db
-        tools.append(cvl_manual_search(await get_rag_db(args.rag_db, get_model())))
+        from composer.workflow.provider import provider_for
+        tools.append(cvl_manual_search(await get_rag_db(args.rag_db, get_model()), provider_for(args.model)))
 
     llm = create_llm(args)
 

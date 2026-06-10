@@ -10,6 +10,7 @@ from langchain_core.language_models import BaseChatModel
 
 from graphcore.tools.memory import PostgresMemoryBackend
 from graphcore.tools.schemas import WithAsyncImplementation
+from graphcore.utils import ainvoke
 from langgraph.runtime import get_runtime
 
 from composer.assistant.types import OrchestratorContext
@@ -208,7 +209,7 @@ async def _extract_one(
         conversation=conversation,
     )
 
-    result = await llm.ainvoke([  # type: ignore[union-attr]
+    result = await ainvoke(llm, [
         SystemMessage(content=system_text),
         HumanMessage(content=user_text),
     ])

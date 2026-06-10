@@ -7,9 +7,8 @@ from pydantic import BaseModel, Field
 
 from graphcore.graph import FlowInput, build_async_workflow
 from graphcore.tools.results import result_tool_generator
-from graphcore.tools.memory import memory_tool, MemoryBackend
 
-from langchain_core.tools import tool
+from langchain_core.tools import tool, BaseTool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -23,6 +22,7 @@ from composer.input.types import RAGDBOptions
 from composer.rag.db import ComposerRAGDB, rag_context
 from composer.rag.models import get_model
 from composer.workflow.services import checkpointer_context
+from composer.workflow.provider import ProviderKind
 from composer.tools.search import cvl_manual_search
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.templates.loader import load_jinja_template
@@ -142,15 +142,16 @@ async def get_requirements(
     llm: BaseChatModel,
     sys_doc: InputFileLike,
     spec_file: InputFileLike,
-    mem_backend: MemoryBackend,
+    mem_tool: BaseTool,
+    provider: ProviderKind,
     resume_artifact: ResumeArtifact | None,
     oracle: list[str]
 ) -> ExtractionResult:
     tools = [
-        memory_tool(mem_backend),
+        mem_tool,
         results_tool,
         human_in_the_loop,
-        cvl_manual_search(ExtractionContext),
+        cvl_manual_search(ExtractionContext, provider),
         *get_rough_draft_tools(ExtractionState),
     ]
     async with (

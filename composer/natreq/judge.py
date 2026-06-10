@@ -4,7 +4,6 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from graphcore.tools.memory import MemoryBackend, memory_tool
 from graphcore.graph import FlowInput, build_async_workflow, WithToolCallId
 from graphcore.tools.results import result_tool_generator
 from graphcore.tools.vfs import VFSState
@@ -56,10 +55,9 @@ class JudgeState(MessagesState, VFSState, RoughDraftState):
 
 def _gen_workflow(
     vfs_tools: list[BaseTool],
-    mem: MemoryBackend,
+    mem_tool: BaseTool,
     llm: BaseChatModel,
 ) -> StateGraph[JudgeState, None, JudgeInput, Any]:
-    mem_tool = memory_tool(mem)
     res = result_tool_generator(
         "result",
         result_schema=JudgeResult,
@@ -139,11 +137,11 @@ def judge_res_checker(
 
 def get_judge_tool(
     reqs: list[str],
-    mem: MemoryBackend,
+    mem_tool: BaseTool,
     vfs_tools: list[BaseTool],
     unbound: BaseChatModel
 ) -> BaseTool:
-    workflow = _gen_workflow(vfs_tools, mem, unbound)
+    workflow = _gen_workflow(vfs_tools, mem_tool, unbound)
     compiled_graph = workflow.compile(checkpointer=MemorySaver())
     req_list = "\n".join([f"{i}. {r}" for (i, r) in enumerate(reqs, start = 1)])
     @tool_display("Evaluating requirements", "Requirements evaluation")
