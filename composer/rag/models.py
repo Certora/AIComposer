@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 # claim we always import ST
 if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer #type: ignore
+    from sentence_transformers import SentenceTransformer
     def get_model() -> SentenceTransformer:
         ...
 else:

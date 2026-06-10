@@ -19,6 +19,7 @@ give-ups are reported as failures in the result.
 """
 
 import asyncio
+import enum
 import pathlib
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
@@ -74,7 +75,19 @@ from composer.spec.system_model import (
 from composer.spec.util import slugify_filename, string_hash
 
 from composer.io.multi_job import HandlerFactory, TaskInfo, run_task
-from composer.ui.autoprove_app import AutoProvePhase
+
+
+# ---------------------------------------------------------------------------
+# Phases
+# ---------------------------------------------------------------------------
+
+
+class FoundryPhase(enum.Enum):
+    """Task-grouping phases of the foundry pipeline (the ``P`` of its
+    ``HandlerFactory``)."""
+    SYSTEM_ANALYSIS = "system_analysis"
+    PROPERTY_EXTRACTION = "property_extraction"
+    TEST_GENERATION = "test_generation"
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +135,7 @@ class FoundryPipelineResult:
 async def run_foundry_pipeline(
     source_input: SourceCode,
     ctx: WorkflowContext[None],
-    handler_factory: HandlerFactory[AutoProvePhase, None],
+    handler_factory: HandlerFactory[FoundryPhase, None],
     env: FoundryEnv,
     *,
     max_concurrent: int = 4,
@@ -130,6 +143,7 @@ async def run_foundry_pipeline(
     interactive: bool = False,
     forge_binary: str = "forge",
     forge_timeout_s: int = 600,
+    forge_concurrency: int = 1
 ) -> FoundryPipelineResult:
     """Run the foundry test-generation pipeline against an existing project.
 
@@ -146,7 +160,7 @@ async def run_foundry_pipeline(
     # ------------------------------------------------------------------
     summary = await run_task(
         handler_factory,
-        TaskInfo("system-analysis", "System Analysis", AutoProvePhase.COMPONENT_ANALYSIS),
+        TaskInfo("system-analysis", "System Analysis", FoundryPhase.SYSTEM_ANALYSIS),
         lambda: run_component_analysis(
             ty=SourceApplication,
             child_ctxt=ctx.child(SOURCE_ANALYSIS_KEY),
@@ -195,7 +209,7 @@ async def run_foundry_pipeline(
         props = await run_task(
             handler_factory,
             TaskInfo(
-                f"bug-{idx}", feat.component.name, AutoProvePhase.BUG_ANALYSIS,
+                f"bug-{idx}", feat.component.name, FoundryPhase.PROPERTY_EXTRACTION,
             ),
             lambda conv: run_property_inference(
                 feat_ctx,
@@ -235,7 +249,7 @@ async def run_foundry_pipeline(
     test_dir = pathlib.Path(source_input.project_root) / "test"
     test_dir.mkdir(exist_ok=True)
 
-    forge_runner_sem = asyncio.Semaphore(1)
+    forge_runner_sem = asyncio.Semaphore(forge_concurrency)
 
     async def _generate(i: int, batch: _ComponentBatch) -> BatchFoundryResult:
         batch_child = await batch.feat_ctx.child(
@@ -250,7 +264,7 @@ async def run_foundry_pipeline(
 
         res = await run_task(
             handler_factory,
-            TaskInfo(f"foundry-{i}", label, AutoProvePhase.CVL_GEN),
+            TaskInfo(f"foundry-{i}", label, FoundryPhase.TEST_GENERATION),
             lambda: batch_foundry_test_generation(
                 ctx=batch_ctx,
                 project_root=source_input.project_root,
@@ -309,5 +323,5 @@ async def run_foundry_pipeline(
 
 
 type FoundryPipelineExecutor = Callable[
-    [HandlerFactory[AutoProvePhase, None]], Awaitable[FoundryPipelineResult],
+    [HandlerFactory[FoundryPhase, None]], Awaitable[FoundryPipelineResult],
 ]

@@ -208,7 +208,7 @@ async def _extract_one(
         conversation=conversation,
     )
 
-    result = await llm.ainvoke([  # type: ignore[union-attr]
+    result = await llm.ainvoke([
         SystemMessage(content=system_text),
         HumanMessage(content=user_text),
     ])

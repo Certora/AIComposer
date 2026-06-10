@@ -76,7 +76,7 @@ def _accumulate_token_usage(update: dict, usage_dict: dict[str, int] | None) -> 
             if isinstance(msg, AIMessage):
                 usage = get_token_usage(msg)
                 for key in usage:
-                    usage_dict[key] = usage_dict.get(key, 0) + usage[key]  # type: ignore[operator]
+                    usage_dict[key] = usage_dict.get(key, 0) + usage[key]
 
 
 def main() -> int:

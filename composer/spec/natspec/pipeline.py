@@ -280,7 +280,6 @@ async def analyze_single_contract(
             case GaveUp(reason=reason):
                 for prop in batch.props:
                     failures.append(PropertyFailure(prop=prop, reason=reason))
-                failures.append(PropertyFailure(prop=prop, reason=reason))
             case GenerationSuccess():
                 props_by_title = {p.title: p for p in batch.props}
                 for skip in result.skipped:

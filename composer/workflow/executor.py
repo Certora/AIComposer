@@ -377,7 +377,7 @@ async def execute_ai_composer_workflow(
             flow_input["input"].insert(0, recovery_msg)
 
     try:
-        import grandalf # type: ignore
+        import grandalf
         layout = workflow_exec.get_graph().draw_ascii()
         logger.debug(f"\n{layout}")
     except ModuleNotFoundError:

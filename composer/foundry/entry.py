@@ -36,13 +36,12 @@ from composer.rag.db import FOUNDRY_DEFAULT_CONNECTION, PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.context import SourceCode, WorkflowContext
 from composer.spec.util import FS_FORBIDDEN_READ
-from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
 from composer.workflow.services import create_llm, standard_connections
 
 from composer.foundry.env import build_foundry_env
 from composer.foundry.pipeline import (
-    FoundryPipelineResult, run_foundry_pipeline,
+    FoundryPhase, FoundryPipelineResult, run_foundry_pipeline,
 )
 
 
@@ -74,6 +73,7 @@ class FoundryArgs(ModelOptions, FoundryRAGDBOptions, Protocol):
     recursion_limit: int
     forge_binary: str
     forge_timeout_s: int
+    max_forge_runners: int
 
 
 def _user_ns(*parts: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -103,7 +103,7 @@ def _root_cache_key(
 
 
 type FoundryRunner = Callable[
-    [HandlerFactory[AutoProvePhase, None]], Awaitable[FoundryPipelineResult],
+    [HandlerFactory[FoundryPhase, None]], Awaitable[FoundryPipelineResult],
 ]
 
 
@@ -122,6 +122,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
     parser.add_argument("main_contract", help="Main contract as path:ContractName")
     parser.add_argument("system_doc", help="Path to the design document (text or PDF)")
     parser.add_argument("--max-concurrent", type=int, default=4, help="Max concurrent agents (default: 4)")
+    parser.add_argument("--max-forge-runners", default=1, type=int, help="Max concurrent forge runners (default: 1)")
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
     parser.add_argument("--interactive", action="store_true", help="Interactively refine extracted properties")
@@ -212,7 +213,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
         )
 
         async def runner(
-            handler: HandlerFactory[AutoProvePhase, None],
+            handler: HandlerFactory[FoundryPhase, None],
         ) -> FoundryPipelineResult:
             return await run_foundry_pipeline(
                 source_input=source_input,
@@ -224,6 +225,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
                 interactive=args.interactive,
                 forge_binary=args.forge_binary,
                 forge_timeout_s=args.forge_timeout_s,
+                forge_concurrency=args.max_forge_runners
             )
 
         yield runner

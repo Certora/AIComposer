@@ -23,7 +23,7 @@ import pathlib
 
 from bs4 import BeautifulSoup, Tag
 from bs4.element import NavigableString
-import spacy #type: ignore
+import spacy
 from composer.rag.db import get_rag_db, DEFAULT_CONNECTION
 from composer.rag.types import BlockChunk
 from composer.rag.text import get_code_refs
@@ -92,6 +92,9 @@ def extract_code(s: Tag) -> str:
                 block += ch.text
             case NavigableString():
                 block += ch.text
+            case _:
+                # Other PageElement kinds (comments, etc.) contribute no code.
+                pass
     return block.strip("\n")
 
 
