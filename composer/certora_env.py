@@ -18,6 +18,16 @@ from importlib.resources import files
 from pathlib import Path
 
 
+class CertoraEnvironmentError(Exception):
+    """The local Certora toolchain could not be resolved.
+
+    Raised when a required Certora artifact (e.g. ``Typechecker.jar``) can't be
+    located because ``$CERTORA`` points somewhere wrong or the pip-installed
+    packages are missing. Callers should treat this as an environment fault to
+    surface to the operator, NOT as a spec/input error to retry.
+    """
+
+
 def certora_home() -> Path | None:
     """The Certora source checkout pointed to by ``$CERTORA``.
 
@@ -47,15 +57,15 @@ def import_run_certora():
 def typechecker_jar() -> Path:
     """Locate the CVL ``Typechecker.jar``, honoring ``$CERTORA``.
 
-    Raises ``FileNotFoundError`` with an actionable message if the jar cannot be
-    located, so callers can surface an environment problem instead of mistaking
-    it for a spec error.
+    Raises ``CertoraEnvironmentError`` with an actionable message if the jar
+    cannot be located, so callers can surface an environment problem instead of
+    mistaking it for a spec error.
     """
     home = certora_home()
     if home is not None:
         jar = home / "certora_jars" / "Typechecker.jar"
         if not jar.is_file():
-            raise FileNotFoundError(
+            raise CertoraEnvironmentError(
                 f"$CERTORA is set to {home} but {jar} does not exist"
             )
         return jar
@@ -64,13 +74,13 @@ def typechecker_jar() -> Path:
     try:
         base = files("certora_jars")
     except ModuleNotFoundError as exc:
-        raise FileNotFoundError(
+        raise CertoraEnvironmentError(
             "certora_jars package is not importable and $CERTORA is unset; "
             "cannot locate Typechecker.jar"
         ) from exc
     jar = Path(str(base / "Typechecker.jar"))
     if not jar.is_file():
-        raise FileNotFoundError(
+        raise CertoraEnvironmentError(
             f"certora_jars resolved to {jar} but the jar is missing"
         )
     return jar

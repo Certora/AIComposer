@@ -24,7 +24,7 @@ from composer.ui.tool_display import tool_display_of, CommonTools, ToolDisplay, 
 
 from graphcore.graph import tool_state_update
 
-_logger = logging.getLogger("composer.cvl")
+_logger = logging.getLogger(__name__)
 
 _put_cvl_display = ToolDisplay(
     "Writing spec", suppress_ack("Spec write result")
