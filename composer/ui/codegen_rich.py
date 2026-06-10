@@ -227,6 +227,10 @@ class CodeGenRichApp(BaseRichConsoleApp[HumanInteractionType, ProgressUpdate]):
                     target,
                     Static(Text("Context compacted (summarization applied)", style="dim italic"))
                 )
+            case "prover_link":
+                # Not rendered in the TUI; the link is surfaced by the
+                # console handler / run logs.
+                pass
 
     # ── Overrides ─────────────────────────────────────────────
 

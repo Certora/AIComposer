@@ -88,16 +88,39 @@ class BugEnvironment(BasicAgentTools, Protocol):
 class RefinementState(MessagesState):
     properties: list[PropertyFormulation]
 
+CERTORA_BACKEND_GUIDANCE: str = """\
+You *must* limit your invariants/vectors/properties to those that can be
+plausibly formally stated or reasoned about in a symbolic reasoning tool
+(namely, the Certora Prover). The following is a list of types of
+properties which are difficult or impossible to prove using the Certora
+Prover:
+
+1. Attack vectors or invariants that reference off-chain events (like
+   key compromising, phishing, etc.)
+2. Reasoning about hash function behavior or hash collisions (e.g.,
+   "invalid signatures should be rejected")
+3. Event emission (not impossible, simply difficult and tedious)
+
+In addition, due to the advent of checked arithmetic, properties that
+assert no overflow are considered uninteresting. Further, properties
+which assert properties implied by the type system are generally not
+considered interesting (e.g., a uint256 being non-negative, a uint128
+field not exceeding 2^128 - 1, etc.)
+"""
+
+
 def _get_initial_prompt(
     context: ContractComponentInstance,
     has_source: bool,
-    prev_results: list[_AgentRoundResult]
+    prev_results: list[_AgentRoundResult],
+    backend_guidance: str,
 ) -> str:
     return load_jinja_template(
         "property_analysis_prompt.j2",
         context=context,
         has_source=has_source,
-        prior_properties=prev_results
+        prior_properties=prev_results,
+        backend_guidance=backend_guidance,
     )
 
 @tool_display("Ending conversation...", None)
@@ -269,7 +292,8 @@ async def _run_bug_round(
     front_matter_items: Sequence[str | dict],
     ctx: WorkflowContext[_AgentResult],
     round: int,
-    prev: list[_AgentRoundResult]
+    prev: list[_AgentRoundResult],
+    backend_guidance: str,
 ) -> _AgentRoundWithHistory:
     round_ctx = ctx.child(agent_round_key(round))
     if (cached := await round_ctx.cache_get(_AgentRoundWithHistory)) is not None:
@@ -290,7 +314,7 @@ async def _run_bug_round(
     ).with_input(
         BugAnalysisInput
     ).with_initial_prompt(
-        _get_initial_prompt(component, env.has_source, prev)
+        _get_initial_prompt(component, env.has_source, prev, backend_guidance)
     ).with_tools(
         get_rough_draft_tools(ST)
     ).with_tools(
@@ -329,7 +353,8 @@ async def _run_bug_analysis_inner(
     component: ContractComponentInstance,
     extra_input: Sequence[str | dict],
     threat_model: Document | None,
-    max_rounds: int
+    max_rounds: int,
+    backend_guidance: str,
 ) -> _AgentResult:
     if (cached := await agent_component_analysis.cache_get(_AgentResult)) is not None:
         return cached
@@ -350,7 +375,8 @@ async def _run_bug_analysis_inner(
 
     for i in range(0, max_rounds):
         next_result = await _run_bug_round(
-            env, component, front_matter_items, agent_component_analysis, i, prev_rounds
+            env, component, front_matter_items, agent_component_analysis, i, prev_rounds,
+            backend_guidance,
         )
         if len(next_result.items) == 0:
             assert last_round_convo is not None
@@ -377,9 +403,17 @@ async def run_property_inference(
     threat_model: Document | None = None,
     refinement: ConversationContextProvider | None = None,
     max_rounds: int = 3,
+    backend_guidance: str = CERTORA_BACKEND_GUIDANCE,
 ) -> list[PropertyFormulation]:
     """
     Extract security properties for a component.
+
+    ``backend_guidance`` is inlined verbatim into the property-analysis
+    prompt as the "what's expressible in your downstream verification
+    tool" filter. Defaults to ``CERTORA_BACKEND_GUIDANCE`` so existing
+    callers (the autoprove pipeline) get the same prompt they always had;
+    other backends (e.g. foundry tests) pass their own string describing
+    what's a fit / not a fit for *their* verification surface.
     """
 
     component_analysis = ctx.child(bug_analysis_key(threat_model, refinement is not None))
@@ -393,6 +427,7 @@ async def run_property_inference(
         extra_input,
         threat_model,
         max_rounds=max_rounds,
+        backend_guidance=backend_guidance,
     )
     if refinement is None:
         to_ret = agent_attempt.items

@@ -54,6 +54,8 @@ graphcore = { path = "./graphcore", editable = true }
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
 ap-trail = "composer.cli.ap_trail:main"
+console-foundry = "composer.cli.console_foundry:main"
+tui-foundry = "composer.cli.tui_foundry:main"
 
 [tool.setuptools.packages.find]
 include = ["composer*", "sanity_analyzer*", "analyzer*"]

@@ -1447,8 +1447,8 @@ def install_harness_tape() -> HarnessFakeLLM:
 
     import composer.workflow.services as services
 
-    services.create_llm = lambda args: fake  # type: ignore[assignment]
-    services.create_llm_base = lambda args: fake  # type: ignore[assignment]
+    services.create_llm = lambda args: fake
+    services.create_llm_base = lambda args: fake
     return fake
 
 

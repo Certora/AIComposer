@@ -41,6 +41,10 @@ class CodeGenEventHandler(EventHandler):
                         tool_id=d["tool_id"],
                         ref=d["ref"]
                     )
+                case "summarization":
+                    # Audited via the "summarization_raw" branch above; the
+                    # cooked variant carries nothing extra for the sink.
+                    pass
         elif is_user_update(d):
             await self._io.progress_update(path, d)
 

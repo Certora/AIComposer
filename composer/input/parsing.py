@@ -57,7 +57,7 @@ def add_protocol_args(parser: argparse.ArgumentParser, protocol: type, feature_f
         
         # Add argument
         arg_name = f"--{name.replace('_', '-')}"
-        parser.add_argument(arg_name, **arg_kwargs) #type: ignore
+        parser.add_argument(arg_name, **arg_kwargs)
 
 
 def _extract_arg_metadata(type_hint: Any) -> Arg | OptionalArg | None:
