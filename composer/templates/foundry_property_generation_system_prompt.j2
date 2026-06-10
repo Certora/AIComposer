@@ -54,10 +54,17 @@ wholesale, so always re-emit the full source.
   test is itself the demonstration the property requires (e.g., proving
   an attack vector is reachable). For routine "this should revert"
   assertions, prefer `vm.expectRevert(...)` inline.
-* `result(commentary, property_tests)` — publish. Rejected unless
-  `forge_test` has stamped the current buffer (i.e., a green run after
-  your most recent `put_test_raw`) AND every non-skipped property is
-  claimed by ≥1 test function name in `property_tests`.
+* `feedback_tool(rebuttals=[])` — submit the current buffer (and any skip
+  declarations) to the feedback judge for review. A judge acceptance
+  stamps the publish gate; like the `forge_test` stamp, it is invalidated
+  by any subsequent `put_test_raw` or skip change.
+* `result(commentary, property_tests)` — publish. Rejected unless BOTH
+  `forge_test` and the feedback judge have stamped the current buffer
+  (i.e., a green unseeded run and a judge acceptance after your most
+  recent `put_test_raw`). `property_tests` is checked against the tests
+  forge actually ran: every non-skipped property must be demonstrated by
+  ≥1 test that ran, and every test that ran must be tied back to one of
+  the batch's properties.
 * `give_up(reason)` — last-resort exit.
 
 ## Test naming

@@ -57,15 +57,7 @@ class PropertyRuleMapping(BaseModel):
     property_title: str = Field(description="The unique snake_case title of the property (from the batch listing) that these rules verify")
     rules: list[str] = Field(description="The names of the rules/invariants in the spec that verify this property")
 
-
-class Rebuttal(BaseModel):
-    """A rebuttal to a specific piece of feedback from a prior round, backed by evidence.
-
-    File a rebuttal when a prior-round suggestion was tried and provably does not work —
-    a typecheck error, a persistent counterexample, a CVL construct that does not parse,
-    etc. Do NOT file rebuttals for feedback you merely disagree with; address those by
-    revising the spec.
-    """
+class RebuttalBase(BaseModel):
     prior_feedback_reference: str = Field(
         description=(
             "A brief quote from, or clear pointer to, the piece of prior-round feedback "
@@ -73,6 +65,24 @@ class Rebuttal(BaseModel):
             "suggestion you are responding to — not a full transcript."
         )
     )
+    evidence: str = Field(
+        description=(
+            "The concrete artifact backing the rebuttal: typecheck error text, a "
+            "counterexample summary, a manual quote with location, or a brief reasoned "
+            "argument. Keep it short and specific — the judge reads this verbatim."
+        )
+    )
+
+
+
+class Rebuttal(RebuttalBase):
+    """A rebuttal to a specific piece of feedback from a prior round, backed by evidence.
+
+    File a rebuttal when a prior-round suggestion was tried and provably does not work —
+    a typecheck error, a persistent counterexample, a CVL construct that does not parse,
+    etc. Do NOT file rebuttals for feedback you merely disagree with; address those by
+    revising the spec.
+    """
     evidence_type: Literal[
         "typecheck_failure",
         "counterexample",
@@ -84,13 +94,6 @@ class Rebuttal(BaseModel):
             "`counterexample`, `manual_citation`) carry more weight than `reasoned`; "
             "only use `reasoned` when you genuinely cannot produce tool output or a "
             "manual citation."
-        )
-    )
-    evidence: str = Field(
-        description=(
-            "The concrete artifact backing the rebuttal: typecheck error text, a "
-            "counterexample summary, a manual quote with location, or a brief reasoned "
-            "argument. Keep it short and specific — the judge reads this verbatim."
         )
     )
 

@@ -211,7 +211,8 @@ class ForgeTestTool(
         if results is None:
             # Most likely a compile failure: forge didn't reach the test
             # runner. Surface the raw output so the agent sees the solc /
-            # linker error.
+            # linker error. No tests ran, and any previously recorded test
+            # names no longer describe a runnable buffer — clear them.
             msg = (
                 f"forge test did not produce parseable JSON "
                 f"(exit {returncode}). This usually means the project "
@@ -222,7 +223,11 @@ class ForgeTestTool(
             get_stream_writer()(
                 ForgeTestRunEvent(type="forge_test_run", summary=msg)
             )
-            return msg
+            return tool_state_update(
+                tool_call_id=self.tool_call_id,
+                content=msg,
+                last_test_names=[],
+            )
 
         expected_failures = self.state["expected_failures"]
         unexpected_failures = [
@@ -245,6 +250,12 @@ class ForgeTestTool(
             and not unexpected_passes
         )
 
+        # Every run that produced results records the names of the tests
+        # that ran. The publish gate validates the declared property→test
+        # mapping against this ground truth instead of trusting the agent's
+        # transcription of its own test names.
+        test_names = [r.name for r in results]
+
         if clean and not seeded:
             stamper = make_foundry_validation_stamper(FORGE_TEST_VALIDATION_KEY)
             return tool_state_update(
@@ -253,15 +264,20 @@ class ForgeTestTool(
                     f"All tests passed (publish gate stamped).\n\n{summary}"
                 ),
                 validations=stamper(self.state),
+                last_test_names=test_names,
             )
 
         if clean and seeded:
-            return (
-                f"All tests passed under seed={self.seed!r} — the "
-                "fuzz-failure cache replayed prior counterexamples and "
-                "they no longer trigger. Call forge_test WITHOUT a seed "
-                "to run a fresh campaign and stamp the publish gate.\n\n"
-                f"{summary}"
+            return tool_state_update(
+                tool_call_id=self.tool_call_id,
+                content=(
+                    f"All tests passed under seed={self.seed!r} — the "
+                    "fuzz-failure cache replayed prior counterexamples and "
+                    "they no longer trigger. Call forge_test WITHOUT a seed "
+                    "to run a fresh campaign and stamp the publish gate.\n\n"
+                    f"{summary}"
+                ),
+                last_test_names=test_names,
             )
 
         problems: list[str] = []
@@ -276,11 +292,15 @@ class ForgeTestTool(
                 "expect_test_passage to clear the marker, or rework the test): "
                 + ", ".join(r.name for r in unexpected_passes)
             )
-        return (
-            "forge test did not produce a clean run.\n"
-            + "\n".join(problems)
-            + f"\n\n{summary}"
-            + seed_footer
+        return tool_state_update(
+            tool_call_id=self.tool_call_id,
+            content=(
+                "forge test did not produce a clean run.\n"
+                + "\n".join(problems)
+                + f"\n\n{summary}"
+                + seed_footer
+            ),
+            last_test_names=test_names,
         )
 
 

@@ -83,14 +83,30 @@ as an expected failure. Do *NOT* produce a test that passes to demonstrate
 A subsequent `put_test_raw` invalidates any prior `forge_test` stamp,
 so always finish with a clean `forge_test` run after the *latest* edit.
 
-## Step 3 — publish
+## Step 3 — seek feedback
+
+Seek feedback on your tests from the feedback tool. If it indicates that
+your tests need work, address its feedback and reinvoke the tool until it
+is satisfied.
+
+The feedback judge is aware of all properties in this batch. It will flag
+missing coverage — if your tests do not address a property and you have
+not declared a skip for it, the judge will reject your tests. If you have
+declared a skip but the judge considers the justification insufficient,
+it will also reject and may suggest how the property can in fact be
+demonstrated.
+
+## Step 4 — publish
 
 Call `result(commentary, property_tests)`. The publish gate requires:
 
-* `forge_test` stamped the current buffer (i.e., a green run after the
-  most recent `put_test_raw`).
+* `forge_test` stamped the current buffer (i.e., a green unseeded run
+  after the most recent `put_test_raw`).
+* The feedback judge accepted the current buffer.
 * Every non-skipped property is claimed by at least one test function
-  name in `property_tests`. Skipped properties must NOT appear.
+  name in `property_tests`, every claimed test actually ran in the
+  stamping `forge_test` invocation, and every test that ran is claimed
+  by some property. Skipped properties must NOT appear.
 
 If your `result` call is rejected, the rejection message names the
 specific gate that failed; fix it and call `result` again.
@@ -145,7 +161,10 @@ changed. Follow this procedure:
 2. Reapply any skips your memory recorded.
 3. Reapply any `expect_test_failure` markings your memory recorded.
 4. Run `forge_test` to re-stamp the publish gate.
-5. Deliver via `result`.
+5. Reinvoke the feedback tool to re-stamp the judge's acceptance (the
+   judge retains its memory of prior rounds, so re-acceptance of an
+   unchanged draft is cheap).
+6. Deliver via `result`.
 
-Do NOT skip step 4 — the publish gate requires a stamp on the *current*
-buffer.
+Do NOT skip steps 4 and 5 — the publish gate requires both stamps on the
+*current* buffer.
