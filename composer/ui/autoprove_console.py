@@ -24,6 +24,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from composer.spec.source.prover import ProverEvents
+from composer.spec.source.autosetup import AutoSetupEvents
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.io.event_handler import NullEventHandler
 from composer.io.multi_job import TaskHandle, TaskInfo
@@ -215,6 +216,22 @@ class AutoProveConsoleHandler(NullEventHandler):
             case "cex_analysis":
                 self._output(f"[{self._label(path)}]: rule analysis start -> {d['rule_name']}")
         return super().handle_event(payload, path, checkpoint_id)
+
+    @override
+    async def handle_progress_event(self, payload: dict) -> None:
+        # AutoSetup is an external subprocess, not a LangGraph agent, so it
+        # never trips the graph-level ``[<phase>] start`` log the other phases
+        # get. Surface its lifecycle here for parity. Per-line subprocess stdout
+        # is suppressed, mirroring how ``prover_output`` is dropped above.
+        evt = cast(AutoSetupEvents, payload)
+        match evt["type"]:
+            case "auto_setup_start":
+                self._output("[AutoSetup] start")
+            case "auto_setup_output":
+                pass
+            case "auto_setup_complete":
+                self._output(f"[AutoSetup] complete (return code {evt['return_code']})")
+        await super().handle_progress_event(payload)
 
     @asynccontextmanager
     async def _start_conversation(self, initial: RenderableType) -> AsyncIterator[ConversationClient]:

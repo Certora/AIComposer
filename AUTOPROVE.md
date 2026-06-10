@@ -166,7 +166,7 @@ Generates CVL summaries for ERC20 contracts and external interfaces discovered i
 
 ### Phase 3: Structural Invariants
 
-Formulates and generates CVL for system-wide structural invariants (e.g. total supply consistency, balance accounting). The resulting `certora/invariants.spec` is made available as a resource that later phases can import and use as preconditions.
+Formulates and generates CVL for system-wide structural invariants (e.g. total supply consistency, balance accounting). The resulting `certora/specs/invariants.spec` is made available as a resource that later phases can import and use as preconditions.
 
 ### Phase 4: Per-Component Property Extraction (parallel)
 
@@ -174,15 +174,22 @@ For each component identified in Phase 0, an agent analyzes the code and formula
 
 ### Phase 5: Per-Component CVL Generation (parallel)
 
-For each component's properties, an agent generates CVL specs and runs the prover to verify them. Failed specs are revised in a feedback loop. Results are written to `certora/autospec_{n}.spec` with accompanying commentary files. Also bounded by `--max-concurrent`.
+For each component's properties, an agent generates CVL specs and runs the prover to verify them. Failed specs are revised in a feedback loop. Results are written to `certora/specs/autospec_{component}.spec` with accompanying commentary files. Also bounded by `--max-concurrent`.
 
 ### Output
 
-Auto-prove writes its output into the `certora/` directory within the project root:
+Auto-prove writes its output into the `certora/` directory within the project root. Generated specs live under `certora/specs/` (the prover resolves CVL `import`s relative to that directory), while their run configs go to `certora/confs/`:
 
-- `certora/invariants.spec` — structural invariants (if any were formulated)
-- `certora/autospec_0.spec`, `certora/autospec_1.spec`, ... — per-component specs
-- `certora/*.commentary.md` — LLM commentary explaining each spec
+- `certora/specs/invariants.spec` — structural invariants (if any were formulated)
+- `certora/specs/autospec_{component}.spec` (e.g. `autospec_Core_Logic.spec`) — per-component specs
+- `certora/specs/summaries/*.spec` — AutoSetup-generated and protocol-specific summaries
+- `certora/confs/*.conf` — per-spec prover configs (each `verify` points at the spec's path relative to the project root)
+
+Each spec (`invariants` and every `autospec_{component}`) is accompanied by metadata under `certora/properties/`, keyed by the spec's stem:
+
+- `certora/properties/{stem}.properties.json` — the analysis-phase property formulations (title, sort, methods, description); `title` is the cross-reference key
+- `certora/properties/{stem}.property_rules.json` — the property→rules mapping (`{property title: [rule names]}`)
+- `certora/properties/{stem}.commentary.md` — LLM commentary explaining the generated spec (per-component specs only)
 
 The pipeline returns an `AutoProveResult` with counts of components analyzed, properties generated, and any failures.
 

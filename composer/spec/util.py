@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 from typing import Iterator
 
+from composer.spec.gen_types import CERTORA_DIR
+
 
 def string_hash(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:16]
@@ -19,22 +21,38 @@ def slugify_filename(name: str) -> str:
     return slug or "unnamed"
 
 
+def ensure_dir(path: Path) -> Path:
+    """``mkdir -p`` *path* (no-op if it already exists) and return it, so it can be
+    used inline, e.g. ``ensure_dir(certora_dir / "specs") / spec_name``."""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 @contextlib.contextmanager
 def temp_certora_file(
     *,
     root: str,
     ext: str,
     content: str,
-    prefix: str = "generated"
+    prefix: str = "generated",
+    dest_dir: Path = CERTORA_DIR,
 ) -> Iterator[str]:
-    """Write a temp file into the project's certora/ dir, yield its name, clean up."""
+    """Write a temp file under ``<root>/<dest_dir>``, yield its path **relative to
+    the project root**, and clean it up.
+
+    *dest_dir* is itself project-root-relative (default ``certora``). The yielded
+    path uses the same project-root-relative convention as the persisted artifacts,
+    so callers use it verbatim (no ``certora/`` prefixing). Materializing a spec in
+    the same directory it will ultimately be dumped to (e.g. ``certora/specs``)
+    makes the prover resolve the spec's CVL ``import`` statements identically at
+    verify-time and after persistence.
+    """
     tmp_name = f"{prefix}_{uuid.uuid1().hex[:16]}.{ext}"
-    certora_dir = Path(root) / "certora"
-    certora_dir.mkdir(exist_ok=True, parents=True)
-    tgt = certora_dir / tmp_name
+    target_dir = ensure_dir(Path(root) / dest_dir)
+    tgt = target_dir / tmp_name
     tgt.write_text(content)
     try:
-        yield tmp_name
+        yield (dest_dir / tmp_name).as_posix()
     finally:
         os.unlink(tgt)
 

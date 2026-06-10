@@ -16,6 +16,9 @@ import pathlib
 import time
 from logging.handlers import RotatingFileHandler
 
+from composer.spec.gen_types import AUTOPROVE_INTERNAL_DIR, under_project
+from composer.spec.util import ensure_dir
+
 
 _MAX_BYTES = 1024 * 1024
 _BACKUP_COUNT = 5
@@ -46,8 +49,7 @@ def setup_autoprove_logging(
 
     Callers should arrange to invoke this exactly once per pipeline run.
     """
-    log_dir = pathlib.Path(project_root) / ".certora_internal" / "autoProve"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = ensure_dir(under_project(project_root, AUTOPROVE_INTERNAL_DIR))
 
     stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
     text_path = log_dir / f"{stamp}.{thread_id}.log"

@@ -37,6 +37,7 @@ type AutoProveEvent = ProverOutputEvent | CloudPollingEvent
 
 class AutoProvePhase(enum.Enum):
     HARNESS = "harness"
+    AUTOSETUP = "autosetup"
     INVARIANTS = "invariants"
     SUMMARIES = "summaries"
     COMPONENT_ANALYSIS = "component_analysis"
@@ -45,7 +46,8 @@ class AutoProvePhase(enum.Enum):
 
 
 AUTOPROVE_PHASE_LABELS: dict[AutoProvePhase, str] = {
-    AutoProvePhase.HARNESS: "Harness Setup",
+    AutoProvePhase.HARNESS: "Harness Creation",
+    AutoProvePhase.AUTOSETUP: "AutoSetup",
     AutoProvePhase.INVARIANTS: "Structural Invariants",
     AutoProvePhase.SUMMARIES: "Summaries",
     AutoProvePhase.COMPONENT_ANALYSIS: "Component Analysis",
@@ -54,7 +56,8 @@ AUTOPROVE_PHASE_LABELS: dict[AutoProvePhase, str] = {
 }
 
 AUTOPROVE_SECTION_ORDER: list[str] = [
-    "Harness Setup",
+    "Harness Creation",
+    "AutoSetup",
     "Structural Invariants",
     "Summaries",
     "Component Analysis",

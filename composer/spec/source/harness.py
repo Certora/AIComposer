@@ -36,7 +36,7 @@ from composer.spec.source.autosetup import run_autosetup, SetupFailure, SetupSuc
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
-from composer.spec.gen_types import TypedTemplate
+from composer.spec.gen_types import TypedTemplate, certora_relative_to_project, under_project
 from composer.spec.system_model import SourceApplication, SourceExternalActor, SourceExplicitContract
 
 def system_setup_key(s: SourceApplication) -> CacheKey["ContractSetup", "SystemDescriptionHarnessed"]:
@@ -502,19 +502,65 @@ config_key = CacheKey[None, ContractSetup]("config")
 from logging import getLogger
 _logger = getLogger(__name__)
 
-async def run_setup(
+
+# ---------------------------------------------------------------------------
+# Split phases.
+#
+# Harness creation and AutoSetup are exposed as two separate, independently
+# cached steps so the pipeline can run AutoSetup in parallel with invariant/bug
+# analysis. They share the ``config_key`` parent context, so existing
+# harness-creation caches (keyed by ``system_setup_key``) still hit; the
+# AutoSetup result is cached under its own key.
+# ---------------------------------------------------------------------------
+
+async def run_harness_creation(
     context: WorkflowContext[None],
     source: SourceCode,
     env: SourceEnvironment,
     application_desc: SourceApplication,
-    prover_opts: ProverOptions,
-) -> ContractSetup | None:
+) -> SystemDescriptionHarnessed:
+    """Classify external contracts, generate harness files, and write them to
+    disk. ``run_and_apply_part1`` re-writes the harness files on every call
+    (idempotent), so they are guaranteed present for the AutoSetup phase even on
+    a cache hit."""
     config_ctxt = context.child(config_key)
-    if (cached := await config_ctxt.cache_get(ContractSetup)) is not None:
-        if (Path(source.project_root) / "certora"  / cached.config.summaries_path).exists():
-            return cached
+    return await run_and_apply_part1(config_ctxt, source, env, application_desc)
 
-    sys_desc = await run_and_apply_part1(config_ctxt, source, env, application_desc)
+
+def autosetup_key(
+    app: SourceApplication,
+    prover_opts: ProverOptions,
+) -> CacheKey[ContractSetup, SetupSuccess]:
+    """Cache key for the AutoSetup phase. Includes ``prover_opts`` so cloud and
+    local configurations never collide (the old composite ``config_key`` omitted
+    them, which could reuse a stale config across modes)."""
+    return CacheKey[ContractSetup, SetupSuccess](
+        "autosetup-" + string_hash(
+            app.model_dump_json() + "\x00" + "\x00".join(prover_opts.extra_args)
+        )
+    )
+
+
+async def run_autosetup_phase(
+    context: WorkflowContext[None],
+    source: SourceCode,
+    sys_desc: SystemDescriptionHarnessed,
+    application_desc: SourceApplication,
+    prover_opts: ProverOptions,
+) -> SetupSuccess:
+    """Run AutoSetup compilation against the (already written) harness files and
+    return the compilation config + summaries. Depends on harness creation
+    having run first: it reads the transitive-closure file paths from disk.
+
+    Cache hits are guarded by the on-disk existence of ``summaries_path``."""
+    config_ctxt = context.child(config_key)
+    cache = await config_ctxt.child(
+        autosetup_key(application_desc, prover_opts),
+        application_desc.model_dump(),
+    )
+    if (cached := await cache.cache_get(SetupSuccess)) is not None:
+        if under_project(source.project_root, certora_relative_to_project(cached.summaries_path)).exists():
+            return cached
 
     extra_files = [
         c.path for c in sys_desc.transitive_closure if c.name != source.contract_name
@@ -531,11 +577,6 @@ async def run_setup(
     if isinstance(setup_result, SetupFailure):
         raise RuntimeError(f"Auto setup failed: {setup_result.error}\nProc stderr:\n{setup_result.stderr}")
 
-    to_ret = ContractSetup(
-        system_description=sys_desc,
-        config=setup_result
-    )
-
-    await config_ctxt.cache_put(to_ret)
-    return to_ret
+    await cache.cache_put(setup_result)
+    return setup_result
 

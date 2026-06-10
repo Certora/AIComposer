@@ -23,7 +23,8 @@ from composer.spec.source.prover import ProverStateExtra, DELETE_SKIP, VALIDATIO
 from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
 from langgraph.runtime import get_runtime
-from composer.spec.gen_types import CVLResource, TypedTemplate
+from pathlib import Path
+from composer.spec.gen_types import CVLResource, TypedTemplate, import_statement_for
 from composer.spec.source.source_env import SourceEnvironment
 from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
@@ -143,9 +144,16 @@ class GiveUpTool(WithImplementation[Command], WithInjectedId):
             result=self.reason,
         )
 
+class ResourceView(TypedDict):
+    """A CVLResource prepared for the prompt: ``import_path`` is the CVL import
+    string relative to the generated spec's directory (``certora/specs/``)."""
+    description: str
+    required: bool
+    import_path: str
+
 class PropertyGenParams(TypedDict):
     context: ContractComponentInstance | None
-    resources: list[CVLResource]
+    resources: list[ResourceView]
     properties: list[PropertyFormulation]
     contract_name: str
 
@@ -337,10 +345,22 @@ async def batch_cvl_generation(
     prover_tool: BaseTool,
     env: SourceEnvironment,
     description: str,
-    source: SourceCode
+    source: SourceCode,
+    spec_dir: Path,
 ) -> BatchGeneratedCVLResult:
+    # *spec_dir* (project-root-relative) is where the caller will persist the spec
+    # authored here. The prover resolves the spec's CVL imports relative to its own
+    # directory, so resource imports are expressed relative to *spec_dir*.
+    resource_views: list[ResourceView] = [
+        {
+            "description": r.description,
+            "required": r.required,
+            "import_path": import_statement_for(r.path, spec_dir),
+        }
+        for r in resources
+    ]
     bound_template = _PropertyGenTemplate.bind({
-        "resources": resources,
+        "resources": resource_views,
         "context": component,
         "properties": props,
         "contract_name": source.contract_name
