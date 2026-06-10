@@ -19,22 +19,11 @@ that:
 * On any unexpected failure or output that doesn't parse as JSON,
   returns the raw output and leaves ``validations`` untouched.
 
-JSON shape (forge ≥ 0.2, stable across recent versions):
-
-    {
-      "<path>:<ContractName>": {
-        "test_results": {
-          "<signature(...)>": {
-             "status": "Success" | "Failure" | "Skipped",
-             "reason": null | str,
-             ...other fields we don't use...
-          },
-          ...
-        },
-        ...
-      },
-      ...
-    }
+The slice of forge's JSON output we consume is modeled by
+``_ForgeSuiteResult`` / ``_ForgeTestEntry`` (see the JSON-parsing section
+below); shape stable across recent forge versions. Output that is JSON
+but does not validate against that schema raises — see
+``_parse_forge_json`` for the rationale.
 """
 
 import asyncio
@@ -49,7 +38,7 @@ from typing_extensions import TypedDict
 from langchain_core.tools import BaseTool
 from langgraph.config import get_stream_writer
 from langgraph.types import Command
-from pydantic import Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from graphcore.graph import tool_state_update
 from graphcore.tools.schemas import (
@@ -330,12 +319,30 @@ def get_forge_test_tool(
 # ---------------------------------------------------------------------------
 
 
+class _ForgeTestEntry(BaseModel):
+    """The slice of one ``test_results`` entry we consume. Forge sends many
+    more fields (duration, traces, counterexamples, ...) — ignored."""
+    status: str
+    reason: str | None = None
+
+
+class _ForgeSuiteResult(BaseModel):
+    """One ``"<path>:<ContractName>"`` block of ``forge test --json`` output."""
+    test_results: dict[str, _ForgeTestEntry] = Field(default_factory=dict)
+
+
+_FORGE_REPORT = TypeAdapter(dict[str, _ForgeSuiteResult])
+
+
 def _parse_forge_json(stdout: str) -> list[_TestResult] | None:
     """Parse forge's ``--json`` output into a flat list of ``_TestResult``.
 
-    Returns ``None`` if the output isn't JSON (compile error / runner
-    crash). Otherwise returns one entry per ``(contract, signature)``
-    pair regardless of how many contracts were exercised in the run.
+    Returns ``None`` if the output isn't JSON at all (compile error /
+    runner crash) — that path surfaces the raw build output to the agent.
+    Output that IS JSON but doesn't match the expected forge schema raises
+    ``ValidationError`` instead: it means forge changed its output format
+    underneath us, and the ground-truth test-name gate is broken — fail
+    loudly rather than let the agent thrash against silently-empty results.
 
     Test names are the function identifier portion of the JSON key
     (``"test_Foo(uint256)"`` → ``"test_Foo"``) — that's what the agent
@@ -350,25 +357,17 @@ def _parse_forge_json(stdout: str) -> list[_TestResult] | None:
         doc = json.loads(text)
     except json.JSONDecodeError:
         return None
-    if not isinstance(doc, dict):
-        return None
 
-    out: list[_TestResult] = []
-    for contract_block in doc.values():
-        if not isinstance(contract_block, dict):
-            continue
-        tests = contract_block.get("test_results")
-        if not isinstance(tests, dict):
-            continue
-        for signature, body in tests.items():
-            if not isinstance(body, dict):
-                continue
-            name = signature.split("(", 1)[0].strip()
-            status = str(body.get("status", "")).strip() or "Unknown"
-            reason_raw = body.get("reason")
-            reason = str(reason_raw) if reason_raw is not None else None
-            out.append(_TestResult(name=name, status=status, reason=reason))
-    return out
+    report = _FORGE_REPORT.validate_python(doc)
+    return [
+        _TestResult(
+            name=signature.split("(", 1)[0].strip(),
+            status=entry.status,
+            reason=entry.reason,
+        )
+        for suite in report.values()
+        for signature, entry in suite.test_results.items()
+    ]
 
 
 def _format_summary(results: list[_TestResult], expected_failures: dict[str, str]) -> str:
