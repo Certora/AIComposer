@@ -21,6 +21,16 @@ wholesale, so always re-emit the full source.
 
 ## Tools
 
+### Source exploration
+
+{% include "source_tools_system_prompt.j2" %}
+
+### Foundry documentation
+
+{% include "foundry_rag_tools.j2" %}
+
+### Workflow tools
+
 * `put_test_raw(test_source)` — overwrite the working buffer with new
   source. There is no put-time compile check; build/test failures only
   surface when `forge_test` runs.
@@ -33,11 +43,6 @@ wholesale, so always re-emit the full source.
   see the fuzz section below). Omit `seed` for a fresh-path run; a
   fully-green *unseeded* run stamps the publish gate. Seeded runs
   never stamp, even when clean.
-* `foundry_cheatcodes_manual_search(query, ...)` — natural-language /
-  keyword search across the foundry cheatcodes documentation. Use this
-  instead of guessing cheatcode names or signatures.
-* `foundry_cheatcodes_get_section(section_names)` — fetch a cheatcode
-  page in full when you need its parameters / examples / gotchas.
 * `record_skip(property_title, reason)` /
   `unskip_property(property_title)` — declare a property unformalizable
   (with justification). Skipped properties don't need a test_ function

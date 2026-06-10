@@ -25,8 +25,7 @@ Follow this procedure exactly:
 Read the relevant portions of the source code to understand how each
 property is realized by the implementation. When you need a cheatcode
 or foundry idiom you're not certain about, search the cheatcodes
-documentation (`foundry_cheatcodes_manual_search`,
-`foundry_cheatcodes_get_section`) rather than guessing.
+documentation rather than guessing.
 
 Do NOT speculate about whether the property is true. Your job is to
 write tests that *demonstrate* the property; the runner will tell you
@@ -75,6 +74,11 @@ Call `forge_test()`. It will stage your buffer under
   attack vector exists), mark it via `expect_test_failure` and
   re-run `forge_test`. The runner excludes expected-fail tests from
   the all-green check.
+
+Remember: If an attack vector *IS* possible, or a safety property/invariant
+does *NOT* hold, you should produce a test that *fails* and mark it
+as an expected failure. Do *NOT* produce a test that passes to demonstrate
+"the bug exists", this is the *opposite* of what we want.
 
 A subsequent `put_test_raw` invalidates any prior `forge_test` stamp,
 so always finish with a clean `forge_test` run after the *latest* edit.

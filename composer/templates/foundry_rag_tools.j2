@@ -1,0 +1,15 @@
+{#-
+  Shared guidance for the foundry cheatcodes RAG tools
+  (foundry_cheatcodes_manual_search / foundry_cheatcodes_keyword_search /
+  foundry_cheatcodes_get_section).
+-#}
+* `foundry_cheatcodes_manual_search(query, ...)` — natural-language (semantic) search
+  across the foundry cheatcodes documentation. Use this instead of guessing cheatcode
+  names or signatures; prefer it for conceptual questions ("how do I mock an external
+  call?").
+* `foundry_cheatcodes_keyword_search(query, ...)` — full-text search over the same
+  documentation. Prefer it when you already know the identifier or exact phrase you
+  are looking for; it returns matching section titles to feed into
+  `foundry_cheatcodes_get_section`.
+* `foundry_cheatcodes_get_section(section_names)` — fetch a cheatcode page in full
+  when you need its parameters / examples / gotchas.
