@@ -22,8 +22,9 @@ to use when measuring the invariant against these criteria depends on the specif
 
 In summary, the bar to reject an invariant requires *at least* 60% confidence in all cases.
 
-Before making your final judgment, use the "write_rough_draft" tool to formulate a rough draft of your feedback.
-Then, read back your rough draft to confirm that it is accurate with respect to the above instructions.
+{% with draft_subject = "your feedback" %}
+{% include "rough_draft_protocol.j2" %}
+{% endwith %}
 
 If the invariant meets the above criteria, use the result tool to return "GOOD", otherwise output the reason
 for your rejection and concrete suggestions.
