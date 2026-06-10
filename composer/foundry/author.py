@@ -22,6 +22,7 @@ Workflow shape:
 """
 
 from dataclasses import dataclass
+import asyncio
 from typing import (
     Awaitable, Callable, Literal, NotRequired, Protocol, override
 )
@@ -631,6 +632,7 @@ async def batch_foundry_test_generation(
     description: str,
     forge_binary: str = "forge",
     forge_timeout_s: int = 600,
+    forge_sem : asyncio.Semaphore
 ) -> BatchFoundryResult:
     """Author one batch of foundry tests covering ``props``.
 
@@ -656,7 +658,7 @@ async def batch_foundry_test_generation(
     runs at the caller level.
     """
     forge_test_tool = get_forge_test_tool(
-        project_root, forge_binary=forge_binary, timeout_s=forge_timeout_s,
+        project_root, forge_binary=forge_binary, timeout_s=forge_timeout_s, forge_sem=forge_sem
     )
 
     bound_template = _FoundryPropertyGenTemplate.bind({

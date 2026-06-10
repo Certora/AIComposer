@@ -74,6 +74,7 @@ from composer.foundry.state import (
 class ForgeTestDeps:
     """Per-project bindings supplied at tool-construction time."""
     project_root: str
+    sem: asyncio.Semaphore
     forge_binary: str = "forge"
     timeout_s: int = 600
 
@@ -150,51 +151,52 @@ class ForgeTestTool(
     async def run(self) -> Command | str:
         if self.state["curr_test"] is None:
             return "No test written yet. Call put_test_raw before forge_test."
-
+        
         with self.tool_deps() as deps:
-            root = Path(deps.project_root).resolve()
-            if not (root / "foundry.toml").is_file():
-                return (
-                    f"forge_test cannot run: {root}/foundry.toml does not "
-                    "exist. The project does not look like a foundry project."
-                )
-            test_dir = root / "test"
-            test_dir.mkdir(exist_ok=True)
-
-            # ``seed`` controls staged filename; an unseeded run picks a
-            # fresh UUID. Only the unseeded variant is eligible to stamp.
-            path_key = self.seed if self.seed is not None else uuid.uuid4().hex[:12]
-            seeded = self.seed is not None
-            staged_name = f"_composer_draft_{path_key}.t.sol"
-            staged = test_dir / staged_name
-            staged.write_text(self.state["curr_test"])
-
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    deps.forge_binary, "test", "--json",
-                    "--match-path", f"test/{staged_name}",
-                    cwd=str(root),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                try:
-                    stdout_b, stderr_b = await asyncio.wait_for(
-                        proc.communicate(), timeout=deps.timeout_s,
+            async with deps.sem:
+                root = Path(deps.project_root).resolve()
+                if not (root / "foundry.toml").is_file():
+                    return (
+                        f"forge_test cannot run: {root}/foundry.toml does not "
+                        "exist. The project does not look like a foundry project."
                     )
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
-                    return f"forge test timed out after {deps.timeout_s}s"
-                stdout = stdout_b.decode(errors="replace")
-                stderr = stderr_b.decode(errors="replace")
-                returncode = proc.returncode if proc.returncode is not None else -1
-            except FileNotFoundError:
-                return f"`{deps.forge_binary}` not found on PATH"
-            finally:
+                test_dir = root / "test"
+                test_dir.mkdir(exist_ok=True)
+
+                # ``seed`` controls staged filename; an unseeded run picks a
+                # fresh UUID. Only the unseeded variant is eligible to stamp.
+                path_key = self.seed if self.seed is not None else uuid.uuid4().hex[:12]
+                seeded = self.seed is not None
+                staged_name = f"_composer_draft_{path_key}.t.sol"
+                staged = test_dir / staged_name
+                staged.write_text(self.state["curr_test"])
+
                 try:
-                    staged.unlink()
-                except OSError:
-                    pass
+                    proc = await asyncio.create_subprocess_exec(
+                        deps.forge_binary, "test", "--json",
+                        "--match-path", f"test/{staged_name}",
+                        cwd=str(root),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        stdout_b, stderr_b = await asyncio.wait_for(
+                            proc.communicate(), timeout=deps.timeout_s,
+                        )
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        await proc.wait()
+                        return f"forge test timed out after {deps.timeout_s}s"
+                    stdout = stdout_b.decode(errors="replace")
+                    stderr = stderr_b.decode(errors="replace")
+                    returncode = proc.returncode if proc.returncode is not None else -1
+                except FileNotFoundError:
+                    return f"`{deps.forge_binary}` not found on PATH"
+                finally:
+                    try:
+                        staged.unlink()
+                    except OSError:
+                        pass
 
         # Every response surfaces ``path_key`` as the seed the agent
         # should pass back to iterate against this specific campaign's
@@ -306,6 +308,7 @@ class ForgeTestTool(
 
 def get_forge_test_tool(
     project_root: str,
+    forge_sem: asyncio.Semaphore,
     *,
     forge_binary: str = "forge",
     timeout_s: int = 600,
@@ -317,6 +320,7 @@ def get_forge_test_tool(
         project_root=project_root,
         forge_binary=forge_binary,
         timeout_s=timeout_s,
+        sem=forge_sem
     )
     return ForgeTestTool.bind(deps).as_tool("forge_test")
 

@@ -235,6 +235,8 @@ async def run_foundry_pipeline(
     test_dir = pathlib.Path(source_input.project_root) / "test"
     test_dir.mkdir(exist_ok=True)
 
+    forge_runner_sem = asyncio.Semaphore(1)
+
     async def _generate(i: int, batch: _ComponentBatch) -> BatchFoundryResult:
         batch_child = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
@@ -259,6 +261,7 @@ async def run_foundry_pipeline(
                 description=label,
                 forge_binary=forge_binary,
                 forge_timeout_s=forge_timeout_s,
+                forge_sem = forge_runner_sem
             ),
             semaphore,
         )
