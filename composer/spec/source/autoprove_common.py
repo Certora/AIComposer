@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import logging
 import pathlib
 import shlex
 import sys
@@ -25,6 +26,7 @@ from composer.spec.context import (
     WorkflowContext, SourceCode,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
+from composer.spec.source.common_pipeline import dump_token_usage
 from composer.prover.core import make_prover_options
 from composer.spec.source.source_env import build_source_env
 from composer.spec.agent_index import agent_index_config_from_env
@@ -36,6 +38,8 @@ from composer.io.thread_logging import thread_logger, DEFAULT_META_NS
 
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.io.multi_job import HandlerFactory
+
+_logger = logging.getLogger(__name__)
 
 def user_ns(
     *parts: str | tuple[str, ...]
@@ -217,4 +221,14 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
                     max_bug_rounds=args.max_bug_rounds,
                 )
 
-        yield runner
+        try:
+            yield runner
+        finally:
+            # Dump final LLM token usage for the run (success or failure). Single
+            # choke point both console and TUI entry points pass through, with
+            # project_root in scope and the summary fully populated. Guarded so a
+            # diagnostics-dump failure can never mask the pipeline's own outcome.
+            try:
+                dump_token_usage(str(project_root), summary)
+            except Exception:
+                _logger.exception("failed to dump token usage")

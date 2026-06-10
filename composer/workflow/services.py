@@ -433,6 +433,7 @@ _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7"}
 def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
     """Create LLM; thinking disabled when args.thinking_tokens is None."""
     from langchain_anthropic import ChatAnthropic
+    from composer.diagnostics.usage_callback import UsageCallback
 
     thinking: dict[str, Any] | None
     effective_interleaved = args.interleaved_thinking
@@ -458,6 +459,7 @@ def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
         ),
         thinking=thinking,
         model_kwargs={"cache_control": {"type": "ephemeral"}},
+        callbacks=[UsageCallback()],
     )
 
 
