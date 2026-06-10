@@ -71,7 +71,7 @@ requires-dist = [
     { name = "langgraph-prebuilt", specifier = "==1.0.8" },
     { name = "numpy", specifier = ">=2.4" },
     { name = "prompt-toolkit", specifier = ">=3.0" },
-    { name = "prover-output-utility", git = "ssh://git@github.com/Certora/ProverOutputUtility.git?rev=6d9cd9b3199112798cfc1f93c3232f4f9cbab451" },
+    { name = "prover-output-utility", git = "ssh://git@github.com/Certora/ProverOutputUtility.git?rev=1d623c6ebaf47c0794983520fd13216c7735dac2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "questionary", specifier = ">=2.1" },
@@ -470,8 +470,8 @@ wheels = [
 
 [[package]]
 name = "certora-login"
-version = "0.5.0"
-source = { git = "ssh://git@github.com/Certora/certora-cloud-cli.git?subdirectory=packages%2Fcertora_login&rev=f1e18887d181fb4f732ab688b4ed86ac50c9c739#f1e18887d181fb4f732ab688b4ed86ac50c9c739" }
+version = "0.5.1.dev8+g77b8b1500"
+source = { git = "ssh://git@github.com/Certora/certora-cloud-cli.git?subdirectory=packages%2Fcertora_login&rev=77b8b15000e3ae0f18b198185e0df4d73dd6be71#77b8b15000e3ae0f18b198185e0df4d73dd6be71" }
 
 [[package]]
 name = "charset-normalizer"
@@ -2472,7 +2472,7 @@ wheels = [
 [[package]]
 name = "prover-output-utility"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/Certora/ProverOutputUtility.git?rev=6d9cd9b3199112798cfc1f93c3232f4f9cbab451#6d9cd9b3199112798cfc1f93c3232f4f9cbab451" }
+source = { git = "ssh://git@github.com/Certora/ProverOutputUtility.git?rev=1d623c6ebaf47c0794983520fd13216c7735dac2#1d623c6ebaf47c0794983520fd13216c7735dac2" }
 dependencies = [
     { name = "boto3" },
     { name = "certora-login" },

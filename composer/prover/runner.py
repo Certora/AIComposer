@@ -160,7 +160,7 @@ async def certora_prover(
                 Path(temp_dir),
                 args,
                 tool_call_id,
-                CoreProverOptions(extra_args=ctxt.prover_opts.extra_args),
+                CoreProverOptions(extra_args=ctxt.prover_opts.extra_args, cloud=ctxt.prover_opts.cloud),
                 _AuditCallbacks(writer, tool_call_id),
                 _CachingCEXAnalyzer(state, ctxt.llm, store)
             )

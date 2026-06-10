@@ -14,10 +14,9 @@ class ProverOptions:
     capture_output: bool
     keep_folder: bool
     extra_args: list[str] = field(default_factory=list)
-
-    @property
-    def cloud(self) -> bool:
-        return "--server" in self.extra_args
+    #: Explicit cloud flag (from --cloud / --local_prover), not inferred from a
+    #: --server flag; the cloud server is env-derived at launch time.
+    cloud: bool = False
 
     @property
     def global_timeout(self) -> float:

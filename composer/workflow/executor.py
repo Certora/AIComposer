@@ -397,6 +397,7 @@ async def execute_ai_composer_workflow(
         capture_output=workflow_options.prover_capture_output,
         keep_folder=workflow_options.prover_keep_folders,
         extra_args=resolved.extra_args,
+        cloud=resolved.cloud,
     )
 
     required_validations : list[ValidationType] = [prover]
