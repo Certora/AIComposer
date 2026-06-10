@@ -161,7 +161,16 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
         async_tool_context(),
         thread_logger(
             conns.store,
-            {"root_thread_id": thread_id, "workflow": "foundry"},
+            {
+                "root_thread_id": thread_id,
+                "workflow": "foundry",
+                # Resolved cache root (null when caching is disabled) and
+                # effective memory namespace, so run-trail tooling can find
+                # this run's cache/memory entries without reverse-engineering
+                # namespaces from thread ids.
+                "cache_root": list(cache_root) if cache_root is not None else None,
+                "memory_ns": args.memory_ns if args.memory_ns is not None else thread_id,
+            },
             _user_ns(DEFAULT_META_NS),
             run_id=summary.run_id,
         ),
