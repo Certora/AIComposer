@@ -1,0 +1,12 @@
+{#-
+  Citing-side document-reference protocol — for any agent whose output should cite
+  the Document-Refs of research results that informed it. Context variables (all optional):
+    doc_ref_cvl      — agent has the cvl_researcher / `cvl_document_ref` pair (default: true)
+    doc_ref_code     — agent has the code_explorer / `code_document_ref` pair (default: true)
+    doc_ref_artifact — what the agent writes (default: "CVL")
+-#}
+{%- set _cvl = doc_ref_cvl | default(true) -%}
+{%- set _code = doc_ref_code | default(true) -%}
+When the {{ doc_ref_artifact | default("CVL") }} you write is informed by {% if _cvl and _code %}a cvl_researcher or code_explorer result{% elif _cvl %}a cvl_researcher result{% else %}a code_explorer result{% endif %}, include references to the
+{% if _cvl and _code %}`CVL/Code Document-Ref`{% elif _cvl %}`CVL Document-Ref`{% else %}`Code Document-Ref`{% endif %} returned by the relevant tool call (as comments, when you are authoring code or CVL).
+These references let others quickly look up the reference material you used to formulate your work.

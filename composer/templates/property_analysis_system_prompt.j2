@@ -61,21 +61,21 @@ resolving ambiguity in the inputs, favor self-consistency.
 
 ## Rough draft
 
-Before delivering your final answer via the result tool, use `write_rough_draft`
-to draft your property list, then `read_rough_draft` to review it. Verify each
-property against the criteria in your task prompt — formal-verifiability,
-non-triviality, clear violation consequence, defensibility in your `reasoning`.
-
-The rough draft IS where your property content lives during the task — write the
-actual property text to it. Do not route content through any other channel.
+{% with draft_subject = "your property list" %}
+{% include "rough_draft_protocol.j2" %}
+{% endwith %}
+When reviewing your draft, verify each property against the criteria in your
+task prompt — formal-verifiability, non-triviality, clear violation
+consequence, defensibility in your `reasoning`.
 
 {% if has_source %}
 ## Source exploration
 
-You have source tools (`list_files`, `get_file`, `grep_files`) to read the
-application's source code. Every contract in the tree has a stable,
-authoritative implementation. Use the tools to ground your reasoning in the
-actual implementation when the design document is ambiguous, or when an
-attack vector hinges on a code-level detail (storage layout, ordering of
-state mutations, external-call placement). Don't speculate when you can look.
+{% include "source_tools_system_prompt.j2" %}
+
+Every contract in the tree has a stable, authoritative implementation. Use the
+tools to ground your reasoning in the actual implementation when the design
+document is ambiguous, or when an attack vector hinges on a code-level detail
+(storage layout, ordering of state mutations, external-call placement). Don't
+speculate when you can look.
 {% endif %}

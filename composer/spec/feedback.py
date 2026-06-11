@@ -44,7 +44,10 @@ class FeedbackInherentParams(TypedDict):
 
 FeedbackTemplate = TypedTemplate[FeedbackInherentParams]("property_judge_prompt.j2")
 
-FeedbackSystemTemplate = TypedTemplate[dict[str, Any]]("cvl_system_prompt.j2").bind({})
+# Default judge system prompt for the no-source (natspec) flow: same template the
+# source-mode judge uses, with the source-tool sections compiled out. Source-mode
+# callers override with has_source=True (see composer/spec/source/author.py).
+FeedbackSystemTemplate = TypedTemplate[dict[str, Any]]("property_judge_system_prompt.j2").bind({"has_source": False})
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],

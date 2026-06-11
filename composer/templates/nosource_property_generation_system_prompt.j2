@@ -1,0 +1,15 @@
+{% include "cvl_system_prompt.j2" %}
+
+## Tools
+
+{% include "cvl_tools_system_prompt.j2" %}
+
+## Authoring CVL with References
+
+{% with doc_ref_code = false %}
+{% include "doc_ref_author.j2" %}
+{% endwith %}
+
+{% with doc_ref_artifact = "feedback you receive", doc_ref_code = false, doc_ref_scrutinize = false %}
+{% include "doc_ref_reader.j2" %}
+{% endwith %}
