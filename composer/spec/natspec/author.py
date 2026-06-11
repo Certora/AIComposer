@@ -241,7 +241,7 @@ async def generate_cvl_batch(
         .with_input(NatspecGenerationInput)
         .with_state(NatspecGenerationState)
         .with_context(FeedbackToolContext)
-        .with_sys_prompt_template("cvl_system_prompt.j2")
+        .with_sys_prompt_template("nosource_property_generation_system_prompt.j2")
         .inject(
             lambda b: NoSourceGen.bind({
                 "context": component,

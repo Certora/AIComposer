@@ -22,7 +22,7 @@ from composer.ui.autoprove_app import AutoProvePhase
 from composer.spec.context import (
     WorkflowContext, SourceCode, CacheKey, Properties,
 )
-from composer.spec.gen_types import CVLResource
+from composer.spec.gen_types import CVLResource, certora_relative_to_project
 from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import (
@@ -104,13 +104,13 @@ async def run_autoprove_pipeline(
     # Build initial resources from AutoSetup-generated summaries
     resources: list[CVLResource] = [
         CVLResource(
-            import_path=str(standard_summary_path),
+            path=certora_relative_to_project(standard_summary_path),
             required=True,
             description="AutoSetup-generated summaries",
             sort="import",
         ),
         CVLResource(
-            import_path=str(custom_summary_path),
+            path=certora_relative_to_project(custom_summary_path),
             required=False,
             description=f"Summaries specific to {source_input.contract_name}",
             sort="import"

@@ -1,0 +1,20 @@
+{% include "cvl_system_prompt.j2" %}
+
+## Tools
+
+{# Natspec authors get the fs primitives over the stub/interface tree (plus any
+   pre-existing source in update mode), but never the code_explorer pair. #}
+{% with source_tools_has_explorer = false %}
+{% include "source_tools_system_prompt.j2" %}
+{% endwith %}
+{% include "cvl_tools_system_prompt.j2" %}
+
+## Authoring CVL with References
+
+{% with doc_ref_code = false %}
+{% include "doc_ref_author.j2" %}
+{% endwith %}
+
+{% with doc_ref_artifact = "feedback you receive", doc_ref_code = false, doc_ref_scrutinize = false %}
+{% include "doc_ref_reader.j2" %}
+{% endwith %}

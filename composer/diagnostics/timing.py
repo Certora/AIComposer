@@ -15,6 +15,51 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Iterable, Protocol
 import uuid
 
+from graphcore.utils import TokenUsageDict
+
+
+@dataclass(frozen=True)
+class TokenTotals:
+    """Raw LLM token counts accumulated across one or more calls.
+
+    ``from_dict`` builds one from a ``graphcore.utils.TokenUsageDict`` (its
+    ``input_tokens`` / ``output_tokens`` / ``cache_read_input_tokens`` /
+    ``cache_creation_input_tokens`` keys).
+    """
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+
+    def __add__(self, other: "TokenTotals") -> "TokenTotals":
+        """Element-wise sum."""
+        return TokenTotals(
+            self.input + other.input,
+            self.output + other.output,
+            self.cache_read + other.cache_read,
+            self.cache_write + other.cache_write,
+        )
+
+    def __bool__(self) -> bool:
+        return self.input > 0 or self.output > 0 or self.cache_read > 0 or self.cache_write > 0
+
+    @classmethod
+    def from_dict(cls, u: TokenUsageDict) -> "TokenTotals":
+        return TokenTotals(
+            input=u["input_tokens"],
+            output=u["output_tokens"],
+            cache_read=u["cache_read_input_tokens"],
+            cache_write=u["cache_creation_input_tokens"],
+        )
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "input": self.input,
+            "output": self.output,
+            "cache_read": self.cache_read,
+            "cache_write": self.cache_write,
+        }
+
 
 @dataclass
 class PhaseRecord:
@@ -27,6 +72,7 @@ class PhaseRecord:
     prover_s: float = 0.0
     prover_calls: int = 0
     final_link: str | None = None # URL (cloud) or local results directory (local) of the last prover run.
+    token_usage_by_model: dict[str, TokenTotals] = field(default_factory=dict)
 
 
 @dataclass
@@ -42,6 +88,10 @@ class RunSummary:
     """Maps task_id -> link for the most recent prover run."""
     _latest_conf_by_task: dict[str, dict] = field(default_factory=dict, repr=False)
     """Maps task_id -> the full conf dict passed to the most recent prover run."""
+    token_usage_by_model: dict[str, TokenTotals] = field(default_factory=dict)
+    """Maps model_name -> accumulated raw token counts across the whole run."""
+    _active_tokens_by_task: dict[str, dict[str, TokenTotals]] = field(default_factory=dict, repr=False)
+    """Maps task_id -> {model_name -> token counts} accumulated while the task is in flight."""
 
     def record_phase(
         self,
@@ -55,6 +105,7 @@ class RunSummary:
     ) -> None:
         prover_s, prover_calls = self._active_prover_by_task.pop(task_id, (0.0, 0))
         link = self._latest_link_by_task.pop(task_id, None)
+        tokens = self._active_tokens_by_task.pop(task_id, {})
         self.phases.append(PhaseRecord(
             task_id=task_id,
             label=label,
@@ -65,6 +116,7 @@ class RunSummary:
             prover_s=prover_s,
             prover_calls=prover_calls,
             final_link=link,
+            token_usage_by_model=tokens,
         ))
 
     def add_prover_call(self, duration_s: float, *, task_id: str | None = None) -> None:
@@ -74,6 +126,38 @@ class RunSummary:
         if task_id is not None:
             prev_s, prev_n = self._active_prover_by_task.get(task_id, (0.0, 0))
             self._active_prover_by_task[task_id] = (prev_s + duration_s, prev_n + 1)
+
+    def record_token_usage(self, usage: TokenUsageDict, *, task_id: str | None = None) -> None:
+        """Accumulate one LLM call's token counts into the run-wide per-model totals
+        and (if a task is active) into that task's in-flight bucket, later folded into
+        its ``PhaseRecord`` by ``record_phase``. Defaults attribution to the active task."""
+        model = usage.get("model_name") or "unknown"
+        update = TokenTotals.from_dict(usage)
+        self.token_usage_by_model[model] = self.token_usage_by_model.get(model, TokenTotals()) + update
+        if (task_id := task_id or get_current_task_id()) is not None:
+            bucket = self._active_tokens_by_task.setdefault(task_id, {})
+            bucket[model] = bucket.get(model, TokenTotals()) + update
+
+    def total_tokens(self) -> TokenTotals:
+        """Run-wide token counts summed across all models."""
+        return sum(self.token_usage_by_model.values(), TokenTotals())
+
+    def token_usage_summary(self) -> dict[str, object]:
+        """Serializable run-total / per-model / per-phase token breakdown — the
+        body of ``token_usage.json`` and of the ``token_usage`` run tag."""
+        return {
+            "totals": self.total_tokens().as_dict(),
+            "by_model": {model: t.as_dict() for model, t in self.token_usage_by_model.items()},
+            "by_phase": [
+                {
+                    "task_id": p.task_id,
+                    "phase": p.phase,
+                    **sum(p.token_usage_by_model.values(), TokenTotals()).as_dict(),
+                }
+                for p in self.phases
+                if p.token_usage_by_model
+            ],
+        }
 
     def record_prover_link(self, link: str, *, task_id: str | None = None) -> None:
         """Stash the latest prover link (URL or local path); defaults to the active task."""
@@ -193,6 +277,17 @@ def _format_summary(summary: RunSummary) -> str:
         f"Prover total: {_fmt_secs(summary.prover_total_s)} across "
         f"{summary.prover_total_calls} call(s)"
     )
+    tot = summary.total_tokens()
+    if tot:
+        out.append(
+            f"Tokens: in {tot.input:,} · out {tot.output:,} · "
+            f"cache_read {tot.cache_read:,} · cache_write {tot.cache_write:,}"
+        )
+        for model, t in summary.token_usage_by_model.items():
+            out.append(
+                f"  {model}  in {t.input:,} out {t.output:,} "
+                f"cache_r {t.cache_read:,} cache_w {t.cache_write:,}"
+            )
     linked = [p for p in summary.phases if p.final_link]
     if linked:
         out.append("")

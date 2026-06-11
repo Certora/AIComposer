@@ -394,7 +394,7 @@ async def run_property_inference(
     assert isinstance(msg_history[0], SystemMessage) and isinstance(msg_history[-1], ToolMessage)
     import uuid
     edited_history = [
-        SystemMessage(load_jinja_template("bug_refinement_chat_system_prompt.j2")),
+        SystemMessage(load_jinja_template("bug_refinement_chat_system_prompt.j2", sort=env.sort)),
         *msg_history[1:],
         AIMessage("<task-complete>", id=uuid.uuid4().hex)
     ]

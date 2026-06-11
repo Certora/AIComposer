@@ -1,5 +1,5 @@
 
-from typing import Callable, NotRequired, Sequence, Any
+from typing import Callable, NotRequired, Sequence
 from typing_extensions import TypedDict
 from composer.spec.service_host import Sort, ServiceHost
 
@@ -44,7 +44,14 @@ class FeedbackInherentParams(TypedDict):
 
 FeedbackTemplate = TypedTemplate[FeedbackInherentParams]("property_judge_prompt.j2")
 
-FeedbackSystemTemplate = TypedTemplate[dict[str, Any]]("cvl_system_prompt.j2").bind({})
+class JudgeSystemParams(TypedDict):
+    sort: Sort
+
+# Judge system prompt, shared between the natspec and source-mode flows. The fs
+# primitives are always documented; ``sort`` drives the rest (the template
+# compiles out the code_explorer / code_document_ref guidance unless
+# ``sort == "existing"``, the only mode that wires those tools).
+FeedbackSystemTemplate = TypedTemplate[JudgeSystemParams]("property_judge_system_prompt.j2")
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
@@ -53,8 +60,11 @@ def property_feedback_judge(
     props: list[PropertyFormulation],
     *,
     extra_inputs: list[str | dict] | Callable[[], list[str | dict]] | None = None,
-    system_prompt: TemplateInstantiation = FeedbackSystemTemplate
+    system_prompt: TemplateInstantiation | None = None,
 ) -> FeedbackToolContext:
+
+    if system_prompt is None:
+        system_prompt = FeedbackSystemTemplate.bind({"sort": env.sort})
 
     builder = env.builder.with_tools(
         env.all_tools

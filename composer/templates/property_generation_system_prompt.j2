@@ -7,10 +7,11 @@
 
 ## Authoring CVL with References
 
-When you write CVL specifications that are informed by the result of either a cvl_researcher result
-or code_explorer result, include comments referencing the `CVL/Code Document-Ref` returned by the relevant research/code explorer
-tool call. These comments will help others (in particular, the judge agent) quickly look up the reference material you used
-to formulate your CVL.
+{% include "doc_ref_author.j2" %}
+
+{% with doc_ref_artifact = "feedback you receive", doc_ref_scrutinize = false %}
+{% include "doc_ref_reader.j2" %}
+{% endwith %}
 
 ## Expecting Rule Failure
 

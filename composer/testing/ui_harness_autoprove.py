@@ -14,48 +14,60 @@ Scenario inputs and wiring instructions live under
 ``composer/testing/scenarios/autoprove_counter/``.
 
 The scenario is deliberately constrained to one contract with one component
-so that the per-component ``asyncio.gather`` fan-outs in phases 5 and 6 of
-``run_generation_pipeline`` collapse to linear execution. Multiple
-invariants and multiple properties are still authored per-phase — a single
-authoring agent services them sequentially, so the tape remains linear.
+so that the per-component ``asyncio.gather`` fan-outs in the extraction and
+CVL phases collapse to a single lane each. Multiple invariants and multiple
+properties are still authored per-phase — a single authoring agent services
+them sequentially, so each lane stays linear.
 
 ``AutoProveTaskHandler.format_hitl_prompt`` raises ``NotImplementedError``
 — there is no Textual-side HITL prompt in this pipeline. The interactive
 post-bug-analysis *refinement conversation* is a different mechanism: it
 runs through a ``RichConsoleConversationClient`` outside the Textual
-screen and consumes plain-text human input from stdin. **This tape
-requires the pipeline to be invoked with ``--interactive``** — the
-refinement conversation's four tape entries live inline in the single
-global cursor of ``FakeMessagesListChatModel``, so skipping
-``--interactive`` would simply hand those entries to the component-CVL
-phase and the trace would fall apart. Every expected human reply is
-embedded as a ``[TAPE EXPECTATION: respond ...]`` marker inside the
-preceding AI message so the operator running the harness knows what to
-type.
+screen and consumes plain-text human input from stdin. **Run the pipeline
+with ``--interactive``** to exercise it — the refinement conversation's four
+tape entries live in the ``bug-0-Increment`` lane, after the property-extraction
+entries. Routing is per-lane now, so skipping ``--interactive`` just leaves
+those entries unconsumed rather than corrupting another phase. Every
+expected human reply is embedded as a ``[TAPE EXPECTATION: respond ...]``
+marker inside the preceding AI message so the operator running the harness
+knows what to type.
 
-Global call order across phases:
+Lanes and call order
+--------------------
+The pipeline runs several phases concurrently (``asyncio.gather``), so there
+is no single global call order any more. ``HarnessFakeLLM`` routes each call
+to a per-phase *lane* keyed by the ``run_task`` task_id (read from the
+``get_current_task_id`` ContextVar that ``run_task`` sets). Within a lane the
+calls happen in the order authored below; sub-agents (invariant_feedback, CEX
+analyzer, cvl_research, code_explorer) inherit their parent phase's task_id,
+so their responses live in the parent's lane.
 
-    run_component_analysis
-      → run_setup / classifier_agent
-      → get_invariant_formulation
-          └─ invariant_feedback sub-agent ×3
-      → batch_cvl_generation (invariant CVL)
-          ├─ cvl_research sub-agent
-          ├─ explore_code sub-agent
-          ├─ feedback-judge sub-agent ×2
-          └─ CEX analyzer (1 LLM call for the violated rule)
-      → run_bug_analysis
-          └─ (interactive refinement conversation when --interactive)
-      → batch_cvl_generation (component CVL, streamlined)
-          ├─ feedback-judge sub-agent ×1
-          └─ CEX analyzer (1 LLM call — surfaces the real
-            ``incrementOther`` implementation bug)
+    system-analysis : run_component_analysis (+ code_explorer sub-agent)
+    harness         : run_harness_creation / classifier_agent
+    autosetup       : run_autosetup_phase — a subprocess, makes NO LLM calls,
+                      so it has no lane
+    ── after harness creation, these lanes run concurrently ──
+    invariants       : get_invariant_formulation (+ invariant_feedback ×3)
+    bug-0-Increment  : run_property_inference (+ refinement when --interactive)
+    ── staged CVL join, after the concurrent branch completes ──
+    invariant-cvl    : batch_cvl_generation, component=None
+                        (+ cvl_research, code_explorer, feedback ×2, CEX ×1)
+    cvl-0-Increment  : batch_cvl_generation, component=<one>
+                        (+ feedback ×1, CEX ×1 — surfaces the real
+                        ``incrementOther`` implementation bug)
+
+    Per-component lanes are ``{bug,cvl}-{component index}-{slugified_name}``;
+    here the Counter's sole component is "Increment".
 """
 
 from typing import Any
 import uuid
 
 from composer.testing.harness_tape import HarnessFakeLLM
+from composer.spec.source.task_ids import (
+    SYSTEM_ANALYSIS_TASK_ID, HARNESS_TASK_ID, INVARIANTS_TASK_ID,
+    INVARIANT_CVL_TASK_ID, bug_analysis_task_id, cvl_gen_task_id,
+)
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.messages.tool import ToolCall
@@ -365,13 +377,14 @@ _REFINED_BUG_ANALYSIS_PROPS = [
 # The tape
 # ---------------------------------------------------------------------------
 #
-# Global call order (section headers mark boundaries, NOT separate tapes).
-# Every AIMessage below is popped by ``FakeMessagesListChatModel`` on a
-# single LLM call, in order. If the real pipeline issues a call not shown
-# here, the fake runs off the end and raises. If real dispatch order drifts
-# from this layout, edit the tape — that's the cheap loop.
+# Authored as one list per phase ("lane"), assembled into the per-lane
+# ``_AUTOPROVE_TAPE`` dict at the bottom. HarnessFakeLLM serves each LLM call
+# from its lane's cursor (keyed by run_task task_id), so the scripted responses
+# stay correct even though the pipeline runs phases concurrently. Within a lane,
+# entries are popped in order; if the pipeline issues a call the lane doesn't
+# have, the fake raises. Editing the tape is the cheap loop.
 
-_AUTOPROVE_TAPE: list[BaseMessage] = [
+_SYSTEM_ANALYSIS_TAPE: list[BaseMessage] = [
 
     # ───────────────────────────────────────────────────────────────────
     # P1. Component analysis (run_component_analysis → SourceApplication)
@@ -471,7 +484,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     ),
 
     # ───────────────────────────────────────────────────────────────────
-    # P2. Classifier agent (run_setup → classifier_agent →
+    # P2. Classifier agent (run_harness_creation → classifier_agent →
     #     AgentSystemDescription)
     # ───────────────────────────────────────────────────────────────────
     # Tools available: memory, source_tools, result.
@@ -488,6 +501,10 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # The preaudit subprocess runs between this phase and the invariant
     # phase — it's a real `python -m orchestrator` call and does not
     # consume LLM calls.
+
+]
+
+_HARNESS_TAPE: list[BaseMessage] = [
 
     # P2.1 — exercise list_files in this agent's thread (different from
     # the P1 thread, so the listing call re-runs against the real fs).
@@ -518,6 +535,10 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # The tape uses 3 invariant_feedback rounds (1 bad + 2 good) to exercise
     # the NOT_INDUCTIVE → resubmit recovery path, and delivers 2 invariants
     # in the final result.
+
+]
+
+_INVARIANTS_TAPE: list[BaseMessage] = [
 
     # P3.1 — exercise source_tools in the main invariant agent.
     _ai(
@@ -708,6 +729,10 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     #
     # 2 invariants — record_skip / unskip_property accept the property titles
     # `increments_sum_is_count` and `zero_address_is_zero`.
+
+]
+
+_INVARIANT_CVL_TAPE: list[BaseMessage] = [
 
     # Q1 — exercise the similarity + keyword search paths.
     _ai(
@@ -1046,16 +1071,22 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     ),
 
     # Q17 — final result. Both validations current, curr_spec unchanged
-    # since Q14 / J3. result schema is (str, "Commentary on your
-    # generated spec") so args are {"value": "..."}.
+    # since Q14 / J3. PublishResultTool requires `commentary` plus a
+    # `property_rules` mapping covering every (non-skipped) batch title —
+    # here the two invariant titles, each verified by the invariant of the
+    # same name in GOOD_INV_CVL.
     _ai(
         "Finalizing the invariant CVL.",
         _tc(
             "result",
-            value=(
+            commentary=(
                 "Formalized the two structural invariants (increments_sum_is_count, "
                 "zero_address_is_zero)."
             ),
+            property_rules=[
+                {"property_title": "increments_sum_is_count", "rules": ["increments_sum_is_count"]},
+                {"property_title": "zero_address_is_zero", "rules": ["zero_address_is_zero"]},
+            ],
         ),
     ),
 
@@ -1070,6 +1101,10 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     #
     # `refinement` is None from the pipeline, so there is NO refinement-loop
     # conversation after this — once `result` fires, the phase ends.
+
+]
+
+_BUG_TAPE: list[BaseMessage] = [
 
     # P5.1 — exercise source_tools + rough_draft. No did_read requirement,
     # kept for coverage.
@@ -1209,6 +1244,10 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
     # then re-runs the prover with the rule excluded so
     # ``validations[prover]`` can be stamped.
 
+]
+
+_CVL_TAPE: list[BaseMessage] = [
+
     # R1 — put the three-rule component spec. Typechecks; covers all three
     # refined props.
     _ai(
@@ -1336,7 +1375,7 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
         "Finalizing the component CVL.",
         _tc(
             "result",
-            value=(
+            commentary=(
                 "Formalized all three extracted safety properties as "
                 "pre/post equalities. The two increment() rules verify. "
                 "The incrementOther rule is left in place and marked "
@@ -1345,29 +1384,47 @@ _AUTOPROVE_TAPE: list[BaseMessage] = [
                 "sender] instead of increments[other]. The spec is "
                 "correct; the implementation needs to be fixed."
             ),
+            property_rules=[
+                {"property_title": "count_increments_by_one", "rules": ["increment_increases_count"]},
+                {"property_title": "sender_increments_by_one", "rules": ["increment_increases_sender_tally"]},
+                {"property_title": "other_increments_by_one", "rules": ["incrementOther_credits_target_when_distinct"]},
+            ],
         ),
     ),
 ]
+
+
+# The tape, as a per-phase lane map keyed by run_task task_id. HarnessFakeLLM
+# serves each LLM call from its lane's cursor, so the scripted responses stay
+# correct even though the pipeline runs phases concurrently. The Counter
+# scenario has one component, "Increment".
+_AUTOPROVE_TAPE: dict[str, list[BaseMessage]] = {
+    SYSTEM_ANALYSIS_TASK_ID: _SYSTEM_ANALYSIS_TAPE,
+    HARNESS_TASK_ID: _HARNESS_TAPE,
+    INVARIANTS_TASK_ID: _INVARIANTS_TAPE,
+    INVARIANT_CVL_TASK_ID: _INVARIANT_CVL_TAPE,
+    bug_analysis_task_id(0, "Increment"): _BUG_TAPE,
+    cvl_gen_task_id(0, "Increment"): _CVL_TAPE,
+}
 
 
 # ---------------------------------------------------------------------------
 # Install / configuration API
 # ---------------------------------------------------------------------------
 #
-# The CEX analyzer's response is inlined at its exact global position in the
-# main tape (see the ``CEX.1`` entry right after Q13's verify_spec). There is
-# no side-channel tape — ``FakeMessagesListChatModel`` has a single global
-# cursor, so any out-of-band entry would be consumed by the wrong LLM call.
+# The CEX analyzer's response is inlined at its position within the
+# invariant-cvl / cvl-0-Increment lane (see the ``CEX.1`` entry after Q13's verify_spec).
+# There is no side-channel tape — each call is routed to its phase's lane by
+# ``run_task`` task_id, and within a lane responses are consumed in order.
 
 
 def get_autoprove_llm() -> HarnessFakeLLM:
     """Return a fresh fake LLM loaded with the autoprove counter tape.
 
-    Each call returns an independent instance (the tape list is shared
-    but ``FakeMessagesListChatModel``'s internal cursor is per-instance),
-    so tests can run multiple scenarios without cross-contamination.
+    Each call returns an independent instance with its own per-lane cursors, so
+    tests can run multiple scenarios without cross-contamination.
     """
-    return HarnessFakeLLM(responses=list(_AUTOPROVE_TAPE))
+    return HarnessFakeLLM(lanes=_AUTOPROVE_TAPE)
 
 
 def install_harness_tape() -> HarnessFakeLLM:
