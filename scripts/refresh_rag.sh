@@ -14,10 +14,10 @@
 # nothing. If you need zero-downtime updates instead, see
 # cvl_rag_update_investigation.html for the per-source / staging-swap designs.
 #
-# It auto-confirms wipe_rag.py's typed-confirmation guard (by piping the sentinel
-# read straight out of wipe_rag.py) because here the wipe is immediately followed
-# by a rebuild from freshly generated source — it is not a standalone destructive
-# op. wipe_rag.py keeps its guard for direct, manual use.
+# It passes --skip-confirmation to wipe_rag.py to bypass that script's interactive
+# typed-confirmation guard, because here the wipe is immediately followed by a
+# rebuild from freshly generated source — it is not a standalone destructive op.
+# wipe_rag.py keeps its guard for direct, manual use.
 set -euo pipefail
 
 script_dir="$(realpath "$(dirname "$0")")"
@@ -67,21 +67,13 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# Read wipe_rag.py's confirmation sentinel from source so this never drifts if
-# the literal changes. If wipe_rag.py rejects what we pipe, it exits non-zero and
-# `set -e` aborts before any rebuild — failing safe (nothing wiped, nothing half-built).
-confirmation="$(grep -E '^_CONFIRMATION[[:space:]]*=' "$script_dir/wipe_rag.py" | sed -E 's/.*"(.*)".*/\1/')"
-if [[ -z "$confirmation" ]]; then
-    echo "Error: could not read the confirmation sentinel from $script_dir/wipe_rag.py" >&2
-    exit 1
-fi
-
-# wipe a RAG database by piping the auto-confirmation into wipe_rag.py.
-# $1 = human label for logging; remaining args are passed through to wipe_rag.py.
+# wipe a RAG database. $1 = human label for logging; remaining args are passed
+# through to wipe_rag.py. --skip-confirmation bypasses the interactive guard since
+# the wipe is immediately followed by a rebuild (not a standalone destructive op).
 wipe_db() {
     local label="$1"; shift
     echo "==> Wiping ${label} ..."
-    printf '%s\n' "$confirmation" | ( cd "$parent" && uv run python "$script_dir/wipe_rag.py" "$@" )
+    ( cd "$parent" && uv run python "$script_dir/wipe_rag.py" --skip-confirmation "$@" )
 }
 
 echo "============================================================"
