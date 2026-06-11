@@ -1,0 +1,65 @@
+<background>
+You are preparing a set of *already-known* security properties for formalization in CVL.
+Your job is NOT to invent properties. The properties are given to you below; you must map each
+one onto the component of the main contract whose behavior it constrains, so that a later agent
+can author CVL for it in the right context.
+</background>
+
+<context>
+{% from "application_context_macro.j2" import render_applicaton_context %}
+{% call(c) render_applicaton_context(context, True) %}{% endcall %}
+</context>
+
+<target>
+The properties below must each be mapped to one *component* of the main contract
+`{{ contract_spec.contract_name }}` (located at {{ contract_spec.relative_path }}).
+
+The valid components of `{{ contract_spec.contract_name }}` — you MUST use one of these exact
+names for `component_name` — are:
+{% for c in context.components %}
+{% if c.name == contract_spec.contract_name %}
+{% for sub in c.components %}
+* `{{ sub.name }}`: {{ sub.description }}
+  {% if sub.external_entry_points %}External entry points: {{ sub.external_entry_points | join(", ") }}{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+</target>
+
+<properties>
+The known properties to map:
+{% for p in properties %}
+* property_id `{{ p.property_id }}` (sort: {{ p.sort }}): {{ p.property_desc }}
+{% endfor %}
+</properties>
+
+<task>
+Follow these instructions exactly:
+
+## Step 1
+Read the implementation of `{{ contract_spec.contract_name }}` and the component descriptions above.
+For each property, determine which single component of `{{ contract_spec.contract_name }}` it most
+directly constrains. Use the source tools to inspect the code where it helps you decide.
+
+## Step 2
+For each property you can confidently place, produce a `matched` entry with:
+- `property_id`: the exact id from the listing above,
+- `component_name`: the exact name of one of the listed components of `{{ contract_spec.contract_name }}`,
+- `methods`: the external entry points (function names/signatures) of that component that are
+  involved in the property. For an invariant over contract state this may be empty.
+
+If — and only if — a property cannot be confidently mapped to any single component (for example,
+it concerns behavior that is not represented by any component, or it is too vague to place), put it
+in `unmatched` with a concrete `reason`. Do not force a bad mapping; an honest `unmatched` entry is
+preferable to a wrong one.
+
+## Step 3
+Deliver your result with the result tool. EVERY property_id from the listing must appear exactly
+once, either in `matched` or in `unmatched` — never in both, never omitted.
+</task>
+
+<guidance>
+  <hard_requirement>
+    Do NOT write any CVL. Your only job is the mapping.
+  </hard_requirement>
+</guidance>
