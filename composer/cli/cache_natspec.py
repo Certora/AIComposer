@@ -26,7 +26,7 @@ from composer.input.types import DEFAULT_RECURSION_LIMIT
 from composer.io.run_index import get_run
 from composer.spec.context import (
     WorkflowContext, CacheKey, CVLGeneration,
-    Contract, ComponentGroup, Properties,
+    Contract, ComponentGroup, Properties, CVLJudge
 )
 from composer.spec.natspec.run_tags import NatspecRunTags
 from composer.spec.system_model import (
@@ -69,6 +69,7 @@ type NatSpecCachedValue = (
     | AuthorResult
     | _LastAttemptCache
     | RegistryRaw
+    | CVLJudge
 )
 
 
