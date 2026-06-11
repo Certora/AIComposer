@@ -7,4 +7,6 @@
 # Tools
 
 {% include "source_tools_system_prompt.j2" %}
+{% if with_cvl_tools | default(true) %}
 {% include "cvl_tools_system_prompt.j2" %}
+{% endif %}

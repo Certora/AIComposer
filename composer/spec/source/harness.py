@@ -321,8 +321,8 @@ async def generate_harnesses(
         "result"
     ).inject(
         lambda g: bound_template.render_to(g.with_initial_prompt_template)
-    ).with_sys_prompt(
-        "You are a methodical Solidity dveloper who is good at following instructions."
+    ).with_sys_prompt_template(
+        "harness_generation_system_prompt.j2"
     ).with_tools(
         v_tools + [result_tool]
     ).with_default_summarizer().compile_async()

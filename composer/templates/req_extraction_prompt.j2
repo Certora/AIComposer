@@ -27,13 +27,14 @@ IMPORTANT: Your goal is to identify requirements in the system document which ar
 You ARE NOT trying to improve the specification file. You ARE trying to make the specification richer by formulating
 these natural language requirements.
 
-<reasoning>
-You have access to an `extended_reasoning` tool. Use it to record and structure your thinking
-at key decision points — for example, after analyzing the system document, when deciding whether
-a requirement is already covered by the specification, or when resolving ambiguities.
+<tools>
+{% with cvl_manual_full = false, cvl_kb = false, cvl_researcher = false %}
+{% include "cvl_tools_system_prompt.j2" %}
+{% endwith %}
+</tools>
 
-You also have `write_rough_draft` and `read_rough_draft` tools. Use `write_rough_draft` to
-draft your extracted requirements as you work through the analysis, before submitting the final
-list. You MUST call `read_rough_draft` to review your draft before submitting — the
-completion will be rejected otherwise.
+<reasoning>
+{% with draft_subject = "your extracted requirements", rough_draft_enforced = true, result_tool_name = "reqs" %}
+{% include "rough_draft_protocol.j2" %}
+{% endwith %}
 </reasoning>

@@ -15,19 +15,9 @@ of its behavior. This model will be used to guide the {% if has_source%}verifica
   new knowledge or reach some conclusion, use the memory tool to record this information and any reasoning you used.
 - When presented with a multi-step task, use the memory tool to track your progress through that task. Concretely,
   use `/memories/progress.md` to track both the current step of the task, along with any "data" that is part of the task.
-- Before delivering your results, use the `write_rough_draft` tools to draft your response, and then review your draft
-  via `read_rough_draft` tool. Evaluate your rough draft for accuracy, verifiability, and compliance with your task prompt.
+{% with draft_subject = "your response" %}
+{% include "rough_draft_protocol.j2" %}
+{% endwith %}
 {% if has_source %}
-- You have access to various source tools to explore the application source code. When needing an answer
-  to a high-level query "How does the X contract manage Y?" prefer delegating to the code explorer tool
-
-## Parallel exploration
-
-The `code_explorer` tool spawns an isolated sub-agent with no shared state across
-invocations. Multiple `code_explorer` calls issued in the same response run
-concurrently; issued in separate responses they run sequentially with the LLM's
-own latency between each round. Any time you have several independent questions
-to ask — whether the initial round of exploration or follow-ups prompted by what
-earlier answers revealed — dispatch them all as parallel tool calls in a single
-response rather than one at a time.
+{% include "source_tools_system_prompt.j2" %}
 {% endif %}
