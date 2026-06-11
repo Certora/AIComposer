@@ -31,7 +31,7 @@ from composer.spec.source.prover import dump_final_conf
 from composer.spec.source.task_ids import (
     bug_analysis_task_id, cvl_gen_task_id, INVARIANT_CVL_TASK_ID,
 )
-from composer.diagnostics.timing import get_run_summary, RunSummary, TokenTotals
+from composer.diagnostics.timing import get_run_summary, RunSummary
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
@@ -100,21 +100,9 @@ def dump_token_usage(
     Raw counts only (``input`` / ``output`` / ``cache_read`` / ``cache_write``),
     broken down ``by_model`` and ``by_phase`` plus run-wide ``totals``. Captures
     every call through the LLM factory — including out-of-graph prover/CEX-analysis
-    side-calls — via the usage callback attached in ``create_llm_base``."""
-    payload = {
-        "run_id": summary.run_id,
-        "totals": summary.total_tokens().as_dict(),
-        "by_model": {model: t.as_dict() for model, t in summary.token_usage_by_model.items()},
-        "by_phase": [
-            {
-                "task_id": p.task_id,
-                "phase": p.phase,
-                **sum(p.token_usage_by_model.values(), TokenTotals()).as_dict(),
-            }
-            for p in summary.phases
-            if p.token_usage_by_model
-        ],
-    }
+    side-calls — via the usage callback attached in ``create_llm_base``. The same
+    breakdown is also persisted to the run's ``RunMeta.tags`` (see ``_entry_point``)."""
+    payload = {"run_id": summary.run_id, **summary.token_usage_summary()}
     out_dir = ensure_dir(under_project(project_root, AUTOPROVE_INTERNAL_DIR))
     (out_dir / "token_usage.json").write_text(json.dumps(payload, indent=2))
 

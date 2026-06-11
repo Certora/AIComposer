@@ -152,9 +152,15 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         ) as conns,
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context(),
-        thread_logger(conns.store, {
-            "root_thread_id": thread_id
-        }, user_ns(DEFAULT_META_NS), run_id=summary.run_id)
+        thread_logger(
+            conns.store,
+            {"root_thread_id": thread_id},
+            user_ns(DEFAULT_META_NS),
+            run_id=summary.run_id,
+            # Persist final token usage into RunMeta.tags at run close (totals
+            # known only once the pipeline is done). Mirrors token_usage.json.
+            finalize_tags=lambda: {"token_usage": summary.token_usage_summary()},
+        )
     ):
         # Source-code agent caches are always per-user — the conventional
         # ``user_data_ns(uid)`` prefix lives directly in the ns we pass

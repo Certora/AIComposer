@@ -12,18 +12,19 @@ from logging import Logger
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Iterable, Mapping, Protocol
+from typing import AsyncIterator, Iterable, Protocol
 import uuid
 
+from graphcore.utils import TokenUsageDict
 
-@dataclass
+
+@dataclass(frozen=True)
 class TokenTotals:
     """Raw LLM token counts accumulated across one or more calls.
 
-    ``add`` consumes a usage mapping shaped like ``graphcore.utils.TokenUsageDict``
-    (keys ``input_tokens`` / ``output_tokens`` / ``cache_read_input_tokens`` /
-    ``cache_creation_input_tokens``); typed structurally so this module stays
-    dependency-free.
+    ``from_dict`` builds one from a ``graphcore.utils.TokenUsageDict`` (its
+    ``input_tokens`` / ``output_tokens`` / ``cache_read_input_tokens`` /
+    ``cache_creation_input_tokens`` keys).
     """
     input: int = 0
     output: int = 0
@@ -43,7 +44,7 @@ class TokenTotals:
         return self.input > 0 or self.output > 0 or self.cache_read > 0 or self.cache_write > 0
 
     @classmethod
-    def from_dict(cls, u: Mapping[str, Any]) -> "TokenTotals":
+    def from_dict(cls, u: TokenUsageDict) -> "TokenTotals":
         return TokenTotals(
             input=u["input_tokens"],
             output=u["output_tokens"],
@@ -126,11 +127,10 @@ class RunSummary:
             prev_s, prev_n = self._active_prover_by_task.get(task_id, (0.0, 0))
             self._active_prover_by_task[task_id] = (prev_s + duration_s, prev_n + 1)
 
-    def record_token_usage(self, usage: Mapping[str, Any], *, task_id: str | None = None) -> None:
+    def record_token_usage(self, usage: TokenUsageDict, *, task_id: str | None = None) -> None:
         """Accumulate one LLM call's token counts into the run-wide per-model totals
         and (if a task is active) into that task's in-flight bucket, later folded into
-        its ``PhaseRecord`` by ``record_phase``. ``usage`` is shaped like
-        ``graphcore.utils.TokenUsageDict``. Defaults attribution to the active task."""
+        its ``PhaseRecord`` by ``record_phase``. Defaults attribution to the active task."""
         model = usage.get("model_name") or "unknown"
         update = TokenTotals.from_dict(usage)
         self.token_usage_by_model[model] = self.token_usage_by_model.get(model, TokenTotals()) + update
@@ -141,6 +141,23 @@ class RunSummary:
     def total_tokens(self) -> TokenTotals:
         """Run-wide token counts summed across all models."""
         return sum(self.token_usage_by_model.values(), TokenTotals())
+
+    def token_usage_summary(self) -> dict[str, object]:
+        """Serializable run-total / per-model / per-phase token breakdown — the
+        body of ``token_usage.json`` and of the ``token_usage`` run tag."""
+        return {
+            "totals": self.total_tokens().as_dict(),
+            "by_model": {model: t.as_dict() for model, t in self.token_usage_by_model.items()},
+            "by_phase": [
+                {
+                    "task_id": p.task_id,
+                    "phase": p.phase,
+                    **sum(p.token_usage_by_model.values(), TokenTotals()).as_dict(),
+                }
+                for p in self.phases
+                if p.token_usage_by_model
+            ],
+        }
 
     def record_prover_link(self, link: str, *, task_id: str | None = None) -> None:
         """Stash the latest prover link (URL or local path); defaults to the active task."""
