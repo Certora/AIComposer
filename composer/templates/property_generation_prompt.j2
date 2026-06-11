@@ -28,6 +28,12 @@ Use this information to inform how you plan to formalize them.
 Write a single CVL (Certora Verification Language) specification which formalizes all of the properties listed above.
 Each property should have its own rule(s) or invariant(s) in the spec.
 
+Directly above each rule or invariant you author, emit a CVL comment naming the originating property's
+title and description, so a reader can backtrace from a rule to the property it covers. Use the form:
+`/// property_id: <title> — <description>`
+(for example `/// property_id: total_supply_preserved — The total supply never changes on transfer.`).
+When a single rule covers several properties, list one such comment line per property it covers.
+
 When writing your specification, you may consult the implementation of the application to, e.g., understand the role
 of external arguments, etc.
 

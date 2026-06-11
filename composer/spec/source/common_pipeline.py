@@ -119,16 +119,59 @@ def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGrou
     return CacheKey(string_hash(combined))
 
 @dataclass
+class UncoveredProperty:
+    """An input property that did not result in a verified rule. Surfaced to the
+    user (warn + dump) so coverage is tracked per ``property_id`` end-to-end."""
+    component: str
+    property_id: str          # == PropertyFormulation.title
+    reason: str               # skip justification, "batch gave up: ...", or exception text
+
+
+@dataclass
 class AutoProveResult:
     n_components: int
     n_properties: int
     failures: list[str] = field(default_factory=list)
+    uncovered: list[UncoveredProperty] = field(default_factory=list)   # default-empty: behaviour-compatible
 
 @dataclass
 class _ComponentBatch:
     feat: ContractComponentInstance
     props: list[PropertyFormulation]
     feat_ctx: WorkflowContext[ComponentGroup]
+
+
+def _main_contract_index(summary: HarnessedApplication, name: str) -> int:
+    """Index of the contract named *name* within *summary*'s contract components.
+    Raises ``ValueError`` if not found."""
+    for i, c in enumerate(summary.contract_components):
+        if c.name == name:
+            return i
+    raise ValueError(f"Component not found: {name}")
+
+
+async def build_component_batch(
+    *,
+    source_input: SourceCode,
+    prop_context: WorkflowContext[Properties],
+    summary: HarnessedApplication,
+    component_idx: int,
+    props: list[PropertyFormulation],
+) -> _ComponentBatch:
+    """Build a ``_ComponentBatch`` for the component at *component_idx* of the
+    main contract, carrying *props*. Mirrors the ``ContractInstance`` /
+    ``ContractComponentInstance`` / ``feat_ctx`` wiring used by
+    ``extract_all_components`` so the tricky index plumbing lives in one place.
+    Callers that already know the component+properties (e.g. the formalize phase)
+    use this instead of importing the private dataclass."""
+    main_idx = _main_contract_index(summary, source_input.contract_name)
+    contract_instance = ContractInstance(main_idx, app=summary)
+    feat = ContractComponentInstance(_contract=contract_instance, ind=component_idx)
+    feat_ctx = await prop_context.child(
+        _component_cache_key(feat),
+        {"component": feat.component.model_dump()},
+    )
+    return _ComponentBatch(feat=feat, props=props, feat_ctx=feat_ctx)
 
 
 async def extract_all_components(
@@ -150,13 +193,7 @@ async def extract_all_components(
     batches that yielded properties; an empty list means nothing was extracted
     (the caller decides how to react).
     """
-    ind = -1
-    for i, c in enumerate(summary.contract_components):
-        if c.name == source_input.contract_name:
-            ind = i
-            break
-    if ind == -1:
-        raise ValueError("Component not found")
+    ind = _main_contract_index(summary, source_input.contract_name)
 
     contract_instance = ContractInstance(ind, app=summary)
 
@@ -302,18 +339,32 @@ async def generate_all_component_cvl(
     dump_component_runs(source_input.project_root, component_runs)
 
     failures: list[str] = []
+    uncovered: list[UncoveredProperty] = []
     n_properties = 0
     for batch, result in zip(component_batches, generation_results):
         n_properties += len(batch.props)
+        component = batch.feat.component.name
         if isinstance(result, BaseException):
-            failures.append(f"{batch.feat.component.name}: {result}")
+            failures.append(f"{component}: {result}")
+            # No spec produced: every property in this batch is uncovered.
+            for prop in batch.props:
+                uncovered.append(UncoveredProperty(component, prop.title, f"exception: {result}"))
         elif isinstance(result, GaveUp):
-            failures.append(f"{batch.feat.component.name}: GAVE_UP: {result.reason}")
+            failures.append(f"{component}: GAVE_UP: {result.reason}")
+            for prop in batch.props:
+                uncovered.append(UncoveredProperty(component, prop.title, f"batch gave up: {result.reason}"))
+        else:
+            # GeneratedCVL: coverage of non-skipped properties is guaranteed by
+            # validate_property_rules (cvl_generation.py); only explicit skips
+            # leave a property uncovered.
+            for s in result.skipped:
+                uncovered.append(UncoveredProperty(component, s.property_title, s.reason))
 
     return AutoProveResult(
         n_components=len(component_batches),
         n_properties=n_properties,
         failures=failures,
+        uncovered=uncovered,
     )
 
 
