@@ -29,6 +29,10 @@ compiler/typechecker; e.g., code to invoke the parent contract's constructor.
 The harness contract will need to import the target contract; you should use the relative path of the target file. For example, if `TokenInstance1` is inheriting from `MyToken`
 declared at the path `src/contracts/token/MyToken.sol`, then `TokenInstance1` should use `import "src/contracts/token/MyToken.sol";`. Do NOT try to use imports with `..`.
 
+**Critical**: An import path without a leading `./` is NOT resolved relative to the importing file — Solidity treats it as a project-root / remapping path. So a bare filename like
+`import "MyToken.sol";` will FAIL with "File not found". If one harness needs to import *another harness* that you placed in the same `certora/harnesses/` directory (for example a
+numbered instance extending a shared base harness), import it with an explicit relative path like `import "./BaseHarness.sol";`. Never import a sibling harness by bare filename.
+
 **Important**: Prior executions of this workflow may mean that the necessary harnesses already exist on the VFS. So long as the files exist with implementations that satisfy
 the above instructions, you *may* deliver those results unchanged.
 

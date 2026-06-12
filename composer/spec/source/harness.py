@@ -18,8 +18,10 @@ Two entry points:
     compilation, and returns a ``Configuration``.
 """
 
-from typing import NotRequired, TypedDict
-from pathlib import Path
+from typing import Callable, NotRequired, TypedDict
+from pathlib import Path, PurePosixPath
+import os
+import re
 import subprocess
 
 from pydantic import Field, BaseModel
@@ -43,6 +45,35 @@ def system_setup_key(s: SourceApplication) -> CacheKey["ContractSetup", "SystemD
     return CacheKey["ContractSetup", "SystemDescriptionHarnessed"](
         "system-setup-" + string_hash(s.model_dump_json())
     )
+
+# Matches the quoted path of any Solidity `import` form:
+#   import "p";   import "p" as X;   import {A} from "p";   import * as X from "p";
+_IMPORT_RE = re.compile(r"""import\s+(?:[^"';]*\bfrom\s+)?["']([^"']+)["']""")
+
+
+def _unresolved_imports(
+    harness_path: str,
+    source_text: str,
+    exists: Callable[[str], bool],
+) -> list[str]:
+    """Return the import paths in ``source_text`` that don't resolve to a real file.
+
+    ``./`` / ``../`` imports resolve relative to the harness file's directory; every
+    other import resolves relative to the project root (the Certora/solc base path).
+    A bare sibling filename like ``import "OtherHarness.sol";`` is NOT relative in
+    Solidity, so it resolves against the project root and fails for a file living
+    under ``certora/harnesses/`` — exactly the failure this guards against.
+    """
+    unresolved: list[str] = []
+    for imp in _IMPORT_RE.findall(source_text):
+        if imp.startswith("./") or imp.startswith("../"):
+            resolved = os.path.normpath(str(PurePosixPath(harness_path).parent / imp))
+        else:
+            resolved = os.path.normpath(imp)
+        if not exists(resolved):
+            unresolved.append(imp)
+    return unresolved
+
 
 class LinkField(BaseModel):
     """
@@ -294,6 +325,32 @@ async def generate_harnesses(
                 [ f"contract {k} ({n} copies)" for (k,n) in check_copy.items() ]
             )
             return f"Missing harnesses in results: {error}"
+        # Reject any harness whose imports don't resolve to a real file. We do a
+        # pure path-resolution check rather than invoking solc (see the disabled
+        # block below): a bare `solc <files>` lacks the project's solc version,
+        # remappings and base/include paths, so it produces spurious failures.
+        # Resolution alone catches the failure mode we care about — e.g. a bare
+        # `import "OtherHarness.sol";` that Solidity won't find — without the toolchain.
+        def _exists(rel: str) -> bool:
+            if mat.get(s, rel) is not None:
+                return True
+            return (Path(source.project_root) / rel).exists()
+
+        for harness_path in all_files:
+            raw = mat.get(s, harness_path)
+            if raw is None:
+                continue
+            bad = _unresolved_imports(harness_path, raw.decode("utf-8", errors="replace"), _exists)
+            if bad:
+                joined = ", ".join(f'import "{b}"' for b in bad)
+                return (
+                    f"Harness {harness_path} has unresolvable import(s): {joined}. In Solidity an "
+                    "import path without a leading `./` or `../` is NOT relative to the file; it is "
+                    "resolved against the project root. To import another harness in the same "
+                    "`certora/harnesses/` directory, use a relative path like `./OtherHarness.sol`. "
+                    "Fix the import(s) and re-deliver."
+                )
+
         if False: # this doesn't work
             with mat.materialize(s) as temp_dir:
                 compile_result = subprocess.run(
