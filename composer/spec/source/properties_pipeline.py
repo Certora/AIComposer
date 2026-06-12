@@ -241,8 +241,11 @@ async def run_properties_pipeline(
             stream_formalize(),
         )
     else:
-        if conf_path is None or summary_path is None:
-            raise ValueError("--skip-setup requires both a conf and a summary path")
+        # User-facing validation lives at CLI parse time (see _properties_entry_point
+        # in autoprove_common.py). This is only a caller invariant / type narrowing.
+        assert conf_path is not None and summary_path is not None, (
+            "--skip-setup requires both a conf and a summary path"
+        )
         prover_config = json.load(open(conf_path, "r"))
         resources = [
             CVLResource(

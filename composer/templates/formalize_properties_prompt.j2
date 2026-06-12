@@ -1,8 +1,7 @@
 <background>
 You are preparing a set of *already-known* security properties for formalization in CVL.
 Your job is NOT to invent properties. The properties are given to you below; you must map each
-one onto the component of the main contract whose behavior it constrains, so that a later agent
-can author CVL for it in the right context.
+one onto the component of the main contract whose behavior it constrains.
 </background>
 
 <context>
@@ -37,9 +36,17 @@ The known properties to map:
 Follow these instructions exactly:
 
 ## Step 1
-Read the implementation of `{{ contract_spec.contract_name }}` and the component descriptions above.
 For each property, determine which single component of `{{ contract_spec.contract_name }}` it most
-directly constrains. Use the source tools to inspect the code where it helps you decide.
+directly constrains — that is, the component whose state variables and/or external entry points the
+property actually talks about.
+
+Decide this primarily from the component descriptions and the external entry points listed above:
+match the nouns and operations the property mentions against each component's description and its
+entry points, and pick the one whose responsibility most directly covers the property.
+
+Only as a last resort — when the descriptions and entry points above genuinely leave a property
+ambiguous between components — fall back to the source tools to read the relevant functions and
+state of `{{ contract_spec.contract_name }}` and confirm which component owns the behavior.
 
 ## Step 2
 For each property you can confidently place, produce a `matched` entry with:
