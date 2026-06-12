@@ -26,6 +26,7 @@ from langgraph.runtime import get_runtime
 from pathlib import Path
 from composer.spec.gen_types import CVLResource, TypedTemplate, import_statement_for
 from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.source.give_up import GiveUpTool
 from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
 from composer.ui.tool_display import tool_display
@@ -121,28 +122,6 @@ class PublishResultTool(
             failed=False,
         )
 
-
-@tool_display(
-    label=lambda p: f"Giving up on CVL generation: {p['reason']}",
-    result=None,
-)
-class GiveUpTool(WithImplementation[Command], WithInjectedId):
-    """
-    Call this tool to give up on the CVL generation for this task.
-
-    This should only ever be called as a LAST RESORT when you have exhausted all other
-    mechanisms to complete your task.
-    """
-    reason: str = Field(description="The reason for giving up on your task")
-
-    @override
-    def run(self) -> Command:
-        return tool_state_update(
-            self.tool_call_id,
-            "Accepted",
-            failed=True,
-            result=self.reason,
-        )
 
 class ResourceView(TypedDict):
     """A CVLResource prepared for the prompt: ``import_path`` is the CVL import

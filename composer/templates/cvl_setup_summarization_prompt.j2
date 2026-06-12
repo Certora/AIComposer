@@ -148,6 +148,16 @@ and outputting your generated CVL via the provided put cvl tools.
 Call the typechecker tool to ensure your specification is well-formed, syntactically correct,
 and well-typed. If not, edit your specification until it is correct.
 
+The typechecker also compiles the underlying Solidity project before checking your CVL. If it
+fails with a **Solidity compilation error** rather than a CVL error — for example a
+`ParserError`, a "File not found" / unresolved `import` in a `.sol` file, or any other message
+pointing at the contracts/harnesses rather than your spec — then the project itself does not
+compile. This is a precondition outside your control: editing your CVL cannot fix it, and
+re-running the typechecker will keep failing the same way. In that case call the `give_up` tool
+**immediately** with a specific reason (quote the failing file and import/line). Do NOT keep
+editing your specification, and do NOT call `give_up` for ordinary CVL errors — those you must
+fix yourself.
+
 ## Step 9
 
 Signal the completion of your work by calling the "result" tool.
