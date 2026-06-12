@@ -6,8 +6,6 @@
 `PropertyFormulation` so the report speaks the same property vocabulary as the
 analysis phase. Bump `schema_version` on a breaking change.
 """
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
@@ -15,16 +13,20 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from prover_output_utility.models import NodeStatus
 
-from composer.spec.prop import PropertyFormulation
+from composer.spec.prop import PropertyFormulation, PropertyType
+
+type RuleName = str
+"""A CVL rule/invariant identifier as it appears in the prover report and in
+``<stem>.property_rules.json``. Used so rule<->property and rule<->group
+references read as the foreign keys they are."""
 
 
 @dataclass(frozen=True)
-class RuleRef:
-    """A reference to one inferred property: the component that owns it and its
-    1-based index within that component's property batch (the index the
-    ``<stem>.property_rules.json`` mapping resolves to via title order)."""
+class PropertyRef:
+    """A reference to one inferred property: the component that owns it and the
+    property's ``title`` (titles are unique within a component's batch)."""
     component: str
-    index: int
+    title: str
 
 
 class GroupStatus(str, Enum):
@@ -43,11 +45,10 @@ class GroupStatus(str, Enum):
 
 
 class InferredProperty(PropertyFormulation):
-    """A `PropertyFormulation` tagged with the component that owns it and its
-    1-based index within that component's batch. Inherits ``title``,
-    ``methods``, ``sort``, ``description`` from PropertyFormulation."""
-    component: str
-    index: int = Field(..., ge=1)
+    """A `PropertyFormulation` tagged with the AIComposer component that owns it.
+    Inherits ``title`` (unique within the component), ``methods``, ``sort`` and
+    ``description`` from PropertyFormulation."""
+    component: str = Field(description="Name of the AIComposer component that owns this property.")
 
 
 class CVLRule(BaseModel):
@@ -58,9 +59,15 @@ class CVLRule(BaseModel):
     ProverOutputUtility's per-rule ``CheckResult`` (verdict + source location),
     not from parsing the spec text. ``property_refs`` come from the component's
     ``property_rules.json`` mapping."""
-    name: str
-    component: str
-    property_refs: list[RuleRef] = Field(default_factory=list)
+    name: RuleName
+    component: str = Field(description="Name of the component whose spec declares this rule.")
+    spec_file: str | None = Field(
+        default=None,
+        description="Basename of the spec file that defines this rule; together with `name` it is the rule's identity, so a rule re-stated under the same name in a different spec stays distinct.",
+    )
+    property_refs: list[PropertyRef] = Field(
+        default_factory=list, description="The inferred properties this rule implements."
+    )
     status: NodeStatus = NodeStatus.UNKNOWN
     line: int | None = None
     duration_seconds: float | None = None
@@ -73,17 +80,13 @@ class HighLevelProperty(BaseModel):
     NOT an AIComposer *component* (a structural unit of the contract produced by
     system analysis). A component can own several high-level properties; each
     high-level property groups the CVL rules establishing one auditable claim,
-    regardless of how many methods or components they span.
-
-    Identified by a stable ``slug`` (kebab-case, reused across runs via the
-    canonical map) and a ``P-NN`` ``id`` assigned during canonical
-    reconciliation."""
-    id: str = Field(..., pattern=r"^P-\d{2,}$")
+    regardless of how many methods or components they span. Identified by its
+    kebab-case ``slug``."""
     slug: str = Field(..., min_length=1, max_length=64)
     title: str
     description: str
     status: GroupStatus
-    rule_names: list[str]
+    rule_names: list[RuleName]
 
 
 class CoverageReport(BaseModel):
@@ -94,21 +97,18 @@ class CoverageReport(BaseModel):
     rules_per_group_min: int
     rules_per_group_max: int
     rule_coverage_complete: bool
-    rules_in_multiple_groups: list[str] = Field(default_factory=list)
-    rules_in_no_group: list[str] = Field(default_factory=list)
+    rules_in_multiple_groups: list[RuleName] = Field(default_factory=list)
+    rules_in_no_group: list[RuleName] = Field(default_factory=list)
     status_aggregation_consistent: bool = True
     warnings: list[str] = Field(default_factory=list)
 
 
 class AutoProverReport(BaseModel):
-    """Top-level report document — written to ``certora/ap_report/report.json``.
-
-    Named to disambiguate from `composer.diagnostics.timing.RunSummary` (the
-    wall-clock timing aggregator)."""
+    """Top-level report document — written to ``certora/ap_report/report.json``."""
     schema_version: Literal["1.0"] = "1.0"
     contract_name: str
     run_timestamp_utc: str | None = None
-    #: component slug (or "invariants") -> prover run link/path
+    #: component name (or "Structural Invariants") -> prover run link/path
     prover_links: dict[str, str] = Field(default_factory=dict)
     inferred_properties: list[InferredProperty]
     rules: list[CVLRule]
@@ -117,47 +117,39 @@ class AutoProverReport(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Canonical map (stable slug <-> P-NN id across runs)
-# ---------------------------------------------------------------------------
-
-class CanonicalEntry(BaseModel):
-    """A slug-anchored P-NN entry kept stable across runs. ``anchor_rules`` is
-    the rule set the slug was first defined against; future runs whose group
-    overlaps it (Jaccard >= reuse threshold) inherit this id/slug/title."""
-    id: str = Field(..., pattern=r"^P-\d{2,}$")
-    slug: str = Field(..., min_length=1, max_length=64)
-    title: str
-    anchor_rules: list[str]
-
-
-class CanonicalMap(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
-    entries: list[CanonicalEntry] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
 # LLM grouping I/O (structured-output shapes; a subset of the public types)
 # ---------------------------------------------------------------------------
 
 class RuleForGrouping(BaseModel):
     """One rule's context handed to the grouping LLM."""
-    name: str
-    component: str
-    status: NodeStatus
-    sorts: list[Literal["invariant", "safety_property", "attack_vector"]]
-    property_descriptions: list[str]
+    name: RuleName = Field(description="The CVL rule identifier.")
+    component: str = Field(description="The component whose spec declares the rule.")
+    status: NodeStatus = Field(description="The rule's prover verdict.")
+    sorts: list[PropertyType] = Field(
+        description="The distinct property kinds (invariant/safety_property/attack_vector) the rule's properties carry."
+    )
+    property_descriptions: list[str] = Field(
+        description="English descriptions of the inferred properties this rule implements."
+    )
 
 
 class HighLevelPropertyDraft(BaseModel):
-    """One high-level property as proposed by the grouping LLM. The final
-    ``P-NN`` id is assigned afterward by canonical reconciliation; the LLM
-    proposes only slug, title, description, and member rule names."""
-    slug: str = Field(..., min_length=1, max_length=64)
-    title: str
-    description: str
-    rule_names: list[str]
+    """One high-level property proposed by the grouping LLM."""
+    slug: str = Field(
+        ..., min_length=1, max_length=64,
+        description="kebab-case ASCII lower-case identifier for the grouping; deterministic for the same conceptual grouping.",
+    )
+    title: str = Field(description="A 5-12 word human-readable headline for the property.")
+    description: str = Field(
+        description="1-3 plain-English sentences summarising what the group establishes; do not name the CVL rules."
+    )
+    rule_names: list[RuleName] = Field(
+        description="The CVL rule names in this group; every input rule must appear in exactly one group."
+    )
 
 
 class GroupingResult(BaseModel):
-    """Structured response from the grouping LLM call."""
-    groups: list[HighLevelPropertyDraft]
+    """The high-level property groups covering every input rule exactly once."""
+    groups: list[HighLevelPropertyDraft] = Field(
+        description="The high-level property groups; collectively they cover every input rule exactly once."
+    )

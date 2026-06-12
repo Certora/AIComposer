@@ -1,12 +1,10 @@
 """Tests for the autoprove report package (composer.spec.source.report).
 
 Covers the pure pieces (collect from property dumps + a fake POU, coverage
-aggregation, grouping reconciliation/fallback, HTML render) and the build
-orchestrator's fallback + canonical-map reuse. No DB / no real LLM / no real
-prover: POU is faked and the grouping LLM is monkeypatched.
+aggregation, grouping + fallback, HTML render) and the build orchestrator's
+fallback path. No DB / no real LLM / no real prover: POU is faked and the
+grouping LLM is monkeypatched.
 """
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,14 +18,13 @@ from composer.spec.source.report.coverage import (
     ValidationError, aggregate_status, validate,
 )
 from composer.spec.source.report.grouping import (
-    FALLBACK_SLUG, _jaccard, _next_id, build_fallback_grouping,
-    build_rules_for_grouping, reconcile_with_canonical, validate_slugs,
+    FALLBACK_SLUG, build_fallback_grouping, build_high_level,
+    build_rules_for_grouping, validate_slugs,
 )
 from composer.spec.source.report.render import render_html
 from composer.spec.source.report.schema import (
-    AutoProverReport, CanonicalEntry, CanonicalMap, CVLRule, CoverageReport,
-    GroupStatus, HighLevelProperty, HighLevelPropertyDraft, InferredProperty,
-    RuleRef,
+    AutoProverReport, CVLRule, CoverageReport, GroupStatus, HighLevelProperty,
+    HighLevelPropertyDraft, InferredProperty, PropertyRef,
 )
 
 
@@ -35,8 +32,10 @@ from composer.spec.source.report.schema import (
 # Fakes / fixtures
 # ---------------------------------------------------------------------------
 
-def _fake_check(rule_name, status, line=None, duration=None):
-    sl = SimpleNamespace(line=line) if line is not None else None
+def _fake_check(rule_name, status, line=None, duration=None, file="autospec_Increment.spec"):
+    """A stand-in CheckResult. ``file`` is the spec the rule is defined in (per
+    POU's source location); pass ``file=None`` to simulate POU not reporting one."""
+    sl = SimpleNamespace(file=file, line=line)
     return SimpleNamespace(
         rule_name=rule_name, status=status, duration=duration, source_location=sl,
     )
@@ -89,14 +88,15 @@ def test_collect_joins_properties_rules_and_pou_verdicts(tmp_path):
 
     props, rules = collect(str(tmp_path), comps, api=api)
 
-    assert [(p.index, p.title) for p in props] == [(1, "count_increases"), (2, "count_eq_sum")]
+    # Properties are addressed by title, not a positional index.
+    assert [p.title for p in props] == ["count_increases", "count_eq_sum"]
     by_name = {r.name: r for r in rules}
-    assert by_name["increment_increases_count"].status == NodeStatus.VERIFIED
-    assert by_name["increment_increases_count"].line == 12
-    assert by_name["increment_increases_count"].property_refs == [RuleRef("Increment", 1)]
+    r = by_name["increment_increases_count"]
+    assert r.status == NodeStatus.VERIFIED and r.line == 12
+    assert r.property_refs == [PropertyRef("Increment", "count_increases")]
+    assert r.spec_file == "autospec_Increment.spec"
+    assert r.prover_link == "L1"
     assert by_name["countEqualsSum"].status == NodeStatus.VIOLATED
-    assert by_name["countEqualsSum"].line == 40
-    assert by_name["increment_increases_count"].prover_link == "L1"
 
 
 def test_collect_missing_rule_mapping_tolerated(tmp_path):
@@ -110,20 +110,46 @@ def test_collect_missing_rule_mapping_tolerated(tmp_path):
     assert rules[0].property_refs == []
 
 
-def test_collect_rule_seen_in_two_components_keeps_first(tmp_path):
+def test_collect_shared_invariant_dedupes_by_spec_file(tmp_path):
+    """An invariant defined in invariants.spec but imported into a component
+    spec reports the same source file from both runs, so it collapses to one
+    rule (attributed to the first component seen)."""
     certora = tmp_path / "certora"
     _write_props(certora, "autospec_Increment", [_prop("c", "comp view", sort="invariant")])
     _write_rules(certora, "autospec_Increment", {"c": ["countEqualsSum"]})
     _write_props(certora, "invariants", [_prop("i", "structural", sort="invariant")])
     _write_rules(certora, "invariants", {"i": ["countEqualsSum"]})
-    api = _FakeAPI({})
+    api = _FakeAPI({
+        "Lc": [_fake_check("countEqualsSum", NodeStatus.VERIFIED, file="invariants.spec")],
+        "Li": [_fake_check("countEqualsSum", NodeStatus.VERIFIED, file="invariants.spec")],
+    })
     comps = [
-        ComponentInput("Increment", "autospec_Increment", None),
-        ComponentInput("Structural Invariants", "invariants", None),
+        ComponentInput("Increment", "autospec_Increment", "Lc"),
+        ComponentInput("Structural Invariants", "invariants", "Li"),
     ]
     _props, rules = collect(str(tmp_path), comps, api=api)
     ces = [r for r in rules if r.name == "countEqualsSum"]
     assert len(ces) == 1 and ces[0].component == "Increment"
+    assert ces[0].spec_file == "invariants.spec"
+
+
+def test_collect_same_name_different_spec_stays_distinct(tmp_path):
+    """Two rules that happen to share a name but are defined in different spec
+    files are kept as distinct rules (no silent first-write-wins drop)."""
+    certora = tmp_path / "certora"
+    _write_props(certora, "autospec_A", [_prop("pa", "a")])
+    _write_props(certora, "autospec_B", [_prop("pb", "b")])
+    api = _FakeAPI({
+        "La": [_fake_check("transferIsSafe", NodeStatus.VERIFIED, file="autospec_A.spec")],
+        "Lb": [_fake_check("transferIsSafe", NodeStatus.VIOLATED, file="autospec_B.spec")],
+    })
+    comps = [ComponentInput("A", "autospec_A", "La"), ComponentInput("B", "autospec_B", "Lb")]
+    _props, rules = collect(str(tmp_path), comps, api=api)
+    safe = sorted((r for r in rules if r.name == "transferIsSafe"), key=lambda r: r.spec_file)
+    assert [(r.spec_file, r.status) for r in safe] == [
+        ("autospec_A.spec", NodeStatus.VERIFIED),
+        ("autospec_B.spec", NodeStatus.VIOLATED),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -142,14 +168,14 @@ def _rule(name, status=NodeStatus.VERIFIED, component="C"):
     return CVLRule(name=name, component=component, status=status)
 
 
-def _grp(slug, rule_names, status=GroupStatus.VERIFIED, id_="P-01"):
-    return HighLevelProperty(id=id_, slug=slug, title="T", description="d",
+def _grp(slug, rule_names, status=GroupStatus.VERIFIED):
+    return HighLevelProperty(slug=slug, title="T", description="d",
                              status=status, rule_names=rule_names)
 
 
 def test_validate_rule_in_two_groups_raises():
     rules = [_rule("a"), _rule("b")]
-    groups = [_grp("g1", ["a"], id_="P-01"), _grp("g2", ["a", "b"], id_="P-02")]
+    groups = [_grp("g1", ["a"]), _grp("g2", ["a", "b"])]
     with pytest.raises(ValidationError, match="multiple groups"):
         validate(rules=rules, groups=groups, total_inferred=2)
 
@@ -169,38 +195,18 @@ def test_validate_missing_rule_is_soft():
 # grouping
 # ---------------------------------------------------------------------------
 
-def test_next_id_counter():
-    assert _next_id(set()) == "P-01"
-    assert _next_id({"P-01", "P-02"}) == "P-03"
-    assert _next_id({f"P-{i:02d}" for i in range(1, 100)}) == "P-100"
-
-
-def test_jaccard():
-    assert _jaccard([], []) == 0.0
-    assert _jaccard(["a", "b"], ["a", "b"]) == 1.0
-    assert _jaccard(["a", "b", "c"], ["a", "b", "d"]) == 0.5
-
-
 def test_validate_slugs():
     assert validate_slugs([HighLevelPropertyDraft(slug="ok-slug", title="t", description="d", rule_names=["x"])]) == []
     errs = validate_slugs([HighLevelPropertyDraft(slug="Bad_Slug", title="t", description="d", rule_names=["x"])])
     assert errs and "kebab-case" in errs[0]
 
 
-def test_reconcile_reuses_canonical_on_exact_slug():
-    canonical = CanonicalMap(entries=[CanonicalEntry(id="P-01", slug="token", title="Canon", anchor_rules=["a"])])
-    drafts = [HighLevelPropertyDraft(slug="token", title="LLM title", description="d", rule_names=["a"])]
-    finals, warnings, updated = reconcile_with_canonical(drafts, canonical, {"a": NodeStatus.VERIFIED})
-    assert finals[0].id == "P-01" and finals[0].title == "Canon"
-    assert len(updated.entries) == 1 and warnings == []
-
-
-def test_reconcile_assigns_fresh_id_for_new_group():
-    canonical = CanonicalMap(entries=[CanonicalEntry(id="P-01", slug="token", title="C", anchor_rules=["a"])])
-    drafts = [HighLevelPropertyDraft(slug="brand-new", title="New", description="d", rule_names=["x", "y"])]
-    finals, _w, updated = reconcile_with_canonical(drafts, canonical, {"x": NodeStatus.VERIFIED, "y": NodeStatus.VERIFIED})
-    assert finals[0].id == "P-02" and finals[0].slug == "brand-new"
-    assert {e.id for e in updated.entries} == {"P-01", "P-02"}
+def test_build_high_level_rolls_up_status_and_keeps_slug():
+    drafts = [HighLevelPropertyDraft(slug="grp-a", title="Group A", description="d", rule_names=["a", "b"])]
+    finals = build_high_level(drafts, {"a": NodeStatus.VERIFIED, "b": NodeStatus.VIOLATED})
+    assert len(finals) == 1
+    assert finals[0].slug == "grp-a" and finals[0].title == "Group A"
+    assert finals[0].status == GroupStatus.VIOLATED
 
 
 def test_fallback_grouping_covers_all_rules():
@@ -211,9 +217,10 @@ def test_fallback_grouping_covers_all_rules():
 
 
 def test_build_rules_for_grouping_attaches_descriptions_and_sorts():
-    props = [InferredProperty(component="C", index=1, title="t", methods=["m"],
+    props = [InferredProperty(component="C", title="t", methods=["m"],
                               sort="invariant", description="the desc")]
-    rules = [CVLRule(name="r1", component="C", property_refs=[RuleRef("C", 1)], status=NodeStatus.VERIFIED)]
+    rules = [CVLRule(name="r1", component="C", property_refs=[PropertyRef("C", "t")],
+                     status=NodeStatus.VERIFIED)]
     rows = build_rules_for_grouping(rules, props)
     assert rows[0].property_descriptions == ["the desc"] and rows[0].sorts == ["invariant"]
 
@@ -226,13 +233,15 @@ def _mini_report() -> AutoProverReport:
     return AutoProverReport(
         contract_name="Counter",
         prover_links={"Increment": "https://prover.example/run/abc"},
-        inferred_properties=[InferredProperty(component="Increment", index=1, title="count_increases",
+        inferred_properties=[InferredProperty(component="Increment", title="count_increases",
                                               methods=["increment"], sort="safety_property",
                                               description="increment raises count")],
         rules=[CVLRule(name="increment_increases_count", component="Increment",
-                       property_refs=[RuleRef("Increment", 1)], status=NodeStatus.VERIFIED,
-                       line=10, prover_link="https://prover.example/run/abc")],
-        high_level_properties=[HighLevelProperty(id="P-01", slug="count-up", title="Count Increases",
+                       spec_file="autospec_Increment.spec",
+                       property_refs=[PropertyRef("Increment", "count_increases")],
+                       status=NodeStatus.VERIFIED, line=10,
+                       prover_link="https://prover.example/run/abc")],
+        high_level_properties=[HighLevelProperty(slug="count-up", title="Count Increases",
                                                  description="d", status=GroupStatus.VERIFIED,
                                                  rule_names=["increment_increases_count"])],
         coverage=CoverageReport(total_inferred_properties=1, total_rules=1, total_groups=1,
@@ -240,9 +249,9 @@ def _mini_report() -> AutoProverReport:
     )
 
 
-def test_render_html_contains_ids_links_and_appendix():
+def test_render_html_contains_slug_links_and_appendix():
     h = render_html(_mini_report())
-    assert "P-01" in h and "Count Increases" in h
+    assert "count-up" in h and "Count Increases" in h  # slug + title (no P-NN)
     assert 'href="https://prover.example/run/abc"' in h
     assert "increment_increases_count" in h  # appendix "implemented by"
     assert "count_increases" in h            # property title in appendix
@@ -250,7 +259,7 @@ def test_render_html_contains_ids_links_and_appendix():
 
 
 # ---------------------------------------------------------------------------
-# build orchestrator (async): empty grouping -> fallback; canonical reuse
+# build orchestrator (async): empty grouping -> fallback
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -281,15 +290,7 @@ async def test_build_empty_grouping_falls_back_and_persists(tmp_path, monkeypatc
     assert g.status == GroupStatus.VIOLATED  # r2 violated
     assert any("FALLBACK GROUPING APPLIED" in w for w in report.coverage.warnings)
 
-    # Persisted under certora/ap_report/.
+    # Persisted as report.json only — no canonical_map.json anymore.
     report_json = tmp_path / "certora" / "ap_report" / "report.json"
-    canon_json = tmp_path / "certora" / "ap_report" / "canonical_map.json"
-    assert report_json.is_file() and canon_json.is_file()
-    first_id = g.id
-
-    # A second run reuses the canonical 'general' id (stable across runs).
-    report2 = await build.run_autoprove_report(
-        project_root=str(tmp_path), contract_name="Counter",
-        components=comps, llm=object(), api=api,
-    )
-    assert report2.high_level_properties[0].id == first_id
+    assert report_json.is_file()
+    assert not (tmp_path / "certora" / "ap_report" / "canonical_map.json").exists()

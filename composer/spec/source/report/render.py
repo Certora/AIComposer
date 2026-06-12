@@ -1,17 +1,15 @@
 """Render an `AutoProverReport` (report.json) as a standalone HTML report.
 
-Single self-contained page (inline CSS, no external assets): P-NN sections with
-a status badge + high-level description + a rule table, plus a collapsible
-appendix indexing every inferred property to the rules that implement it. HTML
-is opt-in — the pipeline writes report.json; render it on demand:
+Single self-contained page (inline CSS, no external assets): one section per
+high-level property (keyed by its slug) with a status badge + description + a
+rule table, plus a collapsible appendix indexing every inferred property to the
+rules that implement it. HTML is opt-in — the pipeline writes report.json;
+render it on demand:
 
     autoprove-report-render certora/ap_report/report.json [--out report.html]
 """
-from __future__ import annotations
-
 import argparse
 import html
-import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -360,7 +358,7 @@ def _render_group(
     rules_by_name: dict[str, CVLRule],
     desc_lookup: dict[str, str],
 ) -> str:
-    """One P-NN section: heading, description, rule table."""
+    """One high-level-property section: heading, description, rule table."""
     rows = []
     for name in group.rule_names:
         rule = rules_by_name.get(name)
@@ -390,9 +388,8 @@ def _render_group(
         )
 
     return f"""\
-<section class="prop" id="{html.escape(group.id)}">
-  <h2><span class="id">{html.escape(group.id)}</span> {html.escape(group.title)} {_badge(group.status.value)}</h2>
-  <div class="slug">slug: <code>{html.escape(group.slug)}</code></div>
+<section class="prop" id="{html.escape(group.slug)}">
+  <h2><span class="id">{html.escape(group.slug)}</span> {html.escape(group.title)} {_badge(group.status.value)}</h2>
   <p class="desc">{html.escape(group.description)}</p>
   <table class="rules">
     <thead><tr><th>Rule</th><th>Status</th><th>Description</th><th></th></tr></thead>
@@ -404,12 +401,12 @@ def _render_group(
 
 def _description_lookup(report: AutoProverReport) -> dict[str, str]:
     """{rule_name: first English description from its property_refs}."""
-    by_ref = {(p.component, p.index): p.description for p in report.inferred_properties}
+    by_ref = {(p.component, p.title): p.description for p in report.inferred_properties}
     out: dict[str, str] = {}
     for r in report.rules:
         text = ""
         for ref in r.property_refs:
-            d = by_ref.get((ref.component, ref.index))
+            d = by_ref.get((ref.component, ref.title))
             if d:
                 text = d
                 break
@@ -420,10 +417,10 @@ def _description_lookup(report: AutoProverReport) -> dict[str, str]:
 def _render_appendix(report: AutoProverReport) -> str:
     """Collapsible appendix: every inferred property, by component, with the
     rule(s) that implement it."""
-    rules_by_ref: dict[tuple[str, int], list[CVLRule]] = defaultdict(list)
+    rules_by_ref: dict[tuple[str, str], list[CVLRule]] = defaultdict(list)
     for r in report.rules:
         for ref in r.property_refs:
-            rules_by_ref[(ref.component, ref.index)].append(r)
+            rules_by_ref[(ref.component, ref.title)].append(r)
 
     by_component: dict[str, list[InferredProperty]] = defaultdict(list)
     for p in report.inferred_properties:
@@ -433,25 +430,23 @@ def _render_appendix(report: AutoProverReport) -> str:
              f'{len(report.inferred_properties)} properties across '
              f'{len(by_component)} components</summary>']
     for comp in sorted(by_component):
-        props = sorted(by_component[comp], key=lambda p: p.index)
+        props = sorted(by_component[comp], key=lambda p: p.title)
         parts.append(f'<h3>{html.escape(comp)} ({len(props)} properties)</h3>')
         parts.append('<table>')
-        parts.append('<thead><tr><th>#</th><th>Sort</th><th>Description</th>'
+        parts.append('<thead><tr><th>Property</th><th>Sort</th><th>Description</th>'
                      '<th>Implemented by</th></tr></thead><tbody>')
         for p in props:
-            impl = rules_by_ref.get((comp, p.index), [])
+            impl = rules_by_ref.get((comp, p.title), [])
             impl_html = (
                 ", ".join(f'<code>{html.escape(r.name)}</code>' for r in impl) if impl
                 else '<span style="color:var(--muted-fg)">(no rule mapping)</span>'
             )
-            # The agent-assigned snake_case title is the cross-reference key in
-            # property_rules.json; show it under the P-number.
-            num_cell = f'P{p.index}'
-            if p.title:
-                num_cell += f'<br><code style="font-size:11px">{html.escape(p.title)}</code>'
+            # The agent-assigned snake_case title is the property's identity and
+            # the cross-reference key in property_rules.json.
+            title_cell = f'<code>{html.escape(p.title)}</code>'
             parts.append(
                 f'<tr>'
-                f'<td>{num_cell}</td>'
+                f'<td>{title_cell}</td>'
                 f'<td><span class="sort-tag">{html.escape(p.sort)}</span></td>'
                 f'<td>{html.escape(p.description)}</td>'
                 f'<td>{impl_html}</td>'
@@ -516,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[autoprove-report-render] no such file: {args.input}", file=sys.stderr)
         return 1
 
-    report = AutoProverReport.model_validate(json.loads(args.input.read_text()))
+    report = AutoProverReport.model_validate_json(args.input.read_text())
     out_path = args.out or args.input.with_suffix(".html")
     out_path.write_text(render_html(report))
     print(f"[autoprove-report-render] wrote {out_path}")

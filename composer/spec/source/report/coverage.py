@@ -7,8 +7,6 @@ degrades to the single 'general' bucket so a report is always produced. The
 fallback shape is trivially valid, so a re-validate after substitution cannot
 raise.
 """
-from __future__ import annotations
-
 from collections import Counter
 from typing import Iterable
 
@@ -30,15 +28,17 @@ def aggregate_status(statuses: Iterable[NodeStatus]) -> GroupStatus:
       - some VERIFIED but not all (no VIOLATED) -> PARTIAL
       - none VERIFIED, none VIOLATED         -> INCONCLUSIVE
     """
-    sts = list(statuses)
-    if not sts:
-        return GroupStatus.INCONCLUSIVE
-    if any(s == NodeStatus.VIOLATED for s in sts):
-        return GroupStatus.VIOLATED
-    if all(s == NodeStatus.VERIFIED for s in sts):
-        return GroupStatus.VERIFIED
-    if any(s == NodeStatus.VERIFIED for s in sts):
-        return GroupStatus.PARTIAL
+    all_verified = True
+    any_verified = False
+    for s in statuses:
+        if s == NodeStatus.VIOLATED:
+            return GroupStatus.VIOLATED
+        if s == NodeStatus.VERIFIED:
+            any_verified = True
+        else:
+            all_verified = False
+    if any_verified:
+        return GroupStatus.VERIFIED if all_verified else GroupStatus.PARTIAL
     return GroupStatus.INCONCLUSIVE
 
 

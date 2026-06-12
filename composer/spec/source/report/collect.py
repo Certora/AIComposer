@@ -5,16 +5,14 @@ the pipeline already wrote under ``certora/properties/`` and fetch per-rule
 verdicts from that component's prover run via ProverOutputUtility:
 
   - ``<stem>.properties.json``     -> ordered `PropertyFormulation`s
-                                      (array order == 1-based property index)
   - ``<stem>.property_rules.json`` -> ``{property_title: [rule_names]}``
   - the component's prover link    -> POU `CheckResult`s (status + source line)
 
 `<stem>` is ``autospec_<slugified_name>`` for components and ``invariants`` for
-the structural invariants. No spec-text parsing and no
-``.certora_recent_jobs.json``: rule line numbers and verdicts both come from POU.
+the structural invariants. Properties are addressed by their unique ``title``;
+rule line numbers and verdicts both come from POU (no spec-text parsing, no
+``.certora_recent_jobs.json``).
 """
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass
@@ -24,7 +22,7 @@ from prover_output_utility import ProverOutputAPI
 from prover_output_utility.models import CheckResult, NodeStatus
 
 from composer.spec.gen_types import CERTORA_DIR, under_project
-from composer.spec.source.report.schema import CVLRule, InferredProperty, RuleRef
+from composer.spec.source.report.schema import CVLRule, InferredProperty, PropertyRef
 
 _log = logging.getLogger(__name__)
 
@@ -41,13 +39,6 @@ class ComponentInput:
     prover_link: str | None
 
 
-@dataclass(frozen=True)
-class _Verdict:
-    status: NodeStatus
-    line: int | None
-    duration_seconds: float | None
-
-
 # Rollup priority when a rule_name has several per-method CheckResults: the most
 # attention-worthy / terminal verdict wins as the rule-level status.
 _STATUS_PRIORITY: dict[NodeStatus, int] = {
@@ -61,6 +52,32 @@ _STATUS_PRIORITY: dict[NodeStatus, int] = {
 }
 
 
+@dataclass(frozen=True)
+class _Verdict:
+    status: NodeStatus
+    line: int | None
+    duration_seconds: float | None
+    spec_file: str | None = None
+
+    def merge(self, other: "_Verdict | None") -> "_Verdict":
+        """Combine two CheckResults for the same rule within one prover run: the
+        higher-priority (more terminal) status wins, and line/duration/spec_file
+        are kept from whichever side has them."""
+        if other is None:
+            return self
+        hi, lo = (
+            (self, other)
+            if _STATUS_PRIORITY.get(self.status, 0) >= _STATUS_PRIORITY.get(other.status, 0)
+            else (other, self)
+        )
+        return _Verdict(
+            hi.status,
+            hi.line if hi.line is not None else lo.line,
+            hi.duration_seconds if hi.duration_seconds is not None else lo.duration_seconds,
+            hi.spec_file or lo.spec_file,
+        )
+
+
 def _properties_dir(project_root: str) -> Path:
     return under_project(project_root, CERTORA_DIR) / PROPERTIES_SUBDIR
 
@@ -70,32 +87,28 @@ def _load_properties(pdir: Path, stem: str, component: str) -> list[InferredProp
     if not path.is_file():
         return []
     raw = json.loads(path.read_text())
-    return [
-        InferredProperty(component=component, index=i + 1, **prop)
-        for i, prop in enumerate(raw)
-    ]
+    return [InferredProperty(component=component, **prop) for prop in raw]
 
 
 def _load_rule_refs(
     pdir: Path, stem: str, component: str, properties: list[InferredProperty]
-) -> dict[str, list[RuleRef]]:
+) -> dict[str, list[PropertyRef]]:
     """Invert ``<stem>.property_rules.json`` ({title: [rules]}) into
-    ``rule_name -> [RuleRef]``. Missing file -> empty (a component that gave up
-    after extraction has properties but no rule mapping)."""
+    ``rule_name -> [PropertyRef]``. Missing file -> empty (a component that gave
+    up after extraction has properties but no rule mapping)."""
     path = pdir / f"{stem}.property_rules.json"
     if not path.is_file():
         return {}
-    title_to_index = {p.title: p.index for p in properties if p.title}
+    known_titles = {p.title for p in properties if p.title}
     mapping: dict[str, list[str]] = json.loads(path.read_text())
-    out: dict[str, list[RuleRef]] = {}
+    out: dict[str, list[PropertyRef]] = {}
     for title, rule_names in mapping.items():
-        idx = title_to_index.get(title)
-        if idx is None:
+        if title not in known_titles:
             # A title in the mapping with no matching property entry means the
-            # two files disagree; skip rather than fabricate an index.
+            # two files disagree; skip rather than reference a phantom property.
             continue
         for rule_name in rule_names:
-            out.setdefault(rule_name, []).append(RuleRef(component, idx))
+            out.setdefault(rule_name, []).append(PropertyRef(component, title))
     return out
 
 
@@ -110,17 +123,14 @@ def _fetch_verdicts(api: ProverOutputAPI, link: str) -> dict[str, _Verdict]:
 
     verdicts: dict[str, _Verdict] = {}
     for c in checks:
-        line = c.source_location.line if c.source_location else None
-        cand = _Verdict(c.status, line, c.duration or None)
-        prev = verdicts.get(c.rule_name)
-        if prev is None or _STATUS_PRIORITY.get(c.status, 0) > _STATUS_PRIORITY.get(prev.status, 0):
-            # Keep a line/duration even if a later (higher-priority) check lacks one.
-            verdicts[c.rule_name] = _Verdict(
-                cand.status,
-                cand.line if cand.line is not None else (prev.line if prev else None),
-                cand.duration_seconds if cand.duration_seconds is not None
-                else (prev.duration_seconds if prev else None),
-            )
+        loc = c.source_location
+        cand = _Verdict(
+            c.status,
+            loc.line if loc else None,
+            c.duration or None,
+            Path(loc.file).name if (loc and loc.file) else None,
+        )
+        verdicts[c.rule_name] = cand.merge(verdicts.get(c.rule_name))
     return verdicts
 
 
@@ -132,17 +142,19 @@ def collect(
 ) -> tuple[list[InferredProperty], list[CVLRule]]:
     """Assemble the report's inferred properties and CVL rules.
 
-    Components are processed in the given order with first-write-wins on rule
-    name, so a rule re-stated across components (e.g. a structural invariant
-    imported into a component spec) keeps its first definition; duplicates are
-    logged. Pass components in the order you want that precedence (components
-    before invariants).
+    Rules are identified by ``(spec_file, rule_name)``: a rule re-stated under
+    the same name in a different spec stays distinct, while a single definition
+    seen through several components (e.g. a structural invariant imported into
+    component specs) collapses to one entry. The defining spec file comes from
+    POU's source location; when absent it falls back to the component's own
+    spec. Components are processed in the given order with first-write-wins on
+    that key, so pass components before invariants for the precedence you want.
     """
     pdir = _properties_dir(project_root)
     api = api or ProverOutputAPI()
 
     all_properties: list[InferredProperty] = []
-    rules_by_name: dict[str, CVLRule] = {}
+    rules_by_key: dict[tuple[str, str], CVLRule] = {}
 
     for comp in components:
         props = _load_properties(pdir, comp.stem, comp.name)
@@ -153,20 +165,24 @@ def collect(
         rule_refs = _load_rule_refs(pdir, comp.stem, comp.name, props)
         verdicts = _fetch_verdicts(api, comp.prover_link) if comp.prover_link else {}
 
+        comp_spec = f"{comp.stem}.spec"  # identity fallback when POU has no source location
+
         # Union of rules the agent mapped to properties and rules the prover
         # reported (the latter may include helper rules with no property ref).
         for rule_name in set(rule_refs) | set(verdicts):
-            if rule_name in rules_by_name:
+            v = verdicts.get(rule_name)
+            spec_file = v.spec_file if (v and v.spec_file) else comp_spec
+            key = (spec_file, rule_name)
+            if key in rules_by_key:
                 _log.info(
-                    "autoprove report: rule %r seen in multiple components; "
-                    "keeping the first (%s)",
-                    rule_name, rules_by_name[rule_name].component,
+                    "autoprove report: rule %r in %s already collected (first from %s); keeping the first",
+                    rule_name, spec_file, rules_by_key[key].component,
                 )
                 continue
-            v = verdicts.get(rule_name)
-            rules_by_name[rule_name] = CVLRule(
+            rules_by_key[key] = CVLRule(
                 name=rule_name,
                 component=comp.name,
+                spec_file=spec_file,
                 property_refs=rule_refs.get(rule_name, []),
                 status=v.status if v else NodeStatus.UNKNOWN,
                 line=v.line if v else None,
@@ -174,5 +190,5 @@ def collect(
                 prover_link=comp.prover_link,
             )
 
-    rules = sorted(rules_by_name.values(), key=lambda r: (r.component, r.name))
+    rules = sorted(rules_by_key.values(), key=lambda r: (r.component, r.name))
     return all_properties, rules

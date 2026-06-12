@@ -4,12 +4,3 @@ Rules to group:
 ```json
 {{ rules_json }}
 ```
-{% if canonical_json %}
-Known canonical groupings from prior runs of this project:
-```json
-{{ canonical_json }}
-```
-Reuse a canonical slug whenever you'd produce a group whose rule set substantially overlaps that canonical entry's anchor rules.
-{% else %}
-(No canonical groupings from prior runs.)
-{% endif %}
