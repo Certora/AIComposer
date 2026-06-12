@@ -26,8 +26,11 @@ in `certora/harnesses/TokenInstance1.sol`.
 The actual harness implementation should contain a minimal contract which simply extends the target contract. You should only add code necessary to satisfy the Solidity
 compiler/typechecker; e.g., code to invoke the parent contract's constructor.
 
-The harness contract will need to import the target contract; you should use the relative path of the target file. For example, if `TokenInstance1` is inheriting from `MyToken`
-declared at the path `src/contracts/token/MyToken.sol`, then `TokenInstance1` should use `import "src/contracts/token/MyToken.sol";`. Do NOT try to use imports with `..`.
+Your harnesses will need `import` statements. **Every import path must be written relative to the project root** — the same base as the `path` shown for each contract in the list above. Never use a path with `..`, and never use a bare filename.
+
+Two cases:
+* **Importing a target contract you are harnessing.** Use the `path` given for it in the list above. For example, if `TokenInstance1` extends `MyToken` whose listed path is `src/contracts/token/MyToken.sol`, then `TokenInstance1.sol` should use `import "src/contracts/token/MyToken.sol";`.
+* **Importing another harness you generated.** Generated harnesses live in `certora/harnesses/`, so import them by their full project-root-relative path. For example, if `Bar.sol` (in `certora/harnesses/`) needs `Foo` from `certora/harnesses/Foo.sol`, it must use `import "certora/harnesses/Foo.sol";` — NOT `import "Foo.sol";`. A bare filename is resolved against the project root (`<root>/Foo.sol`), not the harness directory, and the compiler will not find the file.
 
 **Important**: Prior executions of this workflow may mean that the necessary harnesses already exist on the VFS. So long as the files exist with implementations that satisfy
 the above instructions, you *may* deliver those results unchanged.
