@@ -18,13 +18,13 @@ from composer.spec.source.report.coverage import (
     ValidationError, aggregate_status, validate,
 )
 from composer.spec.source.report.grouping import (
-    FALLBACK_SLUG, build_fallback_grouping, build_high_level,
+    FALLBACK_SLUG, build_fallback_grouping, build_implemented_properties,
     build_rules_for_grouping, validate_slugs,
 )
 from composer.spec.source.report.render import render_html
 from composer.spec.source.report.schema import (
-    AutoProverReport, CVLRule, CoverageReport, GroupStatus, HighLevelProperty,
-    HighLevelPropertyDraft, InferredProperty, PropertyRef,
+    AutoProverReport, CVLRule, CoverageReport, GroupStatus, ImplementedProperty,
+    ImplementedPropertyDraft, PropertyFormulationWithComponent,
 )
 
 
@@ -93,7 +93,9 @@ def test_collect_joins_properties_rules_and_pou_verdicts(tmp_path):
     by_name = {r.name: r for r in rules}
     r = by_name["increment_increases_count"]
     assert r.status == NodeStatus.VERIFIED and r.line == 12
-    assert r.property_refs == [PropertyRef("Increment", "count_increases")]
+    # The implemented property formulation is embedded on the rule (no second join).
+    assert [(p.component, p.title) for p in r.properties] == [("Increment", "count_increases")]
+    assert r.properties[0].description == "count up by one"
     assert r.spec_file == "autospec_Increment.spec"
     assert r.prover_link == "L1"
     assert by_name["countEqualsSum"].status == NodeStatus.VIOLATED
@@ -107,7 +109,7 @@ def test_collect_missing_rule_mapping_tolerated(tmp_path):
     props, rules = collect(str(tmp_path), [ComponentInput("Increment", "autospec_Increment", "L1")], api=api)
     assert len(props) == 1
     assert [r.name for r in rules] == ["helper"]
-    assert rules[0].property_refs == []
+    assert rules[0].properties == []
 
 
 def test_collect_shared_invariant_dedupes_by_spec_file(tmp_path):
@@ -169,8 +171,8 @@ def _rule(name, status=NodeStatus.VERIFIED, component="C"):
 
 
 def _grp(slug, rule_names, status=GroupStatus.VERIFIED):
-    return HighLevelProperty(slug=slug, title="T", description="d",
-                             status=status, rule_names=rule_names)
+    return ImplementedProperty(slug=slug, title="T", description="d",
+                               status=status, rule_names=rule_names)
 
 
 def test_validate_rule_in_two_groups_raises():
@@ -196,14 +198,14 @@ def test_validate_missing_rule_is_soft():
 # ---------------------------------------------------------------------------
 
 def test_validate_slugs():
-    assert validate_slugs([HighLevelPropertyDraft(slug="ok-slug", title="t", description="d", rule_names=["x"])]) == []
-    errs = validate_slugs([HighLevelPropertyDraft(slug="Bad_Slug", title="t", description="d", rule_names=["x"])])
+    assert validate_slugs([ImplementedPropertyDraft(slug="ok-slug", title="t", description="d", rule_names=["x"])]) == []
+    errs = validate_slugs([ImplementedPropertyDraft(slug="Bad_Slug", title="t", description="d", rule_names=["x"])])
     assert errs and "kebab-case" in errs[0]
 
 
-def test_build_high_level_rolls_up_status_and_keeps_slug():
-    drafts = [HighLevelPropertyDraft(slug="grp-a", title="Group A", description="d", rule_names=["a", "b"])]
-    finals = build_high_level(drafts, {"a": NodeStatus.VERIFIED, "b": NodeStatus.VIOLATED})
+def test_build_implemented_properties_rolls_up_status_and_keeps_slug():
+    drafts = [ImplementedPropertyDraft(slug="grp-a", title="Group A", description="d", rule_names=["a", "b"])]
+    finals = build_implemented_properties(drafts, {"a": NodeStatus.VERIFIED, "b": NodeStatus.VIOLATED})
     assert len(finals) == 1
     assert finals[0].slug == "grp-a" and finals[0].title == "Group A"
     assert finals[0].status == GroupStatus.VIOLATED
@@ -216,12 +218,11 @@ def test_fallback_grouping_covers_all_rules():
     assert "boom" in out.groups[0].description
 
 
-def test_build_rules_for_grouping_attaches_descriptions_and_sorts():
-    props = [InferredProperty(component="C", title="t", methods=["m"],
-                              sort="invariant", description="the desc")]
-    rules = [CVLRule(name="r1", component="C", property_refs=[PropertyRef("C", "t")],
-                     status=NodeStatus.VERIFIED)]
-    rows = build_rules_for_grouping(rules, props)
+def test_build_rules_for_grouping_reads_embedded_properties():
+    prop = PropertyFormulationWithComponent(component="C", title="t", methods=["m"],
+                                            sort="invariant", description="the desc")
+    rules = [CVLRule(name="r1", component="C", properties=[prop], status=NodeStatus.VERIFIED)]
+    rows = build_rules_for_grouping(rules)
     assert rows[0].property_descriptions == ["the desc"] and rows[0].sorts == ["invariant"]
 
 
@@ -230,21 +231,21 @@ def test_build_rules_for_grouping_attaches_descriptions_and_sorts():
 # ---------------------------------------------------------------------------
 
 def _mini_report() -> AutoProverReport:
+    prop = PropertyFormulationWithComponent(component="Increment", title="count_increases",
+                                            methods=["increment"], sort="safety_property",
+                                            description="increment raises count")
     return AutoProverReport(
         contract_name="Counter",
         prover_links={"Increment": "https://prover.example/run/abc"},
-        inferred_properties=[InferredProperty(component="Increment", title="count_increases",
-                                              methods=["increment"], sort="safety_property",
-                                              description="increment raises count")],
+        property_formulations=[prop],
         rules=[CVLRule(name="increment_increases_count", component="Increment",
-                       spec_file="autospec_Increment.spec",
-                       property_refs=[PropertyRef("Increment", "count_increases")],
+                       spec_file="autospec_Increment.spec", properties=[prop],
                        status=NodeStatus.VERIFIED, line=10,
                        prover_link="https://prover.example/run/abc")],
-        high_level_properties=[HighLevelProperty(slug="count-up", title="Count Increases",
-                                                 description="d", status=GroupStatus.VERIFIED,
-                                                 rule_names=["increment_increases_count"])],
-        coverage=CoverageReport(total_inferred_properties=1, total_rules=1, total_groups=1,
+        implemented_properties=[ImplementedProperty(slug="count-up", title="Count Increases",
+                                                    description="d", status=GroupStatus.VERIFIED,
+                                                    rule_names=["increment_increases_count"])],
+        coverage=CoverageReport(total_property_formulations=1, total_rules=1, total_groups=1,
                                 rules_per_group_min=1, rules_per_group_max=1, rule_coverage_complete=True),
     )
 
@@ -283,8 +284,8 @@ async def test_build_empty_grouping_falls_back_and_persists(tmp_path, monkeypatc
     )
 
     # The empty grouping degraded to a single 'general' bucket covering all rules.
-    assert len(report.high_level_properties) == 1
-    g = report.high_level_properties[0]
+    assert len(report.implemented_properties) == 1
+    g = report.implemented_properties[0]
     assert g.slug == FALLBACK_SLUG
     assert set(g.rule_names) == {"r1", "r2"}
     assert g.status == GroupStatus.VIOLATED  # r2 violated

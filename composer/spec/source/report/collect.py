@@ -22,7 +22,7 @@ from prover_output_utility import ProverOutputAPI
 from prover_output_utility.models import CheckResult, NodeStatus
 
 from composer.spec.gen_types import CERTORA_DIR, under_project
-from composer.spec.source.report.schema import CVLRule, InferredProperty, PropertyRef
+from composer.spec.source.report.schema import CVLRule, PropertyFormulationWithComponent
 
 _log = logging.getLogger(__name__)
 
@@ -82,33 +82,36 @@ def _properties_dir(project_root: str) -> Path:
     return under_project(project_root, CERTORA_DIR) / PROPERTIES_SUBDIR
 
 
-def _load_properties(pdir: Path, stem: str, component: str) -> list[InferredProperty]:
+def _load_properties(pdir: Path, stem: str, component: str) -> list[PropertyFormulationWithComponent]:
     path = pdir / f"{stem}.properties.json"
     if not path.is_file():
         return []
     raw = json.loads(path.read_text())
-    return [InferredProperty(component=component, **prop) for prop in raw]
+    return [PropertyFormulationWithComponent(component=component, **prop) for prop in raw]
 
 
-def _load_rule_refs(
-    pdir: Path, stem: str, component: str, properties: list[InferredProperty]
-) -> dict[str, list[PropertyRef]]:
+def _load_rule_properties(
+    pdir: Path, stem: str, properties: list[PropertyFormulationWithComponent]
+) -> dict[str, list[PropertyFormulationWithComponent]]:
     """Invert ``<stem>.property_rules.json`` ({title: [rules]}) into
-    ``rule_name -> [PropertyRef]``. Missing file -> empty (a component that gave
-    up after extraction has properties but no rule mapping)."""
+    ``rule_name -> [the property formulations that rule implements]``, resolving
+    each title to its property object so callers need no second join. Missing
+    file -> empty (a component that gave up after extraction has properties but
+    no rule mapping)."""
     path = pdir / f"{stem}.property_rules.json"
     if not path.is_file():
         return {}
-    known_titles = {p.title for p in properties if p.title}
+    by_title = {p.title: p for p in properties if p.title}
     mapping: dict[str, list[str]] = json.loads(path.read_text())
-    out: dict[str, list[PropertyRef]] = {}
+    out: dict[str, list[PropertyFormulationWithComponent]] = {}
     for title, rule_names in mapping.items():
-        if title not in known_titles:
+        prop = by_title.get(title)
+        if prop is None:
             # A title in the mapping with no matching property entry means the
             # two files disagree; skip rather than reference a phantom property.
             continue
         for rule_name in rule_names:
-            out.setdefault(rule_name, []).append(PropertyRef(component, title))
+            out.setdefault(rule_name, []).append(prop)
     return out
 
 
@@ -139,7 +142,7 @@ def collect(
     components: list[ComponentInput],
     *,
     api: ProverOutputAPI | None = None,
-) -> tuple[list[InferredProperty], list[CVLRule]]:
+) -> tuple[list[PropertyFormulationWithComponent], list[CVLRule]]:
     """Assemble the report's inferred properties and CVL rules.
 
     Rules are identified by ``(spec_file, rule_name)``: a rule re-stated under
@@ -153,7 +156,7 @@ def collect(
     pdir = _properties_dir(project_root)
     api = api or ProverOutputAPI()
 
-    all_properties: list[InferredProperty] = []
+    all_properties: list[PropertyFormulationWithComponent] = []
     rules_by_key: dict[tuple[str, str], CVLRule] = {}
 
     for comp in components:
@@ -162,14 +165,14 @@ def collect(
             continue
         all_properties.extend(props)
 
-        rule_refs = _load_rule_refs(pdir, comp.stem, comp.name, props)
+        rule_props = _load_rule_properties(pdir, comp.stem, props)
         verdicts = _fetch_verdicts(api, comp.prover_link) if comp.prover_link else {}
 
         comp_spec = f"{comp.stem}.spec"  # identity fallback when POU has no source location
 
         # Union of rules the agent mapped to properties and rules the prover
-        # reported (the latter may include helper rules with no property ref).
-        for rule_name in set(rule_refs) | set(verdicts):
+        # reported (the latter may include helper rules with no property).
+        for rule_name in set(rule_props) | set(verdicts):
             v = verdicts.get(rule_name)
             spec_file = v.spec_file if (v and v.spec_file) else comp_spec
             key = (spec_file, rule_name)
@@ -183,7 +186,7 @@ def collect(
                 name=rule_name,
                 component=comp.name,
                 spec_file=spec_file,
-                property_refs=rule_refs.get(rule_name, []),
+                properties=rule_props.get(rule_name, []),
                 status=v.status if v else NodeStatus.UNKNOWN,
                 line=v.line if v else None,
                 duration_seconds=v.duration_seconds if v else None,

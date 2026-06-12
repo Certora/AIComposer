@@ -13,7 +13,7 @@ from typing import Iterable
 from prover_output_utility.models import NodeStatus
 
 from composer.spec.source.report.schema import (
-    CoverageReport, CVLRule, GroupStatus, HighLevelProperty,
+    CoverageReport, CVLRule, GroupStatus, ImplementedProperty,
 )
 
 
@@ -45,7 +45,7 @@ def aggregate_status(statuses: Iterable[NodeStatus]) -> GroupStatus:
 def validate(
     *,
     rules: list[CVLRule],
-    groups: list[HighLevelProperty],
+    groups: list[ImplementedProperty],
     total_inferred: int,
 ) -> CoverageReport:
     """Cross-check the grouping against the rule set; produce a CoverageReport.
@@ -84,7 +84,7 @@ def validate(
 
     rules_per_group = [len(g.rule_names) for g in groups]
     return CoverageReport(
-        total_inferred_properties=total_inferred,
+        total_property_formulations=total_inferred,
         total_rules=len(rules),
         total_groups=len(groups),
         rules_per_group_min=min(rules_per_group) if rules_per_group else 0,

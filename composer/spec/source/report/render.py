@@ -17,7 +17,8 @@ from pathlib import Path
 from prover_output_utility.models import NodeStatus
 
 from composer.spec.source.report.schema import (
-    AutoProverReport, CVLRule, GroupStatus, HighLevelProperty, InferredProperty,
+    AutoProverReport, CVLRule, GroupStatus, ImplementedProperty,
+    PropertyFormulationWithComponent,
 )
 
 
@@ -295,7 +296,7 @@ def _link_cell(rule: CVLRule) -> str:
 def _render_header(report: AutoProverReport) -> str:
     """Top-of-page summary card + per-status count chips."""
     status_counts: Counter[str] = Counter(r.status.value for r in report.rules)
-    group_counts: Counter[str] = Counter(g.status.value for g in report.high_level_properties)
+    group_counts: Counter[str] = Counter(g.status.value for g in report.implemented_properties)
 
     chips = []
     for status in [NodeStatus.VERIFIED, NodeStatus.VIOLATED, NodeStatus.TIMEOUT,
@@ -333,9 +334,9 @@ def _render_header(report: AutoProverReport) -> str:
 <header class="report-head">
   <h1>Formal verification report — {html.escape(report.contract_name)}</h1>
   <div class="subtitle">
-    {len(report.inferred_properties)} inferred properties &middot;
+    {len(report.property_formulations)} property formulations &middot;
     {len(report.rules)} CVL rules &middot;
-    {len(report.high_level_properties)} high-level properties
+    {len(report.implemented_properties)} implemented properties
   </div>
   <dl class="meta-grid">{meta_rows}</dl>
   <div style="margin-top:14px;font-size:12px;color:var(--muted-fg);">Rule outcomes:</div>
@@ -354,7 +355,7 @@ def _render_warnings(report: AutoProverReport) -> str:
 
 
 def _render_group(
-    group: HighLevelProperty,
+    group: ImplementedProperty,
     rules_by_name: dict[str, CVLRule],
     desc_lookup: dict[str, str],
 ) -> str:
@@ -400,34 +401,24 @@ def _render_group(
 
 
 def _description_lookup(report: AutoProverReport) -> dict[str, str]:
-    """{rule_name: first English description from its property_refs}."""
-    by_ref = {(p.component, p.title): p.description for p in report.inferred_properties}
-    out: dict[str, str] = {}
-    for r in report.rules:
-        text = ""
-        for ref in r.property_refs:
-            d = by_ref.get((ref.component, ref.title))
-            if d:
-                text = d
-                break
-        out[r.name] = text
-    return out
+    """{rule_name: first English description from the properties it implements}."""
+    return {r.name: (r.properties[0].description if r.properties else "") for r in report.rules}
 
 
 def _render_appendix(report: AutoProverReport) -> str:
-    """Collapsible appendix: every inferred property, by component, with the
+    """Collapsible appendix: every property formulation, by component, with the
     rule(s) that implement it."""
     rules_by_ref: dict[tuple[str, str], list[CVLRule]] = defaultdict(list)
     for r in report.rules:
-        for ref in r.property_refs:
-            rules_by_ref[(ref.component, ref.title)].append(r)
+        for prop in r.properties:
+            rules_by_ref[(prop.component, prop.title)].append(r)
 
-    by_component: dict[str, list[InferredProperty]] = defaultdict(list)
-    for p in report.inferred_properties:
+    by_component: dict[str, list[PropertyFormulationWithComponent]] = defaultdict(list)
+    for p in report.property_formulations:
         by_component[p.component].append(p)
 
-    parts = ['<details class="appendix"><summary>Inferred property index — '
-             f'{len(report.inferred_properties)} properties across '
+    parts = ['<details class="appendix"><summary>Property formulation index — '
+             f'{len(report.property_formulations)} properties across '
              f'{len(by_component)} components</summary>']
     for comp in sorted(by_component):
         props = sorted(by_component[comp], key=lambda p: p.title)
@@ -474,7 +465,7 @@ def render_html(report: AutoProverReport) -> str:
     desc_lookup = _description_lookup(report)
 
     body_parts = [_render_header(report), _render_warnings(report)]
-    for g in report.high_level_properties:
+    for g in report.implemented_properties:
         body_parts.append(_render_group(g, rules_by_name, desc_lookup))
     body_parts.append(_render_appendix(report))
     body_parts.append(_render_footer(report))

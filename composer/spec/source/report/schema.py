@@ -2,11 +2,19 @@
 
 `AutoProverReport` is the top-level document written to
 ``certora/ap_report/report.json``. Rule verdicts reuse ProverOutputUtility's
-`NodeStatus`; the inferred properties reuse (subclass) composer's
+`NodeStatus`; the property formulations reuse (subclass) composer's
 `PropertyFormulation` so the report speaks the same property vocabulary as the
 analysis phase. Bump `schema_version` on a breaking change.
+
+The report is a **per-run snapshot**: slugs and statuses describe only the
+current run. There is no cross-run identity (the canonical map was removed) —
+cross-run reuse is delegated to composer's `--cache-ns`, not the report.
+
+Two distinct property granularities (see the types): a
+`PropertyFormulationWithComponent` is one granular per-component formulation
+(~1:1 with a CVL rule); an `ImplementedProperty` is the audit-level grouping of
+the rules that establish one claim.
 """
-from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
@@ -21,16 +29,8 @@ type RuleName = str
 references read as the foreign keys they are."""
 
 
-@dataclass(frozen=True)
-class PropertyRef:
-    """A reference to one inferred property: the component that owns it and the
-    property's ``title`` (titles are unique within a component's batch)."""
-    component: str
-    title: str
-
-
 class GroupStatus(str, Enum):
-    """Aggregated verdict for a high-level property, rolled up from the POU
+    """Aggregated verdict for an implemented property, rolled up from the POU
     `NodeStatus` of its member rules (see :func:`coverage.aggregate_status`):
 
       - VERIFIED     — every member rule VERIFIED
@@ -44,29 +44,31 @@ class GroupStatus(str, Enum):
     INCONCLUSIVE = "INCONCLUSIVE"
 
 
-class InferredProperty(PropertyFormulation):
-    """A `PropertyFormulation` tagged with the AIComposer component that owns it.
-    Inherits ``title`` (unique within the component), ``methods``, ``sort`` and
-    ``description`` from PropertyFormulation."""
+class PropertyFormulationWithComponent(PropertyFormulation):
+    """The granular unit: a `PropertyFormulation` (title, methods, sort,
+    description) tagged with the AIComposer component that owns it. One per
+    component property, ~1:1 with a CVL rule. Distinct from an
+    `ImplementedProperty`, which is the audit-level grouping of several rules."""
     component: str = Field(description="Name of the AIComposer component that owns this property.")
 
 
 class CVLRule(BaseModel):
     """One CVL rule/invariant the agent authored, joined to its prover verdict
-    and the inferred properties it implements.
+    and the property formulations it implements.
 
     ``status``, ``line`` and ``duration_seconds`` come from
     ProverOutputUtility's per-rule ``CheckResult`` (verdict + source location),
-    not from parsing the spec text. ``property_refs`` come from the component's
-    ``property_rules.json`` mapping."""
+    not from parsing the spec text. ``properties`` are the formulations this rule
+    implements (resolved from the component's ``property_rules.json`` mapping),
+    embedded so the grouping/render layers need no second join."""
     name: RuleName
     component: str = Field(description="Name of the component whose spec declares this rule.")
     spec_file: str | None = Field(
         default=None,
         description="Basename of the spec file that defines this rule; together with `name` it is the rule's identity, so a rule re-stated under the same name in a different spec stays distinct.",
     )
-    property_refs: list[PropertyRef] = Field(
-        default_factory=list, description="The inferred properties this rule implements."
+    properties: list[PropertyFormulationWithComponent] = Field(
+        default_factory=list, description="The property formulations this rule implements."
     )
     status: NodeStatus = NodeStatus.UNKNOWN
     line: int | None = None
@@ -74,13 +76,12 @@ class CVLRule(BaseModel):
     prover_link: str | None = None
 
 
-class HighLevelProperty(BaseModel):
-    """A human-readable property covering one or more `CVLRule`s.
-
-    NOT an AIComposer *component* (a structural unit of the contract produced by
-    system analysis). A component can own several high-level properties; each
-    high-level property groups the CVL rules establishing one auditable claim,
-    regardless of how many methods or components they span. Identified by its
+class ImplementedProperty(BaseModel):
+    """The audit-level unit: a human-readable property implemented by one or more
+    `CVLRule`s. Distinct from a `PropertyFormulationWithComponent` (the granular,
+    per-component formulation) — an ImplementedProperty groups the CVL rules that
+    together establish one auditable claim, regardless of how many methods or
+    components they span. NOT an AIComposer *component*. Identified by its
     kebab-case ``slug``."""
     slug: str = Field(..., min_length=1, max_length=64)
     title: str
@@ -91,7 +92,7 @@ class HighLevelProperty(BaseModel):
 
 class CoverageReport(BaseModel):
     """Validation outcomes after grouping (see :func:`coverage.validate`)."""
-    total_inferred_properties: int
+    total_property_formulations: int
     total_rules: int
     total_groups: int
     rules_per_group_min: int
@@ -110,9 +111,9 @@ class AutoProverReport(BaseModel):
     run_timestamp_utc: str | None = None
     #: component name (or "Structural Invariants") -> prover run link/path
     prover_links: dict[str, str] = Field(default_factory=dict)
-    inferred_properties: list[InferredProperty]
+    property_formulations: list[PropertyFormulationWithComponent]
     rules: list[CVLRule]
-    high_level_properties: list[HighLevelProperty]
+    implemented_properties: list[ImplementedProperty]
     coverage: CoverageReport
 
 
@@ -133,7 +134,7 @@ class RuleForGrouping(BaseModel):
     )
 
 
-class HighLevelPropertyDraft(BaseModel):
+class ImplementedPropertyDraft(BaseModel):
     """One high-level property proposed by the grouping LLM."""
     slug: str = Field(
         ..., min_length=1, max_length=64,
@@ -150,6 +151,6 @@ class HighLevelPropertyDraft(BaseModel):
 
 class GroupingResult(BaseModel):
     """The high-level property groups covering every input rule exactly once."""
-    groups: list[HighLevelPropertyDraft] = Field(
+    groups: list[ImplementedPropertyDraft] = Field(
         description="The high-level property groups; collectively they cover every input rule exactly once."
     )

@@ -16,7 +16,7 @@ from composer.spec.gen_types import AP_REPORT_DIR, under_project
 from composer.spec.source.report.collect import ComponentInput, collect
 from composer.spec.source.report.coverage import ValidationError, validate
 from composer.spec.source.report.grouping import (
-    build_fallback_grouping, build_high_level, build_rules_for_grouping, call_grouping_llm,
+    build_fallback_grouping, build_implemented_properties, build_rules_for_grouping, call_grouping_llm,
 )
 from composer.spec.source.report.schema import AutoProverReport
 
@@ -37,40 +37,40 @@ async def run_autoprove_report(
     """Build and persist the report. Returns the in-memory `AutoProverReport`."""
     properties, rules = collect(project_root, components, api=api)
     rule_status = {r.name: r.status for r in rules}
-    rules_for_grouping = build_rules_for_grouping(rules, properties)
+    rules_for_grouping = build_rules_for_grouping(rules)
 
     # The grouping may fail three ways; each degrades to the single 'general'
-    # bucket so the report always has a high-level section: (a) the LLM call
-    # raises, (b) validation rejects a structurally-invalid grouping, (c) the
-    # grouping is valid but covers no rules. The fallback bucket holds every
-    # rule exactly once, so the re-validate below cannot raise.
+    # bucket so the report always has an implemented-properties section: (a) the
+    # LLM call raises, (b) validation rejects a structurally-invalid grouping,
+    # (c) the grouping is valid but covers no rules. The fallback bucket holds
+    # every rule exactly once, so the re-validate below cannot raise.
     fallback_reason: str | None = None
     try:
         grouping = await call_grouping_llm(
             llm=llm, contract_name=contract_name, rules=rules_for_grouping,
         )
-        high_level = build_high_level(grouping.groups, rule_status)
-        coverage = validate(rules=rules, groups=high_level, total_inferred=len(properties))
-        if rules and not {n for g in high_level for n in g.rule_names}:
+        implemented = build_implemented_properties(grouping.groups, rule_status)
+        coverage = validate(rules=rules, groups=implemented, total_inferred=len(properties))
+        if rules and not {n for g in implemented for n in g.rule_names}:
             raise ValidationError("grouping produced no high-level properties")
     except Exception as e:  # noqa: BLE001 — any LLM/transport/validation error degrades
         fallback_reason = (
             f"validation rejected the grouping: {e}" if isinstance(e, ValidationError)
             else f"grouping failed: {e}"
         )
-        high_level = build_high_level(
+        implemented = build_implemented_properties(
             build_fallback_grouping([r.name for r in rules], str(e)).groups, rule_status
         )
-        coverage = validate(rules=rules, groups=high_level, total_inferred=len(properties))
+        coverage = validate(rules=rules, groups=implemented, total_inferred=len(properties))
         coverage.warnings = [f"FALLBACK GROUPING APPLIED — {fallback_reason}"] + coverage.warnings
 
     report = AutoProverReport(
         contract_name=contract_name,
         run_timestamp_utc=timestamp_utc or datetime.now(timezone.utc).isoformat(),
         prover_links={c.name: c.prover_link for c in components if c.prover_link},
-        inferred_properties=properties,
+        property_formulations=properties,
         rules=rules,
-        high_level_properties=high_level,
+        implemented_properties=implemented,
         coverage=coverage,
     )
 
