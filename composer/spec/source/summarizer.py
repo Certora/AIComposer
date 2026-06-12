@@ -27,10 +27,21 @@ from composer.spec.gen_types import CVLResource, SUMMARIES_DIR, under_project
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import temp_certora_file, string_hash, ensure_dir
 from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.source.give_up import GiveUpTool
 from composer.spec.source.harness import ContractSetup, ExternalInterface, HarnessDef
 from composer.spec.system_model import HarnessedApplication, ExternalActor
 from composer.spec.gen_types import TypedTemplate
 from composer.ui.tool_display import tool_display, suppress_ack
+
+
+class SummariesPreconditionError(RuntimeError):
+    """Raised when the custom-summaries agent gives up because a precondition it
+    cannot fix from CVL (typically the project failing to compile) blocks the
+    task. Hard-fails the pipeline with the agent's stated reason."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Custom summaries generation gave up (precondition failure): {reason}")
+        self.reason = reason
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +91,10 @@ class SummarizerExtra(TypedDict):
     plan: str | None
     curr_spec: str | None
     typechecked: str
+    # Set to True by the ``give_up`` tool when the agent bails out of an
+    # unrecoverable precondition failure (e.g. the project does not compile).
+    # ``None`` on a normal completion.
+    failed: bool | None
 
 class ST(MessagesState, SummarizerExtra):
     result: NotRequired[str]
@@ -198,7 +213,8 @@ async def _setup_summaries_impl(
         put_cvl,
         _PlanReader.as_tool("read_plan"),
         _PlanWrite.as_tool("plan_write"),
-        _TypeChecker.as_tool("typechecker")
+        _TypeChecker.as_tool("typechecker"),
+        GiveUpTool.as_tool("give_up"),
     ]
 
     intf_summaries = []
@@ -250,6 +266,7 @@ async def _setup_summaries_impl(
             typechecked="",
             plan=None,
             curr_spec=None,
+            failed=None,
             input=[
                 "The following types are available for use in your spec",
                 udts,
@@ -263,6 +280,11 @@ async def _setup_summaries_impl(
             source=source
         )
     )
+    if st.get("failed"):
+        # The agent called ``give_up``: a precondition it cannot fix from CVL
+        # (typically the project does not compile) blocks the whole task. Fail
+        # fast with the agent's reason rather than caching a partial spec.
+        raise SummariesPreconditionError(st.get("result") or "no reason given")
     assert st["curr_spec"] is not None
     return st["curr_spec"]
 
