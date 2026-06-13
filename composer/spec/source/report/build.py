@@ -58,11 +58,12 @@ async def run_autoprove_report(
             f"validation rejected the grouping: {e}" if isinstance(e, ValidationError)
             else f"grouping failed: {e}"
         )
+        _log.warning("autoprove report: %s; applying fallback grouping", fallback_reason)
         implemented = build_implemented_properties(
-            build_fallback_grouping([r.name for r in rules], str(e)).groups, rule_status
+            build_fallback_grouping([r.name for r in rules]).groups, rule_status
         )
         coverage = validate(rules=rules, groups=implemented, total_inferred=len(properties))
-        coverage.warnings = [f"FALLBACK GROUPING APPLIED — {fallback_reason}"] + coverage.warnings
+        coverage.warnings = ["FALLBACK GROUPING APPLIED"] + coverage.warnings
 
     report = AutoProverReport(
         contract_name=contract_name,

@@ -14,12 +14,10 @@ from prover_output_utility.models import NodeStatus
 
 from composer.spec.source.report import build
 from composer.spec.source.report.collect import ComponentInput, collect
-from composer.spec.source.report.coverage import (
-    ValidationError, aggregate_status, validate,
-)
+from composer.spec.source.report.coverage import ValidationError, validate
 from composer.spec.source.report.grouping import (
-    FALLBACK_SLUG, build_fallback_grouping, build_implemented_properties,
-    build_rules_for_grouping, validate_slugs,
+    FALLBACK_SLUG, aggregate_status, build_fallback_grouping,
+    build_implemented_properties, build_rules_for_grouping,
 )
 from composer.spec.source.report.render import render_html
 from composer.spec.source.report.schema import (
@@ -32,7 +30,7 @@ from composer.spec.source.report.schema import (
 # Fakes / fixtures
 # ---------------------------------------------------------------------------
 
-def _fake_check(rule_name, status, line=None, duration=None, file="autospec_Increment.spec"):
+def _fake_check(rule_name, status, line=None, duration=None, file: str | None = "autospec_Increment.spec"):
     """A stand-in CheckResult. ``file`` is the spec the rule is defined in (per
     POU's source location); pass ``file=None`` to simulate POU not reporting one."""
     sl = SimpleNamespace(file=file, line=line)
@@ -154,16 +152,39 @@ def test_collect_same_name_different_spec_stays_distinct(tmp_path):
     ]
 
 
+def test_collect_fails_when_verdict_has_no_source(tmp_path):
+    """A proved rule must carry a source location; if POU reports none we cannot
+    identify its defining spec, so collect raises rather than mis-attributing."""
+    certora = tmp_path / "certora"
+    _write_props(certora, "autospec_Increment", [_prop("p1", "d1")])
+    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED, file=None)]})
+    with pytest.raises(ValueError, match="no source location"):
+        collect(str(tmp_path), [ComponentInput("Increment", "autospec_Increment", "L1")], api=api)
+
+
+def test_collect_tolerates_rule_without_verdict(tmp_path):
+    """A rule mapped to a property but with no prover verdict (e.g. the run
+    didn't report it) is kept, identified by the component's own spec."""
+    certora = tmp_path / "certora"
+    _write_props(certora, "autospec_Increment", [_prop("p1", "d1")])
+    _write_rules(certora, "autospec_Increment", {"p1": ["r1"]})
+    api = _FakeAPI({"L1": []})  # prover run produced no checks for r1
+    _props, rules = collect(str(tmp_path), [ComponentInput("Increment", "autospec_Increment", "L1")], api=api)
+    assert [(r.name, r.status, r.spec_file) for r in rules] == [
+        ("r1", NodeStatus.UNKNOWN, "autospec_Increment.spec")
+    ]
+
+
 # ---------------------------------------------------------------------------
 # coverage
 # ---------------------------------------------------------------------------
 
 def test_aggregate_status_table():
-    assert aggregate_status([]) == GroupStatus.INCONCLUSIVE
+    assert aggregate_status([]) == GroupStatus.NO_RESULTS
     assert aggregate_status([NodeStatus.VERIFIED, NodeStatus.VERIFIED]) == GroupStatus.VERIFIED
     assert aggregate_status([NodeStatus.VERIFIED, NodeStatus.VIOLATED]) == GroupStatus.VIOLATED
     assert aggregate_status([NodeStatus.VERIFIED, NodeStatus.TIMEOUT]) == GroupStatus.PARTIAL
-    assert aggregate_status([NodeStatus.TIMEOUT, NodeStatus.UNKNOWN]) == GroupStatus.INCONCLUSIVE
+    assert aggregate_status([NodeStatus.TIMEOUT, NodeStatus.UNKNOWN]) == GroupStatus.NO_RESULTS
 
 
 def _rule(name, status=NodeStatus.VERIFIED, component="C"):
@@ -197,12 +218,6 @@ def test_validate_missing_rule_is_soft():
 # grouping
 # ---------------------------------------------------------------------------
 
-def test_validate_slugs():
-    assert validate_slugs([ImplementedPropertyDraft(slug="ok-slug", title="t", description="d", rule_names=["x"])]) == []
-    errs = validate_slugs([ImplementedPropertyDraft(slug="Bad_Slug", title="t", description="d", rule_names=["x"])])
-    assert errs and "kebab-case" in errs[0]
-
-
 def test_build_implemented_properties_rolls_up_status_and_keeps_slug():
     drafts = [ImplementedPropertyDraft(slug="grp-a", title="Group A", description="d", rule_names=["a", "b"])]
     finals = build_implemented_properties(drafts, {"a": NodeStatus.VERIFIED, "b": NodeStatus.VIOLATED})
@@ -212,10 +227,10 @@ def test_build_implemented_properties_rolls_up_status_and_keeps_slug():
 
 
 def test_fallback_grouping_covers_all_rules():
-    out = build_fallback_grouping(["r1", "r2"], "boom")
+    out = build_fallback_grouping(["r1", "r2"])
     assert len(out.groups) == 1 and out.groups[0].slug == FALLBACK_SLUG
     assert out.groups[0].rule_names == ["r1", "r2"]
-    assert "boom" in out.groups[0].description
+    assert out.groups[0].description == "All rules."
 
 
 def test_build_rules_for_grouping_reads_embedded_properties():

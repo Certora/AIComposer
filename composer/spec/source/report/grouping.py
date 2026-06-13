@@ -9,29 +9,46 @@ A `general`-bucket fallback (every rule in one group) is built by `build` when
 the LLM call raises, when validation rejects the grouping, or when the grouping
 covers no rules.
 """
-import re
+from typing import Iterable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from prover_output_utility.models import NodeStatus
 
 from composer.templates.loader import load_jinja_template
-from composer.spec.source.report.coverage import aggregate_status
 from composer.spec.source.report.schema import (
-    CVLRule, ImplementedProperty, ImplementedPropertyDraft, GroupingResult,
-    RuleForGrouping,
+    CVLRule, GroupStatus, ImplementedProperty, ImplementedPropertyDraft,
+    GroupingResult, RuleForGrouping, RuleName,
 )
-
-_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 FALLBACK_SLUG = "general"
 FALLBACK_TITLE = "General (fallback grouping)"
 
 
+def aggregate_status(statuses: Iterable[NodeStatus]) -> GroupStatus:
+    """Roll up member-rule `NodeStatus`es into a `GroupStatus`:
+      - any VIOLATED                            -> VIOLATED
+      - all VERIFIED                            -> VERIFIED
+      - some VERIFIED but not all (no VIOLATED) -> PARTIAL
+      - none VERIFIED, none VIOLATED            -> NO_RESULTS
+    """
+    all_verified = True
+    any_verified = False
+    for s in statuses:
+        if s == NodeStatus.VIOLATED:
+            return GroupStatus.VIOLATED
+        if s == NodeStatus.VERIFIED:
+            any_verified = True
+        else:
+            all_verified = False
+    if any_verified:
+        return GroupStatus.VERIFIED if all_verified else GroupStatus.PARTIAL
+    return GroupStatus.NO_RESULTS
+
+
 def build_rules_for_grouping(rules: list[CVLRule]) -> list[RuleForGrouping]:
-    """Project each `CVLRule` into the context row the grouping LLM sees. The
-    rule already carries the property formulations it implements (embedded at
-    collect time), so this is a straight read — no second join."""
+    """Flatten each `CVLRule` (with its embedded property formulations) into the
+    context row the grouping LLM sees."""
     out: list[RuleForGrouping] = []
     for r in rules:
         out.append(RuleForGrouping(
@@ -65,27 +82,12 @@ async def call_grouping_llm(
     return result
 
 
-def validate_slugs(groups: list[ImplementedPropertyDraft]) -> list[str]:
-    """Human-readable problems with the proposed slugs (kebab-case + unique)."""
-    errors: list[str] = []
-    seen: dict[str, int] = {}
-    for i, g in enumerate(groups):
-        if not _SLUG_RE.match(g.slug):
-            errors.append(f"group #{i}: slug '{g.slug}' is not kebab-case ASCII")
-        if g.slug in seen:
-            errors.append(f"group #{i}: slug '{g.slug}' duplicates group #{seen[g.slug]}")
-        else:
-            seen[g.slug] = i
-    return errors
-
-
 def build_implemented_properties(
     drafts: list[ImplementedPropertyDraft],
-    rule_status: dict[str, NodeStatus],
+    rule_status: dict[RuleName, NodeStatus],
 ) -> list[ImplementedProperty]:
     """Turn the LLM's drafts into final `ImplementedProperty`s, rolling each
-    group's status up from its member rules' verdicts. Identity is the draft's
-    own ``slug`` — there is no cross-run reconciliation."""
+    group's status up from its member rules' verdicts."""
     return [
         ImplementedProperty(
             slug=d.slug,
@@ -98,18 +100,14 @@ def build_implemented_properties(
     ]
 
 
-def build_fallback_grouping(rule_names: list[str], reason: str) -> GroupingResult:
-    """A single 'general' bucket holding every rule, used when structured
-    grouping is unavailable. `reason` is surfaced in the group description."""
+def build_fallback_grouping(rule_names: list[RuleName]) -> GroupingResult:
+    """A single bucket holding every rule, used when structured grouping is
+    unavailable. The reason is logged by the caller, not shown to the user."""
     return GroupingResult(groups=[
         ImplementedPropertyDraft(
             slug=FALLBACK_SLUG,
             title=FALLBACK_TITLE,
-            description=(
-                "Fallback grouping: every rule was placed in a single bucket "
-                "because structured grouping did not produce a usable result. "
-                f"Reason: {reason}."
-            ),
+            description="All rules.",
             rule_names=list(rule_names),
         )
     ])

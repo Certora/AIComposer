@@ -20,7 +20,7 @@ from composer.spec.util import string_hash, ensure_dir
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import (
-    CVLResource, CERTORA_DIR, SPECS_DIR, AUTOPROVE_INTERNAL_DIR, under_project,
+    CVLResource, CERTORA_DIR, SPECS_DIR, PROPERTIES_DIR, AUTOPROVE_INTERNAL_DIR, under_project,
 )
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import (
@@ -51,7 +51,7 @@ def dump_properties(
     ``properties/{spec_stem}.properties.json`` under ``certora_dir``, accompanying
     ``{spec_stem}.spec``. ``title`` is the cross-reference key used by
     ``{spec_stem}.property_rules.json``."""
-    properties_dir = ensure_dir(certora_dir / "properties")
+    properties_dir = ensure_dir(certora_dir / PROPERTIES_DIR.name)
     properties_dump = [prop.model_dump() for prop in props]
     (properties_dir / f"{spec_stem}.properties.json").write_text(
         json.dumps(properties_dump, indent=2)
@@ -67,7 +67,7 @@ def dump_property_rules(
     ``properties/{spec_stem}.property_rules.json`` under ``certora_dir``, accompanying
     ``{spec_stem}.spec``. Titles are unique (enforced at extraction) and validated against
     the batch at completion."""
-    properties_dir = ensure_dir(certora_dir / "properties")
+    properties_dir = ensure_dir(certora_dir / PROPERTIES_DIR.name)
     mapping = {m.property_title: m.rules for m in property_rules}
     (properties_dir / f"{spec_stem}.property_rules.json").write_text(
         json.dumps(mapping, indent=2)
@@ -264,7 +264,7 @@ async def generate_all_component_cvl(
             return res
         certora_dir = under_project(source_input.project_root, CERTORA_DIR)
         specs_dir = ensure_dir(certora_dir / "specs")  # absolute (project_root/certora/specs)
-        properties_dir = ensure_dir(certora_dir / "properties")
+        properties_dir = ensure_dir(certora_dir / PROPERTIES_DIR.name)
         base = batch.feat.slugified_name
         spec_name = pathlib.Path(f"autospec_{base}.spec")
         (specs_dir / spec_name).write_text(res.cvl)

@@ -28,20 +28,29 @@ type RuleName = str
 ``<stem>.property_rules.json``. Used so rule<->property and rule<->group
 references read as the foreign keys they are."""
 
+type ComponentName = str
+"""Human name of an AIComposer component (e.g. "Increment")."""
+
+type StemName = str
+"""A property-dump / spec-file stem (e.g. "autospec_Increment", "invariants")."""
+
+type PropertyTitle = str
+"""A property's unique snake_case title — the key in ``<stem>.property_rules.json``."""
+
 
 class GroupStatus(str, Enum):
     """Aggregated verdict for an implemented property, rolled up from the POU
-    `NodeStatus` of its member rules (see :func:`coverage.aggregate_status`):
+    `NodeStatus` of its member rules (see :func:`grouping.aggregate_status`):
 
       - VERIFIED     — every member rule VERIFIED
       - VIOLATED     — any member rule VIOLATED
       - PARTIAL      — some VERIFIED, some not-yet-VERIFIED (but none VIOLATED)
-      - INCONCLUSIVE — none VERIFIED, none VIOLATED (all TIMEOUT/ERROR/…)
+      - NO_RESULTS   — none VERIFIED, none VIOLATED (all TIMEOUT/ERROR/…)
     """
     VERIFIED = "VERIFIED"
     VIOLATED = "VIOLATED"
     PARTIAL = "PARTIAL"
-    INCONCLUSIVE = "INCONCLUSIVE"
+    NO_RESULTS = "NO_RESULTS"
 
 
 class PropertyFormulationWithComponent(PropertyFormulation):

@@ -19,6 +19,9 @@ from pydantic import BaseModel, Field
 CERTORA_DIR = Path("certora")
 #: Generated specs (the "importers") are written here.
 SPECS_DIR = CERTORA_DIR / "specs"
+#: Per-component property dumps (`<stem>.properties.json` / `.property_rules.json`)
+#: written by the pipeline and read back by the report phase.
+PROPERTIES_DIR = CERTORA_DIR / "properties"
 #: AutoSetup / custom summaries live here.
 SUMMARIES_DIR = SPECS_DIR / "summaries"
 #: The autoprove run report (report.json, the optional rendered HTML, and the

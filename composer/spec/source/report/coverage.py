@@ -8,38 +8,17 @@ fallback shape is trivially valid, so a re-validate after substitution cannot
 raise.
 """
 from collections import Counter
-from typing import Iterable
 
 from prover_output_utility.models import NodeStatus
 
+from composer.spec.source.report.grouping import aggregate_status
 from composer.spec.source.report.schema import (
-    CoverageReport, CVLRule, GroupStatus, ImplementedProperty,
+    CoverageReport, CVLRule, ImplementedProperty, RuleName,
 )
 
 
 class ValidationError(RuntimeError):
     """Hard failure during validation — a bug in inputs or grouping."""
-
-
-def aggregate_status(statuses: Iterable[NodeStatus]) -> GroupStatus:
-    """Roll up member-rule `NodeStatus`es into a `GroupStatus`:
-      - any VIOLATED                         -> VIOLATED
-      - all VERIFIED                         -> VERIFIED
-      - some VERIFIED but not all (no VIOLATED) -> PARTIAL
-      - none VERIFIED, none VIOLATED         -> INCONCLUSIVE
-    """
-    all_verified = True
-    any_verified = False
-    for s in statuses:
-        if s == NodeStatus.VIOLATED:
-            return GroupStatus.VIOLATED
-        if s == NodeStatus.VERIFIED:
-            any_verified = True
-        else:
-            all_verified = False
-    if any_verified:
-        return GroupStatus.VERIFIED if all_verified else GroupStatus.PARTIAL
-    return GroupStatus.INCONCLUSIVE
 
 
 def validate(
@@ -56,7 +35,7 @@ def validate(
     warnings: list[str] = []
     rule_names_all = {r.name for r in rules}
 
-    appearance: Counter[str] = Counter()
+    appearance: Counter[RuleName] = Counter()
     for g in groups:
         for n in g.rule_names:
             appearance[n] += 1
@@ -71,7 +50,7 @@ def validate(
 
     missing = sorted(rule_names_all - set(appearance))
 
-    rule_status = {r.name: r.status for r in rules}
+    rule_status: dict[RuleName, NodeStatus] = {r.name: r.status for r in rules}
     consistent = True
     for g in groups:
         expected = aggregate_status([rule_status[n] for n in g.rule_names if n in rule_status])

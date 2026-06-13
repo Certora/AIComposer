@@ -21,21 +21,22 @@ from pathlib import Path
 from prover_output_utility import ProverOutputAPI
 from prover_output_utility.models import CheckResult, NodeStatus
 
-from composer.spec.gen_types import CERTORA_DIR, under_project
-from composer.spec.source.report.schema import CVLRule, PropertyFormulationWithComponent
+from composer.spec.gen_types import PROPERTIES_DIR, under_project
+from composer.spec.source.report.schema import (
+    ComponentName, CVLRule, PropertyFormulationWithComponent, PropertyTitle, RuleName, StemName,
+)
 
 _log = logging.getLogger(__name__)
-
-PROPERTIES_SUBDIR = "properties"
 
 
 @dataclass(frozen=True)
 class ComponentInput:
     """One unit to collect: its human name, the property-dump stem, and the
     prover run link/path for its verdicts (``None`` if the run produced no
-    link, e.g. a component that gave up before submitting)."""
-    name: str
-    stem: str
+    link, e.g. a component that gave up before submitting). One prover run per
+    component (and one for the structural invariants)."""
+    name: ComponentName
+    stem: StemName
     prover_link: str | None
 
 
@@ -79,10 +80,15 @@ class _Verdict:
 
 
 def _properties_dir(project_root: str) -> Path:
-    return under_project(project_root, CERTORA_DIR) / PROPERTIES_SUBDIR
+    return under_project(project_root, PROPERTIES_DIR)
 
 
-def _load_properties(pdir: Path, stem: str, component: str) -> list[PropertyFormulationWithComponent]:
+def _load_properties(
+    pdir: Path, stem: StemName, component: ComponentName
+) -> list[PropertyFormulationWithComponent]:
+    """Load ``<stem>.properties.json`` and wrap each entry as a
+    `PropertyFormulationWithComponent`, tagging it with the component that owns
+    the spec. Missing file -> empty."""
     path = pdir / f"{stem}.properties.json"
     if not path.is_file():
         return []
@@ -91,9 +97,9 @@ def _load_properties(pdir: Path, stem: str, component: str) -> list[PropertyForm
 
 
 def _load_rule_properties(
-    pdir: Path, stem: str, properties: list[PropertyFormulationWithComponent]
-) -> dict[str, list[PropertyFormulationWithComponent]]:
-    """Invert ``<stem>.property_rules.json`` ({title: [rules]}) into
+    pdir: Path, stem: StemName, properties: list[PropertyFormulationWithComponent]
+) -> dict[RuleName, list[PropertyFormulationWithComponent]]:
+    """Invert ``<stem>.property_rules.json`` into
     ``rule_name -> [the property formulations that rule implements]``, resolving
     each title to its property object so callers need no second join. Missing
     file -> empty (a component that gave up after extraction has properties but
@@ -102,8 +108,9 @@ def _load_rule_properties(
     if not path.is_file():
         return {}
     by_title = {p.title: p for p in properties if p.title}
-    mapping: dict[str, list[str]] = json.loads(path.read_text())
-    out: dict[str, list[PropertyFormulationWithComponent]] = {}
+    # property_rules.json maps each PropertyTitle to the RuleNames implementing it.
+    mapping: dict[PropertyTitle, list[RuleName]] = json.loads(path.read_text())
+    out: dict[RuleName, list[PropertyFormulationWithComponent]] = {}
     for title, rule_names in mapping.items():
         prop = by_title.get(title)
         if prop is None:
@@ -115,7 +122,7 @@ def _load_rule_properties(
     return out
 
 
-def _fetch_verdicts(api: ProverOutputAPI, link: str) -> dict[str, _Verdict]:
+def _fetch_verdicts(api: ProverOutputAPI, link: str) -> dict[RuleName, _Verdict]:
     """rule_name -> rolled-up `_Verdict` for one prover run. Best-effort: any
     POU failure yields an empty map (rules fall back to UNKNOWN)."""
     try:
@@ -124,7 +131,7 @@ def _fetch_verdicts(api: ProverOutputAPI, link: str) -> dict[str, _Verdict]:
         _log.warning("autoprove report: POU get_all_checks failed for %s", link, exc_info=True)
         return {}
 
-    verdicts: dict[str, _Verdict] = {}
+    verdicts: dict[RuleName, _Verdict] = {}
     for c in checks:
         loc = c.source_location
         cand = _Verdict(
@@ -157,7 +164,7 @@ def collect(
     api = api or ProverOutputAPI()
 
     all_properties: list[PropertyFormulationWithComponent] = []
-    rules_by_key: dict[tuple[str, str], CVLRule] = {}
+    rules_by_key: dict[tuple[str, RuleName], CVLRule] = {}
 
     for comp in components:
         props = _load_properties(pdir, comp.stem, comp.name)
@@ -174,7 +181,20 @@ def collect(
         # reported (the latter may include helper rules with no property).
         for rule_name in set(rule_props) | set(verdicts):
             v = verdicts.get(rule_name)
-            spec_file = v.spec_file if (v and v.spec_file) else comp_spec
+            if v is None:
+                # No prover run reported this rule -> identify it by the
+                # component's own spec.
+                spec_file = comp_spec
+            elif v.spec_file is None:
+                # A proved rule must carry a source location; if POU doesn't give
+                # one we can't determine the rule's defining spec — fail loudly
+                # rather than mis-attribute it to the component stem.
+                raise ValueError(
+                    f"autoprove report: prover verdict for rule {rule_name!r} in component "
+                    f"{comp.name!r} has no source location; cannot identify its defining spec."
+                )
+            else:
+                spec_file = v.spec_file
             key = (spec_file, rule_name)
             if key in rules_by_key:
                 _log.info(

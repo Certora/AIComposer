@@ -33,7 +33,7 @@ _STATUS_KIND: dict[str, str] = {
     GroupStatus.VERIFIED.value:     "ok",
     GroupStatus.VIOLATED.value:     "bad",
     GroupStatus.PARTIAL.value:      "warn",
-    GroupStatus.INCONCLUSIVE.value: "muted",
+    GroupStatus.NO_RESULTS.value: "muted",
 }
 
 
@@ -308,7 +308,7 @@ def _render_header(report: AutoProverReport) -> str:
 
     group_chips = []
     for status in [GroupStatus.VERIFIED, GroupStatus.VIOLATED,
-                   GroupStatus.PARTIAL, GroupStatus.INCONCLUSIVE]:
+                   GroupStatus.PARTIAL, GroupStatus.NO_RESULTS]:
         n = group_counts.get(status.value, 0)
         if n:
             group_chips.append(f'<span class="count-chip">{_badge(status.value)} <strong>{n}</strong></span>')
