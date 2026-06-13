@@ -1,19 +1,44 @@
-* You have access to list_dir, get_file, and grep_file tools for primitive access to the project source code
-  * The pattern accepted by grep_file applies to the file *contents*, NOT the file names
+{#-
+  Shared guidance for the source-exploration tool family. Context variables (all optional):
+    source_tools_has_explorer     — agent also has the `code_explorer` sub-agent tool (default: true)
+    source_tools_artifact_warning — include the "don't read non-code artifacts" rule (default: true)
+-#}
+{%- set _explorer = source_tools_has_explorer | default(true) -%}
+{%- set _artifact_warning = source_tools_artifact_warning | default(true) -%}
+* You have access to `list_files`, `get_file`, and `grep_files` tools for primitive access to the project source code
+  * The pattern accepted by `grep_files` applies to the file *contents*, NOT the file names
   * The pattern is interpreted by the Python regex library. Escape (or not) special characters as appropriate
   * `get_file` accepts an optional line `range` argument, but by default you MUST read the entire file (omit the
     `range`). Only pass a `range` when the file is exceptionally large AND you are certain no other part of it
     will ever be relevant — partial reads routinely miss context (imports, related definitions, modifiers, etc.)
     and force wasteful re-reads. When in doubt, read the whole file.
-* When you need an open-ended, broad question about the application/code answered, prefer delegating
-  to the code explorer tool.
-* Do *NOT* use the code explorer tool to answer trivial questions you can answer via the filesystem
+{% if _artifact_warning -%}
+* IMPORTANT: Do not use the source tools to look at non-code artifacts like extant prover configurations, .json reports, or
+  existing CVL specification files. These may be completely unrelated to your current task, and you have *no way* of knowing
+  whether they are relevant to you or not.
+{% endif -%}
+{% if _explorer -%}
+* When you need an open-ended, broad question about the application/code answered — one whose answer must be
+  *synthesized* from multiple places in the codebase — prefer delegating to the code explorer tool.
+* Do *NOT* use the code explorer tool for retrieval. If the question names the thing to look at, it is
+  retrieval: grep for the name and read the definition yourself. In particular, "show me the X function" and
+  "what does the Y function do" are NOT code explorer questions — they are answered by reading a single
+  definition you already know how to find, and delegating them is strictly worse than reading: slower, and the
+  answer comes back as a paraphrase instead of the actual code.
   Good example: "How does the Pool Manager contract interact with the Escrow holder?" (open ended, but specific)
   Bad Example: "How does the application work?" (unspecific)
-  Bad Example: "What is the implementation of PoolManager's `adjustRate` function?" (grep for the function name and
-  then use `get_file`)
+  Bad Example: "What is the implementation of PoolManager's `adjustRate` function?" (retrieval: grep, then `get_file`)
+  Bad Example: "What does `settleEpoch` do?" (retrieval: read its definition)
 * Do NOT ask the code explorer tool any questions about the following:
   * Your current task
   * The behavior of other tools available to you
   * CVL features
   * Questions about non-code artifacts ("explain this configuration file", etc.)
+* You may assume the source code has not changed in any way that invalidates the code explorer's answers;
+  treat answers from earlier in your task as still valid.
+* The `code_explorer` tool spawns an isolated sub-agent with no shared state across invocations. Multiple
+  `code_explorer` calls issued in the same response run concurrently; issued in separate responses they run
+  sequentially with the LLM's own latency between each round. Any time you have several independent questions
+  to ask — whether an initial round of exploration or follow-ups prompted by what earlier answers revealed —
+  dispatch them all as parallel tool calls in a single response rather than one at a time.
+{% endif -%}

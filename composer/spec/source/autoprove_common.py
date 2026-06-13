@@ -2,11 +2,10 @@
 
 import argparse
 import hashlib
+import logging
 import pathlib
-import shlex
 import sys
 import uuid
-import os
 from contextlib import asynccontextmanager
 from typing import cast, AsyncIterator, Protocol, Callable, Awaitable
 
@@ -25,6 +24,7 @@ from composer.spec.context import (
     WorkflowContext, SourceCode,
 )
 from composer.spec.source.pipeline import run_autoprove_pipeline, AutoProveResult
+from composer.spec.source.common_pipeline import dump_token_usage
 from composer.prover.core import make_prover_options
 from composer.spec.source.source_env import build_source_env
 from composer.spec.agent_index import agent_index_config_from_env
@@ -36,6 +36,8 @@ from composer.io.thread_logging import thread_logger, DEFAULT_META_NS
 
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.io.multi_job import HandlerFactory
+
+_logger = logging.getLogger(__name__)
 
 def user_ns(
     *parts: str | tuple[str, ...]
@@ -60,7 +62,6 @@ class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cache_ns: str | None
     memory_ns: str | None
     cloud: bool
-    prover_extra_args: str | None
     interactive: bool
     threat_model: str
     recursion_limit: int
@@ -103,7 +104,6 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
     parser.add_argument("--cache-ns", default=None, help="Cache namespace (enables cross-run caching)")
     parser.add_argument("--memory-ns", default=None, help="Memory namespace (default: thread id)")
     parser.add_argument("--cloud", action="store_true", help="Run prover jobs in the cloud")
-    parser.add_argument("--prover-extra-args", default=None, help='Extra arguments forwarded to certoraRun as a quoted string (e.g. "--rule_sanity advanced --smt_timeout 600")')
     parser.add_argument("--interactive", action="store_true", help="Interactively refine the security properties after extraction")
     parser.add_argument("--threat-model", type=str, default=None, help="Path to a 'thread' model (text or pdf) with which to seed the property extraction process")
     parser.add_argument("--max-bug-rounds", type=int, default=3, help="Maximum number of bug-extraction rounds run per component during property analysis (default: 3)")
@@ -148,9 +148,15 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         ) as conns,
         PostgreSQLRAGDatabase.rag_context(model, args.rag_db) as rag_db,
         async_tool_context(),
-        thread_logger(conns.store, {
-            "root_thread_id": thread_id
-        }, user_ns(DEFAULT_META_NS), run_id=summary.run_id)
+        thread_logger(
+            conns.store,
+            {"root_thread_id": thread_id},
+            user_ns(DEFAULT_META_NS),
+            run_id=summary.run_id,
+            # Persist final token usage into RunMeta.tags at run close (totals
+            # known only once the pipeline is done). Mirrors token_usage.json.
+            finalize_tags=lambda: {"token_usage": summary.token_usage_summary()},
+        )
     ):
         # Source-code agent caches are always per-user — the conventional
         # ``user_data_ns(uid)`` prefix lives directly in the ns we pass
@@ -198,10 +204,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
             memory_namespace=memory_ns,
         )
 
-        prover_opts = make_prover_options(
-            cloud=args.cloud,
-            user_extra_args=shlex.split(args.prover_extra_args) if args.prover_extra_args else [],
-        )
+        prover_opts = make_prover_options(cloud=args.cloud)
 
         async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
             return await run_autoprove_pipeline(
@@ -217,4 +220,14 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
                     max_bug_rounds=args.max_bug_rounds,
                 )
 
-        yield runner
+        try:
+            yield runner
+        finally:
+            # Dump final LLM token usage for the run (success or failure). Single
+            # choke point both console and TUI entry points pass through, with
+            # project_root in scope and the summary fully populated. Guarded so a
+            # diagnostics-dump failure can never mask the pipeline's own outcome.
+            try:
+                dump_token_usage(str(project_root), summary)
+            except Exception:
+                _logger.exception("failed to dump token usage")

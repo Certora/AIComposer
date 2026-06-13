@@ -146,8 +146,8 @@ async def get_invariant_formulation(
     feedback_graph = bind_standard(
         env.builder,
         FeedbackST,
-    ).with_sys_prompt(
-        "You are a methodical formal verification expert working at Certora, Inc."
+    ).with_sys_prompt_template(
+        "invariant_judge_system_prompt.j2"
     ).with_initial_prompt_template(
         "invariant_judge_prompt.j2",
         contract_spec=source,
@@ -208,7 +208,9 @@ async def get_invariant_formulation(
         doc="The structural/state invariants you identified",
         validator=_validate_invariants,
     ).with_sys_prompt_template(
-        "cvl_summarization_system_prompt.j2"
+        # The formulation agent only has source tools — suppress the partial's
+        # CVL researcher/manual guidance (those tools are not bound here).
+        "source_cvl_system_prompt.j2", with_cvl_tools=False
     ).inject(
         lambda g: bound_template.render_to(g.with_initial_prompt_template)
     ).with_tools(

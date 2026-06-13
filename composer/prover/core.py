@@ -41,10 +41,10 @@ DEFAULT_GLOBAL_TIMEOUT: float = 1200.0
 @dataclass
 class ProverOptions:
     extra_args: list[str] = field(default_factory=list)
-    #: Whether prover runs go to the cloud. An explicit input (from --cloud /
-    #: --local_prover), NOT inferred from a --server flag — the cloud server is
-    #: derived from the env (POU cloud_server_for_env) only when cloud.
-    cloud: bool = False
+
+    @property
+    def cloud(self) -> bool:
+        return "--server" in self.extra_args
 
     @property
     def global_timeout(self) -> float:
@@ -54,24 +54,16 @@ class ProverOptions:
         return float(self.extra_args[idx + 1])
 
 
-def make_prover_options(
-    *,
-    cloud: bool,
-    user_extra_args: list[str],
-) -> ProverOptions:
-    """Resolve user-supplied extras with cloud defaults; user flags take precedence.
-
-    `cloud` is recorded explicitly. We do NOT inject `--server` here: the cloud
-    server is derived from the deployment env (`AISS_ENV`) at the point each
-    prover/ autosetup run is launched, so login, submission and verdict-fetch all
-    target the same environment. A user-supplied `--server` still passes through.
-    """
-    has_timeout = "--global_timeout" in user_extra_args
-
-    extras = list(user_extra_args)
-    if cloud and not has_timeout:
-        extras = ["--global_timeout", str(int(DEFAULT_GLOBAL_TIMEOUT))] + extras
-    return ProverOptions(extra_args=extras, cloud=cloud)
+def make_prover_options(*, cloud: bool) -> ProverOptions:
+    """Build prover options. Cloud runs get a default global timeout and the
+    certoraRun ``--server`` resolved from the deployment env."""
+    extras: list[str] = []
+    if cloud:
+        extras = [
+            "--global_timeout", str(int(DEFAULT_GLOBAL_TIMEOUT)),
+            "--server", cloud_server_for_env(),
+        ]
+    return ProverOptions(extra_args=extras)
 
 @dataclass
 class ProverReport:
@@ -186,11 +178,6 @@ async def run_prover(
 
     # 1. Build effective args. extra_args is already fully resolved by make_prover_options.
     effective_args = args + prover_opts.extra_args
-    # Cloud runs need a --server. Derive it from the deployment env (AISS_ENV via
-    # POU) instead of hardcoding one, so login / submission / verdict-fetch all
-    # target the same environment. A caller-supplied --server still wins.
-    if prover_opts.cloud and "--server" not in effective_args:
-        effective_args = ["--server", cloud_server_for_env()] + effective_args
 
     # 2. Notify callback
     await callbacks.on_prover_run(effective_args)

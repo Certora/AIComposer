@@ -23,14 +23,6 @@ Follow this procedure exactly:
 Gather information about the Web3 application and its relationship with the properties above.
 Use this information to inform how you plan to formalize them.
 
-When collecting broad information about the source code (e.g., "where is X modified?", "what entry points are responsible
-for implementing feature Y") prefer using the code exploration tool instead of exploring the source code directly.
-
-Do NOT use the exploration tool to answer questions like "What is the type signature of X" or "what is the implementation of function F",
-these are better answered by "reading" the code directly.
-
-IMPORTANT: you may assume that the source code has not changed in any way that invalidates the exploration tool's answers.
-
 ## Step 1
 
 Write a single CVL (Certora Verification Language) specification which formalizes all of the properties listed above.
@@ -38,11 +30,6 @@ Each property should have its own rule(s) or invariant(s) in the spec.
 
 When writing your specification, you may consult the implementation of the application to, e.g., understand the role
 of external arguments, etc.
-
-If you are facing a specific issue, use the knowledge base articles to search for help.
-
-When you need to understand CVL syntax, patterns, or language features — especially for
-non-obvious constructs or features — delegate to the cvl_research tool rather than searching the manual yourself.
 
 Before writing your specification, use extended thinking to analyze your collected information.
 
