@@ -252,7 +252,6 @@ def _mini_report() -> AutoProverReport:
     return AutoProverReport(
         contract_name="Counter",
         prover_links={"Increment": "https://prover.example/run/abc"},
-        property_formulations=[prop],
         rules=[CVLRule(name="increment_increases_count", component="Increment",
                        spec_file="autospec_Increment.spec", properties=[prop],
                        status=NodeStatus.VERIFIED, line=10,
@@ -272,6 +271,20 @@ def test_render_html_contains_slug_links_and_appendix():
     assert "increment_increases_count" in h  # appendix "implemented by"
     assert "count_increases" in h            # property title in appendix
     assert "VERIFIED" in h
+
+
+def test_render_appendix_lists_unimplemented_properties():
+    orphan = PropertyFormulationWithComponent(component="C", title="orphan_prop",
+                                              methods=["m"], sort="safety_property",
+                                              description="no rule implements this")
+    rep = AutoProverReport(
+        contract_name="C", rules=[], implemented_properties=[],
+        unimplemented_properties=[orphan],
+        coverage=CoverageReport(total_property_formulations=1, total_rules=0, total_groups=0,
+                                rules_per_group_min=0, rules_per_group_max=0, rule_coverage_complete=True),
+    )
+    h = render_html(rep)
+    assert "orphan_prop" in h and "(no rule mapping)" in h
 
 
 # ---------------------------------------------------------------------------
@@ -310,3 +323,27 @@ async def test_build_empty_grouping_falls_back_and_persists(tmp_path, monkeypatc
     report_json = tmp_path / "certora" / "ap_report" / "report.json"
     assert report_json.is_file()
     assert not (tmp_path / "certora" / "ap_report" / "canonical_map.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_build_surfaces_unimplemented_properties(tmp_path, monkeypatch):
+    """A property no rule implements lands in unimplemented_properties; mapped
+    properties are not duplicated there (they're embedded in rules[].properties)."""
+    from composer.spec.source.report.schema import GroupingResult, ImplementedPropertyDraft
+
+    certora = tmp_path / "certora"
+    _write_props(certora, "autospec_Increment", [_prop("p1", "d1"), _prop("p2", "d2")])
+    _write_rules(certora, "autospec_Increment", {"p1": ["r1"]})  # p2 has no rule
+    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED)]})
+
+    async def _llm(**kw):
+        return GroupingResult(groups=[
+            ImplementedPropertyDraft(slug="g", title="G", description="d", rule_names=["r1"])])
+    monkeypatch.setattr(build, "call_grouping_llm", _llm)
+
+    report = await build.run_autoprove_report(
+        project_root=str(tmp_path), contract_name="C",
+        components=[ComponentInput("Increment", "autospec_Increment", "L1")], llm=object(), api=api,
+    )
+    assert [(p.component, p.title) for p in report.unimplemented_properties] == [("Increment", "p2")]
+    assert report.coverage.total_property_formulations == 2  # both still counted

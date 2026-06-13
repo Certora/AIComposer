@@ -334,7 +334,7 @@ def _render_header(report: AutoProverReport) -> str:
 <header class="report-head">
   <h1>Formal verification report — {html.escape(report.contract_name)}</h1>
   <div class="subtitle">
-    {len(report.property_formulations)} property formulations &middot;
+    {report.coverage.total_property_formulations} property formulations &middot;
     {len(report.rules)} CVL rules &middot;
     {len(report.implemented_properties)} implemented properties
   </div>
@@ -413,15 +413,20 @@ def _render_appendix(report: AutoProverReport) -> str:
         for prop in r.properties:
             rules_by_ref[(prop.component, prop.title)].append(r)
 
-    by_component: dict[str, list[PropertyFormulationWithComponent]] = defaultdict(list)
-    for p in report.property_formulations:
-        by_component[p.component].append(p)
+    # Full catalog: properties embedded in rules + those no rule implements,
+    # deduped by (component, title).
+    by_component: dict[str, dict[str, PropertyFormulationWithComponent]] = defaultdict(dict)
+    for r in report.rules:
+        for prop in r.properties:
+            by_component[prop.component].setdefault(prop.title, prop)
+    for p in report.unimplemented_properties:
+        by_component[p.component].setdefault(p.title, p)
 
+    total = sum(len(props) for props in by_component.values())
     parts = ['<details class="appendix"><summary>Property formulation index — '
-             f'{len(report.property_formulations)} properties across '
-             f'{len(by_component)} components</summary>']
+             f'{total} properties across {len(by_component)} components</summary>']
     for comp in sorted(by_component):
-        props = sorted(by_component[comp], key=lambda p: p.title)
+        props = sorted(by_component[comp].values(), key=lambda p: p.title)
         parts.append(f'<h3>{html.escape(comp)} ({len(props)} properties)</h3>')
         parts.append('<table>')
         parts.append('<thead><tr><th>Property</th><th>Sort</th><th>Description</th>'

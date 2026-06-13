@@ -38,6 +38,11 @@ async def run_autoprove_report(
     rule_status = {r.name: r.status for r in rules}
     rules_for_grouping = build_rules_for_grouping(rules)
 
+    # Mapped properties are embedded in `rules[].properties`; surface only the
+    # inferred properties that no rule implements (a coverage gap).
+    mapped = {(p.component, p.title) for r in rules for p in r.properties}
+    unimplemented = [p for p in properties if (p.component, p.title) not in mapped]
+
     # The grouping may fail three ways; each degrades to the single 'general'
     # bucket so the report always has an implemented-properties section: (a) the
     # LLM call raises, (b) validation rejects a structurally-invalid grouping,
@@ -66,11 +71,11 @@ async def run_autoprove_report(
 
     report = AutoProverReport(
         contract_name=contract_name,
-        run_timestamp_utc=timestamp_utc or datetime.now(timezone.utc).isoformat(),
+        run_timestamp_utc=datetime.now(timezone.utc).isoformat(),
         prover_links={c.name: c.prover_link for c in components if c.prover_link},
-        property_formulations=properties,
         rules=rules,
         implemented_properties=implemented,
+        unimplemented_properties=unimplemented,
         coverage=coverage,
     )
 

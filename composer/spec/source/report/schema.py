@@ -6,8 +6,8 @@
 `PropertyFormulation` so the report speaks the same property vocabulary as the
 analysis phase. Bump `schema_version` on a breaking change.
 
-The report is a **per-run snapshot**: slugs and statuses describe only the
-current run.
+The report is a **per-run snapshot**: it describes only the current run, with no
+guarantee that property/group names (slugs) stay stable across runs.
 
 Two distinct property granularities (see the types): a
 `PropertyFormulationWithComponent` is one granular per-component formulation
@@ -119,9 +119,11 @@ class AutoProverReport(BaseModel):
     run_timestamp_utc: str | None = None
     #: component name (or "Structural Invariants") -> prover run link/path
     prover_links: dict[str, str] = Field(default_factory=dict)
-    property_formulations: list[PropertyFormulationWithComponent]
     rules: list[CVLRule]
     implemented_properties: list[ImplementedProperty]
+    #: Inferred properties that NO CVL rule implements (a coverage gap). Mapped
+    #: properties aren't repeated here — they're embedded in `rules[].properties`.
+    unimplemented_properties: list[PropertyFormulationWithComponent] = Field(default_factory=list)
     coverage: CoverageReport
 
 
