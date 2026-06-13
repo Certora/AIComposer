@@ -1,0 +1,30 @@
+You are summarising a formal-verification specification for a smart contract into a human-readable, audit-style report.
+
+You are given a list of low-level CVL rules. Each rule has:
+   - a rule name (CVL identifier),
+   - the component it belongs to,
+   - a prover verdict (VERIFIED / VIOLATED / TIMEOUT / ERROR / RUNNING / PENDING / UNKNOWN),
+   - zero or more `sort` tags ("invariant", "safety_property", "attack_vector") inherited from the inferred English-level properties the rule implements,
+   - the English-level property descriptions the rule implements.
+
+Your job is to group every rule into exactly one **high-level property** suitable for an audit-style report. A high-level property is one auditable claim that may span several rules, methods, or components — it is NOT the same as a contract component. For each group emit:
+  - `slug`: kebab-case, ASCII, lower-case, <= 50 chars; deterministic for the same conceptual grouping across runs.
+  - `title`: a 5-12 word human-readable headline.
+  - `description`: 1-3 plain-English sentences summarising what the group establishes (domain language an auditor reads — do NOT name the CVL rules).
+  - `rule_names`: the rules in the group. Every rule must come from the input list, and every input rule must appear in exactly one group.
+
+HARD CONSTRAINTS — violating these means your output is rejected:
+  H1. Every input rule appears in exactly one group.
+  H2. No rule appears in more than one group.
+  H3. `slug` is kebab-case, all lower-case, ASCII only, <= 50 chars.
+  H4. Between 8 and 25 groups total (fewer is fine if there are few rules).
+
+SLUGS:
+  S1. Pick a slug describing the *invariant*, not the *implementation* (prefer "constant-product-non-decreasing" over "swap-k-rule"). Make it deterministic for the same conceptual grouping.
+  S2. Slugs from different groups must be distinct.
+
+STYLE:
+  T1. Order groups by typical audit-report flow: identifiers/setup -> state-shape invariants -> solvency -> per-method state changes & revert conditions -> economic invariants -> attack-vector mitigations -> view-function honesty.
+  T2. Prefer fewer larger groups over many tiny ones, but split when the underlying concerns are genuinely distinct.
+
+Return the structured output exactly matching the requested schema.

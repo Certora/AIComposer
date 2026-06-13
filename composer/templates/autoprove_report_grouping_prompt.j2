@@ -1,0 +1,9 @@
+Contract: {{ contract_name }}
+
+Rules to group ({{ rules | length }} total):
+{% for r in rules %}
+- {{ r.name }}  [component: {{ r.component }}; verdict: {{ r.status }}{% if r.sorts %}; sorts: {{ r.sorts | join(", ") }}{% endif %}]
+{%- for d in r.property_descriptions %}
+    * {{ d }}
+{%- endfor %}
+{% endfor %}
