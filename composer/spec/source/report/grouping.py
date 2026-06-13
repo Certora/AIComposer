@@ -22,7 +22,7 @@ from composer.spec.source.report.schema import (
 )
 
 FALLBACK_SLUG = "general"
-FALLBACK_TITLE = "General (fallback grouping)"
+FALLBACK_TITLE = "General"
 
 
 def aggregate_status(statuses: Iterable[NodeStatus]) -> GroupStatus:
