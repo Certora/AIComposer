@@ -7,8 +7,7 @@
 analysis phase. Bump `schema_version` on a breaking change.
 
 The report is a **per-run snapshot**: slugs and statuses describe only the
-current run. There is no cross-run identity (the canonical map was removed) —
-cross-run reuse is delegated to composer's `--cache-ns`, not the report.
+current run.
 
 Two distinct property granularities (see the types): a
 `PropertyFormulationWithComponent` is one granular per-component formulation

@@ -32,7 +32,6 @@ async def run_autoprove_report(
     components: list[ComponentInput],
     llm: BaseChatModel,
     api: ProverOutputAPI | None = None,
-    timestamp_utc: str | None = None,
 ) -> AutoProverReport:
     """Build and persist the report. Returns the in-memory `AutoProverReport`."""
     properties, rules = collect(project_root, components, api=api)
