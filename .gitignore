@@ -14,3 +14,4 @@ emv-*
 .certora-*
 composer/testing/**/certora/
 local/
+test_scenarios/**/certora/

@@ -5,11 +5,14 @@ contract that implements the interface and compiles.
 </background>
 
 <interface>
-The interface to implement is:
+The interface to implement is `{{ interface_name }}`, laid out in the project at `{{ interface_path }}`.
+Its source is:
 
 ```solidity
 {{ the_interface }}
 ```
+
+You may also read it directly via your source tools (`get_file("{{ interface_path }}")`) if needed.
 </interface>
 
 <task>
@@ -17,16 +20,38 @@ Given the interface file, generate a minimal stub implementation.
 
 Requirements:
 - Use pragma solidity ^0.{{ solc_version }};
-- Do *NOT* inline the interface, import it from "interfaces/{{interface_name}}.sol"
-- Declare a suitably named contract that implements the interface
+- Do *NOT* inline the interface, import it from `"{{ interface_path }}"` (use that exact path in
+  your import statement, it is resolved relative to the project root as required by Solidity).
 - Implement all interface functions with empty bodies (return default values as needed)
 - Use parameter names in all function signatures, even if unused
 - Do NOT add any storage variables — those will be added later by the verification pipeline
 
+### Contract identifier
+
+The contract you declare in the stub MUST be named exactly `{{ solidity_identifier }}`. Use it
+verbatim — the downstream pipeline binds to this identifier. Emit `{{ solidity_identifier }}`
+both as the contract declaration's name and as the `solidity_identifier` field of your result.
+
+Correct: `contract {{ solidity_identifier }} is {{ interface_name }} { ... }`
+
+### Choosing the stub file path
+
+{% if agent_chooses_path %}
+You must choose a project-relative path for the stub file. Before deciding, use your source tools
+(`list_files`, `get_file`, `grep_files`) to inspect the existing project layout and follow
+whatever convention the codebase already uses for contract implementations — for example an
+existing `src/`, `contracts/`, or `src/contracts/` directory. The path must end in `.sol` and the
+basename MUST be `{{ solidity_identifier }}.sol`. If the project has no existing convention, place
+the stub at `src/contracts/{{ solidity_identifier }}.sol`.
+{% else %}
+The stub file location is assigned automatically — you do not need to choose a path. Focus on
+the stub content; the path will be populated from `{{ solidity_identifier }}`.
+{% endif %}
+
 ## Deliver
 
-Output the complete Solidity stub source code and your chosen contract identifier using the result tool.
-The stub must compile successfully with solc{{ solc_version }}.
+Output the complete Solidity stub source code using the result tool. The stub must compile
+successfully with solc{{ solc_version }}.
 </task>
 
 <guidance>

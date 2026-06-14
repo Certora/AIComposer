@@ -20,6 +20,7 @@ from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.workflow.services import create_llm, standard_connections
 
+from composer.spec.system_model import SolidityIdentifier
 from composer.spec.context import (
     WorkflowContext, SourceCode,
 )
@@ -170,7 +171,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         system_doc = SourceCode(
             content=content,
             project_root=str(project_root),
-            contract_name=contract_name,
+            contract_name=SolidityIdentifier(contract_name),
             relative_path=relative_path,
             forbidden_read=FS_FORBIDDEN_READ,
         )

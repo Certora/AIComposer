@@ -1,25 +1,28 @@
 
 <stub_tools>
-You have access to a shared verification stub — a minimal Solidity contract used as the
-verification target. The stub starts with only the interface implementation and grows as
-property agents request storage variables.
+Stubs start as a minimal interface implementation and grow as property agents request storage
+variables. The stub fleet is shared across all spec-authoring agents, so any field you add on
+behalf of your own spec may be reused by another agent, and vice versa. Two dedicated tools
+interact with the stubs:
 
-Available tools:
-- `read_stub`: Read the current stub source code. Use this to understand what storage
-  variables are available for your specification.
-- `request_stub_field`: Request a new storage variable. Describe what you need
-  (e.g., "a mapping to track per-user deposit amounts"). The registry will either
-  return an existing field that serves the same purpose or create a new one.
-  Always use the returned field name in your CVL specification.
-- `advisory_typecheck`: Run the CVL typechecker on the current spec (from state) against
-  the current stub. Use this after writing your spec via `put_cvl` / `put_cvl_raw` to
-  catch type errors before attempting to publish or receive feedback. Takes no arguments.
+- `request_stub_field(contract_identifier, purpose)`: Request a storage variable on a contract's stub.
+  Describe what you need (e.g., "a mapping to track per-user deposit amounts"). The registry will
+  either return an existing field that serves the same purpose or add a new one. Pass your own
+  contract's Solidity identifier to grow your own stub, or another contract's Solidity identifier
+  when your spec needs to reason about state on a dependency. Always use the returned field name
+  in your CVL specification.
+  You may *NOT* use this tool to request any change to the stub besides a new storage field.
+- `advisory_typecheck`: Run the CVL typechecker on the current spec (from state) against the
+  current stub fleet. Use this after writing your spec via `put_cvl` / `put_cvl_raw` to catch type
+  errors before attempting to publish or receive feedback. Takes no arguments.
 
 ## Intended Use
 
-1. Before writing CVL, read the stub to see available fields
-2. If you need a storage variable not in the stub, use `request_stub_field`
-3. Write your CVL using the field names from the stub
+1. Before writing CVL that references a contract's state, `get_file` its stub to see which fields
+   exist. Use `list_files` first if you're unsure which stubs exist.
+2. If you need a storage variable that isn't already present on the relevant contract's stub,
+   call `request_stub_field` for that contract.
+3. Write your CVL using the field names from the stubs (e.g., `theOther.fieldName`).
 
 **Important**: Do NOT try to request `constant` fields; Solidity `constant` are compile time
 constants which are erased after compilation. The Prover operates on the compiled bytecode, and thus

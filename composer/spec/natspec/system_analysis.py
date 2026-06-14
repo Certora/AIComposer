@@ -1,40 +1,38 @@
-from typing import NotRequired, Protocol
-
-
-from graphcore.graph import MessagesState, FlowInput
-from langchain_core.tools import BaseTool
-
+from typing import Any
 
 from composer.spec.context import (
     WorkflowContext, CacheKey,
     SystemDoc
 )
-from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.system_model import Application
-from composer.spec.tool_env import BasicAgentTools
+from composer.spec.natspec.task_description import MentalModel
+from composer.spec.system_model import NatspecApplication
 from composer.spec.system_analysis import run_component_analysis as wrapped_analysis
+from composer.spec.service_host import ServiceHost
 
-
-SOURCE_ANALYSIS_KEY = CacheKey[None, Application]("source-analysis")
 
 DESCRIPTION = "Component analysis"
 
+def source_analysis_key[A: NatspecApplication](
+    s: MentalModel[A, Any, Any]
+) -> CacheKey[None, A]:
+    return CacheKey[None, A]("source-analysis-" + s.model_ty.__name__)
 
-class AnalysisEnv(BasicAgentTools, Protocol):
-    @property
-    def system_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
-
-async def run_component_analysis(
+async def run_component_analysis[A: NatspecApplication](
     context: WorkflowContext[None],
     input: SystemDoc,
-    tools: AnalysisEnv
-) -> Application | None:
-    """Analyze application components from a system doc and optionally source code."""
+    tools: ServiceHost,
+    mental_model: MentalModel[A, Any, Any],
+) -> A | None:
+    """Analyze application components from a system doc and optionally source code.
+
+    The concrete application subtype to produce (``Application`` for greenfield,
+    ``FromSourceApplication`` for the from-source workflow) is taken from
+    ``mental_model.model_ty``.
+    """
     return await wrapped_analysis(
-        ty=Application,
-        child_ctxt=context.child(SOURCE_ANALYSIS_KEY),
+        ty=mental_model.model_ty,
+        child_ctxt=context.child(source_analysis_key(mental_model)),
         env=tools,
         extra_input=[],
-        input=input,
+        input=input
     )
