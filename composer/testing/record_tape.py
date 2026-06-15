@@ -94,7 +94,6 @@ class TapeRecorder:
         self.out_path = out_path
         # task_id -> ordered list of recorded AIMessages.
         self.lanes: dict[str, list[AIMessage]] = {}
-        self._dumped = False
 
     def record(self, response: BaseMessage) -> None:
         if not isinstance(response, AIMessage):
@@ -112,9 +111,6 @@ class TapeRecorder:
         self.lanes.setdefault(task_id, []).append(response)
 
     def dump(self) -> None:
-        if self._dumped:
-            return
-        self._dumped = True
         total = sum(len(v) for v in self.lanes.values())
         if total == 0:
             print(
