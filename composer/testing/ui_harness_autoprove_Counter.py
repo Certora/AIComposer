@@ -1418,7 +1418,7 @@ _AUTOPROVE_TAPE: dict[str, list[BaseMessage]] = {
 # ``run_task`` task_id, and within a lane responses are consumed in order.
 
 
-def get_autoprove_llm() -> HarnessFakeLLM:
+def get_autoprove_Counter_llm() -> HarnessFakeLLM:
     """Return a fresh fake LLM loaded with the autoprove counter tape.
 
     Each call returns an independent instance with its own per-lane cursors, so
@@ -1441,7 +1441,7 @@ def install_harness_tape() -> HarnessFakeLLM:
     Returns the fake instance so the caller can inspect ``.i`` /
     ``.responses`` for debugging.
     """
-    fake = get_autoprove_llm()
+    fake = get_autoprove_Counter_llm()
     import composer.spec.agent_index as a_ind
     a_ind._UNSAFE_DISABLE_CACHE = True
 
@@ -1458,7 +1458,7 @@ __all__ = [
     "COMPONENT_CVL",
     "GOOD_INV_CVL",
     "SUBTLE_INV_CVL",
-    "get_autoprove_llm",
+    "get_autoprove_Counter_llm",
     "install_harness_tape",
 ]
 

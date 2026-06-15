@@ -22,3 +22,13 @@ if (_tape := os.environ.get("COMPOSER_TEST_TAPE")):
     import importlib
     _mod = importlib.import_module(f"composer.testing.ui_harness_{_tape}")
     _mod.install_harness_tape()
+elif (_record := os.environ.get("COMPOSER_RECORD_TAPE")):
+    # Record a real run into a replayable tape (inverse of COMPOSER_TEST_TAPE).
+    # Optional COMPOSER_RECORD_OUT overrides the default
+    # composer/testing/ui_harness_<name>.py output path.
+    from composer.testing.record_tape import install_recorder
+    install_recorder(
+        _record,
+        os.environ.get("COMPOSER_RECORD_OUT"),
+        no_thinking=bool(os.environ.get("COMPOSER_RECORD_NO_THINKING")),
+    )

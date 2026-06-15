@@ -3,7 +3,7 @@
 These strings are a contract between the orchestration that sets them on
 ``TaskInfo`` (``pipeline.py`` / ``common_pipeline.py``) and anything that keys
 off them — notably the fake-LLM tape lanes in
-``composer/testing/ui_harness_autoprove.py``, which route scripted responses by
+``composer/testing/ui_harness_autoprove_Counter.py``, which route scripted responses by
 task_id. Keeping the strings (and the per-component format) here means a rename
 is a single edit instead of a silent desync that only fails at smoke-run time.
 """
