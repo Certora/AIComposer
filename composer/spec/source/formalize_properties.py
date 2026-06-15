@@ -25,7 +25,7 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey, Properties
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import HarnessedApplication
-from composer.spec.prop import PropertyFormulation
+from composer.spec.prop import PropertyFormulation, PropertyId
 from composer.spec.gen_types import TypedTemplate
 from composer.spec.util import string_hash
 from composer.spec.source.known_properties import KnownProperties, KnownProperty
@@ -41,13 +41,13 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class FormalizedProperty(BaseModel):
-    property_id: str = Field(description="The exact property_id of a known property from the listing")
+    property_id: PropertyId = Field(description="The exact property_id of a known property from the listing")
     component_name: str = Field(description="The exact name of a component of the main contract this property maps to")
     methods: list[str] = Field(description="The external entry points of that component involved in the property (may be empty for a pure state invariant)")
 
 
 class UnmatchedProperty(BaseModel):
-    property_id: str = Field(description="The exact property_id of a known property that could not be mapped")
+    property_id: PropertyId = Field(description="The exact property_id of a known property that could not be mapped")
     reason: str = Field(description="A concrete explanation of why this property could not be mapped to any component")
 
 

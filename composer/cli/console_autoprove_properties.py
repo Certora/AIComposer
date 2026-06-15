@@ -7,6 +7,7 @@ import composer.bind as _
 from composer.diagnostics.timing import RunSummary
 from composer.ui.autoprove_console import AutoProveConsoleHandler
 from composer.spec.source.autoprove_common import _properties_entry_point
+from composer.spec.source.common_pipeline import Unmatched
 
 
 # ---------------------------------------------------------------------------
@@ -33,7 +34,11 @@ async def _main() -> int:
             print(f"  UNCOVERED PROPERTIES: {len(result.uncovered)} input "
                   "propert(y/ies) did NOT result in a verified rule:")
             for u in result.uncovered:
-                where = u.component if u.component != "<unmatched>" else "unmatched (no component)"
+                where = (
+                    "unmatched (no component)"
+                    if isinstance(u.reason, Unmatched)
+                    else u.reason.feat.component.name
+                )
                 print(f"    - {u.property_id} [{where}]: {u.reason}")
             print("  See certora/properties/uncovered_properties.json")
             print(f"  {'!' * 56}")

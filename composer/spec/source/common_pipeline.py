@@ -17,7 +17,7 @@ from composer.spec.context import (
 )
 from composer.spec.util import string_hash, ensure_dir
 from composer.spec.prop_inference import run_property_inference
-from composer.spec.prop import PropertyFormulation
+from composer.spec.prop import PropertyFormulation, PropertyId
 from composer.spec.gen_types import (
     CVLResource, CERTORA_DIR, SPECS_DIR, AUTOPROVE_INTERNAL_DIR, under_project,
 )
@@ -119,12 +119,55 @@ def _batch_cache_key(props: list[PropertyFormulation]) -> CacheKey[ComponentGrou
     return CacheKey(string_hash(combined))
 
 @dataclass
+class Unmatched:
+    """The formalize phase could not map this property to any component."""
+    reason: str
+
+    def __str__(self) -> str:
+        return self.reason
+
+
+@dataclass
+class Skipped:
+    """The CVL-generation agent explicitly skipped this property."""
+    feat: ContractComponentInstance
+    reason: str
+
+    def __str__(self) -> str:
+        return f"skipped: {self.reason}"
+
+
+@dataclass
+class BatchGaveUp:
+    """The component's whole CVL batch gave up; this property went down with it."""
+    feat: ContractComponentInstance
+    reason: str
+
+    def __str__(self) -> str:
+        return f"batch gave up: {self.reason}"
+
+
+@dataclass
+class Errored:
+    """CVL generation raised; the component produced no spec."""
+    feat: ContractComponentInstance
+    error: str
+
+    def __str__(self) -> str:
+        return f"exception: {self.error}"
+
+
+# Why a property is uncovered, carrying only the fields relevant to that shape
+# (the component is meaningless for an unmatched property, so it is absent there).
+type UncoveredReason = Unmatched | Skipped | BatchGaveUp | Errored
+
+
+@dataclass
 class UncoveredProperty:
     """An input property that did not result in a verified rule. Surfaced to the
     user (warn + dump) so coverage is tracked per ``property_id`` end-to-end."""
-    component: str
-    property_id: str          # == PropertyFormulation.title
-    reason: str               # skip justification, "batch gave up: ...", or exception text
+    property_id: PropertyId   # == PropertyFormulation.title
+    reason: UncoveredReason
 
 
 @dataclass
@@ -343,22 +386,22 @@ async def generate_all_component_cvl(
     n_properties = 0
     for batch, result in zip(component_batches, generation_results):
         n_properties += len(batch.props)
-        component = batch.feat.component.name
+        feat = batch.feat
         if isinstance(result, BaseException):
-            failures.append(f"{component}: {result}")
+            failures.append(f"{feat.component.name}: {result}")
             # No spec produced: every property in this batch is uncovered.
             for prop in batch.props:
-                uncovered.append(UncoveredProperty(component, prop.title, f"exception: {result}"))
+                uncovered.append(UncoveredProperty(prop.title, Errored(feat, str(result))))
         elif isinstance(result, GaveUp):
-            failures.append(f"{component}: GAVE_UP: {result.reason}")
+            failures.append(f"{feat.component.name}: GAVE_UP: {result.reason}")
             for prop in batch.props:
-                uncovered.append(UncoveredProperty(component, prop.title, f"batch gave up: {result.reason}"))
+                uncovered.append(UncoveredProperty(prop.title, BatchGaveUp(feat, result.reason)))
         else:
             # GeneratedCVL: coverage of non-skipped properties is guaranteed by
             # validate_property_rules (cvl_generation.py); only explicit skips
             # leave a property uncovered.
             for s in result.skipped:
-                uncovered.append(UncoveredProperty(component, s.property_title, s.reason))
+                uncovered.append(UncoveredProperty(s.property_title, Skipped(feat, s.reason)))
 
     return AutoProveResult(
         n_components=len(component_batches),

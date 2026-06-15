@@ -27,6 +27,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from composer.spec.prop import PropertyId
+
 # Input accepts ``safety_property`` as an alias for ``attack_vector``; normalized
 # on load. Canonical sort matches ``PropertyFormulation.sort`` (prop.py).
 InputSort = Literal["invariant", "safety_property", "attack_vector"]
@@ -37,7 +39,7 @@ class KnownProperty(BaseModel):
 
     sort: InputSort
     property_desc: str = Field(min_length=1)
-    property_id: str = Field(min_length=1)
+    property_id: PropertyId = Field(min_length=1)
 
     @field_validator("sort")
     @classmethod

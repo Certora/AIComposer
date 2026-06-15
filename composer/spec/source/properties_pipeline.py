@@ -53,7 +53,7 @@ from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
 from composer.spec.source.common_pipeline import (
-    generate_all_component_cvl, AutoProveResult, UncoveredProperty,
+    generate_all_component_cvl, AutoProveResult, UncoveredProperty, Unmatched,
     dump_properties, dump_property_rules, _ComponentBatch,
 )
 from composer.spec.source.formalize_properties import formalize_properties, UnmatchedProperty
@@ -72,27 +72,21 @@ INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 def _dump_uncovered(
     project_root: str,
     known: KnownProperties,
-    formalize_unmatched: list[UnmatchedProperty],
-    cvl_uncovered: list[UncoveredProperty],
+    uncovered: list[UncoveredProperty],
 ) -> None:
-    """Write the single consolidated coverage report merging both sources:
+    """Write the consolidated coverage report
     ``certora/properties/uncovered_properties.json`` =
-    ``[{property_id, property_desc, stage, reason}]``."""
+    ``[{property_id, property_desc, component, reason}]``. ``component`` is
+    derived from the reason variant (formalize unmatched ⇒ no component)."""
     desc_by_id = {p.property_id: p.property_desc for p in known.properties}
-    payload: list[dict[str, str]] = []
-    for up in formalize_unmatched:
-        payload.append({
-            "property_id": up.property_id,
-            "property_desc": desc_by_id.get(up.property_id, ""),
-            "stage": "formalize",
-            "reason": up.reason,
-        })
-    for uc in cvl_uncovered:
+    payload: list[dict[str, str | None]] = []
+    for uc in uncovered:
+        component = None if isinstance(uc.reason, Unmatched) else uc.reason.feat.component.name
         payload.append({
             "property_id": uc.property_id,
             "property_desc": desc_by_id.get(uc.property_id, ""),
-            "stage": "cvl",
-            "reason": uc.reason,
+            "component": component,
+            "reason": str(uc.reason),
         })
     properties_dir = ensure_dir(under_project(project_root, CERTORA_DIR) / "properties")
     (properties_dir / "uncovered_properties.json").write_text(json.dumps(payload, indent=2))
@@ -261,20 +255,17 @@ async def run_properties_pipeline(
         )
 
     certora_dir = under_project(source_input.project_root, CERTORA_DIR)
+    uncovered = [
+        UncoveredProperty(property_id=up.property_id, reason=Unmatched(up.reason))
+        for up in unmatched
+    ]
 
     # If nothing matched, there is no CVL to generate: report the unmatched
     # properties as uncovered and stop here (instead of raising).
     if not component_batches:
         _logger.warning("No properties were mapped to a component; skipping CVL generation.")
-        _dump_uncovered(source_input.project_root, known_properties, unmatched, [])
-        return AutoProveResult(
-            n_components=0,
-            n_properties=0,
-            uncovered=[
-                UncoveredProperty(component="<unmatched>", property_id=up.property_id, reason=up.reason)
-                for up in unmatched
-            ],
-        )
+        _dump_uncovered(source_input.project_root, known_properties, uncovered)
+        return AutoProveResult(n_components=0, n_properties=0, uncovered=uncovered)
 
     # ------------------------------------------------------------------
     # Stage 1: structural-invariant CVL (writes invariants.spec, imported as
@@ -357,9 +348,6 @@ async def run_properties_pipeline(
     # Consolidate coverage: merge formalize-stage unmatched + CVL-stage uncovered
     # into the single report and the returned result.
     # ------------------------------------------------------------------
-    _dump_uncovered(source_input.project_root, known_properties, unmatched, result.uncovered)
-    result.uncovered.extend(
-        UncoveredProperty(component="<unmatched>", property_id=up.property_id, reason=up.reason)
-        for up in unmatched
-    )
+    result.uncovered.extend(uncovered)
+    _dump_uncovered(source_input.project_root, known_properties, result.uncovered)
     return result
