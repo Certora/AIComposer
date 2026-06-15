@@ -19,6 +19,7 @@ automatically).
 import argparse
 import asyncio
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -120,6 +121,72 @@ async def fetch_messages(thread_id: str) -> list[Any]:
     if tup is None:
         return []
     return list(tup.checkpoint.get("channel_values", {}).get("messages", []))
+
+
+# ------------------------- run-index access (run_id) -------------------------
+#
+# Newer runs are registered in a Postgres-backed run index (composer.io.run_index
+# / thread_logging) keyed by RunSummary.run_id. This lets us resolve a whole
+# run's threads from a run_id alone — no events.jsonl needed. The `ap-trail`
+# CLI (`ap-trail ls` / `view <run_id>` / `export <run_id>`) is the richer,
+# interactive view of the same data; this is the message-level companion.
+
+_RUN_ID_RE = re.compile(r"[0-9a-fA-F]{32}\Z")
+
+
+async def _get_store() -> Any:
+    _ensure_composer_import()
+    from composer.workflow.services import get_async_store
+    return await get_async_store()
+
+
+async def list_recent_runs(limit: int, uid: str | None) -> list[tuple[str, Any]]:
+    from composer.io.run_index import list_runs
+    store = await _get_store()
+    return await list_runs(store, limit=limit, uid=uid)
+
+
+async def fetch_run_catalog(run_id: str, uid: str | None) -> dict[tuple[str, ...], dict[str, Any]]:
+    """Build the same thread-catalog shape as ``walk_threads`` from a run_id,
+    using the run index. A thread with no ``from_tool_id`` is a top-level phase
+    execution; otherwise it's a subagent spawned by that tool call."""
+    from composer.io.run_index import list_threads_for_run
+    store = await _get_store()
+    threads = await list_threads_for_run(store, run_id, uid=uid)
+    if not threads:
+        raise RuntimeError(
+            f"No threads found for run_id {run_id!r}. List runs with "
+            f"`inspect_run.py runs` (or check the uid with --uid)."
+        )
+    by_path: dict[tuple[str, ...], dict[str, Any]] = {}
+    for order, (thread_run_id, meta) in enumerate(threads, start=1):
+        tool = meta.get("from_tool_id")
+        by_path[(thread_run_id,)] = {
+            "thread_id": meta["thread_id"],
+            "depth": 1 if tool is None else 2,
+            "parent": (f"tool:{tool}" if tool else None),
+            "description": meta.get("description"),
+            "order": order,
+        }
+    return by_path
+
+
+async def resolve_catalog(args: argparse.Namespace) -> tuple[dict[tuple[str, ...], dict[str, Any]], str]:
+    """Return ``(thread_catalog, source_label)`` from either ``--run-id`` /
+    a run_id passed positionally, or an events.jsonl path."""
+    run_id = getattr(args, "run_id", None)
+    log_path = getattr(args, "log_path", None)
+    if run_id is None and log_path and _RUN_ID_RE.match(log_path) and not Path(log_path).expanduser().exists():
+        run_id = log_path  # positional looks like a run_id, not a path
+    if run_id:
+        return await fetch_run_catalog(run_id, getattr(args, "uid", None)), f"run_id={run_id}"
+    if not log_path:
+        raise SystemExit(
+            "Provide an events.jsonl/.log/autoProve path, or a run_id "
+            "(positionally or via --run-id). Use `inspect_run.py runs` to list run_ids."
+        )
+    events = resolve_events_file(log_path)
+    return walk_threads(events), f"events={events}"
 
 
 # ------------------------- message helpers -------------------------
@@ -245,8 +312,7 @@ def _select_messages(msgs: list[Any], args: argparse.Namespace) -> Iterable[tupl
 # ------------------------- subcommands -------------------------
 
 async def cmd_summary(args: argparse.Namespace) -> int:
-    events = resolve_events_file(args.log_path)
-    threads = walk_threads(events)
+    threads, source = await resolve_catalog(args)
 
     top_executions = sorted(
         [(p, info) for p, info in threads.items() if info["depth"] == 1],
@@ -258,8 +324,8 @@ async def cmd_summary(args: argparse.Namespace) -> int:
     )
 
     print(f"# Run summary")
-    print(f"events file: {events}")
-    print(f"threads in events: {len(threads)} ({len(top_executions)} top-level execution(s), {len(subs)} subagent)")
+    print(f"source: {source}")
+    print(f"threads: {len(threads)} ({len(top_executions)} top-level execution(s), {len(subs)} subagent)")
 
     print(f"\n## Top-level execution(s)")
     if not top_executions:
@@ -321,8 +387,7 @@ def _default_thread_id(threads: dict[tuple[str, ...], dict[str, Any]]) -> str:
 
 
 async def cmd_messages(args: argparse.Namespace) -> int:
-    events = resolve_events_file(args.log_path)
-    threads = walk_threads(events)
+    threads, _ = await resolve_catalog(args)
     thread_id = args.thread or _default_thread_id(threads)
 
     msgs = await fetch_messages(thread_id)
@@ -353,8 +418,7 @@ async def cmd_messages(args: argparse.Namespace) -> int:
 
 
 async def cmd_message(args: argparse.Namespace) -> int:
-    events = resolve_events_file(args.log_path)
-    threads = walk_threads(events)
+    threads, _ = await resolve_catalog(args)
     thread_id = args.thread or _default_thread_id(threads)
 
     msgs = await fetch_messages(thread_id)
@@ -370,17 +434,47 @@ async def cmd_message(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_runs(args: argparse.Namespace) -> int:
+    runs = await list_recent_runs(args.limit, args.uid)
+    print(f"# {len(runs)} most-recent run(s)" + (f" for uid={args.uid}" if args.uid else ""))
+    if not runs:
+        print("(none — wrong uid, or this DB has no run-index records)")
+        return 0
+    for run_id, meta in runs:
+        start = meta.get("start_time")
+        end = meta.get("end_time") or "(unfinished)"
+        print(f"- {run_id}   {start} -> {end}")
+        tags = meta.get("tags") or {}
+        if tags:
+            shown = ", ".join(f"{k}={tags[k]}" for k in list(tags)[:5])
+            print(f"    tags: {shown}")
+    print("\nNext: inspect_run.py summary <run_id>   (or --run-id <run_id>)")
+    return 0
+
+
 # ------------------------- CLI -------------------------
+
+def _add_source_args(parser: argparse.ArgumentParser) -> None:
+    """Args shared by summary/messages/message: a positional log path (which may
+    instead be a 32-hex run_id), plus explicit --run-id / --uid."""
+    parser.add_argument(
+        "log_path",
+        nargs="?",
+        help=".events.jsonl, .log, autoProve folder, project root, OR a run_id",
+    )
+    parser.add_argument("--run-id", dest="run_id", help="resolve threads from the run index by run_id")
+    parser.add_argument("--uid", help="user namespace for the run index (default: current user)")
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Inspect messages of an AIAutoProver run.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("summary", help="List threads and basic stats for a run.")
-    s.add_argument("log_path", help=".events.jsonl, .log, autoProve folder, or project root")
+    _add_source_args(s)
 
     m = sub.add_parser("messages", help="Print messages from a thread.")
-    m.add_argument("log_path")
+    _add_source_args(m)
     m.add_argument("--thread", help="thread_id (defaults to the thread_id of the run's top-level execution)")
     m.add_argument("--range", help="A:B slice over message indices")
     m.add_argument("--errors-only", action="store_true", help="only tool-error messages")
@@ -389,9 +483,13 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--full", action="store_true", help="dump full content for each match")
 
     one = sub.add_parser("message", help="Print one message in full.")
-    one.add_argument("log_path")
+    _add_source_args(one)
     one.add_argument("index", type=int)
     one.add_argument("--thread")
+
+    r = sub.add_parser("runs", help="List recent runs from the run index (by run_id).")
+    r.add_argument("--limit", type=int, default=20, help="how many runs to list (default 20)")
+    r.add_argument("--uid", help="user namespace for the run index (default: current user)")
 
     return p
 
@@ -404,6 +502,8 @@ def main() -> int:
         return asyncio.run(cmd_messages(args))
     if args.cmd == "message":
         return asyncio.run(cmd_message(args))
+    if args.cmd == "runs":
+        return asyncio.run(cmd_runs(args))
     return 2
 
 
