@@ -56,9 +56,9 @@ from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
 from composer.spec.source.common_pipeline import (
     generate_all_component_cvl, AutoProveResult, UncoveredProperty, Unmatched,
-    dump_properties, dump_property_rules, _ComponentBatch,
+    dump_properties, dump_property_rules, build_component_batch,
 )
-from composer.spec.source.formalize_properties import formalize_properties, UnmatchedProperty
+from composer.spec.source.formalize_properties import formalize_properties, FormalizeResult
 from composer.spec.source.known_properties import KnownProperties
 from composer.spec.source.task_ids import (
     SYSTEM_ANALYSIS_TASK_ID, HARNESS_TASK_ID, AUTOSETUP_TASK_ID,
@@ -248,18 +248,15 @@ async def run_properties_pipeline(
             lambda: get_invariant_formulation(ctx, source_input, env, harnessed_app),
         )
 
-    async def stream_formalize() -> tuple[list[_ComponentBatch], list[UnmatchedProperty]]:
+    async def stream_formalize() -> FormalizeResult:
         return await run_task(
             handler_factory,
             TaskInfo(FORMALIZE_TASK_ID, "Formalize Properties", AutoProvePhase.FORMALIZE),
-            lambda: formalize_properties(
-                ctx, source_input, env, harnessed_app, known_properties,
-                ctx.child(PROPERTIES_KEY),
-            ),
+            lambda: formalize_properties(ctx, source_input, env, harnessed_app, known_properties),
         )
 
     if sys_desc is not None:
-        (prover_config, resources), invariants, (component_batches, unmatched) = await asyncio.gather(
+        (prover_config, resources), invariants, (component_props, unmatched) = await asyncio.gather(
             stream_autosetup(sys_desc),
             stream_invariants(),
             stream_formalize(),
@@ -278,10 +275,22 @@ async def run_properties_pipeline(
                 sort="import",
             ),
         ]
-        invariants, (component_batches, unmatched) = await asyncio.gather(
+        invariants, (component_props, unmatched) = await asyncio.gather(
             stream_invariants(),
             stream_formalize(),
         )
+
+    # Build the per-component batches from the formalized mapping (the formalize
+    # phase is pure mapping; batch + context wiring lives here).
+    prop_context = ctx.child(PROPERTIES_KEY)
+    component_batches = [
+        await build_component_batch(
+            prop_context=prop_context,
+            feat=cp.component,
+            props=cp.properties,
+        )
+        for cp in component_props
+    ]
 
     certora_dir = under_project(source_input.project_root, CERTORA_DIR)
     uncovered = [

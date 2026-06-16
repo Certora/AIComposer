@@ -13,12 +13,13 @@ one onto the component of the main contract whose behavior it constrains.
 The properties below must each be mapped to one *component* of the main contract
 `{{ contract_spec.contract_name }}` (located at {{ contract_spec.relative_path }}).
 
-You MUST use one of these exact names for `component_name`. The valid components of
+You MUST reference a component by BOTH its index (shown in square brackets) and its exact
+name; the two must be consistent. The valid components of
 `{{ contract_spec.contract_name }}` are:
 {% for c in context.components %}
 {% if c.name == contract_spec.contract_name %}
 {% for sub in c.components %}
-* `{{ sub.name }}`: {{ sub.description }}
+* [{{ loop.index0 }}] `{{ sub.name }}`: {{ sub.description }}
   {% if sub.external_entry_points %}External entry points: {{ sub.external_entry_points | join(", ") }}{% endif %}
 {% endfor %}
 {% endif %}
@@ -51,7 +52,8 @@ state of `{{ contract_spec.contract_name }}` and confirm which component owns th
 ## Step 2
 For each property you can confidently place, produce a `matched` entry with:
 - `property_id`: the exact id from the listing above,
-- `component_name`: the exact name of one of the listed components of `{{ contract_spec.contract_name }}`,
+- `component`: the `index` AND exact `name` of one of the listed components of
+  `{{ contract_spec.contract_name }}` (the index and name must match),
 - `methods`: the external entry points (function names/signatures) of that component that are
   involved in the property. For an invariant over contract state this may be empty.
 
@@ -61,7 +63,7 @@ in `unmatched` with a concrete `reason`. Do not force a bad mapping; an honest `
 preferable to a wrong one.
 
 ## Step 3
-{% with draft_subject = "your property-to-component mapping (each property_id's component_name and methods, plus any unmatched and why)", rough_draft_enforced = true %}
+{% with draft_subject = "your property-to-component mapping (each property_id's component index+name and methods, plus any unmatched and why)", rough_draft_enforced = true %}
 {% include "rough_draft_protocol.j2" %}
 {% endwith %}
 

@@ -195,21 +195,14 @@ def _main_contract_index(summary: HarnessedApplication, name: str) -> int:
 
 async def build_component_batch(
     *,
-    source_input: SourceCode,
     prop_context: WorkflowContext[Properties],
-    summary: HarnessedApplication,
-    component_idx: int,
+    feat: ContractComponentInstance,
     props: list[PropertyFormulation],
 ) -> _ComponentBatch:
-    """Build a ``_ComponentBatch`` for the component at *component_idx* of the
-    main contract, carrying *props*. Mirrors the ``ContractInstance`` /
-    ``ContractComponentInstance`` / ``feat_ctx`` wiring used by
-    ``extract_all_components`` so the tricky index plumbing lives in one place.
-    Callers that already know the component+properties (e.g. the formalize phase)
-    use this instead of importing the private dataclass."""
-    main_idx = _main_contract_index(summary, source_input.contract_name)
-    contract_instance = ContractInstance(main_idx, app=summary)
-    feat = ContractComponentInstance(_contract=contract_instance, ind=component_idx)
+    """Build a ``_ComponentBatch`` for *feat*, carrying *props*: derives the
+    per-component ``feat_ctx`` (the cache scope CVL generation runs under) from
+    *prop_context*. Callers that already know the component + properties (e.g. the
+    formalize phase) use this instead of importing the private dataclass."""
     feat_ctx = await prop_context.child(
         _component_cache_key(feat),
         {"component": feat.component.model_dump()},
