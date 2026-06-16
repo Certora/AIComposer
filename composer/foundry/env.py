@@ -33,23 +33,9 @@ from composer.spec.services import _BasicLLM
 from composer.spec.source.source_env import (
     build_basic_source_tools, build_source_tools,
 )
-from composer.spec.tool_env import BasicAgentTools, RAGTools, SourceTools
+from composer.spec.tool_env import BasicAgentTools
+from composer.spec.service_host import ServiceHost, PureServiceHost
 from composer.tools.foundry_rag import get_tools as foundry_cheatcode_tools
-
-
-class FoundryEnv(BasicAgentTools, RAGTools, SourceTools, Protocol):
-    """The shape the foundry pipeline expects: builder + foundry RAG +
-    source tools (fs + code explorer). ``system_analysis_tools`` and
-    ``bug_analysis_tools`` are aliases for ``source_tools`` so the
-    existing ``run_component_analysis`` / ``run_property_inference``
-    helpers (which look those names up via their own protocols) find
-    them."""
-
-    @property
-    def system_analysis_tools(self) -> tuple[BaseTool, ...]: ...
-
-    @property
-    def bug_analysis_tools(self) -> tuple[BaseTool, ...]: ...
 
 
 def build_foundry_env(
@@ -62,7 +48,7 @@ def build_foundry_env(
     store: BaseStore,
     source_question_ns: tuple[str, ...],
     recursion_limit: int,
-) -> FoundryEnv:
+) -> ServiceHost:
     """Construct a foundry-workflow env.
 
     ``rag_db`` is the foundry cheatcodes RAG database (distinct from the
@@ -73,7 +59,7 @@ def build_foundry_env(
     ``code_explorer`` sub-agent for its per-user query cache (same wiring
     autoprove uses; see ``build_source_env``).
     """
-    base_llm = _BasicLLM(llm=llm, has_source=True, _checkpointer=checkpoint)
+    base_llm = _BasicLLM(llm=llm, _checkpointer=checkpoint)
 
     basic_source = build_basic_source_tools(
         root=project_root,
@@ -89,26 +75,11 @@ def build_foundry_env(
 
     rag = tuple(foundry_cheatcode_tools(rag_db))
 
-    @dataclass(frozen=True)
-    class _Env:
-        builder: Builder[None, None, None]
-        llm: BaseChatModel
-        has_source: bool
-        rag_tools: tuple[BaseTool, ...]
-        source_tools: tuple[BaseTool, ...]
-
-        @property
-        def system_analysis_tools(self) -> tuple[BaseTool, ...]:
-            return self.source_tools
-
-        @property
-        def bug_analysis_tools(self) -> tuple[BaseTool, ...]:
-            return self.source_tools
-
-    return _Env(
+    return PureServiceHost(
+        llm=llm,
         builder=base_llm.builder,
-        llm=base_llm.llm,
-        has_source=True,
         rag_tools=rag,
-        source_tools=full_source.source_tools,
+        sort="existing"
+    ).bind_source_tools(
+        full_source
     )

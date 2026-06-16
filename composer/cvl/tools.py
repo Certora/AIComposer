@@ -6,10 +6,9 @@ shared between natspec (natural language spec generation) and
 source_spec (source-based spec generation) workflows.
 """
 
-import os
+import logging
 import subprocess
 import tempfile
-from importlib.resources import files
 from typing import Annotated, Literal, overload
 from typing_extensions import TypedDict
 
@@ -18,11 +17,14 @@ from langgraph.types import Command
 from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field, create_model
 
+from composer.certora_env import typechecker_jar
 from composer.cvl.schema import CVLFile
 from composer.cvl.pretty_print import pretty_print
 from composer.ui.tool_display import tool_display_of, CommonTools, ToolDisplay, suppress_ack
 
 from graphcore.graph import tool_state_update
+
+_logger = logging.getLogger(__name__)
 
 _put_cvl_display = ToolDisplay(
     "Writing spec", suppress_ack("Spec write result")
@@ -84,29 +86,37 @@ def maybe_update_cvl(
     Uses the Certora emv.jar parser to validate the CVL syntax.
     Returns a Command to update state on success, or an error message on failure.
     """
+    # Resolve the typechecker jar and run it. A failure in either step is an
+    # environment/plumbing problem (jar not packaged, CERTORA misconfigured, java
+    # not on PATH), NOT a spec error — surface it distinctly so the caller stops
+    # trying to "fix" valid CVL, and log the real exception for the operator.
     try:
+        emv_jar = str(typechecker_jar())
         with tempfile.NamedTemporaryFile("w", suffix=".spec", delete=False) as f:
             f.write(pp)
             f.flush()
-            if "CERTORA" in os.environ:
-                certora_dir = os.environ["CERTORA"]
-                emv_jar = os.path.join(certora_dir, "certora_jars", "Typechecker.jar")
-            else:
-                emv_jar = str(files("certora_jars") / "Typechecker.jar")
             res = subprocess.run(
                 ["java", "-classpath", emv_jar, "EntryPointKt", f.name],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
-            if res.returncode != 0:
-                import json as _json
-                with tempfile.NamedTemporaryFile("w", suffix=".spec", prefix="pp_fail_", delete=False, dir="/tmp") as dbg_pp:
-                    dbg_pp.write(pp)
-                if ast_json is not None:
-                    with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="pp_fail_", delete=False, dir="/tmp") as dbg_json:
-                        _json.dump(ast_json, dbg_json, indent=2)
-                return f"""
+    except Exception as exc:
+        _logger.exception("CVL syntax checker could not be launched")
+        return (
+            "Syntax checker could not be launched: "
+            f"{type(exc).__name__}: {exc}. This is an environment problem, not a "
+            "problem with the spec — do not keep retrying; surface it to the operator."
+        )
+
+    if res.returncode != 0:
+        import json as _json
+        with tempfile.NamedTemporaryFile("w", suffix=".spec", prefix="pp_fail_", delete=False, dir="/tmp") as dbg_pp:
+            dbg_pp.write(pp)
+        if ast_json is not None:
+            with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="pp_fail_", delete=False, dir="/tmp") as dbg_json:
+                _json.dump(ast_json, dbg_json, indent=2)
+        return f"""
 Update rejected, the syntax checker exited with non-zero status
 
 stdout:
@@ -115,8 +125,6 @@ stdout:
 stderr:
 {res.stderr}
 """
-    except Exception:
-        return "Syntax checker failed"
     update = {}
     update[spec_key] = pp
     if reset_read:

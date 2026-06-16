@@ -35,6 +35,7 @@ from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import FOUNDRY_DEFAULT_CONNECTION, PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.context import SourceCode, WorkflowContext
+from composer.spec.system_model import SolidityIdentifier
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.ui.tool_display import async_tool_context
 from composer.workflow.services import create_llm, standard_connections
@@ -136,6 +137,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
     if not (project_root / "foundry.toml").is_file():
         parser.error(f"{project_root}/foundry.toml not found — not a foundry project")
     main_path, contract_name = args.main_contract.split(":", 1)
+    contract_name = SolidityIdentifier(contract_name)
     full_path = pathlib.Path(main_path).resolve()
     if not full_path.is_relative_to(project_root):
         parser.error(f"Invalid path: {full_path} doesn't appear in project root {project_root}")

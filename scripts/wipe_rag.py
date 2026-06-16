@@ -20,10 +20,10 @@ Hardcodes the table list (rather than truncating every table in the database)
 so a stray schema or co-located table won't get clobbered. Schema is preserved;
 SERIAL counters are reset.
 
-Run with `python scripts/wipe_rag.py [--conn-string ...]`. The script will not
-proceed until you type the literal confirmation sentinel — no `--yes` flag,
-no env-var override, no shortcut. This is intentional: there is no
-unwipe.
+Run with `python scripts/wipe_rag.py [--conn-string ...]`. Interactively the
+script will not proceed until you type the literal confirmation sentinel — there
+is no unwipe. Automated callers that wipe-then-immediately-rebuild (e.g.
+`refresh_rag.sh`) can pass `--skip-confirmation` to bypass the prompt.
 """
 
 from __future__ import annotations
@@ -102,9 +102,15 @@ def main() -> int:
         default=DEFAULT_CONNECTION,
         help=f"PostgreSQL connection string (default: {DEFAULT_CONNECTION})",
     )
+    parser.add_argument(
+        "--skip-confirmation",
+        action="store_true",
+        help="Skip the interactive confirmation prompt. For automated "
+             "wipe-then-rebuild callers (e.g. refresh_rag.sh); use with care.",
+    )
     args = parser.parse_args()
 
-    if not _confirm(args.conn_string):
+    if not args.skip_confirmation and not _confirm(args.conn_string):
         print()
         print("Confirmation did not match. Aborting; no changes made.")
         return 1

@@ -125,6 +125,46 @@ def convert_ul(s: Tag, depth: int = 0) -> str:
         elems.append(convert_li(l, depth))
     return "\n".join(elems)
 
+def convert_table(s: Tag) -> str:
+    """Render a docutils <table> as a markdown-style table so the row/column
+    structure survives into the chunk text the LLM sees."""
+    assert s.name == "table"
+    rows: list[list[str]] = []
+    header_row: int | None = None
+    for tr in s.find_all("tr"):
+        assert isinstance(tr, Tag)
+        cells: list[str] = []
+        is_header = False
+        for cell in tr.find_all(["th", "td"], recursive=False):
+            assert isinstance(cell, Tag)
+            if cell.name == "th":
+                is_header = True
+            cells.append(" ".join(cell.get_text(" ").split()))
+        if not cells:
+            continue
+        if is_header and header_row is None:
+            header_row = len(rows)
+        rows.append(cells)
+    if not rows:
+        return ""
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    lines = []
+    for i, r in enumerate(rows):
+        lines.append("| " + " | ".join(r) + " |")
+        if i == header_row:
+            lines.append("| " + " | ".join(["---"] * width) + " |")
+    return "\n".join(lines)
+
+def convert_aside(s: Tag) -> str:
+    """Render an <aside> (docutils footnotes) as plain prose. Strip the "[n]"
+    label/backlink span, which is just noise once the cross-reference is gone."""
+    assert s.name == "aside"
+    for label in s.find_all("span", {"class": "label"}):
+        assert isinstance(label, Tag)
+        label.decompose()
+    return " ".join(s.get_text(" ").split())
+
 def skip_class(s: Tag) -> bool:
     cl = class_or_empty(s)
     return "versionchanged" in cl or "versionadded" in cl or "math" in cl
@@ -156,6 +196,16 @@ def translate_block(streamer: TextStreamer, s: Tag, headers: list[str]) -> Gener
                 ul = convert_ul(ch)
                 streamer.stream_text(ul)
                 builder.append_text(ul, is_structured_boundary=True, unbreakable=True)
+            case Tag(name="table"):
+                tbl = convert_table(ch)
+                if tbl:
+                    streamer.stream_text(tbl)
+                    builder.append_text(tbl, is_structured_boundary=True, unbreakable=True)
+            case Tag(name="aside"):
+                aside = convert_aside(ch)
+                if aside:
+                    streamer.stream_text(aside)
+                    builder.append_text(aside, is_structured_boundary=True, unbreakable=True)
             case Tag(name="span") if ch.getText() == "":
                 continue
             case NavigableString():

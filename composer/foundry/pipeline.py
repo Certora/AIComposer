@@ -27,10 +27,10 @@ from typing import Awaitable, Callable
 from composer.foundry.author import (
     BatchFoundryResult, GaveUp, GeneratedFoundryTest, batch_foundry_test_generation,
 )
-from composer.foundry.env import FoundryEnv
 from composer.spec.context import (
     CVLGeneration, CacheKey, ComponentGroup, Properties, SourceCode, WorkflowContext,
 )
+from composer.spec.service_host import ServiceHost
 from composer.spec.prop import PropertyFormulation
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.system_analysis import run_component_analysis
@@ -136,7 +136,7 @@ async def run_foundry_pipeline(
     source_input: SourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[FoundryPhase, None],
-    env: FoundryEnv,
+    env: ServiceHost,
     *,
     max_concurrent: int = 4,
     max_bug_rounds: int = 3,

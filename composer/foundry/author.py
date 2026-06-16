@@ -48,7 +48,8 @@ from composer.spec.gen_types import TypedTemplate
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.prop import PropertyFormulation
 from composer.spec.system_model import ContractComponentInstance
-from composer.spec.tool_env import BasicAgentTools, RAGTools, SourceTools
+from composer.spec.tool_env import BasicAgentTools
+from composer.spec.service_host import ServiceHost
 from composer.spec.util import uniq_thread_id
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.ui.tool_display import (
@@ -68,17 +69,6 @@ from composer.foundry.state import (
     make_foundry_validation_stamper,
     validate_property_tests,
 )
-
-class _FoundryEnv(RAGTools, SourceTools, BasicAgentTools, Protocol):
-    """Minimum the foundry author needs from the caller's env: a builder
-    (BasicAgentTools), foundry RAG (RAGTools), and source-tree exploration
-    tools (SourceTools — fs + optionally a code-explorer sub-agent). The
-    caller is expected to wire foundry cheatcode tools into ``rag_tools``
-    and project-source tools into ``source_tools`` when constructing the
-    env (see ``composer.foundry.env.build_foundry_env`` for the standard
-    wiring)."""
-    ...
-
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -386,7 +376,7 @@ class FeedbackTool(
 
 def _build_feedback_thunk(
     judge_ctx: WorkflowContext[CVLJudge],
-    env: _FoundryEnv,
+    env: ServiceHost,
     props: list[PropertyFormulation],
     component: ContractComponentInstance | None,
 ) -> _FeedbackImplThunk:
@@ -628,7 +618,7 @@ async def batch_foundry_test_generation(
     contract_name: str,
     props: list[PropertyFormulation],
     component: ContractComponentInstance | None,
-    env: _FoundryEnv,
+    env: ServiceHost,
     description: str,
     forge_binary: str = "forge",
     forge_timeout_s: int = 600,

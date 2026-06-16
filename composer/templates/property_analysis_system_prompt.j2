@@ -68,10 +68,13 @@ When reviewing your draft, verify each property against the criteria in your
 task prompt — formal-verifiability, non-triviality, clear violation
 consequence, defensibility in your `reasoning`.
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 ## Source exploration
 
+{# Only the source-mode (autoprove) pipeline wires the code_explorer pair. #}
+{% with source_tools_has_explorer = sort == "existing" %}
 {% include "source_tools_system_prompt.j2" %}
+{% endwith %}
 
 Every contract in the tree has a stable, authoritative implementation. Use the
 tools to ground your reasoning in the actual implementation when the design

@@ -25,9 +25,15 @@ committing it.
 ask if they want them.
 
 # Tool Usage
+{% if sort == "existing" %}
 - `code_explorer` — use to re-check the implementation when the user
 challenges a claim or you realize you are guessing. Prefer looking things
 up over asserting from memory.
+{% elif sort == "update" %}
+- `list_files` / `get_file` / `grep_files` — use to re-check the source when
+the user challenges a claim or you realize you are guessing. Prefer looking
+things up over asserting from memory.
+{% endif %}
 - `finalize_properties` — call this, and only this, to end the session. Do not call it
 until the user signals they are done.
 

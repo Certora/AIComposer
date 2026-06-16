@@ -33,16 +33,74 @@ Use this information to inform how you plan to formalize them. Refer to the syst
 Write a single CVL (Certora Verification Language) specification which formalizes all of the properties listed above.
 Each property should have its own rule(s) or invariant(s) in the spec.
 
-You are writing a CVL file without any implementation, neither for the contract being verified or
-the other contracts mentioned as being interacted with.
-However, you have been provided with the Solidity *interface* of these other contracts. If necessary,
-you can write summaries in your specification file to capture the behavior of these other contracts' entry points.
-If modeling the internal state of these other actors/contracts is necessary, use ghost state variables.
-When setting up these summaries/ghosts, carefully consider whether the application will have multiple instances
-of the implementation of the interface (`dynamic` or `multiple` sorts) or a single instance. In the former case,
-your ghost state will need to account for the receiver contract.
+**The stub is NOT the implementation under verification.** It is a non-functional skeleton
+whose only purpose is to give the CVL typechecker something to bind against. Its
+constructor does nothing, its function bodies are empty, and its storage starts at whatever
+defaults Solidity gives it. These are not the contract's real semantics — they are artifacts
+of the stub's purpose as a typechecking target.
 
-If you need to model the state/behavior of an external actor (*not* one of the other explicit contracts in the system)
+Therefore:
+
+- Do **NOT** reason about the stub's initial state, constructor behavior, or default field
+  values as if they were the contract's true semantics. The real implementation does not
+  exist yet; your spec describes what that implementation must satisfy.
+- Do **NOT** skip a property on the grounds that "it fails against the stub", "the stub's
+  constructor doesn't initialize X", "the invariant's base case fails post-construction",
+  or similar. Those are stub-fidelity concerns, not property-expressibility concerns, and
+  they are **INVALID** skip grounds.
+- Do **NOT** add `require` preconditions whose purpose is to hide the stub's trivial
+  behavior. Write the spec as it should hold for a correctly-implemented contract; the
+  Prover will judge the real implementation once it exists.
+
+Valid skip grounds remain what they have always been: the property is genuinely beyond
+CVL's expressiveness (see the skipping guidance below).
+
+Every {%if sort != "greenfield"%}other contract, {%endif%}interface, and generated stub in
+the application is visible through your source tools. Use `list_files` to enumerate what's
+available, `get_file` to read, and `grep_files`
+to search. {% if sort == "update" %}Generated stubs for `new` contracts
+and generated interfaces appear alongside any existing source.{%endif%}
+{% if sort == "update" %}
+The other contracts mentioned as being interacted with fall into two categories, which you should
+handle differently:
+
+- Contracts tagged `unchanged` or `edited`: real implementations live in the source tree and are
+  assumed correct for the purposes of this verification task. You are free to use them directly —
+  call their functions (including state-helper functions) and read their state as if they were any
+  other contract under verification. Use the `register_verification_file` tool for this purpose (see below).
+  You do NOT need to write summaries or ghost state for these contracts; their real implementation
+  is what the Prover uses.
+
+- Contracts tagged `new`: no real implementation. A minimal stub exists (visible via your source
+  tools) and grows by field requests. When your spec needs to reason about the state or behavior of
+  a `new` contract — the one under verification or any other — *prefer* requesting a stub field on
+  **that contract's own stub** via `request_stub_field` (which takes the target contract's name)
+  over introducing CVL ghost state. Each `new` contract has its own stub; do *NOT* model the state
+  of one contract by requesting fields on the stub of a different contract. A stub field is a real
+  Solidity storage variable your spec can reference directly (e.g. `theOther.fieldName`), and the
+  Prover tracks its mutations automatically. Fall back to CVL summaries or ghost state only when
+  stub fields cannot model what you need — for example, when expressing the effect of a specific
+  function invocation purely at the CVL level, or when reasoning about state spread across multiple
+  instances of a `dynamic`/`multiple` sort contract.
+{% else %}
+None of the contracts in the application have real implementations; the Solidity files
+available via your source tools are nonfunctional, minimal stubs. When your spec needs to
+reason about the state or behavior of any contract — the one under verification or any
+other — *prefer* requesting a stub field on **that contract's own stub** via
+`request_stub_field` (which takes the target contract's name) over introducing CVL ghost
+state. Each contract has its own stub; do *NOT* model the state of one contract by
+requesting fields on the stub of a different contract. A stub field is a real Solidity
+storage variable your spec can reference directly (e.g. `theOtherContract.fieldName`), and
+the Prover tracks its mutations automatically. Fall back to CVL summaries or ghost state
+only when stub fields cannot model what you need — for example, when expressing the effect
+of a specific function invocation purely at the CVL level, or when reasoning about state
+spread across multiple instances of a `dynamic`/`multiple` sort contract.
+{% endif %}
+When you do need summaries or ghost state, carefully consider whether the application will have multiple
+instances of the implementation of the interface (`dynamic` or `multiple` sorts) or a single instance.
+In the former case, your ghost state will need to account for the receiver contract.
+
+{#If you need to model the state/behavior of an external actor (*not* one of the other explicit contracts in the system)
 use the following decision procedure:
 1. If the external actor is a permissioned role in the system, you can likely use permission accounting internal
    to your contract. For example, if the external actor is a singular admin role, you can request a stub field
@@ -51,11 +109,12 @@ use the following decision procedure:
    the property should be skipped
 3. If the external actor is another contract not part of the application, you should use the summary/ghost approach
    described above. However, as there is no explicit interface provided for these external actor contracts you will
-   need to make reasonable decisions about the summary signature to use.
+   need to make reasonable decisions about the summary signature to use.#}
 
-To model the state/storage of the contract containing the component under verification,
-you may use the stub tools described below. Do *NOT* try to simulate or otherwise model the
-behavior/state of other contracts with state/functions in the contract you are verifying.
+To reference another contract's state variables within your specification or call its functions,
+you must explicitly register that contract's source as an input to the Prover. Use the `register_verification_file` tool to register
+a file for inclusion. **NOTE**: The stub for the contract containing the component under verification
+is automatically registered in the prover inputs.
 
 {% include "natspec_stub_tools_guidance.j2" %}
 
@@ -77,7 +136,14 @@ and may suggest how the property can in fact be formalized.
 
 ## Step 4
 
-{% include "publish_spec_fragment.j2" %}
+Publish your CVL specification using the `publish` tool with a description of the properties
+you formalized, along with the suggested name for your spec file. Do *not* include the `.spec` stem. Your suggestion
+should be a filename that is usable in automated tools; avoid spaces, dashes, or other special characters.
+
+If the publish fails, i.e., a typecheck error or you haven't received a positive result from the feedback
+judge, you will receive the reason for the rejection. Address the issues and try publishing again.
+
+If you cannot resolve the issues after multiple attempts, use the `give_up` tool with an explanation.
 
 IMPORTANT: Do not try to reason yourself about whether any property is true or possible — focus solely on authoring CVL which will *demonstrate* the desired properties.
 
@@ -90,8 +156,25 @@ You must attempt to formalize ALL properties before considering any skips.
 </skipping>
 
 <state>
-Use the available memory tools to track your progress through this algorithm, any important lessons about CVL you may have learned,
-or any other significant, relevant information to this task. Be sure to update your memory *before* calling the result tool, as that will end the workflow.
+Maintain these memory files. Perform any writes you intend to make before invoking the
+result tool, which ends the task.
+
+- `/memories/status.md` — your live state for this run. Records which step of the above
+  algorithm you are currently on, the property you are currently working, and the
+  approach you are trying, plus a per-property section (one entry per property by number,
+  each one of `NOT_STARTED`, `IN_PROGRESS(<approach>)`, `FORMALIZED`, `SKIPPED(<reason>)`).
+  Rewrite the relevant section when the underlying state changes — when you move to a
+  new property, transition a property's status, or switch algorithmic step.
+- `/memories/cvl_facts.md` — facts you have established about CVL syntax and semantics
+  (from the CVL manual, from `cvl_research` results, from typecheck errors). Write each
+  fact the moment it is established. On resume, entries here MAY be treated as valid;
+  do NOT re-research them.
+- `/memories/feedback_received.md` — each round of feedback the feedback tool has given
+  you, along with a note on how you addressed each item. Write after each feedback round
+  so future rounds (after compaction or re-entry) retain continuity.
+
+On resume, read all of the above first and continue from where you left off. Facts
+recorded in memory do NOT need to be re-verified.
 </state>
 
 </task>

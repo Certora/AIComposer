@@ -1,6 +1,6 @@
 # Background
 
-{% if not has_source %}
+{% if sort == "greenfield" %}
 You have been provided a system/design document which summarizes the design of some on-chain application.
 
 No implementation of this application exists yet; and the system document may be written with different levels
@@ -12,9 +12,9 @@ you have access to the source code of the application which implements this desi
 
 # Task
 
-Your role is to analyze this system/design document {%if has_source %} and implementation{%endif%} and then extract a holistic,
+Your role is to analyze this system/design document {% if sort != "greenfield" %} and implementation{%endif%} and then extract a holistic,
 structured description of the application.
-In particular, your analysis will produce descriptions of the Smart Contracts {% if not has_source %}that need to
+In particular, your analysis will produce descriptions of the Smart Contracts {% if sort == "greenfield" %}that need to
 written to implement the application{% else %}present in the implementation{%endif%},
 along with any external actors the application may interact with.
 At this point, you should focus on extracting natural language descriptions of the various components of the application
@@ -50,7 +50,7 @@ When describing an `ExternalActor` provide a short, descriptive name (if the ext
 of an interface, use the name of that interface). Produce a description of the external actor, including
 its role within the larger application.
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 If application/possible, provide the relative path to the Solidity file which contains the definition of the interface
 describing this external actor.
 {% endif %}
@@ -61,10 +61,27 @@ Finally, for each such external actor, extract the assumptions/requirements abou
 
 In contrast, an "explicit contract" describes some smart contract that will be developed and deployed as part
 of this application. Each "explicit contract" roughly corresponds to some concrete
-Solidity `contract` type or `library`. Each such explicit contract should be given a name and a brief description
-of the contract, i.e., it's role in the application. The name of the contract should be the Solidity identifier {%if not has_source %}mentioned
-in the system document if possible, otherwise a suitably descriptive Solidity identifier should be chosen instead.{%else%}
-used in the implementation.{%endif%}
+Solidity `contract` type or `library`. Each such explicit contract is described with two name fields and a brief
+description of its role in the application:
+
+- `name`: a short conceptual label — the human-readable identifier you would use to refer to this contract in
+  design discussions. This may be the same as `solidity_identifier` when the design doc names the contract by
+  its Solidity identifier directly, but it does not have to be (e.g., "Token Vault" or "Stonks v2" are
+  acceptable conceptual names).
+- `solidity_identifier`: the contract's Solidity identifier as it will appear in source code. Must match
+  `[a-zA-Z_$][a-zA-Z0-9_$]*` (no spaces, no version suffixes like "v2", no other non-identifier characters).
+
+To derive `solidity_identifier`, prefer in priority order:
+- **Design doc**: a Solidity identifier directly mentioned in the design document for this contract (e.g.,
+  code-font names like `TokenVault` or `GovernanceManager`).
+{%- if sort != "greenfield" %}
+- **Source tree**: the contract identifier as it appears in the source files — consult via `code_explorer` if
+  needed.
+{%- endif %}
+- **Last resort**: derive a sensible Solidity identifier from `name` by stripping spaces, version suffixes,
+  and other non-identifier characters.
+
+When `name` is already a valid Solidity identifier (the common case), the two fields may be identical.
 
 **Contract Sorts**: Each explicit contract in the application document should be given a specific "sort".
 The possible sorts are as follows:
@@ -82,7 +99,7 @@ independently and then calls a `registerNewMarket(WrappedMarketToken a)`) then t
 If the protocol itself creates an instance of `WrappedMarketToken` (e.g., as part of an implementation
 of `registerNewMarket(address marketProxy)`) then the classification should be `dynamic`.
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 As part of your extraction, provide the relative path to the Solidity file which contains the definition of the
 contract you are describing.
 {% endif %}
@@ -118,7 +135,7 @@ in your system description.
 **CLARIFICATION**: Your transitive exploration should "halt" at the boundaries of external actors. Do *NOT*
 hypothesize, speculate, or infer what other actors the external actors may themselves interact with. In other words,
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 **CLARIFICATION**: In modern applications, it is quite common to write components which interact with each other
 via interfaces. However, despite this implementation/design abstraction, there is often a single, known implementation of
 these interfaces.
