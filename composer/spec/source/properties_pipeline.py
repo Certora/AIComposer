@@ -39,7 +39,9 @@ from composer.spec.gen_types import (
     CVLResource, CERTORA_DIR, SPECS_DIR, certora_relative_to_project, under_project,
 )
 from composer.spec.util import ensure_dir
-from composer.spec.source.harness import run_harness_creation, run_autosetup_phase, ContractSetup
+from composer.spec.source.harness import (
+    run_harness_creation, run_autosetup_phase, ContractSetup, SystemDescriptionHarnessed,
+)
 from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.summarizer import setup_summaries
@@ -208,13 +210,13 @@ async def run_properties_pipeline(
     #   default:      autosetup (+ custom summaries)
     #   --skip-setup: user-supplied .conf + single summary import
     # ------------------------------------------------------------------
-    async def stream_autosetup() -> tuple[dict, list[CVLResource]]:
-        assert sys_desc is not None
-        sd = sys_desc  # non-None alias so the narrowing reaches the nested closures
+    async def stream_autosetup(
+        sys_desc: SystemDescriptionHarnessed,
+    ) -> tuple[dict, list[CVLResource]]:
         setup_config = await run_task(
             handler_factory,
             TaskInfo(AUTOSETUP_TASK_ID, "AutoSetup", AutoProvePhase.AUTOSETUP),
-            lambda: run_autosetup_phase(ctx, source_input, sd, s, prover_opts),
+            lambda: run_autosetup_phase(ctx, source_input, sys_desc, s, prover_opts),
         )
         res: list[CVLResource] = [
             CVLResource(
@@ -224,14 +226,14 @@ async def run_properties_pipeline(
                 sort="import",
             ),
         ]
-        if sd.erc20_contracts or sd.external_interfaces:
+        if sys_desc.erc20_contracts or sys_desc.external_interfaces:
             summary_resource = await run_task(
                 handler_factory,
                 TaskInfo(SUMMARIES_TASK_ID, "Custom Summaries", AutoProvePhase.SUMMARIES),
                 lambda: setup_summaries(
                     ctx=ctx,
                     app=harnessed_app,
-                    config=ContractSetup(system_description=sd, config=setup_config),
+                    config=ContractSetup(system_description=sys_desc, config=setup_config),
                     env=env,
                     source=source_input,
                 ),
@@ -256,15 +258,14 @@ async def run_properties_pipeline(
             ),
         )
 
-    if not skip_setup:
+    if sys_desc is not None:
         (prover_config, resources), invariants, (component_batches, unmatched) = await asyncio.gather(
-            stream_autosetup(),
+            stream_autosetup(sys_desc),
             stream_invariants(),
             stream_formalize(),
         )
     else:
-        # User-facing validation lives at CLI parse time (see _properties_entry_point
-        # in autoprove_common.py). This is only a caller invariant / type narrowing.
+        # sys_desc is None exactly when --skip-setup was passed (see Phase 2)
         assert conf_path is not None and summary_path is not None, (
             "--skip-setup requires both a conf and a summary path"
         )
