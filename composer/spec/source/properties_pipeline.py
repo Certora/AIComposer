@@ -48,6 +48,7 @@ from composer.spec.source.summarizer import setup_summaries
 from composer.spec.system_model import (
     HarnessedApplication, SourceExplicitContract, SourceApplication,
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition,
+    ContractInstance, ContractComponentInstance,
 )
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import get_prover_tool, dump_final_conf
@@ -56,7 +57,7 @@ from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
 from composer.spec.source.common_pipeline import (
     generate_all_component_cvl, AutoProveResult, UncoveredProperty, Unmatched,
-    dump_properties, dump_property_rules, build_component_batch,
+    dump_properties, dump_property_rules, build_component_batch, _main_contract_index,
 )
 from composer.spec.source.formalize_properties import formalize_properties, FormalizeResult
 from composer.spec.source.known_properties import KnownProperties
@@ -256,7 +257,7 @@ async def run_properties_pipeline(
         )
 
     if sys_desc is not None:
-        (prover_config, resources), invariants, (component_props, unmatched) = await asyncio.gather(
+        (prover_config, resources), invariants, (props_by_component, unmatched) = await asyncio.gather(
             stream_autosetup(sys_desc),
             stream_invariants(),
             stream_formalize(),
@@ -275,21 +276,25 @@ async def run_properties_pipeline(
                 sort="import",
             ),
         ]
-        invariants, (component_props, unmatched) = await asyncio.gather(
+        invariants, (props_by_component, unmatched) = await asyncio.gather(
             stream_invariants(),
             stream_formalize(),
         )
 
-    # Build the per-component batches from the formalized mapping (the formalize
-    # phase is pure mapping; batch + context wiring lives here).
+    # Build the per-component batches from the formalized mapping. The formalize
+    # phase is pure mapping (it yields ComponentRefs); resolving each to a
+    # ContractComponentInstance and wiring up the batch contexts lives here.
+    contract_instance = ContractInstance(
+        _main_contract_index(harnessed_app, source_input.contract_name), app=harnessed_app
+    )
     prop_context = ctx.child(PROPERTIES_KEY)
     component_batches = [
         await build_component_batch(
             prop_context=prop_context,
-            feat=cp.component,
-            props=cp.properties,
+            feat=ContractComponentInstance(_contract=contract_instance, ind=ref.index),
+            props=props,
         )
-        for cp in component_props
+        for ref, props in props_by_component.items()
     ]
 
     certora_dir = under_project(source_input.project_root, CERTORA_DIR)

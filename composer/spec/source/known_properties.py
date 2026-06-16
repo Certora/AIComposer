@@ -25,7 +25,7 @@ import pathlib
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from composer.spec.prop import PropertyId, PropertySort
+from composer.spec.prop import PropertyId, PropertySort, PropertyFormulation
 
 
 class KnownProperty(BaseModel):
@@ -34,6 +34,18 @@ class KnownProperty(BaseModel):
     sort: PropertySort
     property_desc: str = Field(min_length=1)
     property_id: PropertyId = Field(min_length=1)
+
+    def to_formulation(self, methods: list[str]) -> PropertyFormulation:
+        """Build the CVL-generation ``PropertyFormulation`` for this known property,
+        given the external entry points the formalize agent mapped it to. ``sort``
+        and ``description`` come from this (authoritative) YAML row; an invariant
+        carries no methods."""
+        return PropertyFormulation(
+            title=self.property_id,
+            sort=self.sort,
+            description=self.property_desc,
+            methods="invariant" if self.sort == "invariant" else methods,
+        )
 
 
 class KnownProperties(BaseModel):

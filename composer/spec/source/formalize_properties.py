@@ -12,11 +12,10 @@ on a bad mapping, ``with_tools`` (memory + source tools), ``run_to_completion``.
 """
 
 import logging
-from dataclasses import dataclass
 from typing import NotRequired
 
 from typing_extensions import TypedDict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from langgraph.graph import MessagesState
 
@@ -26,9 +25,7 @@ from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.source.source_env import SourceEnvironment
-from composer.spec.system_model import (
-    HarnessedApplication, ContractInstance, ContractComponentInstance,
-)
+from composer.spec.system_model import HarnessedApplication
 from composer.spec.prop import PropertyFormulation, PropertyId
 from composer.spec.gen_types import TypedTemplate
 from composer.spec.util import string_hash
@@ -44,12 +41,19 @@ _logger = logging.getLogger(__name__)
 
 class ComponentRef(BaseModel):
     """A reference to a component of the main contract: its index in the listing
-    and its name, which must be consistent (the name at that index)."""
+    and its name, which must be consistent (the name at that index). Frozen so it
+    can key the grouped formalize result."""
+    model_config = ConfigDict(frozen=True)
+
     index: int = Field(description="The index of the component, as shown in square brackets in the listing")
     name: str = Field(description="The exact name of that component (must be the name shown at that index)")
 
 
-class FormalizedProperty(BaseModel):
+class MatchedProperty(BaseModel):
+    """The agent's mapping decision for one known property: which component it maps
+    to and the entry points involved. ``sort``/``description`` are NOT here — they
+    are authoritative on the ``KnownProperty`` (YAML) and assembled into a
+    ``PropertyFormulation`` via ``KnownProperty.to_formulation``."""
     property_id: PropertyId = Field(description="The exact property_id of a known property from the listing")
     component: ComponentRef = Field(description="The component of the main contract this property maps to")
     methods: list[str] = Field(description="The external entry points of that component involved in the property (may be empty for a pure state invariant)")
@@ -62,20 +66,15 @@ class UnmatchedProperty(BaseModel):
 
 class PropertyMapping(BaseModel):
     """The result of mapping the known properties onto components."""
-    matched: list[FormalizedProperty] = Field(description="The properties mapped to a component")
+    matched: list[MatchedProperty] = Field(description="The properties mapped to a component")
     unmatched: list[UnmatchedProperty] = Field(description="The properties that could not be mapped")
 
 
-@dataclass
-class ComponentProperties:
-    """The known properties mapped onto one component of the main contract."""
-    component: ContractComponentInstance
-    properties: list[PropertyFormulation]
-
-
-# Result of the formalize phase: the matched properties grouped per component,
-# plus the ones left unmatched.
-type FormalizeResult = tuple[list[ComponentProperties], list[UnmatchedProperty]]
+# Result of the formalize phase: the matched properties grouped per component
+# (keyed by its validated index+name reference), plus the ones left unmatched. The
+# caller resolves each ComponentRef to a ContractComponentInstance when building
+# batches.
+type FormalizeResult = tuple[dict[ComponentRef, list[PropertyFormulation]], list[UnmatchedProperty]]
 
 
 class FormalizeParams(TypedDict):
@@ -109,8 +108,7 @@ async def formalize_properties(
     mapping.
     """
     main_idx = _main_contract_index(app, source.contract_name)
-    contract_instance = ContractInstance(main_idx, app=app)
-    main_components = contract_instance.contract.components
+    main_components = app.contract_components[main_idx].components
 
     known_by_id = {p.property_id: p for p in known.properties}
     all_ids = set(known_by_id)
@@ -118,33 +116,19 @@ async def formalize_properties(
     def _finalize(mapping: PropertyMapping) -> FormalizeResult:
         """Resolve a validated mapping to ``(matched, unmatched)``: log the
         unmatched, and group each matched property (converted to a
-        ``PropertyFormulation`` whose title==property_id) under its component
-        index (validated). Deterministic, so it runs identically on cache hit and
-        miss."""
+        ``PropertyFormulation`` whose title==property_id) under its component.
+        Deterministic, so it runs identically on cache hit and miss."""
         for up in mapping.unmatched:
             _logger.warning(
                 "Property %s could not be mapped to a component: %s (%s)",
                 up.property_id, up.reason, known_by_id[up.property_id].property_desc,
             )
-        by_index: dict[int, list[PropertyFormulation]] = {}
+        grouped: dict[ComponentRef, list[PropertyFormulation]] = {}
         for fp in mapping.matched:
-            kp = known_by_id[fp.property_id]
-            by_index.setdefault(fp.component.index, []).append(
-                PropertyFormulation(
-                    title=fp.property_id,
-                    sort=kp.sort,
-                    description=kp.property_desc,
-                    methods="invariant" if kp.sort == "invariant" else fp.methods,
-                )
+            grouped.setdefault(fp.component, []).append(
+                known_by_id[fp.property_id].to_formulation(fp.methods)
             )
-        matched = [
-            ComponentProperties(
-                component=ContractComponentInstance(_contract=contract_instance, ind=idx),
-                properties=props,
-            )
-            for idx, props in by_index.items()
-        ]
-        return matched, mapping.unmatched
+        return grouped, mapping.unmatched
 
     fmt_ctx = ctx.child(_formalize_cache_key(known))
     if (cached := await fmt_ctx.cache_get(PropertyMapping)) is not None:
