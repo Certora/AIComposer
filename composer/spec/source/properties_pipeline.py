@@ -22,13 +22,13 @@ property lost at the formalize phase (no component match) or at the CVL phase
 import asyncio
 import json
 import logging
+import pathlib
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from composer.io.multi_job import (
     TaskInfo, HandlerFactory, run_task,
 )
-from composer.spec.source.autosetup import SetupSuccess
 from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
@@ -115,6 +115,34 @@ def _build_harnessed_app(
         application_type=s.application_type,
         description=s.description,
         components=comp,
+    )
+
+
+def _materialize_invariant_cvl(
+    source_input: SourceCode,
+    certora_dir: pathlib.Path,
+    inv_cvl: GeneratedCVL,
+) -> CVLResource:
+    """Write the structural-invariant spec + its property->rules map + final conf
+    to disk, and return the (optional) ``CVLResource`` the per-component CVLs may
+    import as assumable preconditions. Called for both freshly generated and
+    cache-loaded results so the on-disk artifacts always match the cache."""
+    ensure_dir(certora_dir / "specs")
+    inv_spec_path = SPECS_DIR / "invariants.spec"
+    under_project(source_input.project_root, inv_spec_path).write_text(inv_cvl.cvl)
+    dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
+    dump_final_conf(
+        project_root=source_input.project_root,
+        main_contract=source_input.contract_name,
+        task_id=INVARIANT_CVL_TASK_ID,
+        spec_path=inv_spec_path,
+        conf=inv_cvl.conf,
+    )
+    return CVLResource(
+        path=inv_spec_path,
+        required=False,
+        description="Structural invariants that may be assumed as preconditions",
+        sort="import",
     )
 
 
@@ -273,7 +301,6 @@ async def run_properties_pipeline(
     # ------------------------------------------------------------------
     if invariants.inv:
         inv_cvl_ctx = ctx.child(INV_CVL_KEY)
-        cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
 
         inv_props = [
             PropertyFormulation(
@@ -286,8 +313,9 @@ async def run_properties_pipeline(
         ]
         dump_properties(certora_dir, "invariants", inv_props)
 
+        cached_inv_cvl = await inv_cvl_ctx.cache_get(GeneratedCVL)
         if cached_inv_cvl is not None:
-            inv_cvl = cached_inv_cvl
+            resources.append(_materialize_invariant_cvl(source_input, certora_dir, cached_inv_cvl))
         else:
             inv_cvl_result = await run_task(
                 handler_factory,
@@ -306,29 +334,16 @@ async def run_properties_pipeline(
                 ),
             )
             if isinstance(inv_cvl_result, GaveUp):
-                raise RuntimeError(
-                    f"Structural invariant CVL generation gave up: {inv_cvl_result.reason}"
+                # The structural invariants are an *optional* precondition
+                # resource for the per-component CVLs; if the agent gives up on
+                # them, continue without them rather than failing the whole run.
+                _logger.warning(
+                    "Structural invariant CVL generation gave up (%s); continuing "
+                    "without assumable invariants.", inv_cvl_result.reason,
                 )
-            inv_cvl = inv_cvl_result
-            await inv_cvl_ctx.cache_put(inv_cvl)
-
-        ensure_dir(certora_dir / "specs")
-        inv_spec_path = SPECS_DIR / "invariants.spec"
-        under_project(source_input.project_root, inv_spec_path).write_text(inv_cvl.cvl)
-        dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
-        dump_final_conf(
-            project_root=source_input.project_root,
-            main_contract=source_input.contract_name,
-            task_id=INVARIANT_CVL_TASK_ID,
-            spec_path=inv_spec_path,
-            conf=inv_cvl.conf,
-        )
-        resources.append(CVLResource(
-            path=inv_spec_path,
-            required=False,
-            description="Structural invariants that may be assumed as preconditions",
-            sort="import",
-        ))
+            else:
+                await inv_cvl_ctx.cache_put(inv_cvl_result)
+                resources.append(_materialize_invariant_cvl(source_input, certora_dir, inv_cvl_result))
 
     # ------------------------------------------------------------------
     # Stage 2: per-component CVL (parallel, semaphore-bounded).
