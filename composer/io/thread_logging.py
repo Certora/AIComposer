@@ -1,4 +1,4 @@
-from typing import TypedDict, Protocol, AsyncIterator, Any
+from typing import TypedDict, Protocol, AsyncIterator, Any, Callable
 from dataclasses import dataclass
 from datetime import datetime, UTC
 from uuid import uuid4
@@ -141,7 +141,8 @@ async def thread_logger(
     tags: dict[str, Any],
     ns: tuple[str, ...],
     *,
-    run_id: str | None = None
+    run_id: str | None = None,
+    finalize_tags: Callable[[], dict[str, Any]] | None = None,
 ) -> AsyncIterator[None]:
     run_id = uuid4().hex if run_id is None else run_id
 
@@ -160,6 +161,14 @@ async def thread_logger(
     finally:
         _logger.reset(tok)
         run_meta["end_time"] = _time_string()
+        # Let the caller contribute tags computed at close time (e.g. final token
+        # usage, known only once the run is over). Guarded: tag enrichment must
+        # never break run finalization.
+        if finalize_tags is not None:
+            try:
+                run_meta["tags"] = {**run_meta["tags"], **finalize_tags()}
+            except Exception:
+                pass
         try:
             await store.aput(run_ns, run_id, {**run_meta})
         except Exception:

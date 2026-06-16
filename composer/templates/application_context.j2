@@ -1,7 +1,7 @@
 {% from "component_detail.j2" import render_component %}
 
 {% if not context %}
-    {% if has_source %}
+    {% if sort != "greenfield" %}
     You may read the application source code to receive surrounding context as necessary.
     {% else %}
     No component context is available. Refer to the system document for application context.
@@ -13,7 +13,7 @@
 {% else %}
 
 The Web3 application is described as: {{ context.application_type }}
-{% if has_source %}
+{% if sort != "greenfield" %}
 
 The entry point for the application is found in a smart contract called {{ contract_name }},
 located at {{ relative_path }} on the filesystem.

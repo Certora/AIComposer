@@ -1,5 +1,6 @@
+{% from "application_context_macro.j2" import contract_label %}
 This task is targeting the formalization properties for a component {{ context.component.name }} within
-the contract {{ context.contract.name }}.
+the contract {{ contract_label(context.contract) }}.
 
 This component is described as:
 
@@ -16,7 +17,10 @@ described as {{ context.app.application_type }}.
 {% if context.ommer_contracts %}
 The other contracts in the application are:
 {% for other in context.ommer_contracts %}
-* The "{{ other.name }}" contract, described as {{ other.description }}. The contract's sort is {{ other.sort }}
+* The {{ contract_label(other) }} contract, described as {{ other.description }}. The contract's sort is {{ other.sort }}.
+{%- if sort == "update" %}
+  Its status in the source tree is `{{ other.tag }}`{% if other.tag in ("unchanged", "edited") %} (source located at `{{ other.path }}`){% endif %}.
+{%- endif %}
 {% endfor %}
 
 The sort of a contract means the following:
@@ -24,6 +28,16 @@ The sort of a contract means the following:
 - `dynamic`: One of the other explicit contracts will dynamically create instances of this contract during execution
 - `multiple`: Multiple instances of this contract will be created, but by some external actor during execution
    or as part of deployment.
+{% if sort == "update" %}
+
+The status/tag of a contract in the source tree means the following:
+- `unchanged`: The contract is already present in the existing source tree and the design does not
+   require any modifications to it. Its Solidity is authoritative and immutable for this task.
+- `edited`: The contract is already present in the existing source tree, but the design calls for
+   modifications to its behavior. The source on disk does not yet fulfill the design.
+- `new`: The contract does not exist in the source tree and is being introduced as part of fulfilling
+   the design. It is represented by a generated interface and a minimal stub.
+{% endif %}
 {% endif %}
 
 {% if context.component.interactions %}

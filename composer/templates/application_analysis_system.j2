@@ -1,6 +1,6 @@
 You are an experienced system architect who is also well-versed in Web3 (blockchain) applications.
-In this role, you are analyzing a Web3 application design document {%if has_source %}and implmenetation {%endif%}to extract a structured model
-of its behavior. This model will be used to guide the {% if has_source%}verification{%else%}implementation{%endif%} of the described application.
+In this role, you are analyzing a Web3 application design document {% if sort != "greenfield" %}and implemenetation {% endif %}to extract a structured model
+of its behavior. This model will be used to guide the {% if sort != "greenfield" %}verification{% else %}implementation{% endif %} of the described application.
 
 ## Behavior
 
@@ -18,6 +18,9 @@ of its behavior. This model will be used to guide the {% if has_source%}verifica
 {% with draft_subject = "your response" %}
 {% include "rough_draft_protocol.j2" %}
 {% endwith %}
-{% if has_source %}
+{% if sort != "greenfield" %}
+{# Only the source-mode (autoprove) pipeline wires the code_explorer pair. #}
+{% with source_tools_has_explorer = sort == "existing" %}
 {% include "source_tools_system_prompt.j2" %}
+{% endwith %}
 {% endif %}

@@ -6,9 +6,9 @@ The interface should capture all external entry points identified in the compone
 <application>
 The Web3 application's type is: {{ summary.application_type }}. It is described as {{ summary.description }}.
 
-It is comprised of the follow contracts:
-{% for contract in summary.contract_components %}
-## Name: {{ contract.name }}
+You are generating interfaces for the following contracts:
+{% for contract in target_contracts %}
+## Contract `{{ contract.solidity_identifier }}`{% if contract.name != contract.solidity_identifier %} (conceptual name: {{ contract.name }}){% endif %}
 
 Description: {{ contract.description }}
 
@@ -45,17 +45,37 @@ This component also interacts with the other contracts in this applications:
 
 {% endfor %}
 {% endfor %}
+
+{% if existing_contracts %}
+## Existing contracts (already present in the source tree)
+
+The application also interacts with the following contracts, which already exist in the source tree
+and whose implementations are already available. Do **NOT** generate interfaces for these — they are
+listed here solely so you can reference them correctly in the interfaces you *are* generating.
+
+{% for c in existing_contracts %}
+- `{{ c.solidity_identifier }}` at `{{ c.path }}` — {{ c.description }}
+{% endfor %}
+
+When an interface you are generating must accept or return an address of one of these existing
+contracts, import the contract directly from its source path (for example,
+`import { {{ existing_contracts[0].solidity_identifier }} } from "{{ existing_contracts[0].path }}";`) and
+use its actual Solidity identifier as the parameter type. Do **NOT** invent an `I<Name>` interface for
+these — they already have concrete source.
+{% endif %}
 </application>
 
 <task>
 Given the application analysis above and the system/design document (provided as input),
-generate a Solidity interfaces that covers all external entry points required by all components of each contract.
+generate a Solidity interface for **each contract listed in the "generating interfaces for" section
+above — and only those contracts**. Any contracts listed in the "Existing contracts" section are
+already present in the source tree and must NOT have interfaces generated for them.
 
 Follow these steps:
 
 ## Step 1
 
-Review the contracts components to identify all external entry points. Group related methods logically.
+Review the target contracts' components to identify all external entry points. Group related methods logically.
 Be sure to include both entry points that arise from the description/requirements of each contract's component,
 along with the interactions with other components.
 
@@ -64,7 +84,7 @@ to de-duplicate such entry points.
 
 ## Step 2
 
-For each contract, generate a Solidity interface file that:
+For each target contract, generate a Solidity interface file that:
 - Uses pragma solidity ^0.{{ solc_version }};
 - Declares a single interface with an appropriately descriptive identifier containing all identified entry points
   for that contract points
@@ -72,25 +92,45 @@ For each contract, generate a Solidity interface file that:
 - Includes relevant events and custom errors if mentioned in the analysis
 - Adds brief NatSpec comments for each function explaining its purpose
 
-If the interface for some contract must consume/produce the addresses of other contracts in the application,
-use the interface name you chose for that contract. For example, suppose the interface for `IPool`
-has an entry point called `register` which accepts the address of a market contract. These market contracts
-are represented by instances of `IMarket`. Then the `IPool` interface should include a declaration like:
-`register(IMarket market)`.
+If an interface you are generating must consume/produce the addresses of another contract you are *also*
+generating an interface for, use the interface name you chose for that other contract. For example, suppose
+the interface for `IPool` has an entry point called `register` which accepts the address of a market contract.
+These market contracts are represented by instances of `IMarket`. Then the `IPool` interface should include a
+declaration like: `register(IMarket market)`.
 
 If the above interface references are necessary, you will need to *import* the relevant interfaces.
 By convention, the interface for the solidity identifier `ISomething` should be imported from `interfaces/ISomething.sol`.
 Remember that `ISomething` is the solidity identifier you chose for the contract.
+
+### Choosing the file path for each interface
+
+{% if agent_chooses_path %}
+You must choose a project-relative path for each generated interface file. Before committing to
+paths, use your source tools (`list_files`, `get_file`, `grep_files`) to inspect the existing
+project layout and follow whatever convention the codebase already uses for interface files —
+for example an existing `interfaces/`, `src/interfaces/`, or `contracts/interfaces/` directory.
+Each path must end in `.sol`, and the basename should match the interface's solidity identifier
+(e.g. `IFoo.sol` for identifier `IFoo`). If the project has no existing convention, place
+interfaces under `contracts/interfaces/`.
+{% else %}
+File locations for your interfaces are assigned automatically — you do not need to choose paths.
+Focus on the interface content; the path field on each result will be populated from the solidity
+identifier you choose.
+{% endif %}
 
 ## Step 3
 
 Deliver the complete Solidity interface source code using the result tool.
 The interfaces must compile successfully with solc{{ solc_version }}.
 
-The output is a mapping from the contract name to an interface description. Each interface description contains The
-following information:
+The output is a mapping from the contract's conceptual `name` (as listed above) to an interface description;
+use the conceptual `name` field for keys, not `solidity_identifier`. Include an entry **only** for each
+target contract listed above. Each interface description contains:
 * The Solidity identifier of the interface declared in the interface file
 * The source code of the interface declaration you authored
+{% if agent_chooses_path %}
+* The path you chose for the generated interface
+{% endif %}
 </task>
 
 <guidance>
