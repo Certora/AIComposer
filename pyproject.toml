@@ -14,7 +14,7 @@ authors = [
 ]
 
 dependencies = [
-    "graphcore @ git+ssh://git@github.com/Certora/graphcore.git@5947dba04ec4f74f644d5e96b66f501512644674",
+    "graphcore @ git+ssh://git@github.com/Certora/graphcore.git@d427b0f5f039c84c9b170d184d35c352339ddcda",
     "aiohttp>=3.13",
     "attrs>=26.1",
     "Jinja2>=3.1",
