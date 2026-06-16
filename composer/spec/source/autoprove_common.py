@@ -82,12 +82,15 @@ class CommonAutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cloud: bool
     prover_extra_args: str | None
     recursion_limit: int
+    # Only the inference pipeline exposes --threat-model; the services layer
+    # reads it uniformly, so it is nullable here and the properties entry point
+    # set_defaults() it to None.
+    threat_model: str | None
 
 
 class AutoProveArgs(CommonAutoProveArgs, Protocol):
     """Inference-pipeline arguments (adds the bug-analysis concepts)."""
     interactive: bool
-    threat_model: str
     max_bug_rounds: int
 
 
@@ -157,10 +160,7 @@ async def _autoprove_services(
     """Stand up the shared services for a parsed set of common arguments.
 
     Pipeline-agnostic: the yielded ``AutoProveServices`` is everything any
-    pipeline needs. ``threat_model`` is loaded only if the entry point declared a
-    ``--threat-model`` argument (guarded via ``getattr``); the properties pipeline
-    simply ignores it. The final token-usage dump runs in this CM's ``finally`` so
-    every entry point gets it.
+    pipeline needs.
     """
     # Parse main_contract (path:ContractName)
     project_root = pathlib.Path(args.project_root).resolve()
@@ -228,8 +228,8 @@ async def _autoprove_services(
             )
 
             threat_model = (
-                await conns.uploader.get_document(pathlib.Path(threat_path))
-                if (threat_path := getattr(args, "threat_model", None)) is not None else None
+                await conns.uploader.get_document(pathlib.Path(args.threat_model))
+                if args.threat_model is not None else None
             )
             source_env = build_source_env(
                 llm=llm,
@@ -328,6 +328,8 @@ async def _properties_entry_point(summary: RunSummary) -> AsyncIterator[Executor
     parser.add_argument("--skip-setup", action="store_true", help="Skip autosetup AND harness creation; supply --conf and --summary instead")
     parser.add_argument("--conf", default=None, help="Path to a prover .conf file (required with --skip-setup)")
     parser.add_argument("--summary", default=None, help="Path to a single summary spec, certora/-relative (required with --skip-setup)")
+    # This pipeline has no --threat-model; satisfy CommonAutoProveArgs.threat_model.
+    parser.set_defaults(threat_model=None)
 
     args = cast(PropertiesArgs, parser.parse_args())
 
