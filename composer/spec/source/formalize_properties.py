@@ -108,31 +108,32 @@ async def formalize_properties(
         def _validate(s: ST, m: PropertyMapping) -> str | None:
             if not s.get("did_read"):
                 return "You must read your rough draft before delivering the mapping"
+            errors: list[str] = []
             matched_ids: set[str] = set()
             for fp in m.matched:
                 if fp.property_id not in all_ids:
-                    return f"matched property_id {fp.property_id!r} is not one of the known properties"
+                    errors.append(f"matched property_id {fp.property_id!r} is not one of the known properties")
                 if fp.property_id in matched_ids:
-                    return f"property_id {fp.property_id!r} is matched more than once"
+                    errors.append(f"property_id {fp.property_id!r} is matched more than once")
                 matched_ids.add(fp.property_id)
                 if fp.component_name not in valid_names:
-                    return (
+                    errors.append(
                         f"component_name {fp.component_name!r} for property {fp.property_id!r} is not a "
                         f"component of {source.contract_name}. Valid names: {', '.join(valid_names)}"
                     )
             unmatched_ids: set[str] = set()
             for up in m.unmatched:
                 if up.property_id not in all_ids:
-                    return f"unmatched property_id {up.property_id!r} is not one of the known properties"
+                    errors.append(f"unmatched property_id {up.property_id!r} is not one of the known properties")
                 if up.property_id in matched_ids:
-                    return f"property_id {up.property_id!r} appears in both matched and unmatched"
+                    errors.append(f"property_id {up.property_id!r} appears in both matched and unmatched")
                 if up.property_id in unmatched_ids:
-                    return f"property_id {up.property_id!r} is listed in unmatched more than once"
+                    errors.append(f"property_id {up.property_id!r} is listed in unmatched more than once")
                 unmatched_ids.add(up.property_id)
             missing = all_ids - (matched_ids | unmatched_ids)
             if missing:
-                return f"these property_ids are neither matched nor unmatched: {', '.join(sorted(missing))}"
-            return None
+                errors.append(f"these property_ids are neither matched nor unmatched: {', '.join(sorted(missing))}")
+            return "\n".join(errors) if errors else None
 
         bound_template = _typed_formalize_prompt.bind({
             "context": app,
