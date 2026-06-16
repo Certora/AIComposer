@@ -13,8 +13,8 @@ one onto the component of the main contract whose behavior it constrains.
 The properties below must each be mapped to one *component* of the main contract
 `{{ contract_spec.contract_name }}` (located at {{ contract_spec.relative_path }}).
 
-The valid components of `{{ contract_spec.contract_name }}` — you MUST use one of these exact
-names for `component_name` — are:
+You MUST use one of these exact names for `component_name`. The valid components of
+`{{ contract_spec.contract_name }}` are:
 {% for c in context.components %}
 {% if c.name == contract_spec.contract_name %}
 {% for sub in c.components %}
@@ -37,15 +37,15 @@ Follow these instructions exactly:
 
 ## Step 1
 For each property, determine which single component of `{{ contract_spec.contract_name }}` it most
-directly constrains — that is, the component whose state variables and/or external entry points the
+directly constrains: the component whose state variables and/or external entry points the
 property actually talks about.
 
 Decide this primarily from the component descriptions and the external entry points listed above:
 match the nouns and operations the property mentions against each component's description and its
 entry points, and pick the one whose responsibility most directly covers the property.
 
-Only as a last resort — when the descriptions and entry points above genuinely leave a property
-ambiguous between components — fall back to the source tools to read the relevant functions and
+Only as a last resort, when the descriptions and entry points above genuinely leave a property
+ambiguous between components, fall back to the source tools to read the relevant functions and
 state of `{{ contract_spec.contract_name }}` and confirm which component owns the behavior.
 
 ## Step 2
@@ -55,18 +55,12 @@ For each property you can confidently place, produce a `matched` entry with:
 - `methods`: the external entry points (function names/signatures) of that component that are
   involved in the property. For an invariant over contract state this may be empty.
 
-If — and only if — a property cannot be confidently mapped to any single component (for example,
+If and only if a property cannot be confidently mapped to any single component (for example,
 it concerns behavior that is not represented by any component, or it is too vague to place), put it
 in `unmatched` with a concrete `reason`. Do not force a bad mapping; an honest `unmatched` entry is
 preferable to a wrong one.
 
 ## Step 3
 Deliver your result with the result tool. EVERY property_id from the listing must appear exactly
-once, either in `matched` or in `unmatched` — never in both, never omitted.
+once, either in `matched` or in `unmatched`, never in both, never omitted.
 </task>
-
-<guidance>
-  <hard_requirement>
-    Do NOT write any CVL. Your only job is the mapping.
-  </hard_requirement>
-</guidance>

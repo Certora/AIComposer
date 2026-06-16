@@ -44,7 +44,7 @@ from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.source.summarizer import setup_summaries
 from composer.spec.system_model import (
-    HarnessedApplication, SourceExplicitContract,
+    HarnessedApplication, SourceExplicitContract, SourceApplication,
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition,
 )
 from composer.spec.cvl_generation import GeneratedCVL
@@ -93,7 +93,7 @@ def _dump_uncovered(
 
 
 def _build_harnessed_app(
-    s,
+    s: SourceApplication,
     contract_to_harness: dict[str, list[HarnessDefinition]],
 ) -> HarnessedApplication:
     """Build a ``HarnessedApplication`` from a component analysis, attaching the

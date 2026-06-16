@@ -30,14 +30,16 @@ def test_valid_file(tmp_path: pathlib.Path) -> None:
     assert [x.sort for x in result.properties] == ["invariant", "attack_vector"]
 
 
-def test_safety_property_normalizes_to_attack_vector(tmp_path: pathlib.Path) -> None:
+def test_safety_property_preserved(tmp_path: pathlib.Path) -> None:
+    # safety_property is a first-class PropertyFormulation.sort; it must survive
+    # the load unchanged (not get rewritten to attack_vector).
     p = _write(tmp_path, """
 - sort: safety_property
   property_desc: A user can always withdraw their full balance.
   property_id: "001"
 """)
     result = load_known_properties(p)
-    assert result.properties[0].sort == "attack_vector"
+    assert result.properties[0].sort == "safety_property"
 
 
 def test_not_a_list(tmp_path: pathlib.Path) -> None:
@@ -46,7 +48,7 @@ sort: invariant
 property_desc: foo
 property_id: "001"
 """)
-    with pytest.raises(KnownPropertiesError, match="must contain a YAML list"):
+    with pytest.raises(KnownPropertiesError, match="list"):
         load_known_properties(p)
 
 

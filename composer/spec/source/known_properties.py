@@ -14,42 +14,33 @@ Input example::
       property_desc: A user can always withdraw their full balance.
       property_id: "002"
 
-``sort`` accepts ``invariant``, ``safety_property``, ``attack_vector``, where
-``safety_property`` is an alias for ``attack_vector`` (normalized on load). After
-normalization ``sort`` is in ``{invariant, attack_vector}``, a subset of
-``PropertyFormulation.sort`` (see ``composer/spec/prop.py``), so the downstream
-conversion in the formalize phase is total.
+``sort`` accepts ``invariant``, ``safety_property``, ``attack_vector`` — exactly
+``PropertyFormulation.sort`` (see ``composer/spec/prop.py``) — and is passed
+through unchanged, so the downstream conversion in the formalize phase is total
+and the distinction surfaced to the agents is preserved.
 """
 
 import pathlib
-from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from composer.spec.prop import PropertyId
-
-# Input accepts ``safety_property`` as an alias for ``attack_vector``; normalized
-# on load. Canonical sort matches ``PropertyFormulation.sort`` (prop.py).
-InputSort = Literal["invariant", "safety_property", "attack_vector"]
+from composer.spec.prop import PropertyId, PropertySort
 
 
 class KnownProperty(BaseModel):
     model_config = ConfigDict(extra="forbid")  # typo'd keys are errors
 
-    sort: InputSort
+    sort: PropertySort
     property_desc: str = Field(min_length=1)
     property_id: PropertyId = Field(min_length=1)
-
-    @field_validator("sort")
-    @classmethod
-    def _normalize_sort(cls, v: str) -> str:
-        # safety_property -> attack_vector
-        return "attack_vector" if v == "safety_property" else v
 
 
 class KnownProperties(BaseModel):
     properties: list[KnownProperty]
+
+
+_PROPERTIES_ADAPTER = TypeAdapter(list[KnownProperty])
 
 
 class KnownPropertiesError(Exception):
@@ -94,14 +85,8 @@ def load_known_properties(path: pathlib.Path) -> KnownProperties:
     except yaml.YAMLError as exc:
         raise KnownPropertiesError(f"malformed YAML in {path}: {exc}") from exc
 
-    if not isinstance(data, list):
-        raise KnownPropertiesError(
-            f"properties file {path} must contain a YAML list of properties, "
-            f"got {type(data).__name__}"
-        )
-
     try:
-        parsed = [KnownProperty.model_validate(item) for item in data]
+        parsed = _PROPERTIES_ADAPTER.validate_python(data)
     except ValidationError as exc:
         raise KnownPropertiesError(_format_validation_error(exc)) from exc
 
