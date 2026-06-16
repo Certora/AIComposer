@@ -22,6 +22,7 @@ from langgraph.graph import MessagesState
 from graphcore.graph import FlowInput
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
+from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey, Properties
 from composer.spec.source.source_env import SourceEnvironment
 from composer.spec.system_model import HarnessedApplication
@@ -98,10 +99,15 @@ async def formalize_properties(
     cached = await fmt_ctx.cache_get(PropertyMapping)
 
     if cached is None:
-        class ST(MessagesState):
+        class ST(MessagesState, RoughDraftState):
             result: NotRequired[PropertyMapping]
 
+        class FormalizeInput(FlowInput, RoughDraftState):
+            pass
+
         def _validate(s: ST, m: PropertyMapping) -> str | None:
+            if not s.get("did_read"):
+                return "You must read your rough draft before delivering the mapping"
             matched_ids: set[str] = set()
             for fp in m.matched:
                 if fp.property_id not in all_ids:
@@ -144,14 +150,14 @@ async def formalize_properties(
         ).inject(
             lambda g: bound_template.render_to(g.with_initial_prompt_template)
         ).with_tools(
-            [fmt_ctx.get_memory_tool(), *env.source_tools]
+            [fmt_ctx.get_memory_tool(), *get_rough_draft_tools(ST), *env.source_tools]
         ).with_input(
-            FlowInput
+            FormalizeInput
         ).compile_async()
 
         st = await run_to_completion(
             graph=graph,
-            input=FlowInput(input=[]),
+            input=FormalizeInput(input=[], did_read=False, memory=None),
             thread_id=fmt_ctx.thread_id,
             recursion_limit=fmt_ctx.recursion_limit,
             description="Formalize properties",

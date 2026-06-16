@@ -28,7 +28,7 @@ You MUST use one of these exact names for `component_name`. The valid components
 <properties>
 The known properties to map:
 {% for p in properties %}
-* property_id `{{ p.property_id }}` (sort: {{ p.sort }}): {{ p.property_desc }}
+* `{{ p.property_id }}` (sort: {{ p.sort }}): {{ p.property_desc }}
 {% endfor %}
 </properties>
 
@@ -61,6 +61,11 @@ in `unmatched` with a concrete `reason`. Do not force a bad mapping; an honest `
 preferable to a wrong one.
 
 ## Step 3
+{% with draft_subject = "your property-to-component mapping (each property_id's component_name and methods, plus any unmatched and why)", rough_draft_enforced = true %}
+{% include "rough_draft_protocol.j2" %}
+{% endwith %}
+
+## Step 4
 Deliver your result with the result tool. EVERY property_id from the listing must appear exactly
 once, either in `matched` or in `unmatched`, never in both, never omitted.
 </task>
