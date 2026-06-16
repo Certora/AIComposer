@@ -41,7 +41,7 @@ ml = ["sentence-transformers>=5.1", "einops"] # save CI
 # exactly one extra must be selected at install time (enforced via the
 # [tool.uv] conflicts block below). Each extra is named after the package it
 # pulls.
-certora-cli = ["certora-cli>=8.13.0"]
+certora-cli = ["certora-cli>=8.16.1"]
 certora-cli-beta = ["certora-cli-beta>=8.16.1"]
 certora-cli-beta-mirror = ["certora-cli-beta-mirror>=8.16.1"]
 # Back-compat alias: `prover` == stable channel.

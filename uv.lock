@@ -75,7 +75,7 @@ requires-dist = [
     { name = "ai-composer", extras = ["certora-cli"], marker = "extra == 'prover'" },
     { name = "aiohttp", specifier = ">=3.13" },
     { name = "attrs", specifier = ">=26.1" },
-    { name = "certora-cli", marker = "extra == 'certora-cli'", specifier = ">=8.13.0" },
+    { name = "certora-cli", marker = "extra == 'certora-cli'", specifier = ">=8.16.1" },
     { name = "certora-cli-beta", marker = "extra == 'certora-cli-beta'", specifier = ">=8.16.1" },
     { name = "certora-cli-beta-mirror", marker = "extra == 'certora-cli-beta-mirror'", specifier = ">=8.16.1" },
     { name = "chromadb", specifier = ">=0.4.0" },
@@ -432,7 +432,7 @@ wheels = [
 
 [[package]]
 name = "certora-cli"
-version = "8.13.1"
+version = "8.16.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -448,11 +448,11 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "wcmatch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/52/1f/49b2f763c787a573495f30d37e5daecf2d117d04495a08fccd543441e58c/certora_cli-8.13.1.tar.gz", hash = "sha256:d3dd0c74abe21d3d6227ddcac23eddffbcd8ba7b6e89f2fa984ca3b4899c0725", size = 43202780, upload-time = "2026-05-19T10:55:06.89Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/96/80814e0eca922a676ad73c77e94c86620b193a9149b71e269f656270389f/certora_cli-8.16.1.tar.gz", hash = "sha256:183424e3cb627f2c21bc0cee788fe5daf3175369c8b8fd13e71f9d8b77849988", size = 43309703, upload-time = "2026-06-15T16:17:20.098Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/33/61892f097930bb35b573d2a042aa9abaf6470f59c2f5f552a52b35ab8bcb/certora_cli-8.13.1-py3-none-any.whl", hash = "sha256:360f5632cfd1d6029aa58d64afdc4b3535ca1219eb9f72d12f53ed4c57e9479c", size = 43257532, upload-time = "2026-05-19T10:54:56.97Z" },
-    { url = "https://files.pythonhosted.org/packages/7d/51/4438557b31a8b10ee2a8334f60fcdcfb7ee806cecaef6f05d64ee1eab0ad/certora_cli-8.13.1-py3-none-macosx_10_9_universal2.whl", hash = "sha256:1854788af0c55825037e6e636fafe1c9f6f43fd0df949d993ffd8087877908b8", size = 44783658, upload-time = "2026-05-19T10:55:03.528Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/5e/a458ddd9ddbfe0bb519bf422003a434ade29656d948c17afaed2527afe01/certora_cli-8.13.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:fd5ff11b12623ab22c634b2ce3a53a62842c11ec093345a829cdd4f54e702da3", size = 44093604, upload-time = "2026-05-19T10:55:00.333Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/96/e1df74bbd750f9af91dbb6030219e40800761e88ed11368e7f2edef85d0f/certora_cli-8.16.1-py3-none-any.whl", hash = "sha256:67a1ea1fbbc72bb41782fc61bd66e81a374a23d3ae686bbdfd05166290e2014a", size = 43364831, upload-time = "2026-06-15T16:17:11.753Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/03/965b7921bcf8f8f43e6827be0aace748bfcf5459b4d626e4098d9bcd4002/certora_cli-8.16.1-py3-none-macosx_10_9_universal2.whl", hash = "sha256:dd8a9f047c1086ba33ff6c530af3f5e02fe0f1aa10025e6b5773d4c54833a697", size = 44890955, upload-time = "2026-06-15T16:17:17.332Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/16/15cc87faca48dfd9f9d9c6fd8bb50062cf0acdfa699f03a586b960cbfb3a/certora_cli-8.16.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:91e1662640e57e5e25d96b2a64f84a2622bde4c233a65d8d7889a6d745dce170", size = 44200902, upload-time = "2026-06-15T16:17:14.81Z" },
 ]
 
 [[package]]
