@@ -166,7 +166,7 @@ type UncoveredReason = Unmatched | Skipped | BatchGaveUp | Errored
 class UncoveredProperty:
     """An input property that did not result in a verified rule. Surfaced to the
     user (warn + dump) so coverage is tracked per ``property_id`` end-to-end."""
-    property_id: PropertyId   # == PropertyFormulation.title
+    property_id: PropertyId
     reason: UncoveredReason
 
 

@@ -82,10 +82,6 @@ class FormalizeParams(TypedDict):
     contract_spec: SourceCode
     properties: list[KnownProperty]
 
-
-_typed_formalize_prompt = TypedTemplate[FormalizeParams]("formalize_properties_prompt.j2")
-
-
 def _formalize_cache_key(known: KnownProperties) -> CacheKey[None, PropertyMapping]:
     """Cache key derived from the YAML content so editing ``--properties``
     invalidates a cached mapping (mirrors ``_batch_cache_key``)."""
@@ -178,7 +174,7 @@ async def formalize_properties(
             errors.append(f"these property_ids are neither matched nor unmatched: {', '.join(sorted(missing))}")
         return "\n".join(errors) if errors else None
 
-    bound_template = _typed_formalize_prompt.bind({
+    bound_template = TypedTemplate[FormalizeParams]("formalize_properties_prompt.j2").bind({
         "context": app,
         "contract_spec": source,
         "properties": known.properties,
