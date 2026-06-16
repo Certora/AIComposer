@@ -5,7 +5,7 @@ pass actually constitute evidence for the property it claims to establish?
 
 A test is an experiment. Audit the experimental design: does the setup create conditions under
 which the property could plausibly FAIL, and do the assertions detect that failure? A test that
-cannot fail — or fails only for reasons unrelated to its property — is evidence of nothing.
+cannot fail -- or fails only for reasons unrelated to its property -- is evidence of nothing.
 </background>
 
 <task>
@@ -73,7 +73,7 @@ Flag assertions that hold regardless of the implementation's behavior:
 
 CLARIFICATION: An assertion is tautological IF AND ONLY IF it holds regardless of the contract
 implementation. `assertGt(vault.calculateInterest(x), 0)` is NOT tautological even if the current
-implementation always returns nonzero — it pins implementation behavior. But `assertTrue(flag)`
+implementation always returns nonzero -- it pins implementation behavior. But `assertTrue(flag)`
 right after the test called `setFlag(true)` IS vacuous when the property is about a *consequence*
 of the flag (see Criterion 2).
 
@@ -94,7 +94,7 @@ materially weaker than (a). Typical shapes:
 - Comments narrate a detailed attack or mechanism that the executable test never exercises.
 - The test exercises a different scenario than the property specifies. If the property describes a
   sequence or interleaving (a stale read, a same-block ordering, a cross-contract call order), the
-  test must construct that exact sequence — a static analogue of the end state, or the benign
+  test must construct that exact sequence -- a static analogue of the end state, or the benign
   ordering, does not test the property. If the property names another contract or function as part
   of the scenario, read it and confirm the scenario is reachable through it before endorsing,
   prescribing, or downgrading the test.
@@ -143,7 +143,7 @@ silently bypasses validation the property depends on.
 For each mock/stub, determine which behavioral axes the property depends on and check fidelity
 there:
 1. **Load-bearing divergence**: the mock differs from the real collaborator in a way the property
-   is sensitive to — wrong return-value semantics, missing side effect, wrong enum/ABI encoding in
+   is sensitive to -- wrong return-value semantics, missing side effect, wrong enum/ABI encoding in
    a handwritten mirror, missing validation the real component performs. Verify handwritten
    constants and ABI assumptions against the real source; do not take the test's comments' word.
    Also check *mock-time coherence*: when the contract reads several time-like sources
@@ -152,18 +152,18 @@ there:
 2. **Permissive-mock displacement**: a mock that disables a protection (an authorizer that allows
    every call, a verifier that accepts everything, an oracle that is never stale, a token that
    never fails transfers) is acceptable ONLY if that protection is exercised elsewhere in the suite
-   against the real component. If no test covers the bypassed axis, flag missing coverage — a suite
+   against the real component. If no test covers the bypassed axis, flag missing coverage -- a suite
    gap, not a defect of the individual test. Distinguish from the legitimate inverse,
    *fault-injection mocks* (a token rigged to fail, an oracle rigged stale): those exercise the
    subject's error handling.
-3. **Wrong unit entirely**: the property concerns component X, but the test never deploys X — it
+3. **Wrong unit entirely**: the property concerns component X, but the test never deploys X -- it
    exercises a collaborator and narrates X's behavior in comments. This covers nothing about the
    property; flag it and identify the minimal deployment that would.
 
 ### Criterion 5: Oracle independence
 
 Examine how each test computes its expected values. Flag tests whose oracle is the implementation's
-own logic fed back to itself — such a test passes under any bug the oracle shares; it detects
+own logic fed back to itself -- such a test passes under any bug the oracle shares; it detects
 change, not incorrectness. The family:
 - the implementation's algorithm transcribed into the test (same formula, same rounding, same
   operation order);
@@ -174,7 +174,7 @@ change, not incorrectness. The family:
   computation belongs on independently-known state or balances.
 
 A derived oracle is acceptable when: the formula IS the independently-stated specification; the
-test separately pins anchors — assertions whose expected values are knowable without reference to
+test separately pins anchors -- assertions whose expected values are knowable without reference to
 the implementation's algorithm (boundary values, conservation identities, round-trips, monotonicity
 between concrete states, input/output pairs computed offline); or the derivation is structurally
 different (closed-form vs. iterative, exact vs. approximate). Prefer suggesting anchor assertions
@@ -193,10 +193,10 @@ pass criterion is satisfied by the broken state.
   Any fix you prescribe for an attack-vector test must itself satisfy this criterion: pair a
   passing-on-vulnerable demonstration with the finding and known-vuln marking, or route by-design
   behavior to documentation. Never prescribe a test that is green in the vulnerable state without
-  that packaging, and never prescribe one whose assertions cannot fail under your own sequencing —
+  that packaging, and never prescribe one whose assertions cannot fail under your own sequencing --
   state explicitly which world (vulnerable vs. fixed) your prescribed test passes in.
 - For reverts: prefer specific error selectors over bare `vm.expectRevert()` when the contract
-  defines them — a bare expectRevert is satisfied by an unrelated revert (mock failure, setup
+  defines them -- a bare expectRevert is satisfied by an unrelated revert (mock failure, setup
   arithmetic). Confirm the revert originates from the check named in the property, not earlier in
   the call path. Confirm the same call SUCCEEDS somewhere when the revert condition is absent; a
   revert test without a passing control demonstrates little.
@@ -211,13 +211,13 @@ Unit fuzz tests:
    branch is reachable under the bounds and asserts something; a silent-return branch turns those
    inputs into no-ops.
 
-Invariant (stateful fuzz) tests: the dominant vacuity mode is in the handlers, not the invariant —
+Invariant (stateful fuzz) tests: the dominant vacuity mode is in the handlers, not the invariant --
 handlers whose bounds or early returns make the violating region unreachable, a handler set missing
 the operations the invariant is about, or handlers that revert on most inputs so the campaign never
 leaves near-initial state. That is Criterion 3's degenerate corner in stateful form; audit what
 states the campaign can actually reach.
 
-Harness mechanics: verify the tests mean what they say under actual Foundry semantics — each test
+Harness mechanics: verify the tests mean what they say under actual Foundry semantics -- each test
 runs against a fresh `setUp` state; `vm.expectRevert`, `vm.expectEmit`, and `vm.prank` each apply
 only to the next call. Watch for mental models imported from stateful test frameworks: "restore
 state for the next test" code (dead under per-test isolation), reliance on test execution order,
@@ -232,7 +232,7 @@ Verify the suite covers all {{ properties | length }} listed properties:
   tests failing Criteria 1-3 is NOT covered; say so explicitly.
 - If a property is unaddressed and no skip is declared: reject the suite and flag it.
 - If the author declared a skip: evaluate the justification critically. Foundry can deploy real
-  components, manipulate arbitrary state, mock externals, fork networks, and fuzz — few properties
+  components, manipulate arbitrary state, mock externals, fork networks, and fuzz -- few properties
   of on-chain logic are genuinely untestable. Accept a skip only when the property requires
   behavior outside the repository that cannot be faithfully mocked, or is a statement about all
   reachable states (where a bounded demonstration plus an explicit limitation note is the
@@ -255,10 +255,11 @@ anything nonsensical, not actionable, or unrelated to a criterion. In particular
   test degenerate under Criterion 3;
 - style, naming, gas, or code-organization commentary;
 - "brittleness"/"maintainability" commentary (see Criterion 3 CLARIFICATION);
-- demands for tests beyond the listed properties — coverage is judged against the property list,
+- demands for tests beyond the listed properties -- coverage is judged against the property list,
   not your imagination of a complete suite.
 
-The goal is to rule out low-quality tests, not to demonstrate thoroughness through volume. A short
+The goal of your feedback is to rule out low-quality tests, not to demonstrate your own
+thoroughness through volume. A short
 list of load-bearing defects, each tied to a criterion and a concrete fix, beats an exhaustive
 enumeration of misdemeanors.
 
@@ -269,7 +270,7 @@ Memories must include at least:
 * Foundry/forge-std semantics that informed your acceptance/rejection of tests
 * Facts verified against the contracts (storage layouts, enum orderings, which protections exist
   where, which time-like sources the contracts read), so re-review need not re-derive them
-* Substantive feedback given this round, to ensure you do not contradict yourself
+* Substantive feedback given this round, to ensure you do not contradict yourself in later rounds
 </task>
 
 {% if context %}
@@ -296,7 +297,7 @@ source. Your criticism must cite what the code actually does.
 <reminder>
 A passing test is a claim of evidence; audit the claim. The single question under every criterion:
 under what implementations does this test fail? If the answer is "none" or "only implementations
-nobody would write", the test is not pulling its weight — no matter how thorough its comments look.
+nobody would write", the test is not pulling its weight -- no matter how thorough its comments look.
 </reminder>
 <tools>
 Use the memory tool to save significant findings during source exploration and test analysis.

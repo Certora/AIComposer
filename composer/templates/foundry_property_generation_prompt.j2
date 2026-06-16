@@ -20,7 +20,7 @@ for the contract `{{ contract_name }}`:
 
 Follow this procedure exactly:
 
-## Step 0 — gather context
+## Step 0 -- gather context
 
 Read the relevant portions of the source code to understand how each
 property is realized by the implementation. When you need a cheatcode
@@ -31,7 +31,7 @@ Do NOT speculate about whether the property is true. Your job is to
 write tests that *demonstrate* the property; the runner will tell you
 whether your demonstration actually holds.
 
-## Step 1 — author the test file
+## Step 1 -- author the test file
 
 Write a single foundry test contract that imports `forge-std/Test.sol`
 and covers every non-skipped property with at least one `test_*`
@@ -53,10 +53,10 @@ You are allowed to make multiple `put_test_raw` calls as you iterate;
 each call replaces the buffer wholesale, so emit the complete file every
 time.
 
-## Step 2 — run forge test
+## Step 2 -- run forge test
 
 Call `forge_test()`. It will stage your buffer under
-`<project>/test/` and run `forge test --match-path` on it.
+`<project>/<test-dir>/` and run `forge test --match-path` on it.
 
 * If the run is fully green (excluding any tests you've marked via
   `expect_test_failure`), the publish gate is stamped and you can
@@ -83,20 +83,20 @@ as an expected failure. Do *NOT* produce a test that passes to demonstrate
 A subsequent `put_test_raw` invalidates any prior `forge_test` stamp,
 so always finish with a clean `forge_test` run after the *latest* edit.
 
-## Step 3 — seek feedback
+## Step 3 -- seek feedback
 
 Seek feedback on your tests from the feedback tool. If it indicates that
 your tests need work, address its feedback and reinvoke the tool until it
 is satisfied.
 
 The feedback judge is aware of all properties in this batch. It will flag
-missing coverage — if your tests do not address a property and you have
+missing coverage -- if your tests do not address a property and you have
 not declared a skip for it, the judge will reject your tests. If you have
 declared a skip but the judge considers the justification insufficient,
 it will also reject and may suggest how the property can in fact be
 demonstrated.
 
-## Step 4 — publish
+## Step 4 -- publish
 
 Call `result(commentary, property_tests)`. The publish gate requires:
 
@@ -118,14 +118,14 @@ properties don't appear in the property→test mapping.
 
 You must attempt to formalize ALL properties before considering any
 skips. Skipping is for properties that are genuinely unspecifiable in
-this framework — e.g., a temporal property about block-level ordering
+this framework -- e.g., a temporal property about block-level ordering
 that foundry cannot directly express. Do NOT skip a property merely
 because the test would be tedious.
 
 **Do NOT skip a property because it is universally quantified** ("for
 all inputs", "for all reachable states", "the invariant holds at every
 step"). Foundry's whole purpose for such properties is to *approximate*
-them via `testFuzz_*` or `invariant_*` — sampling does not give a proof,
+them via `testFuzz_*` or `invariant_*` -- sampling does not give a proof,
 but a clean campaign is empirical evidence the property holds and a
 failing campaign surfaces a concrete counterexample. Both are valuable.
 Universally-quantified properties are exactly the shape these test forms
@@ -166,5 +166,5 @@ changed. Follow this procedure:
    unchanged draft is cheap).
 6. Deliver via `result`.
 
-Do NOT skip steps 4 and 5 — the publish gate requires both stamps on the
+Do NOT skip steps 4 and 5 -- the publish gate requires both stamps on the
 *current* buffer.

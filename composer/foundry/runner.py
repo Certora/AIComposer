@@ -32,13 +32,14 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, override
+import tomllib
 
 from typing_extensions import TypedDict
 
 from langchain_core.tools import BaseTool
 from langgraph.config import get_stream_writer
 from langgraph.types import Command
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from graphcore.graph import tool_state_update
 from graphcore.tools.schemas import (
@@ -64,6 +65,7 @@ class ForgeTestDeps:
     """Per-project bindings supplied at tool-construction time."""
     project_root: str
     sem: asyncio.Semaphore
+    test_root: str
     forge_binary: str = "forge"
     timeout_s: int = 600
 
@@ -149,7 +151,7 @@ class ForgeTestTool(
                         f"forge_test cannot run: {root}/foundry.toml does not "
                         "exist. The project does not look like a foundry project."
                     )
-                test_dir = root / "test"
+                test_dir = root / deps.test_root
                 test_dir.mkdir(exist_ok=True)
 
                 # ``seed`` controls staged filename; an unseeded run picks a
@@ -163,7 +165,7 @@ class ForgeTestTool(
                 try:
                     proc = await asyncio.create_subprocess_exec(
                         deps.forge_binary, "test", "--json",
-                        "--match-path", f"test/{staged_name}",
+                        "--match-path", f"{deps.test_root}/{staged_name}",
                         cwd=str(root),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
@@ -294,6 +296,30 @@ class ForgeTestTool(
             last_test_names=test_names,
         )
 
+_DEFAULT_TEST_DIR = "test"
+
+class ProfileConf(BaseModel):
+    test: str | None = Field(default=None)
+
+class FoundryFragment(BaseModel):
+    profile: dict[str, ProfileConf]
+
+def _infer_test_dir(
+    project_root: str
+) -> str:
+    foundry_conf = Path(project_root) / "foundry.toml"
+    if not foundry_conf.exists():
+        return _DEFAULT_TEST_DIR
+    with open(foundry_conf, "rb") as f:
+        conf = tomllib.load(f)
+    try:
+        conf = FoundryFragment.model_validate(conf)
+    except ValidationError:
+        return _DEFAULT_TEST_DIR
+    if "default" not in conf.profile:
+        return _DEFAULT_TEST_DIR
+    default_profile = conf.profile["default"]
+    return default_profile.test or _DEFAULT_TEST_DIR
 
 def get_forge_test_tool(
     project_root: str,
@@ -309,7 +335,8 @@ def get_forge_test_tool(
         project_root=project_root,
         forge_binary=forge_binary,
         timeout_s=timeout_s,
-        sem=forge_sem
+        sem=forge_sem,
+        test_root=_infer_test_dir(project_root)
     )
     return ForgeTestTool.bind(deps).as_tool("forge_test")
 
