@@ -86,7 +86,7 @@ def _dump_uncovered(
         component = None if isinstance(uc.reason, Unmatched) else uc.reason.feat.component.name
         payload.append({
             "property_id": uc.property_id,
-            "property_desc": desc_by_id.get(uc.property_id, ""),
+            "property_desc": desc_by_id[uc.property_id],
             "component": component,
             "reason": str(uc.reason),
         })
