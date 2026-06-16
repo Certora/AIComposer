@@ -24,7 +24,7 @@ from langgraph.types import Command
 from langchain_core.runnables import RunnableConfig
 
 
-def _normalize_updates_payload(payload: dict) -> dict:
+def _normalize_updates_payload(payload: dict[str, Any]) -> dict:
     """Flatten langgraph's mixed-mode tools-node payload to ``dict[node, dict]``.
 
     When a ``ToolNode`` batch contains tools whose returns differ in shape
