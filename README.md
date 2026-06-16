@@ -37,6 +37,21 @@ The sanity analyzer requires additional prover documentation beyond the CVL manu
 
 **Note:** The cex-analyzer and AI Composer use the standard `rag_db` (CVL-only), while sanity-analyzer defaults to `extended_rag_db` (CVL + prover docs). You can override this with the `--rag-db` flag if needed.
 
+## Updating the RAG
+
+The RAG is read-only at runtime and is fully derived from the documentation HTML, so when the docs change you just rebuild it.
+`./refresh_rag.sh` runs the full offline wipe+rebuild in one step (regenerate docs → wipe → repopulate), saving you from
+chaining `gen_docs.sh`, `wipe_rag.py`, and the `populate_*.sh` scripts by hand:
+
+```
+./refresh_rag.sh                 # regenerate docs, then wipe + rebuild rag_db (CVL-only)
+./refresh_rag.sh --all           # also wipe + rebuild extended_rag_db
+./refresh_rag.sh --skip-gen-docs # rebuild from the HTML already in prover-docs/
+```
+
+**Run this offline** (when nothing is querying the RAG): it empties the target database and then re-embeds over a few
+minutes, during which CVL manual search returns no results. See `./refresh_rag.sh --help` for all options.
+
 ## One-time prover setup
 
 From the root of the Certora Prover repo, run `./gradlew copy-assets`. Ensure that your `CERTORA` environment

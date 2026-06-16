@@ -14,7 +14,6 @@ import argparse
 import hashlib
 import logging
 import pathlib
-import shlex
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -80,7 +79,7 @@ class CommonAutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
     cache_ns: str | None
     memory_ns: str | None
     cloud: bool
-    prover_extra_args: str | None
+    interactive: bool
     recursion_limit: int
     # Only the inference pipeline exposes --threat-model; the services layer
     # reads it uniformly, so it is nullable here and the properties entry point
@@ -256,10 +255,7 @@ async def _autoprove_services(
                 memory_namespace=memory_ns,
             )
 
-            prover_opts = make_prover_options(
-                cloud=args.cloud,
-                user_extra_args=shlex.split(args.prover_extra_args) if args.prover_extra_args else [],
-            )
+            prover_opts = make_prover_options(cloud=args.cloud)
 
             yield AutoProveServices(
                 ctx=ctx,
