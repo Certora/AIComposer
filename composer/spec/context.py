@@ -20,6 +20,7 @@ from graphcore.graph import Builder
 from composer.input.files import Document
 from composer.io.mnemonic_store import assign_mnemonic
 from composer.core.user import user_data_ns
+from composer.spec.system_model import SolidityIdentifier
 
 
 # ---------------------------------------------------------------------------
@@ -34,9 +35,14 @@ class SystemDoc:
 
 @dataclass
 class SourceCode(SystemDoc):
-    """Input when source code is also available (source_spec)."""
+    """Input when source code is also available (source_spec).
+
+    ``contract_name`` is the Solidity identifier of the main contract being
+    verified — the ``<Name>`` half of the ``--main-contract path:Name`` CLI
+    argument.
+    """
     project_root: str
-    contract_name: str
+    contract_name: SolidityIdentifier
     relative_path: str
     forbidden_read: str
 

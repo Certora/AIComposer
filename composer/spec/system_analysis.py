@@ -1,34 +1,32 @@
-from typing import NotRequired, Protocol, Any
-
-from langchain_core.tools import BaseTool
+from typing import NotRequired, Any
 
 from graphcore.graph import MessagesState, FlowInput
 
 
 from composer.spec.context import (
-    WorkflowContext, CacheKey, SystemDoc
+    WorkflowContext, SystemDoc
 )
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.spec.system_model import BaseApplication, ExplicitContract, ExternalActor, ExternalDependency
-from composer.spec.tool_env import BasicAgentTools
+from composer.spec.system_model import BaseApplication, ExplicitContract, ExternalActor, ExternalDependency, SolidityIdentifier
+from composer.spec.service_host import ServiceHost
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 
 DESCRIPTION = "Component analysis"
 
-class AnalysisEnv(BasicAgentTools, Protocol):
-    @property
-    def system_analysis_tools(self) -> tuple[BaseTool, ...]:
-        ...
-
 def _validate_connectivity(
-    _: Any, app: BaseApplication
+    app: BaseApplication, expected_main_id: SolidityIdentifier | None
 ) -> str | None:
     errors: list[str] = []
     known_components: dict[str, set[str]] = {}
     known_external: set[str] = set()
+    known_solidity_ids : set[str] = set()
 
     for c in app.components:
         if isinstance(c, ExplicitContract):
+            if c.solidity_identifier in known_solidity_ids:
+                errors.append(f"Duplicate solidity identifier: {c.solidity_identifier}")
+            else:
+                known_solidity_ids.add(c.solidity_identifier)
             if c.name in known_components:
                 errors.append(f"Duplicate contract names: {c.name}")
             else:
@@ -39,7 +37,12 @@ def _validate_connectivity(
                 known_components[c.name].add(sub_comp.name)
         else:
             assert isinstance(c, ExternalActor)
+            if c.name in known_external:
+                errors.append(f"Duplicate external component name: {c.name}")
             known_external.add(c.name)
+    
+    if expected_main_id is not None and expected_main_id not in known_solidity_ids:
+        errors.append(f"Expected an explicit contract instance with solidity identifier: {expected_main_id}")
 
     for explicit in app.components:
         if not isinstance(explicit, ExplicitContract):
@@ -78,8 +81,9 @@ async def run_component_analysis[T: BaseApplication](
     ty: type[T],
     child_ctxt: WorkflowContext[T],
     input: SystemDoc,
-    env: AnalysisEnv,
-    extra_input: list[str | dict]
+    env: ServiceHost,
+    extra_input: list[str | dict],
+    expected_main_id: SolidityIdentifier | None = None,
 ) -> T | None:
     """Analyze application components from a system doc and optionally source code."""
     if (cached := await child_ctxt.cache_get(ty)) is not None:
@@ -87,24 +91,32 @@ async def run_component_analysis[T: BaseApplication](
 
     memory = child_ctxt.get_memory_tool()
 
+    class AnalysisInput(RoughDraftState, FlowInput):
+        pass
+
     AnalysisState = type("AnalysisState", (MessagesState, RoughDraftState), {
         "__annotations__": {"result": NotRequired[ty]}
     })
 
+    def _validation_wrapper(
+        _: Any, app: BaseApplication
+    ) -> str | None:
+        return _validate_connectivity(app, expected_main_id)
+
     b = bind_standard(
         builder=env.builder,
         state_type=AnalysisState,
-        validator=_validate_connectivity
+        validator=_validation_wrapper
     ).with_input(
-        FlowInput
+        AnalysisInput
     ).with_sys_prompt_template(
         "application_analysis_system.j2",
-        has_source=env.has_source
+        sort=env.sort,
     ).with_tools(
-        [memory, *get_rough_draft_tools(AnalysisState), *env.system_analysis_tools]
+        [memory, *get_rough_draft_tools(AnalysisState), *env.analysis_tools]
     ).with_initial_prompt_template(
         "application_analysis_prompt.j2",
-        has_source=env.has_source
+        sort=env.sort,
     )
 
     graph = b.compile_async()
@@ -114,7 +126,7 @@ async def run_component_analysis[T: BaseApplication](
         *extra_input
     ]
 
-    flow_input = FlowInput(input=inputs)
+    flow_input = AnalysisInput(input=inputs, did_read=False, memory=None)
 
     res = await run_to_completion(
         graph,

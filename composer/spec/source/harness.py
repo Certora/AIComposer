@@ -33,11 +33,11 @@ from graphcore.tools.results import result_tool_generator
 
 from composer.spec.graph_builder import run_to_completion, bind_standard
 from composer.spec.source.autosetup import run_autosetup, SetupFailure, SetupSuccess
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
 from composer.spec.gen_types import TypedTemplate, certora_relative_to_project, under_project
-from composer.spec.system_model import SourceApplication, SourceExternalActor, SourceExplicitContract
+from composer.spec.system_model import SolidityIdentifier, SourceApplication, SourceExternalActor, SourceExplicitContract
 
 def system_setup_key(s: SourceApplication) -> CacheKey["ContractSetup", "SystemDescriptionHarnessed"]:
     return CacheKey["ContractSetup", "SystemDescriptionHarnessed"](
@@ -48,7 +48,11 @@ class LinkField(BaseModel):
     """
     Expressing a "linking" relationship
     """
-    target : list[str] = Field(description="The name of the contract(s) being linked to")
+    target : list[SolidityIdentifier] = Field(description=(
+        "The Solidity identifier(s) of the contract(s) being linked to — must match "
+        "the `solidity_identifier` of an entry in the application description's "
+        "transitive closure."
+    ))
     link_paths: list[str] = Field(description="The list of Solidity storage access paths linking to `target`")
 
 
@@ -56,7 +60,10 @@ class ClosureContractBase(BaseModel):
     """
     A contract in the transitive closure.
     """
-    name: str = Field(description="The name of the contract (taken from the application description)")
+    solidity_identifier: SolidityIdentifier = Field(description=(
+        "The Solidity identifier of the contract — must match the `solidity_identifier` "
+        "of the corresponding entry in the application description."
+    ))
     link_fields: list[LinkField] = Field(description="The linking relationship with other contracts in the closure")
 
 class ClosureContract(ClosureContractBase):
@@ -66,7 +73,7 @@ class ClosureContract(ClosureContractBase):
     num_instances : int | None = Field(description="The number of instances of this contract needed to model a non-trivial state (None if N/A)")
 
 class HarnessDef(BaseModel):
-    harness_of: str
+    harness_of: SolidityIdentifier
     harness_source: str
 
 class HarnessedContract(ClosureContractBase):
@@ -84,7 +91,10 @@ class ExternalInterface(BaseModel):
 class SystemDescriptionBase[T: ClosureContractBase](BaseModel):
     non_trivial_state: str = Field(description="A semi-formal description of a `non-trivial state`.")
     transitive_closure: list[T] = Field(description="The list of contracts in the transitive closure that interact with the main contract")
-    erc20_contracts: list[str] = Field(description="A list of the contract names (taken from the application description) which are ERC20 tokens")
+    erc20_contracts: list[SolidityIdentifier] = Field(description=(
+        "A list of the Solidity identifiers (matching `solidity_identifier` "
+        "entries in the application description) of the contracts which are ERC20 tokens"
+    ))
     external_interfaces: list[ExternalInterface] = Field(description="A list of the external contract actors interacted with by the closure")
 
 
@@ -125,7 +135,7 @@ async def classifier_agent(
     context: WorkflowContext[SystemDescriptionHarnessed],
     app: SourceApplication,
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
 ) -> AgentSystemDescription:
     child = context.child(HARNESS_ANALYSIS_KEY)
     if (cached := await child.cache_get(AgentSystemDescription)) is not None:
@@ -144,7 +154,7 @@ async def classifier_agent(
     }
 
     contract_lkp = {
-        c.name: c for c in app.contract_components
+        c.solidity_identifier: c for c in app.contract_components
     }
 
     def result_validator(
@@ -157,8 +167,8 @@ async def classifier_agent(
             if external_lkp[ext.name].path is None:
                 return f"External interface {ext.name} doesn't have a path, and can't be identified as an interface"
         for c in res.transitive_closure:
-            if c.name not in contract_lkp:
-                return f"Contract {c.name} in the interaction closure doesn't appear in the application description"
+            if c.solidity_identifier not in contract_lkp:
+                return f"Contract {c.solidity_identifier} in the interaction closure doesn't appear in the application description"
         return None
 
     d = bind_standard(
@@ -191,7 +201,7 @@ async def classifier_agent(
 class GeneratedHarness(BaseModel):
     """A generated harness file that creates a uniquely-named contract extending an external contract."""
     path: str = Field(description="Path to the harness definition")
-    harness_name: str = Field(description="The name of the contract defined in the harness file")
+    harness_name: SolidityIdentifier = Field(description="The Solidity identifier of the contract defined in the harness file")
 
 class GeneratedHarnessSource(GeneratedHarness):
     source: str
@@ -200,16 +210,19 @@ class HarnessAgentResult(BaseModel):
     """
     The results of your harness generation
     """
-    name_to_source: dict[str, list[GeneratedHarness]] = Field(description="A map from the contract names to the harness names chosen")
-    solidity_compiler: str = Field(description=f"The solidity compiler to use for compiling these harnesses.") 
+    identifier_to_source: dict[SolidityIdentifier, list[GeneratedHarness]] = Field(description=(
+        "A map from each target contract's `solidity_identifier` (exactly as given in "
+        "the input list) to the harnesses chosen for it."
+    ))
+    solidity_compiler: str = Field(description=f"The solidity compiler to use for compiling these harnesses.")
 
 class HarnessResult(BaseModel):
-    name_to_source: dict[str, list[GeneratedHarnessSource]]
+    identifier_to_source: dict[SolidityIdentifier, list[GeneratedHarnessSource]]
 
 class HarnessInput(BaseModel):
     path: str
     n_harnesses: int
-    name: str
+    solidity_identifier: SolidityIdentifier
 
 class HarnessGenParams(TypedDict):
     to_harness: list[HarnessInput]
@@ -223,7 +236,7 @@ def harness_generation_key(
 
 async def generate_harnesses(
     context: WorkflowContext[SystemDescriptionHarnessed],
-    env: SourceEnvironment,
+    env: ServiceHost,
     source: SourceCode,
     application: SourceApplication,
     instructions: AgentSystemDescription
@@ -249,14 +262,14 @@ async def generate_harnesses(
     v_tools, mat = vfs_tools(tool_conf, GenerationState)
 
     contract_paths = {
-        c.name: c.path for c in application.contract_components
+        c.solidity_identifier: c.path for c in application.contract_components
     }
 
     harness_inputs = [
         HarnessInput(
-            name=c.name,
+            solidity_identifier=c.solidity_identifier,
             n_harnesses=c.num_instances,
-            path=contract_paths[c.name]
+            path=contract_paths[c.solidity_identifier]
         )
         for c in instructions.transitive_closure if c.num_instances is not None
     ]
@@ -266,7 +279,7 @@ async def generate_harnesses(
     })
 
     expected = {
-        c.name: c.n_harnesses for c in harness_inputs
+        c.solidity_identifier: c.n_harnesses for c in harness_inputs
     }
 
 
@@ -279,7 +292,7 @@ async def generate_harnesses(
         all_files = [
             
         ]
-        for (nm, r) in res.name_to_source.items():
+        for (nm, r) in res.identifier_to_source.items():
             if nm not in check_copy:
                 return f"Delivered result for contract {nm}, but no instructions were given to harness it"
             if len(r) != check_copy[nm]:
@@ -338,8 +351,8 @@ async def generate_harnesses(
 
     assert "result" in res_state
 
-    res_dict : dict[str, list[GeneratedHarnessSource]] = {}
-    for (nm, r) in res_state["result"].name_to_source.items():
+    res_dict : dict[SolidityIdentifier, list[GeneratedHarnessSource]] = {}
+    for (nm, r) in res_state["result"].identifier_to_source.items():
         generated_source : list[GeneratedHarnessSource] = []
         for gen in r:
             source_code = mat.get(res_state, gen.path)
@@ -351,15 +364,15 @@ async def generate_harnesses(
             ))
         res_dict[nm] = generated_source
     to_ret = HarnessResult(
-        name_to_source=res_dict
+        identifier_to_source=res_dict
     )
     await child.cache_put(to_ret)
     return to_ret
 
 def _multi_replace(
-    s: list[str],
-    patch: dict[str, list[str]]
-) -> list[str]:
+    s: list[SolidityIdentifier],
+    patch: dict[SolidityIdentifier, list[SolidityIdentifier]]
+) -> list[SolidityIdentifier]:
     to_ret = []
     for i in s:
         if i in patch:
@@ -370,7 +383,7 @@ def _multi_replace(
 
 def _patch_links(
     s: list[LinkField],
-    patch: dict[str, list[str]]
+    patch: dict[SolidityIdentifier, list[SolidityIdentifier]]
 ) -> list[LinkField]:
     return [
         LinkField(
@@ -385,25 +398,25 @@ def apply_harness_result(
 ) -> SystemDescriptionHarnessed:
     new_contracts : list[HarnessedContract] = []
     forward_link = {
-        k: [ h.harness_name for h in v ] for (k, v) in harness_result.name_to_source.items()
+        k: [ h.harness_name for h in v ] for (k, v) in harness_result.identifier_to_source.items()
     }
     for c in s.transitive_closure:
         if not c.num_instances:
             new_contracts.append(HarnessedContract(
-                name=c.name,
+                solidity_identifier=c.solidity_identifier,
                 link_fields=_patch_links(c.link_fields, forward_link),
                 harness_definition=None,
                 path=c.path
             ))
             continue
         patched_links = _patch_links(c.link_fields, forward_link)
-        for gen in harness_result.name_to_source[c.name]:
+        for gen in harness_result.identifier_to_source[c.solidity_identifier]:
             new_contracts.append(HarnessedContract(
                 harness_definition=HarnessDef(
-                    harness_of=c.name,
+                    harness_of=c.solidity_identifier,
                     harness_source=gen.source,
                 ),
-                name=gen.harness_name,
+                solidity_identifier=gen.harness_name,
                 link_fields=patched_links,
                 path=gen.path
             ))
@@ -419,7 +432,7 @@ def apply_harness_result(
 async def run_setup_part1(
     context: WorkflowContext[ContractSetup],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     application_desc: SourceApplication
 ) -> SystemDescriptionHarnessed:
     setup_ctx = await context.child(system_setup_key(application_desc), application_desc.model_dump())
@@ -434,7 +447,7 @@ async def run_setup_part1(
     )
 
     name_to_path = {
-        c.name: c.path for c in application_desc.contract_components
+        c.solidity_identifier: c.path for c in application_desc.contract_components
     }
 
     located_desc = LocatedSystemDescription(
@@ -444,9 +457,9 @@ async def run_setup_part1(
         transitive_closure=[
             LocatedClosureContract(
                 link_fields=c.link_fields,
-                name=c.name,
+                solidity_identifier=c.solidity_identifier,
                 num_instances=c.num_instances,
-                path=name_to_path[c.name]
+                path=name_to_path[c.solidity_identifier]
             ) for c in analysis_results.transitive_closure
         ]
     )
@@ -474,7 +487,7 @@ async def run_setup_part1(
             transitive_closure=[
                 HarnessedContract(
                     link_fields=c.link_fields,
-                    name=c.name,
+                    solidity_identifier=c.solidity_identifier,
                     harness_definition=None,
                     path=c.path
                 ) for c in located_desc.transitive_closure
@@ -486,7 +499,7 @@ async def run_setup_part1(
 async def run_and_apply_part1(
     context: WorkflowContext[ContractSetup],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     application_desc: SourceApplication
 ) -> SystemDescriptionHarnessed:
     res = await run_setup_part1(context, source, env, application_desc)
@@ -516,7 +529,7 @@ _logger = getLogger(__name__)
 async def run_harness_creation(
     context: WorkflowContext[None],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     application_desc: SourceApplication,
 ) -> SystemDescriptionHarnessed:
     """Classify external contracts, generate harness files, and write them to
@@ -563,7 +576,7 @@ async def run_autosetup_phase(
             return cached
 
     extra_files = [
-        c.path for c in sys_desc.transitive_closure if c.name != source.contract_name
+        c.path for c in sys_desc.transitive_closure if c.solidity_identifier != source.contract_name
     ]
 
     setup_result = await run_autosetup(
