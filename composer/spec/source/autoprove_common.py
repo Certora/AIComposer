@@ -43,7 +43,7 @@ from composer.spec.source.properties_pipeline import run_properties_pipeline
 from composer.spec.source.common_pipeline import dump_token_usage, AutoProveResult
 from composer.spec.source.known_properties import load_known_properties, KnownPropertiesError
 from composer.prover.core import make_prover_options, ProverOptions
-from composer.spec.source.source_env import build_source_env, SourceEnvironment
+from composer.spec.source.source_env import build_source_env, ServiceHost
 from composer.spec.agent_index import agent_index_config_from_env
 from composer.core.user import get_uid, user_data_ns
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
@@ -144,7 +144,7 @@ class AutoProveServices:
     """Everything a pipeline needs, stood up from the common arguments."""
     ctx: WorkflowContext[None]
     llm: BaseChatModel
-    source_env: SourceEnvironment
+    service_host: ServiceHost
     source: SourceCode
     prover_opts: ProverOptions
     args: CommonAutoProveArgs
@@ -231,7 +231,7 @@ async def _autoprove_services(
                 await conns.uploader.get_document(pathlib.Path(args.threat_model))
                 if args.threat_model is not None else None
             )
-            source_env = build_source_env(
+            service_host = build_source_env(
                 llm=llm,
                 db=rag_db,
                 checkpoint=conns.checkpointer,
@@ -261,7 +261,7 @@ async def _autoprove_services(
             yield AutoProveServices(
                 ctx=ctx,
                 llm=llm,
-                source_env=source_env,
+                service_host=service_host,
                 source=system_doc,
                 prover_opts=prover_opts,
                 args=args,
@@ -301,7 +301,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
                 llm=svc.llm,
                 ctx=svc.ctx,
                 source_input=svc.source,
-                env=svc.source_env,
+                env=svc.service_host,
                 handler_factory=handler,
                 prover_opts=svc.prover_opts,
                 max_concurrent=args.max_concurrent,
@@ -344,7 +344,7 @@ async def _properties_entry_point(summary: RunSummary) -> AsyncIterator[Executor
                 llm=svc.llm,
                 ctx=svc.ctx,
                 source_input=svc.source,
-                env=svc.source_env,
+                host=svc.service_host,
                 handler_factory=handler,
                 known_properties=known,
                 prover_opts=svc.prover_opts,

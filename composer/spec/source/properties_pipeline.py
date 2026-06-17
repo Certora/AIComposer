@@ -43,7 +43,7 @@ from composer.spec.source.harness import (
     run_harness_creation, run_autosetup_phase, ContractSetup, SystemDescriptionHarnessed,
 )
 from composer.spec.source.system_analysis import run_component_analysis
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.source.source_env import ServiceHost
 from composer.spec.source.summarizer import setup_summaries
 from composer.spec.system_model import (
     HarnessedApplication, SourceExplicitContract, SourceApplication,
@@ -109,6 +109,7 @@ def _build_harnessed_app(
         comp.append(HarnessedExplicitContract(
             sort=c.sort,
             name=c.name,
+            solidity_identifier=c.solidity_identifier,
             components=c.components,
             description=c.description,
             path=c.path,
@@ -154,7 +155,7 @@ async def run_properties_pipeline(
     source_input: SourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    host: ServiceHost,
     *,
     known_properties: KnownProperties,
     prover_opts: ProverOptions,
@@ -172,7 +173,7 @@ async def run_properties_pipeline(
     s = await run_task(
         handler_factory,
         TaskInfo(SYSTEM_ANALYSIS_TASK_ID, "System Analysis", AutoProvePhase.COMPONENT_ANALYSIS),
-        lambda: run_component_analysis(ctx, source_input, env=env),
+        lambda: run_component_analysis(ctx, source_input, env=host),
     )
     if s is None:
         raise ValueError("System analysis failed")
@@ -187,14 +188,14 @@ async def run_properties_pipeline(
         sys_desc = await run_task(
             handler_factory,
             TaskInfo(HARNESS_TASK_ID, "Harness Creation", AutoProvePhase.HARNESS),
-            lambda: run_harness_creation(ctx, source_input, env, s),
+            lambda: run_harness_creation(ctx, source_input, host, s),
         )
         contract_to_harness: dict[str, list[HarnessDefinition]] = {}
         for c in sys_desc.transitive_closure:
             if not c.harness_definition:
                 continue
             contract_to_harness.setdefault(c.harness_definition.harness_of, []).append(
-                HarnessDefinition(name=c.name, path=c.path)
+                HarnessDefinition(name=c.solidity_identifier, path=c.path)
             )
         harnessed_app = _build_harnessed_app(s, contract_to_harness)
     else:
@@ -235,7 +236,7 @@ async def run_properties_pipeline(
                     ctx=ctx,
                     app=harnessed_app,
                     config=ContractSetup(system_description=sys_desc, config=setup_config),
-                    env=env,
+                    env=host,
                     source=source_input,
                 ),
             )
@@ -246,14 +247,14 @@ async def run_properties_pipeline(
         return await run_task(
             handler_factory,
             TaskInfo(INVARIANTS_TASK_ID, "Structural Invariants", AutoProvePhase.INVARIANTS),
-            lambda: get_invariant_formulation(ctx, source_input, env, harnessed_app),
+            lambda: get_invariant_formulation(ctx, source_input, host, harnessed_app),
         )
 
     async def stream_formalize() -> FormalizeResult:
         return await run_task(
             handler_factory,
             TaskInfo(FORMALIZE_TASK_ID, "Formalize Properties", AutoProvePhase.FORMALIZE),
-            lambda: formalize_properties(ctx, source_input, env, harnessed_app, known_properties),
+            lambda: formalize_properties(ctx, source_input, host, harnessed_app, known_properties),
         )
 
     if sys_desc is not None:
@@ -339,7 +340,7 @@ async def run_properties_pipeline(
                     ctx=inv_cvl_ctx.abstract(CVLGeneration),
                     component=None,
                     props=inv_props,
-                    env=env,
+                    env=host,
                     init_config=prover_config,
                     prover_tool=prover_tool,
                     resources=resources,
@@ -367,7 +368,7 @@ async def run_properties_pipeline(
         source_input=source_input,
         component_batches=component_batches,
         handler_factory=handler_factory,
-        env=env,
+        env=host,
         prover_tool=prover_tool,
         prover_config=prover_config,
         resources=resources,

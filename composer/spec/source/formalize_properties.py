@@ -24,7 +24,7 @@ from graphcore.graph import FlowInput
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.source.source_env import ServiceHost
 from composer.spec.system_model import HarnessedApplication
 from composer.spec.prop import PropertyFormulation, PropertyId
 from composer.spec.gen_types import TypedTemplate
@@ -91,7 +91,7 @@ def _formalize_cache_key(known: KnownProperties) -> CacheKey[None, PropertyMappi
 async def formalize_properties(
     ctx: WorkflowContext[None],
     source: SourceCode,
-    env: SourceEnvironment,
+    host: ServiceHost,
     app: HarnessedApplication,
     known: KnownProperties,
 ) -> FormalizeResult:
@@ -181,7 +181,7 @@ async def formalize_properties(
     })
 
     graph = bind_standard(
-        env.builder,
+        host.builder,
         ST,
         validator=_validate,
     ).with_sys_prompt_template(
@@ -190,7 +190,7 @@ async def formalize_properties(
     ).inject(
         lambda g: bound_template.render_to(g.with_initial_prompt_template)
     ).with_tools(
-        [fmt_ctx.get_memory_tool(), *get_rough_draft_tools(ST), *env.source_tools]
+        [fmt_ctx.get_memory_tool(), *get_rough_draft_tools(ST), *host.source_tools]
     ).with_input(
         FormalizeInput
     ).compile_async()
