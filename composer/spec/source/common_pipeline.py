@@ -21,7 +21,7 @@ from composer.spec.prop import PropertyFormulation, PropertyId
 from composer.spec.gen_types import (
     CVLResource, CERTORA_DIR, SPECS_DIR, AUTOPROVE_INTERNAL_DIR, under_project,
 )
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
@@ -183,12 +183,11 @@ class _ComponentBatch:
     props: list[PropertyFormulation]
     feat_ctx: WorkflowContext[ComponentGroup]
 
-
 def _main_contract_index(summary: HarnessedApplication, name: str) -> int:
     """Index of the contract named *name* within *summary*'s contract components.
     Raises ``ValueError`` if not found."""
     for i, c in enumerate(summary.contract_components):
-        if c.name == name:
+        if c.solidity_identifier == name:
             return i
     raise ValueError(f"Component not found: {name}")
 
@@ -215,7 +214,7 @@ async def extract_all_components(
     source_input: SourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
     interactive: bool,
@@ -276,7 +275,7 @@ async def generate_all_component_cvl(
     source_input: SourceCode,
     component_batches: list[_ComponentBatch],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     prover_tool: BaseTool,
     prover_config: dict,
     resources: list[CVLResource],
@@ -408,7 +407,7 @@ async def run_generation_pipeline(
     source_input: SourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
     resources: list[CVLResource],

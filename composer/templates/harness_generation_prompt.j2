@@ -14,7 +14,7 @@ of which declares a unique contract identifier that extends C.
 
 You have been tasked with generating harnesses for the following contracts:
 {% for c in to_harness %}
-* Contract `{{c.name}}`, path: `{{ c.path }}`; {{ c.n_harnesses }} copies
+* Contract `{{ c.solidity_identifier }}`, path: `{{ c.path }}`; {{ c.n_harnesses }} copies
 {% endfor %}
 
 You should place all generated files in the `certora/harnesses` directory of the VFS using
@@ -32,8 +32,10 @@ declared at the path `src/contracts/token/MyToken.sol`, then `TokenInstance1` sh
 **Important**: Prior executions of this workflow may mean that the necessary harnesses already exist on the VFS. So long as the files exist with implementations that satisfy
 the above instructions, you *may* deliver those results unchanged.
 
-Once all harness contracts have been generated, call the `result` tool to deliver your result. For each contract you were instructed to harness, provide a list of harness
-descriptions. Each harness description should be the relative path to the generated file and the contract identifier you chose for the generated harness.
+Once all harness contracts have been generated, call the `result` tool to deliver your result. The result is a
+mapping keyed by each target contract's `solidity_identifier` (from the input list above) to the list of harness
+descriptions for that target. Each harness description contains the relative path to the generated file and the
+Solidity identifier you chose for the generated harness.
 In addition, specify the Solidity compiler to use when compiling these harnesses. You should specify this as `solcX.Y`, where `X` and `Y` are the major/minor version numbers.
 For example, to specify Solidity version 0.8.31, use `solc8.31` as the solidity compiler.
 

@@ -1,3 +1,10 @@
+{# Conceptual label for a contract, optionally followed by a parenthetical with
+   the Solidity identifier when the two differ. Use in prose; for Solidity-token
+   contexts render `c.solidity_identifier` directly. #}
+{% macro contract_label(c) -%}
+{{ c.name }}{% if c.solidity_identifier != c.name %} (Solidity: `{{ c.solidity_identifier }}`){% endif %}
+{%- endmacro %}
+
 {% macro render_applicaton_context(context, show_sort) %}
 
 # {{ context.application_type }}
@@ -9,7 +16,7 @@ This application is comprised of the following components.
 ## Components
 
 {% for c in context.components %}
-### {{ "Contract" if c.sort else "External Actor"}}: {{ c.name }}
+### {{ "Contract" if c.sort else "External Actor"}}: {% if c.sort %}{{ contract_label(c) }}{% else %}{{ c.name }}{% endif %}
 
 **Description**: {{ c.description }}
 

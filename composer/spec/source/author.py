@@ -18,14 +18,15 @@ from composer.spec.cvl_generation import (
 )
 from composer.spec.context import WorkflowContext, CVLGeneration, SourceCode
 from composer.spec.prop import PropertyFormulation
-from composer.spec.system_model import ContractComponentInstance
+from composer.spec.system_model import ContractComponentInstance, SolidityIdentifier
 from composer.spec.source.prover import ProverStateExtra, DELETE_SKIP, VALIDATION_KEY as PROVER_VALIDATION_KEY
 from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
 from langgraph.runtime import get_runtime
 from pathlib import Path
 from composer.spec.gen_types import CVLResource, TypedTemplate, import_statement_for
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
+
 from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
 from composer.ui.tool_display import tool_display
@@ -205,12 +206,12 @@ that feedback.
 
 class AddFile(BaseModel):
     """
-    Add a new file to the input of the prover. If the name of the contract within the file does *NOT* match the file stem,
-    specify the contract name explicitly, otherwise leave it null.
+    Add a new file to the input of the prover. If the Solidity identifier of the contract within the file does *NOT* match the file stem,
+    specify it explicitly, otherwise leave it null.
     """
     type: Literal["add_file"]
     file_path: str = Field(description="The relative path to the file to include in the prover inputs")
-    contract_name: str | None = Field(description="The name of the contract within `file_path` to ingest into the prover, if does not match the file stem")
+    contract_name: SolidityIdentifier | None = Field(description="The Solidity identifier of the contract within `file_path` to ingest into the prover, if it does not match the file stem")
 
 class RemoveFile(BaseModel):
     """
@@ -232,16 +233,16 @@ class AddLink(BaseModel):
     to link fields in structs.
     """
     type: Literal["add_link"]
-    source_contract_name: str = Field(description="The name of the contract that is the source of the link")
+    source_contract_name: SolidityIdentifier = Field(description="The Solidity identifier of the contract that is the source of the link")
     link_field_name: str = Field(description="The storage field holding the link within `source_contract_name`")
-    target_contract_name : str = Field(description="The contract held in `link_field_name` of `source_contract_name`")
+    target_contract_name : SolidityIdentifier = Field(description="The Solidity identifier of the contract held in `link_field_name` of `source_contract_name`")
 
 class RemoveLink(BaseModel):
     """
     Remove a link from one contract to another.
     """
     type: Literal["remove_link"]
-    source_contract_name : str = Field(description="The name of the contract whose link should be removed")
+    source_contract_name : SolidityIdentifier = Field(description="The Solidity identifier of the contract whose link should be removed")
     link_field_name : str = Field(description="The storage field holding the link within `source_contract_name` that should be removed")
 
 type ConfigEdit = Annotated[RemoveLink | AddLink | AddFile | RemoveFile, Discriminator("type")]
@@ -331,11 +332,6 @@ class ConfigEditTool(WithAsyncImplementation[Command | str], WithInjectedId, Wit
 
 _PropertyGenTemplate = TypedTemplate[PropertyGenParams]("property_generation_prompt.j2")
 
-class _HasSourceParams(TypedDict):
-    has_source: bool
-
-_PropertyJudgeSystemTemplate = TypedTemplate[_HasSourceParams]("property_judge_system_prompt.j2")
-
 async def batch_cvl_generation(
     ctx: WorkflowContext[CVLGeneration],
     init_config: dict,
@@ -343,7 +339,7 @@ async def batch_cvl_generation(
     component: ContractComponentInstance | None,
     resources: list[CVLResource],
     prover_tool: BaseTool,
-    env: SourceEnvironment,
+    env: ServiceHost,
     description: str,
     source: SourceCode,
     spec_dir: Path,
@@ -367,7 +363,7 @@ async def batch_cvl_generation(
     })
 
     task_graph = env.builder.with_tools(
-        env.cvl_authorship_tools
+        env.all_tools
     ).with_tools(
         static_tools()
     ).with_tools(
@@ -388,11 +384,9 @@ async def batch_cvl_generation(
 
     feedback_env = property_feedback_judge(
         ctx.child(CVL_JUDGE_KEY), env, FeedbackTemplate.bind({
-            "has_source": True,
+            "sort": "existing",
             "context": component
-        }), props, system_prompt=_PropertyJudgeSystemTemplate.bind({
-            "has_source": True
-        })
+        }), props
     )
 
     res_state = await run_cvl_generator(
