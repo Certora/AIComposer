@@ -62,11 +62,13 @@ def _result(commentary: str) -> ToolCallDict:
 
 
 def _raw_report(**rule_status: bool) -> RawReport:
-    return RawReport(rule_status=rule_status, report="Prover report output")
+    return RawReport(rule_status=rule_status, report="Prover report output", link="local://test-run")
 
 
 def _summarized_report(todo: str, **rule_status: bool) -> SummarizedReport:
-    return SummarizedReport(rule_status=rule_status, report="(truncated)", todo_list=todo)
+    return SummarizedReport(
+        rule_status=rule_status, report="(truncated)", todo_list=todo, link="local://test-run",
+    )
 
 
 # ---------------------------------------------------------------------------

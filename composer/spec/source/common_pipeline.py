@@ -30,11 +30,11 @@ from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
 from composer.spec.source.prover import dump_final_conf
 from composer.spec.source.task_ids import (
-    bug_analysis_task_id, cvl_gen_task_id, INVARIANT_CVL_TASK_ID, REPORT_TASK_ID,
+    bug_analysis_task_id, cvl_gen_task_id, REPORT_TASK_ID,
 )
 from composer.spec.source.report.build import run_autoprove_report
-from composer.spec.source.report.collect import ComponentInput
-from composer.diagnostics.timing import get_run_summary, RunSummary
+from composer.spec.source.report.collect import ReportComponentInput
+from composer.diagnostics.timing import RunSummary
 
 _log = logging.getLogger(__name__)
 
@@ -213,6 +213,7 @@ async def generate_all_component_cvl(
     prover_config: dict,
     resources: list[CVLResource],
     semaphore: asyncio.Semaphore,
+    invariant_result: tuple[list[PropertyFormulation], GeneratedCVL] | None = None,
 ) -> AutoProveResult:
     """Phase 6 — per-component CVL generation.
 
@@ -278,7 +279,7 @@ async def generate_all_component_cvl(
             main_contract=source_input.contract_name,
             task_id=task_id,
             spec_path=spec_path,
-            conf=res.conf,
+            base_config=res.config,
         )
         return res
 
@@ -290,37 +291,38 @@ async def generate_all_component_cvl(
         return_exceptions=True,
     )
 
-    # Dump the final prover run link for each component (and the structural
-    # invariant, which ran earlier in the staged pipeline) now that every CVL
-    # generation task has completed — each link is recorded into the run summary
-    # when its task's phase is finalized.
-    link_by_task = {
-        p.task_id: p.final_link for p in get_run_summary().phases if p.final_link
-    }
-    component_runs = {
-        batch.feat.slugified_name: _output_link(link)
-        for batch in component_batches
-        if (link := link_by_task.get(cvl_gen_task_id(batch.feat.ind, batch.feat.slugified_name)))
-    }
-    if inv_link := link_by_task.get(INVARIANT_CVL_TASK_ID):
-        component_runs["invariants"] = _output_link(inv_link)
+    # Map each component (and the structural invariant) to its final prover-run link, taken from the
+    # in-memory generation result (so it survives cache hits) and rewritten to its /output/ view.
+    component_runs: dict[str, str] = {}
+    for batch, result in zip(component_batches, generation_results):
+        if isinstance(result, GeneratedCVL) and result.final_link:
+            component_runs[batch.feat.slugified_name] = _output_link(result.final_link)
+    if invariant_result is not None and invariant_result[1].final_link:
+        component_runs["invariants"] = _output_link(invariant_result[1].final_link)
     dump_component_runs(source_input.project_root, component_runs)
 
-    # Final, best-effort phase: turn the property dumps + per-component prover
-    # verdicts into certora/ap_report/report.json. A failure here must never
-    # fail the run, so the whole phase is guarded.
+    # Final, best-effort phase: turn the in-memory component results + per-component prover verdicts
+    # into certora/ap_report/report.json. A failure here must never fail the run, so it is guarded.
     try:
         report_components = [
-            ComponentInput(
+            ReportComponentInput(
                 name=batch.feat.component.name,
-                stem=f"autospec_{batch.feat.slugified_name}",
+                spec_file=f"autospec_{batch.feat.slugified_name}.spec",
+                props=batch.props,
+                result=result,
                 prover_link=component_runs.get(batch.feat.slugified_name),
             )
-            for batch in component_batches
+            for batch, result in zip(component_batches, generation_results)
         ]
-        report_components.append(
-            ComponentInput("Structural Invariants", "invariants", component_runs.get("invariants"))
-        )
+        if invariant_result is not None:
+            inv_props, inv_cvl = invariant_result
+            report_components.append(ReportComponentInput(
+                name="Structural Invariants",
+                spec_file="invariants.spec",
+                props=inv_props,
+                result=inv_cvl,
+                prover_link=component_runs.get("invariants"),
+            ))
         await run_task(
             handler_factory,
             TaskInfo(REPORT_TASK_ID, "Report", AutoProvePhase.REPORT),

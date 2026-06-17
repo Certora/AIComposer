@@ -1,150 +1,234 @@
 """Tests for the autoprove report package (composer.spec.source.report).
 
-Covers the pure pieces (collect from property dumps + a fake POU, coverage
-aggregation, grouping + fallback, HTML render) and the build orchestrator's
-fallback path. No DB / no real LLM / no real prover: POU is faked and the
-grouping LLM is monkeypatched.
+Property-keyed (schema 2.0). Covers the pure pieces — in-memory collect against a
+fake POU, status aggregation, grouping + fallback, coverage's property-partition,
+HTML render — plus the build orchestrator. No DB / no real LLM / no real prover:
+POU is faked, the grouping LLM is a `BaseChatModel` stub whose structured output is
+preset (so the real `call_grouping_llm` — templates + parsing — still runs), and
+inputs are in-memory `GeneratedCVL` / `GaveUp` objects (collect no longer reads the
+JSON dumps).
 """
-import json
-from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from prover_output_utility.models import NodeStatus
+from prover_output_utility import ProverOutputAPI
+from langchain_core.language_models import BaseChatModel
+from langchain_core.outputs import ChatResult
+from langchain_core.runnables import Runnable, RunnableLambda
+
+from composer.spec.prop import PropertyFormulation, PropertyType
+from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping, SkippedProperty
+from composer.spec.source.author import GaveUp
 
 from composer.spec.source.report import build
-from composer.spec.source.report.collect import ComponentInput, collect
+from composer.spec.source.report.collect import ReportComponentInput, collect
 from composer.spec.source.report.coverage import ValidationError, validate
 from composer.spec.source.report.grouping import (
-    FALLBACK_SLUG, aggregate_status, build_fallback_grouping,
-    build_implemented_properties, build_rules_for_grouping,
+    FALLBACK_SLUG, GroupingResult, PropertyGroupDraft, aggregate_status,
+    build_fallback_grouping, build_groups,
 )
 from composer.spec.source.report.render import render_html
 from composer.spec.source.report.schema import (
-    AutoProverReport, CVLRule, CoverageReport, GroupStatus, ImplementedProperty,
-    ImplementedPropertyDraft, PropertyFormulationWithComponent,
+    AutoProverReport, CoverageReport, FormalizedProperty, GaveUpComponent, GroupStatus,
+    PropertyGroup, RuleVerdict, SkippedClaim,
 )
 
 
 # ---------------------------------------------------------------------------
-# Fakes / fixtures
+# Fakes / builders
 # ---------------------------------------------------------------------------
 
 def _fake_check(rule_name, status, line=None, duration=None, file: str | None = "autospec_Increment.spec"):
-    """A stand-in CheckResult. ``file`` is the spec the rule is defined in (per
-    POU's source location); pass ``file=None`` to simulate POU not reporting one."""
+    """Stand-in CheckResult. ``file`` is the spec the rule is defined in (POU's source
+    location); pass ``file=None`` to simulate POU not reporting one."""
     sl = SimpleNamespace(file=file, line=line)
-    return SimpleNamespace(
-        rule_name=rule_name, status=status, duration=duration, source_location=sl,
-    )
+    return SimpleNamespace(rule_name=rule_name, status=status, duration=duration, source_location=sl)
 
 
-class _FakeAPI:
+class _FakeAPI_Impl:
     """Stand-in for ProverOutputAPI: get_all_checks(link) -> list of checks."""
     def __init__(self, by_link: dict[str, list]):
         self.by_link = by_link
 
     def get_all_checks(self, link):
         return self.by_link.get(link, [])
+    
+def _FakeAPI(by_link: dict[str, list]) -> ProverOutputAPI:
+    return cast(ProverOutputAPI, _FakeAPI_Impl(by_link))
 
 
-def _prop(title, desc, *, sort="safety_property", methods=None):
-    return {"title": title, "methods": methods or ["m"], "sort": sort, "description": desc}
+def _prop(title, desc, *, sort: PropertyType = "safety_property", methods=None) -> PropertyFormulation:
+    return PropertyFormulation(title=title, methods=methods or ["m"], sort=sort, description=desc)
 
 
-def _write_props(certora: Path, stem: str, props: list[dict]):
-    pdir = certora / "properties"
-    pdir.mkdir(parents=True, exist_ok=True)
-    (pdir / f"{stem}.properties.json").write_text(json.dumps(props))
+def _gen(mapping: dict[str, list[str]] | None = None,
+         skipped: dict[str, str] | None = None) -> GeneratedCVL:
+    """A successful generation result: ``mapping`` is property_title -> [rule names];
+    ``skipped`` is property_title -> reason."""
+    return GeneratedCVL(
+        commentary="", cvl="",
+        property_rules=[PropertyRuleMapping(property_title=t, rules=rs)
+                        for t, rs in (mapping or {}).items()],
+        skipped=[SkippedProperty(property_title=t, reason=r)
+                 for t, r in (skipped or {}).items()],
+    )
 
 
-def _write_rules(certora: Path, stem: str, mapping: dict[str, list[str]]):
-    pdir = certora / "properties"
-    pdir.mkdir(parents=True, exist_ok=True)
-    (pdir / f"{stem}.property_rules.json").write_text(json.dumps(mapping))
+def _input(name, spec_file, props, result, link: str | None = "L1") -> ReportComponentInput:
+    return ReportComponentInput(name=name, spec_file=spec_file, props=props,
+                                result=result, prover_link=link)
+
+
+def _fp(component, title, refs, desc="d", sort: PropertyType = "safety_property") -> FormalizedProperty:
+    return FormalizedProperty(component=component, title=title, methods=["m"],
+                              sort=sort, description=desc, rule_refs=refs)
+
+
+def _rv(spec, name, status=NodeStatus.VERIFIED) -> RuleVerdict:
+    return RuleVerdict(name=name, spec_file=spec, status=status)
+
+
+def _pg(slug, members, status=GroupStatus.VERIFIED) -> PropertyGroup:
+    return PropertyGroup(slug=slug, title="T", description="d", status=status, members=members)
+
+
+class _GroupingStubModel(BaseChatModel):
+    """A `BaseChatModel` whose structured-output binding returns a preset `GroupingResult`.
+    Lets the build tests drive the *real* `call_grouping_llm` — template rendering + the
+    `isinstance` check — without a live model, only stubbing the model's output."""
+    result: GroupingResult
+
+    def with_structured_output(self, schema, **kwargs) -> Runnable:  # type: ignore[override]
+        result = self.result
+        return RunnableLambda(lambda _messages: result)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        raise NotImplementedError("stub is structured-output only")
+
+    @property
+    def _llm_type(self) -> str:
+        return "grouping-stub"
 
 
 # ---------------------------------------------------------------------------
-# collect
+# collect (async, in-memory)
 # ---------------------------------------------------------------------------
 
-def test_collect_joins_properties_rules_and_pou_verdicts(tmp_path):
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_Increment", [
-        _prop("count_increases", "count up by one"),
-        _prop("count_eq_sum", "count == sum", sort="invariant", methods="invariant"),
-    ])
-    _write_rules(certora, "autospec_Increment", {
-        "count_increases": ["increment_increases_count"],
-        "count_eq_sum": ["countEqualsSum"],
-    })
+@pytest.mark.asyncio
+async def test_collect_joins_properties_to_rules_and_verdicts():
+    props = [_prop("count_increases", "count up by one"),
+             _prop("count_eq_sum", "count == sum", sort="invariant", methods="invariant")]
+    gen = _gen({"count_increases": ["increment_increases_count"], "count_eq_sum": ["countEqualsSum"]})
     api = _FakeAPI({"L1": [
         _fake_check("increment_increases_count", NodeStatus.VERIFIED, line=12, duration=1.5),
         _fake_check("countEqualsSum", NodeStatus.VIOLATED, line=40),
     ]})
-    comps = [ComponentInput("Increment", "autospec_Increment", "L1")]
 
-    props, rules = collect(str(tmp_path), comps, api=api)
+    properties, rules, skipped, gave_up, dropped = await collect(
+        [_input("Increment", "autospec_Increment.spec", props, gen)], api=api)
 
-    # Properties are addressed by title, not a positional index.
-    assert [p.title for p in props] == ["count_increases", "count_eq_sum"]
-    by_name = {r.name: r for r in rules}
-    r = by_name["increment_increases_count"]
-    assert r.status == NodeStatus.VERIFIED and r.line == 12
-    # The implemented property formulation is embedded on the rule (no second join).
-    assert [(p.component, p.title) for p in r.properties] == [("Increment", "count_increases")]
-    assert r.properties[0].description == "count up by one"
-    assert r.spec_file == "autospec_Increment.spec"
+    assert [p.title for p in properties] == ["count_increases", "count_eq_sum"]
+    assert properties[0].component == "Increment"
+    assert properties[0].rule_refs == [("autospec_Increment.spec", "increment_increases_count")]
+    by_ref = {r.ref: r for r in rules}
+    r = by_ref[("autospec_Increment.spec", "increment_increases_count")]
+    assert r.status == NodeStatus.VERIFIED and r.line == 12 and r.duration_seconds == 1.5
     assert r.prover_link == "L1"
-    assert by_name["countEqualsSum"].status == NodeStatus.VIOLATED
+    assert by_ref[("autospec_Increment.spec", "countEqualsSum")].status == NodeStatus.VIOLATED
+    assert skipped == [] and gave_up == [] and dropped == 0
 
 
-def test_collect_missing_rule_mapping_tolerated(tmp_path):
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_Increment", [_prop("p1", "d1")])
-    # no property_rules.json; POU still reports a verdict
-    api = _FakeAPI({"L1": [_fake_check("helper", NodeStatus.VERIFIED)]})
-    props, rules = collect(str(tmp_path), [ComponentInput("Increment", "autospec_Increment", "L1")], api=api)
-    assert len(props) == 1
-    assert [r.name for r in rules] == ["helper"]
-    assert rules[0].properties == []
+@pytest.mark.asyncio
+async def test_collect_splits_skipped_property_into_gap():
+    props = [_prop("p_done", "formalized"), _prop("p_skip", "cannot express in CVL")]
+    gen = _gen({"p_done": ["r1"]}, skipped={"p_skip": "needs a ghost"})
+    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED)]})
+
+    properties, _rules, skipped, gave_up, _dropped = await collect(
+        [_input("C", "autospec_C.spec", props, gen)], api=api)
+
+    assert [p.title for p in properties] == ["p_done"]
+    assert [(s.component, s.title, s.reason) for s in skipped] == [("C", "p_skip", "needs a ghost")]
+    assert gave_up == []
 
 
-def test_collect_shared_invariant_dedupes_by_spec_file(tmp_path):
-    """An invariant defined in invariants.spec but imported into a component
-    spec reports the same source file from both runs, so it collapses to one
-    rule (attributed to the first component seen)."""
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_Increment", [_prop("c", "comp view", sort="invariant")])
-    _write_rules(certora, "autospec_Increment", {"c": ["countEqualsSum"]})
-    _write_props(certora, "invariants", [_prop("i", "structural", sort="invariant")])
-    _write_rules(certora, "invariants", {"i": ["countEqualsSum"]})
+@pytest.mark.asyncio
+async def test_collect_gave_up_or_crashed_component_is_a_gap():
+    props = [_prop("p1", "d1")]
+    for result in (GaveUp(reason="stuck"), RuntimeError("boom")):
+        properties, rules, skipped, gave_up, dropped = await collect(
+            [_input("C", "autospec_C.spec", props, result, link=None)], api=_FakeAPI({}))
+        assert properties == [] and rules == [] and skipped == [] and dropped == 0
+        assert [g.component for g in gave_up] == ["C"]
+        assert [p.title for p in gave_up[0].properties] == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_collect_drops_and_counts_orphan_rules():
+    """A rule the prover reported but no property maps to is dropped and counted."""
+    gen = _gen({"p1": ["r1"]})
+    api = _FakeAPI({"L1": [
+        _fake_check("r1", NodeStatus.VERIFIED),
+        _fake_check("sanity_helper", NodeStatus.VERIFIED),  # referenced by nothing
+    ]})
+    _props, rules, _skipped, _gave_up, dropped = await collect(
+        [_input("C", "autospec_C.spec", [_prop("p1", "d1")], gen)], api=api)
+    assert [r.name for r in rules] == ["r1"]
+    assert dropped == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_backfills_unknown_for_unproven_referenced_rule():
+    gen = _gen({"p1": ["r1"]})
+    api = _FakeAPI({"L1": []})  # prover reported no checks
+    properties, rules, _s, _g, dropped = await collect(
+        [_input("C", "autospec_C.spec", [_prop("p1", "d1")], gen)], api=api)
+    assert [(r.name, r.status, r.spec_file) for r in rules] == [("r1", NodeStatus.UNKNOWN, "autospec_C.spec")]
+    assert properties[0].rule_refs == [("autospec_C.spec", "r1")]
+    assert dropped == 0
+
+
+@pytest.mark.asyncio
+async def test_collect_falls_back_to_input_spec_when_verdict_has_no_source():
+    """A verdict without a source location is attributed to the component's own spec
+    (no raise — the report is best-effort and every input carries a spec_file)."""
+    gen = _gen({"p1": ["r1"]})
+    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED, file=None)]})
+    properties, rules, *_ = await collect(
+        [_input("C", "autospec_C.spec", [_prop("p1", "d1")], gen)], api=api)
+    assert rules[0].ref == ("autospec_C.spec", "r1")
+    assert properties[0].rule_refs == [("autospec_C.spec", "r1")]
+
+
+@pytest.mark.asyncio
+async def test_collect_shared_rule_dedupes_and_is_referenced_by_both():
+    """An invariant imported into a component spec reports the same source file from
+    both runs, so it collapses to one rule that both components' properties reference."""
+    comp = _input("Increment", "autospec_Increment.spec", [_prop("c", "component view", sort="invariant")],
+                  _gen({"c": ["countEqualsSum"]}), link="Lc")
+    inv = _input("Structural Invariants", "invariants.spec", [_prop("i", "structural", sort="invariant")],
+                 _gen({"i": ["countEqualsSum"]}), link="Li")
     api = _FakeAPI({
         "Lc": [_fake_check("countEqualsSum", NodeStatus.VERIFIED, file="invariants.spec")],
         "Li": [_fake_check("countEqualsSum", NodeStatus.VERIFIED, file="invariants.spec")],
     })
-    comps = [
-        ComponentInput("Increment", "autospec_Increment", "Lc"),
-        ComponentInput("Structural Invariants", "invariants", "Li"),
-    ]
-    _props, rules = collect(str(tmp_path), comps, api=api)
+    properties, rules, *_ = await collect([comp, inv], api=api)
     ces = [r for r in rules if r.name == "countEqualsSum"]
-    assert len(ces) == 1 and ces[0].component == "Increment"
-    assert ces[0].spec_file == "invariants.spec"
+    assert len(ces) == 1 and ces[0].spec_file == "invariants.spec"
+    assert all(p.rule_refs == [("invariants.spec", "countEqualsSum")] for p in properties)
 
 
-def test_collect_same_name_different_spec_stays_distinct(tmp_path):
-    """Two rules that happen to share a name but are defined in different spec
-    files are kept as distinct rules (no silent first-write-wins drop)."""
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_A", [_prop("pa", "a")])
-    _write_props(certora, "autospec_B", [_prop("pb", "b")])
+@pytest.mark.asyncio
+async def test_collect_same_name_different_spec_stays_distinct():
+    a = _input("A", "autospec_A.spec", [_prop("pa", "a")], _gen({"pa": ["transferIsSafe"]}), link="La")
+    b = _input("B", "autospec_B.spec", [_prop("pb", "b")], _gen({"pb": ["transferIsSafe"]}), link="Lb")
     api = _FakeAPI({
         "La": [_fake_check("transferIsSafe", NodeStatus.VERIFIED, file="autospec_A.spec")],
         "Lb": [_fake_check("transferIsSafe", NodeStatus.VIOLATED, file="autospec_B.spec")],
     })
-    comps = [ComponentInput("A", "autospec_A", "La"), ComponentInput("B", "autospec_B", "Lb")]
-    _props, rules = collect(str(tmp_path), comps, api=api)
+    _props, rules, *_ = await collect([a, b], api=api)
     safe = sorted((r for r in rules if r.name == "transferIsSafe"), key=lambda r: r.spec_file)
     assert [(r.spec_file, r.status) for r in safe] == [
         ("autospec_A.spec", NodeStatus.VERIFIED),
@@ -152,31 +236,8 @@ def test_collect_same_name_different_spec_stays_distinct(tmp_path):
     ]
 
 
-def test_collect_fails_when_verdict_has_no_source(tmp_path):
-    """A proved rule must carry a source location; if POU reports none we cannot
-    identify its defining spec, so collect raises rather than mis-attributing."""
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_Increment", [_prop("p1", "d1")])
-    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED, file=None)]})
-    with pytest.raises(ValueError, match="no source location"):
-        collect(str(tmp_path), [ComponentInput("Increment", "autospec_Increment", "L1")], api=api)
-
-
-def test_collect_tolerates_rule_without_verdict(tmp_path):
-    """A rule mapped to a property but with no prover verdict (e.g. the run
-    didn't report it) is kept, identified by the component's own spec."""
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_Increment", [_prop("p1", "d1")])
-    _write_rules(certora, "autospec_Increment", {"p1": ["r1"]})
-    api = _FakeAPI({"L1": []})  # prover run produced no checks for r1
-    _props, rules = collect(str(tmp_path), [ComponentInput("Increment", "autospec_Increment", "L1")], api=api)
-    assert [(r.name, r.status, r.spec_file) for r in rules] == [
-        ("r1", NodeStatus.UNKNOWN, "autospec_Increment.spec")
-    ]
-
-
 # ---------------------------------------------------------------------------
-# coverage
+# aggregate_status
 # ---------------------------------------------------------------------------
 
 def test_aggregate_status_table():
@@ -187,58 +248,88 @@ def test_aggregate_status_table():
     assert aggregate_status([NodeStatus.TIMEOUT, NodeStatus.UNKNOWN]) == GroupStatus.NO_RESULTS
 
 
-def _rule(name, status=NodeStatus.VERIFIED, component="C"):
-    return CVLRule(name=name, component=component, status=status)
-
-
-def _grp(slug, rule_names, status=GroupStatus.VERIFIED):
-    return ImplementedProperty(slug=slug, title="T", description="d",
-                               status=status, rule_names=rule_names)
-
-
-def test_validate_rule_in_two_groups_raises():
-    rules = [_rule("a"), _rule("b")]
-    groups = [_grp("g1", ["a"]), _grp("g2", ["a", "b"])]
-    with pytest.raises(ValidationError, match="multiple groups"):
-        validate(rules=rules, groups=groups, total_inferred=2)
-
-
-def test_validate_hallucinated_rule_raises():
-    with pytest.raises(ValidationError, match="don't exist"):
-        validate(rules=[_rule("a")], groups=[_grp("g", ["ghost"])], total_inferred=1)
-
-
-def test_validate_missing_rule_is_soft():
-    cov = validate(rules=[_rule("a"), _rule("b")], groups=[_grp("g", ["a"])], total_inferred=2)
-    assert cov.rule_coverage_complete is False
-    assert cov.rules_in_no_group == ["b"]
+def test_aggregate_status_idempotent_under_duplicates():
+    once = aggregate_status([NodeStatus.VERIFIED, NodeStatus.TIMEOUT])
+    twice = aggregate_status([NodeStatus.VERIFIED, NodeStatus.VERIFIED, NodeStatus.TIMEOUT])
+    assert once == twice == GroupStatus.PARTIAL
 
 
 # ---------------------------------------------------------------------------
 # grouping
 # ---------------------------------------------------------------------------
 
-def test_build_implemented_properties_rolls_up_status_and_keeps_slug():
-    drafts = [ImplementedPropertyDraft(slug="grp-a", title="Group A", description="d", rule_names=["a", "b"])]
-    finals = build_implemented_properties(drafts, {"a": NodeStatus.VERIFIED, "b": NodeStatus.VIOLATED})
-    assert len(finals) == 1
-    assert finals[0].slug == "grp-a" and finals[0].title == "Group A"
-    assert finals[0].status == GroupStatus.VIOLATED
+def test_build_groups_rolls_up_status_over_member_rule_verdicts():
+    p1 = _fp("C", "p1", [("s.spec", "a")])
+    p2 = _fp("C", "p2", [("s.spec", "b")])
+    props_by_key = {p.key: p for p in (p1, p2)}
+    rule_status = {("s.spec", "a"): NodeStatus.VERIFIED, ("s.spec", "b"): NodeStatus.VIOLATED}
+    draft = PropertyGroupDraft(slug="g", title="G", description="d", members=[("C", "p1"), ("C", "p2")])
+
+    groups = build_groups([draft], props_by_key, rule_status)
+
+    assert len(groups) == 1
+    assert groups[0].status == GroupStatus.VIOLATED  # one member rule violated
+    assert groups[0].members == [("C", "p1"), ("C", "p2")]
 
 
-def test_fallback_grouping_covers_all_rules():
-    out = build_fallback_grouping(["r1", "r2"])
-    assert len(out.groups) == 1 and out.groups[0].slug == FALLBACK_SLUG
-    assert out.groups[0].rule_names == ["r1", "r2"]
-    assert out.groups[0].description == "All rules."
+def test_build_fallback_grouping_covers_all_properties_once():
+    out = build_fallback_grouping([_fp("C", "p1", [("s.spec", "a")]), _fp("D", "p2", [("s.spec", "b")])])
+    assert len(out.groups) == 1
+    g = out.groups[0]
+    assert g.slug == FALLBACK_SLUG
+    assert g.members == [("C", "p1"), ("D", "p2")]
 
 
-def test_build_rules_for_grouping_reads_embedded_properties():
-    prop = PropertyFormulationWithComponent(component="C", title="t", methods=["m"],
-                                            sort="invariant", description="the desc")
-    rules = [CVLRule(name="r1", component="C", properties=[prop], status=NodeStatus.VERIFIED)]
-    rows = build_rules_for_grouping(rules)
-    assert rows[0].property_descriptions == ["the desc"] and rows[0].sorts == ["invariant"]
+# ---------------------------------------------------------------------------
+# coverage (property partition; rule repetition is a stat, not an error)
+# ---------------------------------------------------------------------------
+
+def test_validate_property_in_two_groups_raises():
+    props = [_fp("C", "p1", [("s.spec", "a")])]
+    groups = [_pg("g1", [("C", "p1")]), _pg("g2", [("C", "p1")])]
+    with pytest.raises(ValidationError, match="multiple groups"):
+        validate(properties=props, rules=[_rv("s.spec", "a")], groups=groups,
+                 skipped=[], gave_up=[], dropped_orphan_rules=0)
+
+
+def test_validate_unknown_property_member_raises():
+    props = [_fp("C", "p1", [("s.spec", "a")])]
+    groups = [_pg("g", [("C", "ghost")])]
+    with pytest.raises(ValidationError, match="don't exist"):
+        validate(properties=props, rules=[_rv("s.spec", "a")], groups=groups,
+                 skipped=[], gave_up=[], dropped_orphan_rules=0)
+
+
+def test_validate_property_in_no_group_is_soft():
+    props = [_fp("C", "p1", [("s.spec", "a")]), _fp("C", "p2", [("s.spec", "b")])]
+    groups = [_pg("g", [("C", "p1")])]
+    cov = validate(properties=props, rules=[_rv("s.spec", "a"), _rv("s.spec", "b")],
+                   groups=groups, skipped=[], gave_up=[], dropped_orphan_rules=0)
+    assert cov.property_coverage_complete is False
+    assert cov.properties_in_no_group == [("C", "p2")]
+
+
+def test_validate_reports_rules_spanning_groups_as_stat():
+    """A rule formalizing properties that land in different groups is expected
+    (rules repeat) — reported as an informational stat, not an error."""
+    p1 = _fp("C", "p1", [("s.spec", "shared")])
+    p2 = _fp("C", "p2", [("s.spec", "shared")])
+    groups = [_pg("g1", [("C", "p1")]), _pg("g2", [("C", "p2")])]
+    cov = validate(properties=[p1, p2], rules=[_rv("s.spec", "shared")], groups=groups,
+                   skipped=[], gave_up=[], dropped_orphan_rules=2)
+    assert cov.rules_spanning_multiple_groups == ["shared"]
+    assert cov.dropped_orphan_rules == 2
+
+
+def test_validate_carries_gap_counts():
+    p1 = _fp("C", "p1", [("s.spec", "a")])
+    sk = [SkippedClaim(component="C", title="s1", methods=["m"], sort="safety_property",
+                       description="d", reason="r")]
+    gu = [GaveUpComponent(component="D", properties=[_prop("x", "d")])]
+    cov = validate(properties=[p1], rules=[_rv("s.spec", "a")], groups=[_pg("g", [("C", "p1")])],
+                   skipped=sk, gave_up=gu, dropped_orphan_rules=3)
+    assert (cov.skipped_count, cov.gave_up_component_count, cov.dropped_orphan_rules) == (1, 1, 3)
+    assert cov.property_coverage_complete is True
 
 
 # ---------------------------------------------------------------------------
@@ -246,104 +337,106 @@ def test_build_rules_for_grouping_reads_embedded_properties():
 # ---------------------------------------------------------------------------
 
 def _mini_report() -> AutoProverReport:
-    prop = PropertyFormulationWithComponent(component="Increment", title="count_increases",
-                                            methods=["increment"], sort="safety_property",
-                                            description="increment raises count")
-    return AutoProverReport(
-        contract_name="Counter",
-        prover_links={"Increment": "https://prover.example/run/abc"},
-        rules=[CVLRule(name="increment_increases_count", component="Increment",
-                       spec_file="autospec_Increment.spec", properties=[prop],
-                       status=NodeStatus.VERIFIED, line=10,
-                       prover_link="https://prover.example/run/abc")],
-        implemented_properties=[ImplementedProperty(slug="count-up", title="Count Increases",
-                                                    description="d", status=GroupStatus.VERIFIED,
-                                                    rule_names=["increment_increases_count"])],
-        coverage=CoverageReport(total_property_formulations=1, total_rules=1, total_groups=1,
-                                rules_per_group_min=1, rules_per_group_max=1, rule_coverage_complete=True),
-    )
+    # Two properties in one group share a single rule -> the rule row should carry
+    # both in-group descriptions as a bullet list (the edge-label projection).
+    p1 = _fp("C", "p_pay", [("c.spec", "revert_char")], desc="must accept ETH when value > 0")
+    p2 = _fp("C", "p_open", [("c.spec", "revert_char")], desc="callable by any address")
+    rules = [RuleVerdict(name="revert_char", spec_file="c.spec", status=NodeStatus.VERIFIED,
+                         line=7, prover_link="https://prover.example/run/abc")]
+    groups = [PropertyGroup(slug="deposit-openness", title="Deposit is open", description="d",
+                            status=GroupStatus.VERIFIED, members=[("C", "p_pay"), ("C", "p_open")])]
+    skipped = [SkippedClaim(component="C", title="atomic_on_revert", methods=["m"],
+                            sort="safety_property", description="revert rolls back state",
+                            reason="tautological under EVM semantics")]
+    cov = CoverageReport(total_properties=2, total_rules=1, total_groups=1,
+                         properties_per_group_min=2, properties_per_group_max=2,
+                         property_coverage_complete=True)
+    return AutoProverReport(contract_name="Counter",
+                            prover_links={"C": "https://prover.example/run/abc"},
+                            properties=[p1, p2], rules=rules, groups=groups,
+                            skipped=skipped, coverage=cov)
 
 
-def test_render_html_contains_slug_links_and_appendix():
+def test_render_html_group_rows_and_edge_labels():
     h = render_html(_mini_report())
-    assert "count-up" in h and "Count Increases" in h  # slug + title (no P-NN)
+    assert "deposit-openness" in h and "Deposit is open" in h
     assert 'href="https://prover.example/run/abc"' in h
-    assert "increment_increases_count" in h  # appendix "implemented by"
-    assert "count_increases" in h            # property title in appendix
-    assert "VERIFIED" in h
+    # the shared rule row lists BOTH in-group property descriptions
+    assert '<ul class="claims">' in h
+    assert "must accept ETH" in h and "callable by any address" in h
 
 
-def test_render_appendix_lists_unimplemented_properties():
-    orphan = PropertyFormulationWithComponent(component="C", title="orphan_prop",
-                                              methods=["m"], sort="safety_property",
-                                              description="no rule implements this")
-    rep = AutoProverReport(
-        contract_name="C", rules=[], implemented_properties=[],
-        unimplemented_properties=[orphan],
-        coverage=CoverageReport(total_property_formulations=1, total_rules=0, total_groups=0,
-                                rules_per_group_min=0, rules_per_group_max=0, rule_coverage_complete=True),
-    )
-    h = render_html(rep)
-    assert "orphan_prop" in h and "(no rule mapping)" in h
+def test_render_html_autoescapes_descriptions():
+    h = render_html(_mini_report())
+    assert "value &gt; 0" in h  # the ">" in the description is escaped, not raw
+
+
+def test_render_html_gaps_section_and_footer_bool():
+    h = render_html(_mini_report())
+    assert "Formalization gaps" in h
+    assert "revert rolls back state" in h and "tautological under EVM semantics" in h
+    assert "Coverage complete: <strong>Yes</strong>" in h  # no raw Python bool
 
 
 # ---------------------------------------------------------------------------
-# build orchestrator (async): empty grouping -> fallback
+# build orchestrator (async)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_build_empty_grouping_falls_back_and_persists(tmp_path, monkeypatch):
-    from composer.spec.source.report.schema import GroupingResult
+async def test_build_groups_properties_and_persists(tmp_path):
+    gen = _gen({"p1": ["r1"], "p2": ["r2"]})
+    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED), _fake_check("r2", NodeStatus.VERIFIED)]})
+    llm = _GroupingStubModel(result=GroupingResult(groups=[PropertyGroupDraft(
+        slug="g", title="G", description="d", members=[("C", "p1"), ("C", "p2")])]))
 
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_Increment", [_prop("p1", "d1"), _prop("p2", "d2")])
-    _write_rules(certora, "autospec_Increment", {"p1": ["r1"], "p2": ["r2"]})
-    api = _FakeAPI({"L1": [
-        _fake_check("r1", NodeStatus.VERIFIED), _fake_check("r2", NodeStatus.VIOLATED)]})
-
-    async def _empty_llm(**kw):
-        return GroupingResult(groups=[])
-    monkeypatch.setattr(build, "call_grouping_llm", _empty_llm)
-
-    comps = [ComponentInput("Increment", "autospec_Increment", "L1")]
     report = await build.run_autoprove_report(
         project_root=str(tmp_path), contract_name="Counter",
-        components=comps, llm=object(), api=api,
+        components=[_input("C", "autospec_C.spec", [_prop("p1", "d1"), _prop("p2", "d2")], gen)],
+        llm=llm, api=api,
     )
 
-    # The empty grouping degraded to a single 'general' bucket covering all rules.
-    assert len(report.implemented_properties) == 1
-    g = report.implemented_properties[0]
-    assert g.slug == FALLBACK_SLUG
-    assert set(g.rule_names) == {"r1", "r2"}
-    assert g.status == GroupStatus.VIOLATED  # r2 violated
-    assert any("FALLBACK GROUPING APPLIED" in w for w in report.coverage.warnings)
-
-    # Persisted as report.json only — no canonical_map.json anymore.
-    report_json = tmp_path / "certora" / "ap_report" / "report.json"
-    assert report_json.is_file()
-    assert not (tmp_path / "certora" / "ap_report" / "canonical_map.json").exists()
+    assert [g.slug for g in report.groups] == ["g"]
+    assert {p.title for p in report.properties} == {"p1", "p2"}
+    assert report.coverage.property_coverage_complete is True
+    assert (tmp_path / "certora" / "ap_report" / "report.json").is_file()
 
 
 @pytest.mark.asyncio
-async def test_build_surfaces_unimplemented_properties(tmp_path, monkeypatch):
-    """A property no rule implements lands in unimplemented_properties; mapped
-    properties are not duplicated there (they're embedded in rules[].properties)."""
-    from composer.spec.source.report.schema import GroupingResult, ImplementedPropertyDraft
-
-    certora = tmp_path / "certora"
-    _write_props(certora, "autospec_Increment", [_prop("p1", "d1"), _prop("p2", "d2")])
-    _write_rules(certora, "autospec_Increment", {"p1": ["r1"]})  # p2 has no rule
-    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED)]})
-
-    async def _llm(**kw):
-        return GroupingResult(groups=[
-            ImplementedPropertyDraft(slug="g", title="G", description="d", rule_names=["r1"])])
-    monkeypatch.setattr(build, "call_grouping_llm", _llm)
+async def test_build_empty_grouping_falls_back_and_persists(tmp_path):
+    gen = _gen({"p1": ["r1"], "p2": ["r2"]})
+    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED), _fake_check("r2", NodeStatus.VIOLATED)]})
+    llm = _GroupingStubModel(result=GroupingResult(groups=[]))  # empty grouping -> fallback
 
     report = await build.run_autoprove_report(
         project_root=str(tmp_path), contract_name="C",
-        components=[ComponentInput("Increment", "autospec_Increment", "L1")], llm=object(), api=api,
+        components=[_input("C", "autospec_C.spec", [_prop("p1", "d1"), _prop("p2", "d2")], gen)],
+        llm=llm, api=api,
     )
-    assert [(p.component, p.title) for p in report.unimplemented_properties] == [("Increment", "p2")]
-    assert report.coverage.total_property_formulations == 2  # both still counted
+
+    assert [g.slug for g in report.groups] == [FALLBACK_SLUG]
+    g = report.groups[0]
+    assert set(g.members) == {("C", "p1"), ("C", "p2")}
+    assert g.status == GroupStatus.VIOLATED  # r2 violated
+    assert any("FALLBACK GROUPING APPLIED" in w for w in report.coverage.warnings)
+    assert (tmp_path / "certora" / "ap_report" / "report.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_build_surfaces_skipped_and_gave_up_gaps(tmp_path):
+    gen = _gen({"p_ok": ["r1"]}, skipped={"p_skip": "needs a ghost"})
+    api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED)]})
+    llm = _GroupingStubModel(result=GroupingResult(groups=[PropertyGroupDraft(
+        slug="g", title="G", description="d", members=[("C", "p_ok")])]))
+
+    report = await build.run_autoprove_report(
+        project_root=str(tmp_path), contract_name="C",
+        components=[
+            _input("C", "autospec_C.spec", [_prop("p_ok", "d"), _prop("p_skip", "d")], gen),
+            _input("D", "autospec_D.spec", [_prop("q", "d")], GaveUp(reason="stuck"), link=None),
+        ],
+        llm=llm, api=api,
+    )
+
+    assert [(s.component, s.title) for s in report.skipped] == [("C", "p_skip")]
+    assert [g.component for g in report.gave_up_components] == ["D"]
+    assert report.coverage.skipped_count == 1 and report.coverage.gave_up_component_count == 1

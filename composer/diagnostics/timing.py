@@ -86,8 +86,6 @@ class RunSummary:
     """Maps task_id -> (prover_s_accum, prover_calls) recorded while task is in flight."""
     _latest_link_by_task: dict[str, str] = field(default_factory=dict, repr=False)
     """Maps task_id -> link for the most recent prover run."""
-    _latest_conf_by_task: dict[str, dict] = field(default_factory=dict, repr=False)
-    """Maps task_id -> the full conf dict passed to the most recent prover run."""
     token_usage_by_model: dict[str, TokenTotals] = field(default_factory=dict)
     """Maps model_name -> accumulated raw token counts across the whole run."""
     _active_tokens_by_task: dict[str, dict[str, TokenTotals]] = field(default_factory=dict, repr=False)
@@ -170,19 +168,6 @@ class RunSummary:
         if (task_id := task_id or get_current_task_id()) is None:
             return None
         return self._latest_link_by_task.get(task_id)
-
-    def record_prover_conf(self, conf: dict, *, task_id: str | None = None) -> None:
-        """Stash the full conf passed to the prover; defaults to the active task. Last write wins."""
-        if (task_id := task_id or get_current_task_id()) is None:
-            return
-        self._latest_conf_by_task[task_id] = dict(conf)
-
-    def get_latest_conf(self, task_id: str | None = None) -> dict | None:
-        """Return a copy of the most recent prover conf; defaults to the active task. None if none."""
-        if (task_id := task_id or get_current_task_id()) is None:
-            return None
-        v = self._latest_conf_by_task.get(task_id)
-        return dict(v) if v is not None else None
 
     def total_wall_s(self) -> float:
         return time.perf_counter() - self.started_at_mono

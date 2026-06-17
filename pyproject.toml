@@ -30,7 +30,7 @@ dependencies = [
     "chromadb>=0.4.0",
     "langgraph-prebuilt==1.0.8",
     "langchain_core<1.3.3",
-    "prover-output-utility @ git+ssh://git@github.com/Certora/ProverOutputUtility.git@31f8c662bb692134406d2d0558b04d2ee65c2dcf",
+    "prover-output-utility @ git+ssh://git@github.com/Certora/ProverOutputUtility.git@1d623c6ebaf47c0794983520fd13216c7735dac2",
 ]
 
 [project.optional-dependencies]

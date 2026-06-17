@@ -1,496 +1,137 @@
 """Render an `AutoProverReport` (report.json) as a standalone HTML report.
 
-Single self-contained page (inline CSS, no external assets): one section per
-high-level property (keyed by its slug) with a status badge + description + a
-rule table, plus a collapsible appendix indexing every inferred property to the
-rules that implement it. HTML is opt-in — the pipeline writes report.json;
-render it on demand:
+Single self-contained page (inline CSS, no external assets): a header with outcome counts, one
+section per high-level `PropertyGroup` (status badge + description + a rule table whose per-rule
+descriptions are the in-group property claims that pull each rule in), a formalization-gaps section
+(declined properties + components that gave up), and a coverage footer. The HTML is built by
+``autoprove_report.html.j2``; this module only assembles the render context — no markup here. HTML is
+opt-in — the pipeline writes report.json; render it on demand:
 
     autoprove-report-render certora/ap_report/report.json [--out report.html]
 """
 import argparse
-import html
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 from prover_output_utility.models import NodeStatus
 
+from composer.templates.loader import load_jinja_template
 from composer.spec.source.report.schema import (
-    AutoProverReport, CVLRule, GroupStatus, ImplementedProperty,
-    PropertyFormulationWithComponent,
+    AutoProverReport, FormalizedProperty, GroupStatus, PropertyGroup, PropertyKey, RuleRef, RuleVerdict,
 )
 
-
+# Status value -> CSS kind. Covers both the rule (NodeStatus) and group (GroupStatus) vocabularies.
 _STATUS_KIND: dict[str, str] = {
     NodeStatus.VERIFIED.value: "ok",
     NodeStatus.VIOLATED.value: "bad",
-    NodeStatus.TIMEOUT.value:  "warn",
-    NodeStatus.ERROR.value:    "bad",
-    NodeStatus.RUNNING.value:  "info",
-    NodeStatus.PENDING.value:  "info",
-    NodeStatus.UNKNOWN.value:  "muted",
-    GroupStatus.VERIFIED.value:     "ok",
-    GroupStatus.VIOLATED.value:     "bad",
-    GroupStatus.PARTIAL.value:      "warn",
+    NodeStatus.TIMEOUT.value: "warn",
+    NodeStatus.ERROR.value: "bad",
+    NodeStatus.RUNNING.value: "info",
+    NodeStatus.PENDING.value: "info",
+    NodeStatus.UNKNOWN.value: "muted",
+    GroupStatus.VERIFIED.value: "ok",
+    GroupStatus.VIOLATED.value: "bad",
+    GroupStatus.PARTIAL.value: "warn",
     GroupStatus.NO_RESULTS.value: "muted",
 }
 
+# Chip display order for the header outcome counts.
+_RULE_ORDER = [s.value for s in (
+    NodeStatus.VERIFIED, NodeStatus.VIOLATED, NodeStatus.TIMEOUT, NodeStatus.ERROR,
+    NodeStatus.RUNNING, NodeStatus.PENDING, NodeStatus.UNKNOWN,
+)]
+_GROUP_ORDER = [s.value for s in (
+    GroupStatus.VERIFIED, GroupStatus.VIOLATED, GroupStatus.PARTIAL, GroupStatus.NO_RESULTS,
+)]
 
-def _badge(status: str) -> str:
-    kind = _STATUS_KIND.get(status, "muted")
-    return f'<span class="badge badge-{kind}">{html.escape(status)}</span>'
 
-
-_CSS = """\
-:root {
-    --bg: #ffffff;
-    --fg: #1d2125;
-    --muted-fg: #5b6770;
-    --border: #e4e8ec;
-    --bg-card: #fafbfc;
-    --bg-pre: #f4f6f8;
-    --link: #1a73e8;
-    --ok-fg: #0a6b2a;
-    --ok-bg: #e6f6ec;
-    --bad-fg: #a8071a;
-    --bad-bg: #fde7e9;
-    --warn-fg: #8a5500;
-    --warn-bg: #fff1d6;
-    --info-fg: #054a8c;
-    --info-bg: #e3effb;
-    --muted-bg: #eef0f3;
-}
-* { box-sizing: border-box; }
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                 "Helvetica Neue", Arial, sans-serif;
-    color: var(--fg);
-    background: var(--bg);
-    margin: 0;
-    padding: 0;
-    line-height: 1.5;
-    font-size: 14px;
-}
-.container {
-    max-width: 1080px;
-    margin: 0 auto;
-    padding: 32px 28px 48px;
-}
-header.report-head {
-    border-bottom: 2px solid var(--border);
-    padding-bottom: 16px;
-    margin-bottom: 28px;
-}
-header.report-head h1 {
-    margin: 0 0 4px;
-    font-size: 24px;
-    font-weight: 600;
-}
-header.report-head .subtitle {
-    color: var(--muted-fg);
-    font-size: 13px;
-}
-.meta-grid {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 4px 18px;
-    margin-top: 14px;
-    font-size: 13px;
-}
-.meta-grid dt {
-    color: var(--muted-fg);
-    font-weight: 500;
-    margin: 0;
-}
-.meta-grid dd {
-    margin: 0;
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-    font-size: 12.5px;
-    word-break: break-all;
-}
-.counts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 14px;
-}
-.count-chip {
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 3px 12px;
-    font-size: 12.5px;
-    color: var(--muted-fg);
-    background: var(--bg-card);
-}
-.count-chip strong {
-    color: var(--fg);
-    margin-right: 4px;
-}
-section.prop {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 18px 20px;
-    margin-bottom: 16px;
-}
-section.prop h2 {
-    margin: 0 0 6px;
-    font-size: 16px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-section.prop h2 .id {
-    color: var(--muted-fg);
-    font-weight: 500;
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-}
-section.prop .desc {
-    color: var(--fg);
-    margin: 8px 0 12px;
-}
-section.prop .slug {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-    font-size: 11.5px;
-    color: var(--muted-fg);
-}
-.badge {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 2px 8px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-.badge-ok    { color: var(--ok-fg);    background: var(--ok-bg); }
-.badge-bad   { color: var(--bad-fg);   background: var(--bad-bg); }
-.badge-warn  { color: var(--warn-fg);  background: var(--warn-bg); }
-.badge-info  { color: var(--info-fg);  background: var(--info-bg); }
-.badge-muted { color: var(--muted-fg); background: var(--muted-bg); }
-table.rules {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 4px;
-    font-size: 13px;
-}
-table.rules th, table.rules td {
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-    padding: 8px 10px;
-    vertical-align: top;
-}
-table.rules th {
-    color: var(--muted-fg);
-    font-weight: 500;
-    background: var(--bg);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-}
-table.rules td.col-name {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-    font-size: 12.5px;
-    white-space: nowrap;
-    width: 1%;
-}
-table.rules td.col-status {
-    white-space: nowrap;
-    width: 1%;
-}
-table.rules td.col-link {
-    width: 1%;
-    white-space: nowrap;
-}
-table.rules td.col-link a {
-    color: var(--link);
-    text-decoration: none;
-    font-size: 12px;
-}
-table.rules td.col-link a:hover { text-decoration: underline; }
-details.appendix {
-    margin-top: 36px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px 20px;
-    background: var(--bg-card);
-}
-details.appendix summary {
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 15px;
-}
-details.appendix table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 14px;
-    font-size: 13px;
-}
-details.appendix table th,
-details.appendix table td {
-    text-align: left;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-    vertical-align: top;
-}
-details.appendix table th {
-    color: var(--muted-fg);
-    font-weight: 500;
-    font-size: 12px;
-    text-transform: uppercase;
-}
-details.appendix h3 {
-    margin: 18px 0 6px;
-    font-size: 14px;
-    font-weight: 600;
-}
-.sort-tag {
-    display: inline-block;
-    padding: 1px 7px;
-    border-radius: 3px;
-    background: var(--bg-pre);
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-    font-size: 11px;
-    color: var(--muted-fg);
-}
-footer.report-foot {
-    margin-top: 36px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-    font-size: 12px;
-    color: var(--muted-fg);
-}
-.warnings {
-    background: var(--warn-bg);
-    color: var(--warn-fg);
-    border-radius: 6px;
-    padding: 10px 14px;
-    margin: 14px 0;
-    font-size: 13px;
-}
-.warnings ul { margin: 4px 0 0 18px; padding: 0; }
-"""
+def _kind(status: str) -> str:
+    return _STATUS_KIND.get(status, "muted")
 
 
 def _is_url(link: str) -> bool:
     return link.startswith("http://") or link.startswith("https://")
 
 
-def _link_cell(rule: CVLRule) -> str:
-    """A clickable prover-run link when one is known and it's a URL; a plain
-    label for local-path links; em-dash otherwise."""
-    if rule.prover_link and _is_url(rule.prover_link):
-        return (
-            f'<a href="{html.escape(rule.prover_link)}" target="_blank" '
-            f'rel="noopener">prover run</a>'
-        )
-    if rule.prover_link:
-        return '<span style="color:var(--muted-fg)">local run</span>'
-    return "—"
+def _link_view(link: str | None) -> dict:
+    """How a prover link renders: a clickable URL, a plain 'local run' label, or an em-dash."""
+    if link and _is_url(link):
+        return {"href": link, "label": "prover run"}
+    if link:
+        return {"href": None, "label": "local run"}
+    return {"href": None, "label": "—"}
 
 
-def _render_header(report: AutoProverReport) -> str:
-    """Top-of-page summary card + per-status count chips."""
-    status_counts: Counter[str] = Counter(r.status.value for r in report.rules)
-    group_counts: Counter[str] = Counter(g.status.value for g in report.implemented_properties)
-
-    chips = []
-    for status in [NodeStatus.VERIFIED, NodeStatus.VIOLATED, NodeStatus.TIMEOUT,
-                   NodeStatus.ERROR, NodeStatus.RUNNING, NodeStatus.PENDING,
-                   NodeStatus.UNKNOWN]:
-        n = status_counts.get(status.value, 0)
-        if n:
-            chips.append(f'<span class="count-chip">{_badge(status.value)} <strong>{n}</strong></span>')
-
-    group_chips = []
-    for status in [GroupStatus.VERIFIED, GroupStatus.VIOLATED,
-                   GroupStatus.PARTIAL, GroupStatus.NO_RESULTS]:
-        n = group_counts.get(status.value, 0)
-        if n:
-            group_chips.append(f'<span class="count-chip">{_badge(status.value)} <strong>{n}</strong></span>')
-
-    if report.prover_links:
-        runs = " ".join(
-            (f'<a href="{html.escape(link)}" target="_blank" rel="noopener">{html.escape(slug)}</a>'
-             if _is_url(link) else f'<code>{html.escape(slug)}</code>')
-            for slug, link in sorted(report.prover_links.items())
-        )
-    else:
-        runs = "—"
-
-    meta = [
-        ("Contract",       html.escape(report.contract_name)),
-        ("Schema version", html.escape(report.schema_version)),
-        ("Run timestamp",  html.escape(report.run_timestamp_utc or "—")),
-        ("Prover runs",    runs),
-    ]
-    meta_rows = "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in meta)
-
-    return f"""\
-<header class="report-head">
-  <h1>Formal verification report — {html.escape(report.contract_name)}</h1>
-  <div class="subtitle">
-    {report.coverage.total_property_formulations} property formulations &middot;
-    {len(report.rules)} CVL rules &middot;
-    {len(report.implemented_properties)} implemented properties
-  </div>
-  <dl class="meta-grid">{meta_rows}</dl>
-  <div style="margin-top:14px;font-size:12px;color:var(--muted-fg);">Rule outcomes:</div>
-  <div class="counts">{''.join(chips) or '—'}</div>
-  <div style="margin-top:8px;font-size:12px;color:var(--muted-fg);">High-level property outcomes:</div>
-  <div class="counts">{''.join(group_chips) or '—'}</div>
-</header>
-"""
+def _counts(values: list[str], order: list[str]) -> list[dict]:
+    """Per-status chip data, in display order, omitting statuses with no occurrences."""
+    c = Counter(values)
+    return [{"status": s, "kind": _kind(s), "n": c[s]} for s in order if c.get(s)]
 
 
-def _render_warnings(report: AutoProverReport) -> str:
-    if not report.coverage.warnings:
-        return ""
-    items = "".join(f"<li>{html.escape(w)}</li>" for w in report.coverage.warnings)
-    return f'<div class="warnings"><strong>Coverage warnings:</strong><ul>{items}</ul></div>'
-
-
-def _render_group(
-    group: ImplementedProperty,
-    rules_by_name: dict[str, CVLRule],
-    desc_lookup: dict[str, str],
-) -> str:
-    """One high-level-property section: heading, description, rule table."""
-    rows = []
-    for name in group.rule_names:
-        rule = rules_by_name.get(name)
-        if rule is None:
-            rows.append(
-                f'<tr><td class="col-name">{html.escape(name)}</td>'
-                f'<td class="col-status">{_badge("UNKNOWN")}</td>'
-                f'<td>(missing from rules[] — bug)</td>'
-                f'<td class="col-link">—</td></tr>'
-            )
+def _group_view(
+    group: PropertyGroup,
+    props_by_key: dict[PropertyKey, FormalizedProperty],
+    rules_by_ref: dict[RuleRef, RuleVerdict],
+) -> dict:
+    """Invert the group's members into rule rows: each rule the group's properties formalize, labelled
+    with the descriptions of the in-group properties that pull it in (the edge labels). The same rule
+    can label differently under another group, which is why this is computed per group, not stored."""
+    descriptions: dict[RuleRef, list[str]] = {}
+    order: list[RuleRef] = []
+    for k in group.members:
+        p = props_by_key.get(k)
+        if p is None:
             continue
-        desc_text = desc_lookup.get(rule.name, "")
-        desc_html = (
-            html.escape(desc_text) if desc_text else
-            '<span style="color:var(--muted-fg)">(no inferred description)</span>'
-        )
-        name_cell = html.escape(rule.name)
-        if rule.line is not None:
-            name_cell += f'<span style="color:var(--muted-fg)">:{rule.line}</span>'
-        rows.append(
-            f'<tr>'
-            f'<td class="col-name">{name_cell}</td>'
-            f'<td class="col-status">{_badge(rule.status.value)}</td>'
-            f'<td>{desc_html}</td>'
-            f'<td class="col-link">{_link_cell(rule)}</td>'
-            f'</tr>'
-        )
+        for ref in p.rule_refs:
+            if ref not in descriptions:
+                descriptions[ref] = []
+                order.append(ref)
+            if p.description not in descriptions[ref]:
+                descriptions[ref].append(p.description)
 
-    return f"""\
-<section class="prop" id="{html.escape(group.slug)}">
-  <h2><span class="id">{html.escape(group.slug)}</span> {html.escape(group.title)} {_badge(group.status.value)}</h2>
-  <p class="desc">{html.escape(group.description)}</p>
-  <table class="rules">
-    <thead><tr><th>Rule</th><th>Status</th><th>Description</th><th></th></tr></thead>
-    <tbody>{''.join(rows)}</tbody>
-  </table>
-</section>
-"""
-
-
-def _description_lookup(report: AutoProverReport) -> dict[str, str]:
-    """{rule_name: first English description from the properties it implements}."""
-    return {r.name: (r.properties[0].description if r.properties else "") for r in report.rules}
+    rows = []
+    for ref in order:
+        rule = rules_by_ref.get(ref)
+        status = rule.status.value if rule else NodeStatus.UNKNOWN.value
+        rows.append({
+            "name": ref[1],
+            "status": status,
+            "kind": _kind(status),
+            "line": rule.line if rule else None,
+            "link": _link_view(rule.prover_link if rule else None),
+            "descriptions": descriptions[ref],
+        })
+    return {
+        "slug": group.slug,
+        "title": group.title,
+        "description": group.description,
+        "status": group.status.value,
+        "kind": _kind(group.status.value),
+        "rows": rows,
+    }
 
 
-def _render_appendix(report: AutoProverReport) -> str:
-    """Collapsible appendix: every property formulation, by component, with the
-    rule(s) that implement it."""
-    rules_by_ref: dict[tuple[str, str], list[CVLRule]] = defaultdict(list)
-    for r in report.rules:
-        for prop in r.properties:
-            rules_by_ref[(prop.component, prop.title)].append(r)
-
-    # Full catalog: properties embedded in rules + those no rule implements,
-    # deduped by (component, title).
-    by_component: dict[str, dict[str, PropertyFormulationWithComponent]] = defaultdict(dict)
-    for r in report.rules:
-        for prop in r.properties:
-            by_component[prop.component].setdefault(prop.title, prop)
-    for p in report.unimplemented_properties:
-        by_component[p.component].setdefault(p.title, p)
-
-    total = sum(len(props) for props in by_component.values())
-    parts = ['<details class="appendix"><summary>Property formulation index — '
-             f'{total} properties across {len(by_component)} components</summary>']
-    for comp in sorted(by_component):
-        props = sorted(by_component[comp].values(), key=lambda p: p.title)
-        parts.append(f'<h3>{html.escape(comp)} ({len(props)} properties)</h3>')
-        parts.append('<table>')
-        parts.append('<thead><tr><th>Property</th><th>Sort</th><th>Description</th>'
-                     '<th>Implemented by</th></tr></thead><tbody>')
-        for p in props:
-            impl = rules_by_ref.get((comp, p.title), [])
-            impl_html = (
-                ", ".join(f'<code>{html.escape(r.name)}</code>' for r in impl) if impl
-                else '<span style="color:var(--muted-fg)">(no rule mapping)</span>'
-            )
-            # The agent-assigned snake_case title is the property's identity and
-            # the cross-reference key in property_rules.json.
-            title_cell = f'<code>{html.escape(p.title)}</code>'
-            parts.append(
-                f'<tr>'
-                f'<td>{title_cell}</td>'
-                f'<td><span class="sort-tag">{html.escape(p.sort)}</span></td>'
-                f'<td>{html.escape(p.description)}</td>'
-                f'<td>{impl_html}</td>'
-                f'</tr>'
-            )
-        parts.append('</tbody></table>')
-    parts.append('</details>')
-    return "\n".join(parts)
-
-
-def _render_footer(report: AutoProverReport) -> str:
-    cov = report.coverage
-    return f"""\
-<footer class="report-foot">
-  Coverage check: {cov.total_rules} unique rules across {cov.total_groups} high-level
-  properties ({cov.rules_per_group_min}–{cov.rules_per_group_max} rules each).
-  Coverage complete: <strong>{cov.rule_coverage_complete}</strong>;
-  status aggregation consistent: <strong>{cov.status_aggregation_consistent}</strong>.
-</footer>
-"""
+def _build_context(report: AutoProverReport) -> dict:
+    props_by_key = {p.key: p for p in report.properties}
+    rules_by_ref = {r.ref: r for r in report.rules}
+    return {
+        "report": report,
+        "coverage": report.coverage,
+        "prover_runs": [
+            {"slug": slug, "href": link if _is_url(link) else None}
+            for slug, link in sorted(report.prover_links.items())
+        ],
+        "rule_counts": _counts([r.status.value for r in report.rules], _RULE_ORDER),
+        "group_counts": _counts([g.status.value for g in report.groups], _GROUP_ORDER),
+        "groups": [_group_view(g, props_by_key, rules_by_ref) for g in report.groups],
+        "skipped": report.skipped,
+        "gave_up": report.gave_up_components,
+    }
 
 
 def render_html(report: AutoProverReport) -> str:
-    rules_by_name = {r.name: r for r in report.rules}
-    desc_lookup = _description_lookup(report)
-
-    body_parts = [_render_header(report), _render_warnings(report)]
-    for g in report.implemented_properties:
-        body_parts.append(_render_group(g, rules_by_name, desc_lookup))
-    body_parts.append(_render_appendix(report))
-    body_parts.append(_render_footer(report))
-
-    body = "\n".join(body_parts)
-    title = f"FV report — {html.escape(report.contract_name)}"
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{title}</title>
-<style>{_CSS}</style>
-</head>
-<body>
-<div class="container">
-{body}
-</div>
-</body>
-</html>
-"""
+    return load_jinja_template("autoprove_report.html.j2", **_build_context(report))
 
 
 def main(argv: list[str] | None = None) -> int:

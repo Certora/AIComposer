@@ -1,24 +1,23 @@
-"""LLM-driven grouping of CVL rules into high-level properties.
+"""LLM-driven grouping of inferred properties into high-level audit claims.
 
-A single structured LLM call (langchain's `with_structured_output`) takes the
-rule list and proposes high-level property groups; each group's status is then
-rolled up from its member rules' verdicts. Groups are identified by the slug the
-LLM assigns — this is a per-run snapshot, with no cross-run reconciliation.
+A single structured LLM call takes the `FormalizedProperty` list and partitions it into high-level
+`PropertyGroup`s (the "P-NN" headings) — each property in exactly one group, while the rules those
+properties are formalized by may surface under several groups. Each group's status is rolled up from
+its members' rules' verdicts. Groups are identified by the slug the LLM assigns — a per-run snapshot.
 
-A `general`-bucket fallback (every rule in one group) is built by `build` when
-the LLM call raises, when validation rejects the grouping, or when the grouping
-covers no rules.
+A single ``general`` fallback group (every property in one group) is used by `build` when the LLM
+call raises, validation rejects the grouping, or the grouping covers no properties.
 """
 from typing import Iterable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from prover_output_utility.models import NodeStatus
+from pydantic import BaseModel, Field
 
 from composer.templates.loader import load_jinja_template
 from composer.spec.source.report.schema import (
-    CVLRule, GroupStatus, ImplementedProperty, ImplementedPropertyDraft,
-    GroupingResult, RuleForGrouping, RuleName,
+    FormalizedProperty, GroupStatus, PropertyGroup, PropertyKey, RuleRef,
 )
 
 FALLBACK_SLUG = "general"
@@ -26,7 +25,7 @@ FALLBACK_TITLE = "General"
 
 
 def aggregate_status(statuses: Iterable[NodeStatus]) -> GroupStatus:
-    """Roll up member-rule `NodeStatus`es into a `GroupStatus`:
+    """Roll member-rule `NodeStatus`es up into a `GroupStatus`:
       - any VIOLATED                            -> VIOLATED
       - all VERIFIED                            -> VERIFIED
       - some VERIFIED but not all (no VIOLATED) -> PARTIAL
@@ -46,35 +45,48 @@ def aggregate_status(statuses: Iterable[NodeStatus]) -> GroupStatus:
     return GroupStatus.NO_RESULTS
 
 
-def build_rules_for_grouping(rules: list[CVLRule]) -> list[RuleForGrouping]:
-    """Flatten each `CVLRule` (with its embedded property formulations) into the
-    context row the grouping LLM sees."""
-    out: list[RuleForGrouping] = []
-    for r in rules:
-        out.append(RuleForGrouping(
-            name=r.name,
-            component=r.component,
-            status=r.status,
-            sorts=list(dict.fromkeys(p.sort for p in r.properties)),
-            property_descriptions=[p.description for p in r.properties],
-        ))
-    return out
+# ---------------------------------------------------------------------------
+# LLM grouping I/O (structured-output shapes)
+# ---------------------------------------------------------------------------
+
+class PropertyGroupDraft(BaseModel):
+    """One high-level property group proposed by the grouping LLM."""
+    slug: str = Field(
+        ..., min_length=1, max_length=64,
+        description="kebab-case ASCII lower-case identifier for the grouping.",
+    )
+    title: str = Field(description="A 5-12 word human-readable headline for the high-level property.")
+    description: str = Field(
+        description="1-3 plain-English sentences summarising what the group establishes; "
+        "do not name the CVL rules or the individual property titles."
+    )
+    members: list[PropertyKey] = Field(
+        description="The [component, title] pairs in this group; every input property must appear "
+        "in exactly one group."
+    )
+
+
+class GroupingResult(BaseModel):
+    """The high-level property groups covering every input property exactly once."""
+    groups: list[PropertyGroupDraft] = Field(
+        description="The high-level property groups; collectively they cover every input property "
+        "exactly once."
+    )
 
 
 async def call_grouping_llm(
     *,
     llm: BaseChatModel,
     contract_name: str,
-    rules: list[RuleForGrouping],
+    properties: list[FormalizedProperty],
 ) -> GroupingResult:
-    """One structured LLM call: the rule list in, a `GroupingResult` out, via
-    langchain's `with_structured_output`. The model + token budget come from the
-    passed `llm` (the run's configured model)."""
+    """One structured LLM call: the property list in, a `GroupingResult` out, via langchain's
+    `with_structured_output`. The model + token budget come from the passed `llm`."""
     system = load_jinja_template("autoprove_report_grouping_system.j2")
     user = load_jinja_template(
         "autoprove_report_grouping_prompt.j2",
         contract_name=contract_name,
-        rules=[r.model_dump(mode="json") for r in rules],
+        properties=properties,
     )
     bound = llm.with_structured_output(GroupingResult)
     result = await bound.ainvoke([SystemMessage(system), HumanMessage(user)])
@@ -82,32 +94,38 @@ async def call_grouping_llm(
     return result
 
 
-def build_implemented_properties(
-    drafts: list[ImplementedPropertyDraft],
-    rule_status: dict[RuleName, NodeStatus],
-) -> list[ImplementedProperty]:
-    """Turn the LLM's drafts into final `ImplementedProperty`s, rolling each
-    group's status up from its member rules' verdicts."""
-    return [
-        ImplementedProperty(
+def build_groups(
+    drafts: list[PropertyGroupDraft],
+    props_by_key: dict[PropertyKey, FormalizedProperty],
+    rule_status: dict[RuleRef, NodeStatus],
+) -> list[PropertyGroup]:
+    """Turn the LLM's drafts into final `PropertyGroup`s, rolling each group's status up from the
+    verdicts of the rules its member properties are formalized by."""
+    out: list[PropertyGroup] = []
+    for d in drafts:
+        out.append(PropertyGroup(
             slug=d.slug,
             title=d.title,
             description=d.description,
-            status=aggregate_status([rule_status[r] for r in d.rule_names if r in rule_status]),
-            rule_names=list(d.rule_names),
-        )
-        for d in drafts
-    ]
+            status=aggregate_status(
+                rule_status.get(ref, NodeStatus.UNKNOWN)
+                for k in d.members
+                if (p := props_by_key.get(k)) is not None
+                for ref in p.rule_refs
+            ),
+            members=d.members,
+        ))
+    return out
 
 
-def build_fallback_grouping(rule_names: list[RuleName]) -> GroupingResult:
-    """A single bucket holding every rule, used when structured grouping is
-    unavailable. The reason is logged by the caller, not shown to the user."""
+def build_fallback_grouping(properties: list[FormalizedProperty]) -> GroupingResult:
+    """A single bucket holding every property, used when structured grouping is unavailable. The
+    reason is logged by the caller, not shown to the user."""
     return GroupingResult(groups=[
-        ImplementedPropertyDraft(
+        PropertyGroupDraft(
             slug=FALLBACK_SLUG,
             title=FALLBACK_TITLE,
-            description="All rules.",
-            rule_names=list(rule_names),
+            description="All properties.",
+            members=[p.key for p in properties],
         )
     ])

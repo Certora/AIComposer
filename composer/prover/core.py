@@ -62,12 +62,14 @@ def make_prover_options(*, cloud: bool) -> ProverOptions:
         extras = [
             "--global_timeout", str(int(DEFAULT_GLOBAL_TIMEOUT)),
             "--server", cloud_server_for_env(),
+            "--prover_version", "master"
         ]
     return ProverOptions(extra_args=extras)
 
 @dataclass
 class ProverReport:
     rule_status: dict[str, bool]
+    link: str  # URL (cloud) or local results dir of the prover run that produced this report
 
 @dataclass
 class RawReport(ProverReport):
@@ -280,7 +282,7 @@ async def run_prover(
 
     if isinstance(cex, SummarizingCexHandler) and cex.summarization_threshold < failed_count:
         todo_list = await cex.summarize(report)
-        return SummarizedReport(report=report, todo_list=todo_list, rule_status=prover_report)
+        return SummarizedReport(report=report, todo_list=todo_list, rule_status=prover_report, link=run_result["link"])
 
     # 14. Normal return
-    return RawReport(report=report, rule_status=prover_report)
+    return RawReport(report=report, rule_status=prover_report, link=run_result["link"])

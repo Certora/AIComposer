@@ -1,19 +1,13 @@
-"""Collect the report's inputs from on-disk dumps + prover verdicts.
+"""Collect the report's inputs from in-memory pipeline results + prover verdicts.
 
-For each component (and the structural invariants) we read the property dumps
-the pipeline already wrote under ``certora/properties/`` and fetch per-rule
-verdicts from that component's prover run via ProverOutputUtility:
-
-  - ``<stem>.properties.json``     -> ordered `PropertyFormulation`s
-  - ``<stem>.property_rules.json`` -> ``{property_title: [rule_names]}``
-  - the component's prover link    -> POU `CheckResult`s (status + source line)
-
-`<stem>` is ``autospec_<slugified_name>`` for components and ``invariants`` for
-the structural invariants. Properties are addressed by their unique ``title``;
-rule line numbers and verdicts both come from POU (no spec-text parsing, no
-``.certora_recent_jobs.json``).
+For each component (and the structural invariants) the report phase hands us the inferred
+properties, the generation result (`GeneratedCVL` with its skip list + property->rules mapping, or
+a give-up/crash), and the component's prover-run link. We split the properties into the ones a rule
+formalizes (`FormalizedProperty`) and the formalization gaps (`SkippedClaim` / `GaveUpComponent`),
+and fetch per-rule verdicts from each run via ProverOutputUtility. No on-disk dumps are read — the
+data is already in memory.
 """
-import json
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,35 +15,33 @@ from pathlib import Path
 from prover_output_utility import ProverOutputAPI
 from prover_output_utility.models import CheckResult, NodeStatus
 
-from composer.spec.gen_types import PROPERTIES_DIR, under_project
+from composer.spec.prop import PropertyFormulation
+from composer.spec.cvl_generation import GeneratedCVL
+from composer.spec.source.author import GaveUp
 from composer.spec.source.report.schema import (
-    ComponentName, CVLRule, PropertyFormulationWithComponent, PropertyTitle, RuleName, StemName,
+    ComponentName, FormalizedProperty, GaveUpComponent, RuleName, RuleRef, RuleVerdict, SkippedClaim,
 )
 
 _log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class ComponentInput:
-    """One unit to collect: its human name, the property-dump stem, and the
-    prover run link/path for its verdicts (``None`` if the run produced no
-    link, e.g. a component that gave up before submitting). One prover run per
-    component (and one for the structural invariants)."""
+class ReportComponentInput:
+    """One unit to collect: a component or the structural invariants. ``spec_file`` is the basename
+    of the spec the rules live in (``autospec_<slug>.spec`` / ``invariants.spec``) — the rule-identity
+    fallback when a verdict carries no source location. ``result`` is the in-memory generation
+    outcome; anything other than `GeneratedCVL` (give-up or crash) means no rules were formalized."""
     name: ComponentName
-    stem: StemName
+    spec_file: str
+    props: list[PropertyFormulation]
+    result: GeneratedCVL | GaveUp | BaseException
     prover_link: str | None
 
 
-# Rollup priority when a rule_name has several per-method CheckResults: the most
-# attention-worthy / terminal verdict wins as the rule-level status.
+# Rollup priority when a rule has several per-method CheckResults: the most terminal verdict wins.
 _STATUS_PRIORITY: dict[NodeStatus, int] = {
-    NodeStatus.VIOLATED: 6,
-    NodeStatus.ERROR:    5,
-    NodeStatus.TIMEOUT:  4,
-    NodeStatus.UNKNOWN:  3,
-    NodeStatus.RUNNING:  2,
-    NodeStatus.PENDING:  1,
-    NodeStatus.VERIFIED: 0,
+    NodeStatus.VIOLATED: 6, NodeStatus.ERROR: 5, NodeStatus.TIMEOUT: 4,
+    NodeStatus.UNKNOWN: 3, NodeStatus.RUNNING: 2, NodeStatus.PENDING: 1, NodeStatus.VERIFIED: 0,
 }
 
 
@@ -61,9 +53,8 @@ class _Verdict:
     spec_file: str | None = None
 
     def merge(self, other: "_Verdict | None") -> "_Verdict":
-        """Combine two CheckResults for the same rule within one prover run: the
-        higher-priority (more terminal) status wins, and line/duration/spec_file
-        are kept from whichever side has them."""
+        """Combine two CheckResults for one rule within a run: higher-priority status wins,
+        line/duration/spec_file kept from whichever side has them."""
         if other is None:
             return self
         hi, lo = (
@@ -79,58 +70,13 @@ class _Verdict:
         )
 
 
-def _properties_dir(project_root: str) -> Path:
-    return under_project(project_root, PROPERTIES_DIR)
-
-
-def _load_properties(
-    pdir: Path, stem: StemName, component: ComponentName
-) -> list[PropertyFormulationWithComponent]:
-    """Load ``<stem>.properties.json`` and wrap each entry as a
-    `PropertyFormulationWithComponent`, tagging it with the component that owns
-    the spec. Missing file -> empty."""
-    path = pdir / f"{stem}.properties.json"
-    if not path.is_file():
-        return []
-    raw = json.loads(path.read_text())
-    return [PropertyFormulationWithComponent(component=component, **prop) for prop in raw]
-
-
-def _load_rule_properties(
-    pdir: Path, stem: StemName, properties: list[PropertyFormulationWithComponent]
-) -> dict[RuleName, list[PropertyFormulationWithComponent]]:
-    """Invert ``<stem>.property_rules.json`` into
-    ``rule_name -> [the property formulations that rule implements]``, resolving
-    each title to its property object so callers need no second join. Missing
-    file -> empty (a component that gave up after extraction has properties but
-    no rule mapping)."""
-    path = pdir / f"{stem}.property_rules.json"
-    if not path.is_file():
-        return {}
-    by_title = {p.title: p for p in properties if p.title}
-    # property_rules.json maps each PropertyTitle to the RuleNames implementing it.
-    mapping: dict[PropertyTitle, list[RuleName]] = json.loads(path.read_text())
-    out: dict[RuleName, list[PropertyFormulationWithComponent]] = {}
-    for title, rule_names in mapping.items():
-        prop = by_title.get(title)
-        if prop is None:
-            # A title in the mapping with no matching property entry means the
-            # two files disagree; skip rather than reference a phantom property.
-            continue
-        for rule_name in rule_names:
-            out.setdefault(rule_name, []).append(prop)
-    return out
-
-
 def _fetch_verdicts(api: ProverOutputAPI, link: str) -> dict[RuleName, _Verdict]:
-    """rule_name -> rolled-up `_Verdict` for one prover run. Best-effort: any
-    POU failure yields an empty map (rules fall back to UNKNOWN)."""
+    """rule_name -> rolled-up `_Verdict` for one prover run. Best-effort: any POU failure -> {}."""
     try:
         checks: list[CheckResult] = api.get_all_checks(link)
     except Exception:
         _log.warning("autoprove report: POU get_all_checks failed for %s", link, exc_info=True)
         return {}
-
     verdicts: dict[RuleName, _Verdict] = {}
     for c in checks:
         loc = c.source_location
@@ -144,74 +90,83 @@ def _fetch_verdicts(api: ProverOutputAPI, link: str) -> dict[RuleName, _Verdict]
     return verdicts
 
 
-def collect(
-    project_root: str,
-    components: list[ComponentInput],
+async def collect(
+    inputs: list[ReportComponentInput],
     *,
     api: ProverOutputAPI | None = None,
-) -> tuple[list[PropertyFormulationWithComponent], list[CVLRule]]:
-    """Assemble the report's inferred properties and CVL rules.
+) -> tuple[list[FormalizedProperty], list[RuleVerdict], list[SkippedClaim], list[GaveUpComponent], int]:
+    """Assemble the report inputs.
 
-    Rules are identified by ``(spec_file, rule_name)``: a rule re-stated under
-    the same name in a different spec stays distinct, while a single definition
-    seen through several components (e.g. a structural invariant imported into
-    component specs) collapses to one entry. The defining spec file comes from
-    POU's source location; when absent it falls back to the component's own
-    spec. Components are processed in the given order with first-write-wins on
-    that key, so pass components before invariants for the precedence you want.
+    Returns ``(formalized_properties, rules, skipped, gave_up_components, dropped_orphan_count)``.
+    Rules are identified by ``(spec_file, name)``: a single definition seen through several runs
+    (e.g. a structural invariant imported into a component spec) collapses to one entry. Orphan
+    rules — reported by the prover but referenced by no property — are dropped and counted. Verdicts
+    are fetched concurrently (one blocking POU call per run, off the event loop).
     """
-    pdir = _properties_dir(project_root)
     api = api or ProverOutputAPI()
 
-    all_properties: list[PropertyFormulationWithComponent] = []
-    rules_by_key: dict[tuple[str, RuleName], CVLRule] = {}
+    async def _verdicts_for(inp: ReportComponentInput) -> dict[RuleName, _Verdict]:
+        if isinstance(inp.result, GeneratedCVL) and inp.prover_link:
+            return await asyncio.to_thread(_fetch_verdicts, api, inp.prover_link)
+        return {}
 
-    for comp in components:
-        props = _load_properties(pdir, comp.stem, comp.name)
-        if not props and comp.prover_link is None:
+    verdict_maps = await asyncio.gather(*[_verdicts_for(inp) for inp in inputs])
+
+    properties: list[FormalizedProperty] = []
+    skipped: list[SkippedClaim] = []
+    gave_up: list[GaveUpComponent] = []
+    rules_by_key: dict[RuleRef, RuleVerdict] = {}
+    referenced: set[RuleRef] = set()
+
+    for inp, verdicts in zip(inputs, verdict_maps):
+        if not isinstance(inp.result, GeneratedCVL):
+            # GaveUp or a crashed batch (BaseException): the whole component is a formalization gap.
+            gave_up.append(GaveUpComponent(component=inp.name, properties=inp.props))
             continue
-        all_properties.extend(props)
+        res = inp.result
+        skip_reasons = {s.property_title: s.reason for s in res.skipped}
+        mapping = {m.property_title: m.rules for m in res.property_rules}
 
-        rule_props = _load_rule_properties(pdir, comp.stem, props)
-        verdicts = _fetch_verdicts(api, comp.prover_link) if comp.prover_link else {}
-
-        comp_spec = f"{comp.stem}.spec"  # identity fallback when POU has no source location
-
-        # Union of rules the agent mapped to properties and rules the prover
-        # reported (the latter may include helper rules with no property).
-        for rule_name in set(rule_props) | set(verdicts):
+        def _ref(rule_name: str) -> RuleRef:
             v = verdicts.get(rule_name)
-            if v is None:
-                # No prover run reported this rule -> identify it by the
-                # component's own spec.
-                spec_file = comp_spec
-            elif v.spec_file is None:
-                # A proved rule must carry a source location; if POU doesn't give
-                # one we can't determine the rule's defining spec — fail loudly
-                # rather than mis-attribute it to the component stem.
-                raise ValueError(
-                    f"autoprove report: prover verdict for rule {rule_name!r} in component "
-                    f"{comp.name!r} has no source location; cannot identify its defining spec."
-                )
-            else:
-                spec_file = v.spec_file
-            key = (spec_file, rule_name)
-            if key in rules_by_key:
-                _log.info(
-                    "autoprove report: rule %r in %s already collected (first from %s); keeping the first",
-                    rule_name, spec_file, rules_by_key[key].component,
-                )
-                continue
-            rules_by_key[key] = CVLRule(
-                name=rule_name,
-                component=comp.name,
-                spec_file=spec_file,
-                properties=rule_props.get(rule_name, []),
-                status=v.status if v else NodeStatus.UNKNOWN,
-                line=v.line if v else None,
-                duration_seconds=v.duration_seconds if v else None,
-                prover_link=comp.prover_link,
-            )
+            return ((v.spec_file if v and v.spec_file else inp.spec_file), rule_name)
 
-    rules = sorted(rules_by_key.values(), key=lambda r: (r.component, r.name))
-    return all_properties, rules
+        for prop in inp.props:
+            if prop.title in skip_reasons:
+                skipped.append(SkippedClaim(
+                    component=inp.name, reason=skip_reasons[prop.title], **prop.model_dump()
+                ))
+            elif prop.title in mapping:
+                refs = [_ref(rn) for rn in mapping[prop.title] if rn.strip()]
+                referenced.update(refs)
+                properties.append(FormalizedProperty(
+                    component=inp.name, rule_refs=refs, **prop.model_dump()
+                ))
+            else:
+                # The completion validator guarantees skipped-or-mapped; a residue means the
+                # property/skip/mapping disagree. Drop rather than invent a record.
+                _log.warning(
+                    "autoprove report: property %r in %s is neither skipped nor mapped; dropping",
+                    prop.title, inp.name,
+                )
+
+        # Register every rule the prover reported (first run naming a (spec_file, rule) wins).
+        for rule_name, v in verdicts.items():
+            key = (v.spec_file or inp.spec_file, rule_name)
+            if key not in rules_by_key:
+                rules_by_key[key] = RuleVerdict(
+                    name=rule_name, spec_file=key[0], status=v.status, line=v.line,
+                    duration_seconds=v.duration_seconds, prover_link=inp.prover_link,
+                )
+
+    # A referenced rule with no prover verdict still needs an (UNKNOWN) entry to render.
+    for ref in referenced:
+        if ref not in rules_by_key:
+            rules_by_key[ref] = RuleVerdict(name=ref[1], spec_file=ref[0])
+
+    rules = sorted(
+        (rv for key, rv in rules_by_key.items() if key in referenced),
+        key=lambda r: r.ref,
+    )
+    dropped_orphans = sum(1 for key in rules_by_key if key not in referenced)
+    return properties, rules, skipped, gave_up, dropped_orphans

@@ -1,18 +1,13 @@
 """Datatypes for the autoprove report.
 
-`AutoProverReport` is the top-level document written to
-``certora/ap_report/report.json``. Rule verdicts reuse ProverOutputUtility's
-`NodeStatus`; the property formulations reuse (subclass) composer's
-`PropertyFormulation` so the report speaks the same property vocabulary as the
-analysis phase. Bump `schema_version` on a breaking change.
+`AutoProverReport` is the top-level document written to ``certora/ap_report/report.json``.
+The report is **property-keyed**: a high-level `PropertyGroup` (a "P-NN" heading) groups the
+inferred `FormalizedProperty`s it covers, and a `RuleVerdict` may surface under several groups
+(rules repeat; properties partition). Rule verdicts reuse ProverOutputUtility's `NodeStatus` so the
+report speaks the same vocabulary as the analysis phase.
 
-The report is a **per-run snapshot**: it describes only the current run, with no
-guarantee that property/group names (slugs) stay stable across runs.
-
-Two distinct property granularities (see the types): a
-`PropertyFormulationWithComponent` is one granular per-component formulation
-(~1:1 with a CVL rule); an `ImplementedProperty` is the audit-level grouping of
-the rules that establish one claim.
+The report is a **per-run snapshot** — no guarantee that property/group slugs stay stable across
+runs. Bump `schema_version` on a breaking change.
 """
 from enum import Enum
 from typing import Literal
@@ -20,31 +15,35 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from prover_output_utility.models import NodeStatus
 
-from composer.spec.prop import PropertyFormulation, PropertyType
+from composer.spec.prop import PropertyFormulation
 
 type RuleName = str
-"""A CVL rule/invariant identifier as it appears in the prover report and in
-``<stem>.property_rules.json``. Used so rule<->property and rule<->group
-references read as the foreign keys they are."""
+"""A CVL rule/invariant identifier as it appears in the prover report and in a component's
+``property_rules`` mapping."""
 
 type ComponentName = str
-"""Human name of an AIComposer component (e.g. "Increment")."""
-
-type StemName = str
-"""A property-dump / spec-file stem (e.g. "autospec_Increment", "invariants")."""
+"""Human name of an AIComposer component (e.g. "Increment"), or "Structural Invariants"."""
 
 type PropertyTitle = str
-"""A property's unique snake_case title — the key in ``<stem>.property_rules.json``."""
+"""A property's unique snake_case title — the key in a component's ``property_rules`` mapping."""
+
+type RuleRef = tuple[str, RuleName]
+"""A rule's identity: ``(spec_file, name)``. A name is only unique within a spec, so the defining
+spec file disambiguates a rule re-stated under the same name in another spec (and collapses a single
+definition — e.g. an imported structural invariant — seen through several component runs)."""
+
+type PropertyKey = tuple[ComponentName, PropertyTitle]
+"""A property's identity: ``(component, title)`` — the cross-reference key groups use for members."""
 
 
 class GroupStatus(str, Enum):
-    """Aggregated verdict for an implemented property, rolled up from the POU
-    `NodeStatus` of its member rules (see :func:`grouping.aggregate_status`):
+    """Aggregated verdict for a `PropertyGroup`, rolled up from the `NodeStatus` of the rules its
+    member properties are formalized by (see :func:`grouping.aggregate_status`):
 
-      - VERIFIED     — every member rule VERIFIED
-      - VIOLATED     — any member rule VIOLATED
-      - PARTIAL      — some VERIFIED, some not-yet-VERIFIED (but none VIOLATED)
-      - NO_RESULTS   — none VERIFIED, none VIOLATED (all TIMEOUT/ERROR/…)
+      - VERIFIED   — every contributing rule VERIFIED
+      - VIOLATED   — any contributing rule VIOLATED
+      - PARTIAL    — some VERIFIED, some not-yet-VERIFIED (but none VIOLATED)
+      - NO_RESULTS — none VERIFIED, none VIOLATED (all TIMEOUT/ERROR/…)
     """
     VERIFIED = "VERIFIED"
     VIOLATED = "VIOLATED"
@@ -52,115 +51,97 @@ class GroupStatus(str, Enum):
     NO_RESULTS = "NO_RESULTS"
 
 
-class PropertyFormulationWithComponent(PropertyFormulation):
-    """The granular unit: a `PropertyFormulation` (title, methods, sort,
-    description) tagged with the AIComposer component that owns it. One per
-    component property, ~1:1 with a CVL rule. Distinct from an
-    `ImplementedProperty`, which is the audit-level grouping of several rules."""
-    component: str = Field(description="Name of the AIComposer component that owns this property.")
-
-
-class CVLRule(BaseModel):
-    """One CVL rule/invariant the agent authored, joined to its prover verdict
-    and the property formulations it implements.
-
-    ``status``, ``line`` and ``duration_seconds`` come from
-    ProverOutputUtility's per-rule ``CheckResult`` (verdict + source location),
-    not from parsing the spec text. ``properties`` are the formulations this rule
-    implements (resolved from the component's ``property_rules.json`` mapping),
-    embedded so the grouping/render layers need no second join."""
+class RuleVerdict(BaseModel):
+    """One CVL rule/invariant and its prover outcome — the verdict table the report references by
+    `RuleRef`. Stored once even when properties across several groups are formalized by it, so a
+    shared rule carries a single consistent verdict/link. ``status``/``line``/``duration_seconds``
+    come from ProverOutputUtility's per-rule ``CheckResult``."""
     name: RuleName
-    component: str = Field(description="Name of the component whose spec declares this rule.")
-    spec_file: str | None = Field(
-        default=None,
-        description="Basename of the spec file that defines this rule; together with `name` it is the rule's identity, so a rule re-stated under the same name in a different spec stays distinct.",
-    )
-    properties: list[PropertyFormulationWithComponent] = Field(
-        default_factory=list, description="The property formulations this rule implements."
+    spec_file: str = Field(
+        description="Basename of the spec defining this rule; with `name` it is the rule's identity.",
     )
     status: NodeStatus = NodeStatus.UNKNOWN
     line: int | None = None
     duration_seconds: float | None = None
     prover_link: str | None = None
 
+    @property
+    def ref(self) -> RuleRef:
+        """This rule's identity ``(spec_file, name)`` — the key properties reference it by."""
+        return (self.spec_file, self.name)
 
-class ImplementedProperty(BaseModel):
-    """The audit-level unit: a human-readable property implemented by one or more
-    `CVLRule`s. Distinct from a `PropertyFormulationWithComponent` (the granular,
-    per-component formulation) — an ImplementedProperty groups the CVL rules that
-    together establish one auditable claim, regardless of how many methods or
-    components they span. NOT an AIComposer *component*. Identified by its
-    kebab-case ``slug``."""
+
+class FormalizedProperty(PropertyFormulation):
+    """An inferred property (title, methods, sort, description) that at least one CVL rule
+    formalizes, tagged with its owning component. ``rule_refs`` are the property→rule edges; the
+    render layer labels each edge with this property's ``description``. Distinct from a
+    `PropertyGroup`, which is the audit-level grouping of several such properties."""
+    component: ComponentName = Field(description="The AIComposer component that owns this property.")
+    rule_refs: list[RuleRef] = Field(
+        default_factory=list,
+        description="Identities of the rules that (jointly) formalize this property.",
+    )
+
+    @property
+    def key(self) -> PropertyKey:
+        """This property's identity ``(component, title)`` — how groups reference it."""
+        return (self.component, self.title)
+
+
+class SkippedClaim(PropertyFormulation):
+    """A formalization gap: an inferred property the author deliberately declined to formalize, with
+    the recorded reason. The component's generation otherwise succeeded."""
+    component: ComponentName
+    reason: str = Field(description="Why the author skipped formalizing this property.")
+
+
+class GaveUpComponent(BaseModel):
+    """A formalization gap at component granularity: the component's CVL generation gave up (or
+    crashed), so none of its inferred properties were formalized. No per-property reason."""
+    component: ComponentName
+    properties: list[PropertyFormulation]
+
+
+class PropertyGroup(BaseModel):
+    """An audit-level "P-NN" heading: a synthesized claim over a set of `FormalizedProperty`s (its
+    ``members``, by identity). Members partition — each property belongs to exactly one group —
+    while a rule may surface under several groups via those members' ``rule_refs``. Identified by
+    its kebab-case ``slug``."""
     slug: str = Field(..., min_length=1, max_length=64)
     title: str
     description: str
     status: GroupStatus
-    rule_names: list[RuleName]
+    members: list[PropertyKey]
 
 
 class CoverageReport(BaseModel):
     """Validation outcomes after grouping (see :func:`coverage.validate`)."""
-    total_property_formulations: int
+    total_properties: int
     total_rules: int
     total_groups: int
-    rules_per_group_min: int
-    rules_per_group_max: int
-    rule_coverage_complete: bool
-    rules_in_multiple_groups: list[RuleName] = Field(default_factory=list)
-    rules_in_no_group: list[RuleName] = Field(default_factory=list)
-    status_aggregation_consistent: bool = True
+    properties_per_group_min: int
+    properties_per_group_max: int
+    property_coverage_complete: bool
+    properties_in_no_group: list[PropertyKey] = Field(default_factory=list)
+    #: rules whose properties span >1 group — expected (rules repeat), reported as a stat not an error
+    rules_spanning_multiple_groups: list[RuleName] = Field(default_factory=list)
+    skipped_count: int = 0
+    gave_up_component_count: int = 0
+    dropped_orphan_rules: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 
 class AutoProverReport(BaseModel):
     """Top-level report document — written to ``certora/ap_report/report.json``."""
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     contract_name: str
     run_timestamp_utc: str | None = None
     #: component name (or "Structural Invariants") -> prover run link/path
-    prover_links: dict[str, str] = Field(default_factory=dict)
-    rules: list[CVLRule]
-    implemented_properties: list[ImplementedProperty]
-    #: Inferred properties that NO CVL rule implements (a coverage gap). Mapped
-    #: properties aren't repeated here — they're embedded in `rules[].properties`.
-    unimplemented_properties: list[PropertyFormulationWithComponent] = Field(default_factory=list)
+    prover_links: dict[ComponentName, str] = Field(default_factory=dict)
+    properties: list[FormalizedProperty]
+    rules: list[RuleVerdict]
+    groups: list[PropertyGroup]
+    #: Formalization gaps — properties that exist but no rule formalizes (see the two gap types).
+    skipped: list[SkippedClaim] = Field(default_factory=list)
+    gave_up_components: list[GaveUpComponent] = Field(default_factory=list)
     coverage: CoverageReport
-
-
-# ---------------------------------------------------------------------------
-# LLM grouping I/O (structured-output shapes; a subset of the public types)
-# ---------------------------------------------------------------------------
-
-class RuleForGrouping(BaseModel):
-    """One rule's context handed to the grouping LLM."""
-    name: RuleName = Field(description="The CVL rule identifier.")
-    component: str = Field(description="The component whose spec declares the rule.")
-    status: NodeStatus = Field(description="The rule's prover verdict.")
-    sorts: list[PropertyType] = Field(
-        description="The distinct property kinds (invariant/safety_property/attack_vector) the rule's properties carry."
-    )
-    property_descriptions: list[str] = Field(
-        description="English descriptions of the inferred properties this rule implements."
-    )
-
-
-class ImplementedPropertyDraft(BaseModel):
-    """One high-level property proposed by the grouping LLM."""
-    slug: str = Field(
-        ..., min_length=1, max_length=64,
-        description="kebab-case ASCII lower-case identifier for the grouping; deterministic for the same conceptual grouping.",
-    )
-    title: str = Field(description="A 5-12 word human-readable headline for the property.")
-    description: str = Field(
-        description="1-3 plain-English sentences summarising what the group establishes; do not name the CVL rules."
-    )
-    rule_names: list[RuleName] = Field(
-        description="The CVL rule names in this group; every input rule must appear in exactly one group."
-    )
-
-
-class GroupingResult(BaseModel):
-    """The high-level property groups covering every input rule exactly once."""
-    groups: list[ImplementedPropertyDraft] = Field(
-        description="The high-level property groups; collectively they cover every input rule exactly once."
-    )
