@@ -87,11 +87,12 @@ This inserts ~30 curated articles (summary misapplication, vacuity traps, ghost 
 To install the scripts for execution simply run:
 
 ```bash
-uv tool install '.[ml,prover,pou]'
+uv tool install '.[ml,certora-cli,pou]'
 ```
 
-The `ml` group includes `sentence-transformers` and `einops`, required for the embedding model (`nomic-embed-text-v1.5`) used by RAG and the indexed store. `prover` includes all of the dependencies
-for running the prover scripts (in local mode), and the certoraRun scripts themselves (cloud mode), and pou is required by the auto setup component.
+The `certora-cli` package is selected via one of three mutually-exclusive extras (pick exactly one): `certora-cli` (stable/main release), `certora-cli-beta`, or `certora-cli-beta-mirror`. The `prover` extra is an alias for `certora-cli` (the main release), so `'.[ml,prover,pou]'` is equivalent to the command above. These extras include all of the dependencies for running the prover scripts (in local mode) and the certoraRun scripts themselves (cloud mode).
+
+The `ml` group includes `sentence-transformers` and `einops`, required for the embedding model (`nomic-embed-text-v1.5`) used by RAG and the indexed store. `pou` is required by the auto setup component.
 
 ## Usage
 
