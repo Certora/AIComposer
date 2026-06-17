@@ -54,19 +54,19 @@ no LLM) with the *same* CLI flags::
 
     COMPOSER_TEST_TAPE=<name> console-autoprove <project> ... --max-bug-rounds 1
 
-The generated module is a faithful, runnable *starting point*: hand-edit it to
-add explanatory comments or hoist artifacts, exactly like
-``ui_harness_autoprove_Counter.py``.
+The generated module embeds the tape as JSON and validates it back into
+``AIMessage`` objects on import. Curate it by editing the embedded ``_TAPE_JSON``
+(drop diverging turns, fix a phase's tail, …).
 """
 
 import atexit
-import pprint
+import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
 from composer.diagnostics.timing import get_current_task_id
@@ -95,20 +95,15 @@ class TapeRecorder:
         # task_id -> ordered list of recorded AIMessages.
         self.lanes: dict[str, list[AIMessage]] = {}
 
-    def record(self, response: BaseMessage) -> None:
-        if not isinstance(response, AIMessage):
-            # Chat models always return AIMessage; anything else is not
-            # replayable by HarnessFakeLLM, so skip it.
-            return
-        if not response.text and not (response.tool_calls or []):
-            # Content-less response (no text, no tool_calls): a transient
-            # no-tool-call turn the agent loop rejects and retries — it is never
-            # kept in thread state. Replaying it would trigger a spurious "every
-            # AI turn must end with a tool call" retry and exhaust the lane, so
-            # drop it (the next real response is what the replay needs).
+    def record(self, message: AIMessage) -> None:
+        if not message.text and not (message.tool_calls or []):
+            # Content-less turn (no text, no tool_calls): a transient no-tool-call
+            # turn the agent loop rejects and retries — never kept in thread state.
+            # Replaying it would trigger a spurious "every AI turn must end with a
+            # tool call" retry and exhaust the lane, so drop it.
             return
         task_id = get_current_task_id() or NO_TASK_LANE
-        self.lanes.setdefault(task_id, []).append(response)
+        self.lanes.setdefault(task_id, []).append(message)
 
     def dump(self) -> None:
         total = sum(len(v) for v in self.lanes.values())
@@ -153,7 +148,7 @@ class RecordingCallback(BaseCallbackHandler):
     ``run_inline = True`` keeps the handler on the event-loop thread so the
     ``get_current_task_id()`` ContextVar that ``run_task`` set is visible (the
     same reason ``UsageCallback`` sets it). The extraction mirrors
-    ``UsageCallback.on_llm_end`` exactly.
+    ``UsageCallback.on_llm_end``.
     """
 
     run_inline = True
@@ -166,8 +161,10 @@ class RecordingCallback(BaseCallbackHandler):
             generation = response.generations[0][0]
         except IndexError:
             return
-        if isinstance(generation, ChatGeneration) and isinstance(generation.message, AIMessage):
-            rec.record(generation.message)
+        # on_llm_end for a chat model always carries a ChatGeneration whose
+        # `.message` is the AIMessage (same access UsageCallback makes).
+        if isinstance(generation, ChatGeneration):
+            rec.record(cast(AIMessage, generation.message))
 
 
 def default_out_path(name: str) -> Path:
@@ -234,83 +231,27 @@ def install_recorder(name: str, out_path: str | None = None, *, no_thinking: boo
 # Serialization — emit a ui_harness_<name>.py module
 # ---------------------------------------------------------------------------
 
-def _py_str(s: str) -> str:
-    """A valid Python string literal — triple-quoted when that stays faithful,
-    otherwise ``repr``."""
-    if "\n" in s and '"""' not in s and "\\" not in s and not s.endswith('"'):
-        return '"""\\\n' + s + '"""'
-    return repr(s)
-
-
-class _Hoister:
-    """Hoists large/multiline string values into module-level constants so the
-    lane lists stay readable (mirrors how ui_harness_autoprove_Counter.py keeps CVL
-    blobs as top-level constants)."""
-
-    def __init__(self) -> None:
-        self._by_value: dict[str, str] = {}
-        self.consts: list[tuple[str, str]] = []  # (name, literal)
-
-    def ref(self, s: str) -> str:
-        """Return an expression for string ``s`` — a hoisted constant name when
-        the string is multiline or long, otherwise an inline literal."""
-        if "\n" not in s and len(s) <= 88:
-            return repr(s)
-        if s in self._by_value:
-            return self._by_value[s]
-        name = f"_T{len(self.consts)}"
-        self._by_value[s] = name
-        self.consts.append((name, _py_str(s)))
-        return name
-
-
-def _py_value(v: Any, hoist: _Hoister) -> str:
-    """A valid Python expression for a tool-call argument value."""
-    if isinstance(v, str):
-        return hoist.ref(v)
-    # Non-str (None/bool/int/float/dict/list): pformat emits a valid Python
-    # literal and preserves dict order.
-    return pprint.pformat(v, width=88, sort_dicts=False)
-
-
-def _emit_tc(tc: Any, hoist: _Hoister, indent: str) -> str:
-    name = tc.get("name", "")
-    args = tc.get("args") or {}
-    if not args:
-        return f"{indent}_tc({name!r})"
-    if all(str(k).isidentifier() for k in args):
-        kvs = [f"{k}={_py_value(v, hoist)}" for k, v in args.items()]
-    else:
-        kvs = [f"**{_py_value(args, hoist)}"]
-    inner_indent = indent + "    "
-    body = (",\n" + inner_indent).join(kvs)
-    return f"{indent}_tc(\n{inner_indent}{name!r},\n{inner_indent}{body},\n{indent})"
-
-
-def _emit_ai(msg: AIMessage, hoist: _Hoister, indent: str) -> str:
-    text = msg.text  # langchain concatenates text blocks, drops thinking/tool_use
-    tool_calls = list(msg.tool_calls or [])
-    inner_indent = indent + "    "
-    arg_exprs: list[str] = []
-    if text:
-        arg_exprs.append(f"{inner_indent}{hoist.ref(text)}")
-    for tc in tool_calls:
-        arg_exprs.append(_emit_tc(tc, hoist, inner_indent))
-    if not arg_exprs:
-        return f"{indent}_ai()"
-    body = ",\n".join(arg_exprs)
-    return f"{indent}_ai(\n{body},\n{indent})"
-
-
-_MODULE_HEADER = '''\
+def render_tape_module(name: str, lanes: dict[str, list[AIMessage]]) -> str:
+    """Render the ``ui_harness_<name>.py`` source: the lanes serialized as embedded
+    JSON (each ``AIMessage`` via ``model_dump``) plus the boilerplate that loads it
+    back with ``AIMessage.model_validate`` and installs the fake."""
+    payload = {
+        task_id: [m.model_dump(mode="json", exclude_none=True) for m in msgs]
+        for task_id, msgs in lanes.items()
+    }
+    tape_json = json.dumps(payload, indent=2)
+    # JSON escapes its own double quotes, so the dumped text can't contain a
+    # literal triple-quote — guard the r"""...""" embedding just in case.
+    assert '"""' not in tape_json
+    lane_summary = ", ".join(f"{k}={len(v)}" for k, v in lanes.items())
+    return f'''\
 """
 AUTO-GENERATED fake-LLM tape for the {name!r} AutoProve scenario.
 
-Recorded by composer.testing.record_tape from a real run. Each lane is the
-ordered list of AIMessage responses for one run_task task_id; HarnessFakeLLM
-replays one per llm.ainvoke. This is a faithful, runnable starting point —
-edit freely (add comments, hoist artifacts) the way ui_harness_autoprove_Counter.py is
-hand-curated.
+Recorded by composer.testing.record_tape from a real run: each lane is the ordered
+list of a phase's AIMessage responses (keyed by run_task task_id), serialized as
+JSON and validated back into AIMessages on import. HarnessFakeLLM replays one per
+llm.ainvoke. To curate, edit `_TAPE_JSON` (drop diverging turns, fix the tail, etc.).
 
 Replay with the SAME CLI flags used to record:
 
@@ -320,43 +261,20 @@ Replay with the SAME CLI flags used to record:
 Lanes captured: {lane_summary}
 """
 
-from typing import Any
-import uuid
+import json
+
+from langchain_core.messages import AIMessage
 
 from composer.testing.harness_tape import HarnessFakeLLM
 
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.messages.tool import ToolCall
+# task_id -> ordered list of recorded AIMessage responses (pydantic model_dump JSON).
+_TAPE_JSON = r"""
+{tape_json}
+"""
 
-
-def _tc(name: str, **args: Any) -> ToolCall:
-    """Tool-call dict with a unique id (LangGraph binds tool responses back to
-    calls by id, so every entry needs its own)."""
-    return {{
-        "id": f"toolu_{{uuid.uuid4().hex[:20]}}",
-        "name": name,
-        "args": args,
-        "type": "tool_call",
-    }}
-
-
-def _ai(text: str = "", *tool_calls: ToolCall) -> AIMessage:
-    """Tape entry: optional text + zero or more tool_calls."""
-    content: list[str | dict] = []
-    if text:
-        content.append(text)
-    content.extend(
-        {{"type": "tool_use", "id": t["id"], "name": t["name"], "input": t["args"]}}
-        for t in tool_calls
-    )
-    return AIMessage(content=content, tool_calls=list(tool_calls))
-'''
-
-
-_MODULE_FOOTER = '''\
-
-_TAPE: dict[str, list[BaseMessage]] = {{
-{lane_entries}
+_TAPE: dict[str, list[AIMessage]] = {{
+    task_id: [AIMessage.model_validate(m) for m in messages]
+    for task_id, messages in json.loads(_TAPE_JSON).items()
 }}
 
 
@@ -366,9 +284,8 @@ def get_{name}_llm() -> HarnessFakeLLM:
 
 
 def install_harness_tape() -> HarnessFakeLLM:
-    """Monkeypatch create_llm / create_llm_base so the pipeline receives the
-    fake. Call before importing the autoprove entry path (composer/bind.py
-    does this when COMPOSER_TEST_TAPE={name} is set)."""
+    """Monkeypatch create_llm / create_llm_base so the pipeline receives the fake.
+    composer/bind.py calls this when COMPOSER_TEST_TAPE={name} is set."""
     fake = get_{name}_llm()
     import composer.spec.agent_index as a_ind
     a_ind._UNSAFE_DISABLE_CACHE = True
@@ -380,26 +297,3 @@ def install_harness_tape() -> HarnessFakeLLM:
 
 __all__ = ["get_{name}_llm", "install_harness_tape"]
 '''
-
-
-def render_tape_module(name: str, lanes: dict[str, list[AIMessage]]) -> str:
-    """Render the full ``ui_harness_<name>.py`` source for ``lanes``."""
-    hoist = _Hoister()
-    lane_blocks: list[str] = []
-    for task_id, msgs in lanes.items():
-        key_expr = repr(task_id)
-        entries = ",\n".join(_emit_ai(m, hoist, "        ") for m in msgs)
-        lane_blocks.append(
-            f"    # lane: {task_id} ({_entries(len(msgs))})\n"
-            f"    {key_expr}: [\n{entries},\n    ],"
-        )
-
-    lane_summary = ", ".join(f"{k}({len(v)})" for k, v in lanes.items())
-    header = _MODULE_HEADER.format(name=name, lane_summary=lane_summary)
-    consts_block = ""
-    if hoist.consts:
-        consts_block = "\n\n# Hoisted string artifacts (CVL specs, long messages).\n" + "\n".join(
-            f"{cname} = {literal}\n" for cname, literal in hoist.consts
-        )
-    footer = _MODULE_FOOTER.format(name=name, lane_entries="\n".join(lane_blocks))
-    return header + consts_block + footer

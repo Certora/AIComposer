@@ -17,7 +17,10 @@ phase's task_id, so their calls land in the parent's lane. It lets the
 other tool (solc, the Certora prover, PreAudit, Postgres, RAG) runs for real.
 `COMPOSER_TEST_TAPE=<name>` (handled in `composer/bind.py`) installs it.
 
-`ui_harness_autoprove_Counter.py` (the Counter scenario) is the curated reference.
+A recorder-generated tape embeds its messages as JSON (validated back into
+`AIMessage`s on import); a hand-authored tape can build the lanes dict any way it
+likes. `ui_harness_autoprove_Counter.py` (the Counter scenario) is the curated,
+hand-authored reference for what complete lanes look like.
 
 ## How tapes are made: RECORD a real run — don't reconstruct from logs
 
@@ -26,23 +29,25 @@ recorder in `composer/testing/record_tape.py` — the inverse of `HarnessFakeLLM
 It appends a callback (`RecordingCallback`, alongside the existing `UsageCallback`)
 to every model the pipeline builds; the callback files each LLM response into the
 lane for the active task_id, in call order, and the recorder dumps a runnable
-`ui_harness_<name>.py` at exit.
+`ui_harness_<name>.py` (the lanes embedded as JSON) at exit.
 
 Why not reconstruct from a past run's Postgres checkpoints (e.g. via inspect-run
-/ `ap-trail`)? Two tape entries are **unrecoverable** that way:
+/ `ap-trail`)? Recording captures two things for free that reconstruction has to
+work for:
 
 - **Inline counter-example analysis** (`composer.prover.analysis.analyze_cex_raw`)
   is a bare `llm.ainvoke` *outside* the LangGraph agent loop, so it is never
-  checkpointed to any thread. Recording captures it for free, in the right lane
-  and position; reconstruction can at best regex it out of the `verify_spec`
-  tool output.
+  checkpointed to any thread. Recording captures it in the right lane and position;
+  reconstruction has to recover it separately (e.g. by logging the side-channel
+  messages, or scraping the `verify_spec` tool output).
 - **Subagent interleaving** (code_explorer / feedback / cvl_research /
   invariant_feedback) — these inherit the parent phase's task_id, so recording
-  lands them in the parent lane in exact call order; reconstruction has to
-  stitch separate threads back together heuristically.
+  lands them in the parent lane in exact call order; reconstruction has to stitch
+  the separate threads back together (e.g. by matching tool calls).
 
-Recording is faithful by construction. It costs one real (paid) LLM run, which
-you need anyway for a new scenario.
+Both are recoverable from logs — recording just avoids that plumbing, and is
+faithful by construction. It costs one real (paid) LLM run, which you need anyway
+for a new scenario.
 
 ### Record produces a DRAFT — then hand-clean it
 
@@ -134,45 +139,37 @@ before replaying.
 
 ### 3. Hand-clean the recorded draft (the load-bearing step)
 
-This is where a draft becomes a replayable tape. Edit
-`composer/testing/ui_harness_<name>.py` to remove entries whose replay depends on
-**per-run / stateful / non-deterministic** tool results — those make the agent's
-next call diverge from the recording. In order of impact:
+The recorder embeds the lanes in `_TAPE_JSON` (each entry is an `AIMessage`
+`model_dump`, validated back into an `AIMessage` on import). Curate by editing that
+JSON — remove entries whose replay depends on **per-run / stateful /
+non-deterministic** tool results, which make the agent's next call diverge from the
+recording. In order of impact:
 
 - **`memory` tool calls** — the agent uses `memory` (per-run namespace) to stash and
-  re-read "progress" notes; replay can't reproduce that store, so a recorded
-  `memory` read returns different content and the agent veers off-tape. Drop the
-  `memory` tool-call from each `_ai(...)` entry (and drop the whole entry if `memory`
-  was its only tool call). The pipeline tolerates the agent not using memory.
+  re-read "progress" notes; replay can't reproduce that store, so a recorded `memory`
+  read returns different content and the agent veers off-tape. In the JSON, drop the
+  `memory` entry from a message's `"tool_calls"` (and its matching `tool_use` block in
+  `"content"`), or delete the whole message if `memory` was its only tool call. The
+  pipeline tolerates the agent not using memory.
 - **Flailing / redundant turns** — on trivial scenarios the agent loops (re-reads
-  files, re-drafts). Trim each lane to its canonical path. For a CVL lane that is:
-  `put_cvl_raw → feedback_tool → verify_spec → result`, where `feedback_tool` spawns
-  the **feedback-judge subagent** whose turns are served from the *same* lane,
-  interleaved right after the `feedback_tool` call (`get_cvl` + `write_rough_draft`
-  → `read_rough_draft` → `result(good=True)`), before the author's `verify_spec`.
+  files, re-drafts). Delete those message objects, trimming each lane to its canonical
+  path. For a CVL lane that is `put_cvl_raw → feedback_tool → verify_spec → result`,
+  where `feedback_tool` spawns the **feedback-judge subagent** whose turns are served
+  from the *same* lane, interleaved right after the `feedback_tool` call
+  (`get_cvl` + `write_rough_draft` → `read_rough_draft` → `result(good=True)`) before
+  the author's `verify_spec`. (`ui_harness_autoprove_Counter.py`'s `_CVL_TAPE` is that
+  exact author+judge+prover flow — hand-authored Python, but the call structure is the
+  same.)
 - **Missing terminal turn** — if the recording flailed *past* its terminal `result`
   (e.g. hit the recursion limit before publishing), the lane has no clean ending and
-  replay exhausts. **Hand-author the tail**, and reuse the recording's *real*
-  artifacts so it stays faithful: the CVL spec the run already wrote (it typechecked
-  and the prover verified it), and the property/rule names. The final publish is
-  `result(commentary=..., property_rules=[{"property_title": "<from bug lane>", "rules": ["<rule in the spec>"]}])`.
+  replay exhausts. Hand-author the tail, reusing the recording's *real* artifacts (the
+  CVL spec the run already wrote — it typechecked and the prover verified it — and the
+  property/rule names). Easiest way to produce the JSON for a new entry is to build it
+  in a REPL and dump it, e.g. `AIMessage(content="…", tool_calls=[{"id": "t1", "name":
+  "result", "args": {"commentary": "…", "property_rules": [{"property_title": "<from bug
+  lane>", "rules": ["<rule>"]}]}, "type": "tool_call"}]).model_dump(mode="json",
+  exclude_none=True)`, then paste the object into the lane's JSON array.
 - **Anything else that reads mutable side state** you spot diverging in step 4.
-
-`ui_harness_autoprove_Counter.py` is the structural template for every lane (its `_CVL_TAPE`
-is the exact author+judge+prover flow above). Also do the cosmetic curation: add
-comments, hoist big artifacts to module constants.
-
-The generator emits **literal** `run_task` task_id keys (`"system-analysis"`,
-`"bug-0-<slug>"`, …), which must match the task_ids the pipeline sets in
-`composer/spec/source/task_ids.py`. For the committed tape, optionally swap them to
-the `task_ids.py` constants — rename-safe and matching the
-`ui_harness_autoprove_Counter.py` reference (add
-`from composer.spec.source.task_ids import (...)`):
-
-- `"system-analysis"` → `SYSTEM_ANALYSIS_TASK_ID` (likewise `HARNESS_TASK_ID`,
-  `AUTOSETUP_TASK_ID`, `SUMMARIES_TASK_ID`, `INVARIANTS_TASK_ID`, `INVARIANT_CVL_TASK_ID`)
-- `"bug-<i>-<slug>"` → `bug_analysis_task_id(<i>, "<slug>")`
-- `"cvl-<i>-<slug>"` → `cvl_gen_task_id(<i>, "<slug>")`
 
 (Tip: `inspect-run` on the recording shows each phase's real messages — useful for
 deciding what's load-bearing vs. flailing.)
@@ -197,7 +194,7 @@ again — it's an iterate-to-green loop:
   remove that lane's `memory` calls). Fix and re-replay.
 - `tape lane '<x>' exhausted … Prompt -> HumanMessage: Every AI turn must end with a
   tool call` — a content-less turn slipped through (the recorder normally drops
-  these); remove the trailing/empty `_ai()` entries in that lane.
+  these); remove the trailing/empty message objects in that lane.
 - `no tape lane for task_id '<x>'` — replay took a phase the recording never hit
   (usually a flag mismatch, or a non-deterministic branch). Match flags; if a phase
   legitimately makes no LLM calls (e.g. `invariant-cvl` on a stateless contract) it
@@ -213,6 +210,7 @@ again — it's an iterate-to-green loop:
   `create_llm` delegates to) to append a `RecordingCallback` to every model's
   `callbacks` list — the same stable callback surface as `UsageCallback`, so it
   captures agent-loop turns and out-of-graph calls (CEX analysis) alike. It
-  auto-drops content-less responses and registers an `atexit` dump. With
-  `COMPOSER_RECORD_NO_THINKING=1` it also disables thinking on the built models.
+  auto-drops content-less responses and, at `atexit`, dumps the lanes as JSON into
+  `ui_harness_<name>.py`. With `COMPOSER_RECORD_NO_THINKING=1` it also disables
+  thinking on the built models.
 - Lane task_ids are centralized in `composer/spec/source/task_ids.py`.
