@@ -343,10 +343,13 @@ async def batch_cvl_generation(
     description: str,
     source: SourceCode,
     spec_dir: Path,
+    spec_stem: str,
 ) -> BatchGeneratedCVLResult:
     # *spec_dir* (project-root-relative) is where the caller will persist the spec
     # authored here. The prover resolves the spec's CVL imports relative to its own
     # directory, so resource imports are expressed relative to *spec_dir*.
+    # *spec_stem* is the basename it is persisted under; the prover materializes its
+    # transient spec/conf under the same stem so on-disk names match the dump.
     resource_views: list[ResourceView] = [
         {
             "description": r.description,
@@ -397,6 +400,7 @@ async def batch_cvl_generation(
         in_state=SourceCVLGenerationInput(
             curr_spec=None,
             config=init_config,
+            spec_stem=spec_stem,
             input=[],
             required_validations=[FEEDBACK_VALIDATION_KEY, PROVER_VALIDATION_KEY],
             rule_skips={},

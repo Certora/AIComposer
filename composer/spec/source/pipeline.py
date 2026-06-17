@@ -44,7 +44,7 @@ from composer.spec.source.prover import get_prover_tool, dump_final_conf
 from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
-from composer.spec.source.common_pipeline import extract_all_components, generate_all_component_cvl, AutoProveResult, dump_properties, dump_property_rules
+from composer.spec.source.common_pipeline import extract_all_components, generate_all_component_cvl, AutoProveResult, dump_properties, dump_property_rules, INVARIANTS_SPEC_STEM
 from composer.spec.source.task_ids import (
     SYSTEM_ANALYSIS_TASK_ID, HARNESS_TASK_ID, AUTOSETUP_TASK_ID,
     SUMMARIES_TASK_ID, INVARIANTS_TASK_ID, INVARIANT_CVL_TASK_ID,
@@ -236,7 +236,7 @@ async def run_autoprove_pipeline(
         ]
 
         # Dump the analysis-phase invariant properties now that we have them.
-        dump_properties(certora_dir, "invariants", inv_props)
+        dump_properties(certora_dir, INVARIANTS_SPEC_STEM, inv_props)
 
         if cached_inv_cvl is not None:
             inv_cvl = cached_inv_cvl
@@ -255,6 +255,7 @@ async def run_autoprove_pipeline(
                     description="Structural invariant CVL",
                     source=source_input,
                     spec_dir=SPECS_DIR,
+                    spec_stem=INVARIANTS_SPEC_STEM,
                 ),
             )
             if isinstance(inv_cvl_result, GaveUp):
@@ -268,9 +269,9 @@ async def run_autoprove_pipeline(
         # Canonical (project-root-relative) path of the persisted spec. The conf's
         # verify entry derives from it; the CVL import path is derived (relative to
         # certora/specs/) where the import is emitted.
-        inv_spec_path = SPECS_DIR / "invariants.spec"
+        inv_spec_path = SPECS_DIR / f"{INVARIANTS_SPEC_STEM}.spec"
         under_project(source_input.project_root, inv_spec_path).write_text(inv_cvl.cvl)
-        dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
+        dump_property_rules(certora_dir, INVARIANTS_SPEC_STEM, inv_cvl.property_rules)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,

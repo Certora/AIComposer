@@ -37,6 +37,17 @@ PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 
 
+def component_spec_stem(feat: ContractComponentInstance) -> str:
+    """Single source of truth for a component's artifact stem -- shared by its
+    persisted ``<stem>.spec``/``.conf``/``.properties.json``/``.commentary.md`` and the
+    name the generation phase materializes its transient spec/conf under."""
+    return f"autospec_{feat.slugified_name}"
+
+
+# Stem of the single structural-invariant spec/conf (and its properties json).
+INVARIANTS_SPEC_STEM = "invariants"
+
+
 def dump_properties(
     certora_dir: pathlib.Path,
     spec_stem: str,
@@ -193,7 +204,7 @@ async def extract_all_components(
     # extraction phase is complete.
     certora_dir = under_project(source_input.project_root, CERTORA_DIR)
     for batch in component_batches:
-        dump_properties(certora_dir, f"autospec_{batch.feat.slugified_name}", batch.props)
+        dump_properties(certora_dir, component_spec_stem(batch.feat), batch.props)
 
     return component_batches
 
@@ -219,6 +230,7 @@ async def generate_all_component_cvl(
     async def _generate_batch(
         task_id: str,
         batch: _ComponentBatch,
+        spec_stem: str,
     ) -> BatchGeneratedCVLResult:
         batch_child = await batch.feat_ctx.child(
             _batch_cache_key(batch.props),
@@ -243,6 +255,7 @@ async def generate_all_component_cvl(
                 description=label,
                 source=source_input,
                 spec_dir=SPECS_DIR,
+                spec_stem=spec_stem,
             ),
             semaphore,
         )
@@ -253,21 +266,21 @@ async def generate_all_component_cvl(
     async def _generate_and_write_batch(
         batch: _ComponentBatch
     ) -> BatchGeneratedCVLResult:
+        spec_stem = component_spec_stem(batch.feat)
         task_id = cvl_gen_task_id(batch.feat.ind, batch.feat.slugified_name)
-        res = await _generate_batch(task_id=task_id, batch=batch)
+        res = await _generate_batch(task_id=task_id, batch=batch, spec_stem=spec_stem)
         if isinstance(res, GaveUp):
             return res
         certora_dir = under_project(source_input.project_root, CERTORA_DIR)
         specs_dir = ensure_dir(certora_dir / "specs")  # absolute (project_root/certora/specs)
         properties_dir = ensure_dir(certora_dir / "properties")
-        base = batch.feat.slugified_name
-        spec_name = pathlib.Path(f"autospec_{base}.spec")
+        spec_name = pathlib.Path(f"{spec_stem}.spec")
         (specs_dir / spec_name).write_text(res.cvl)
         # Canonical (project-root-relative) path of the persisted spec, used for
         # the conf's verify entry.
         spec_path = SPECS_DIR / spec_name
-        (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
-        dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
+        (properties_dir / f"{spec_stem}.commentary.md").write_text(res.commentary)
+        dump_property_rules(certora_dir, spec_stem, res.property_rules)
         dump_final_conf(
             project_root=source_input.project_root,
             main_contract=source_input.contract_name,
@@ -298,7 +311,7 @@ async def generate_all_component_cvl(
         if (link := link_by_task.get(cvl_gen_task_id(batch.feat.ind, batch.feat.slugified_name)))
     }
     if inv_link := link_by_task.get(INVARIANT_CVL_TASK_ID):
-        component_runs["invariants"] = _output_link(inv_link)
+        component_runs[INVARIANTS_SPEC_STEM] = _output_link(inv_link)
     dump_component_runs(source_input.project_root, component_runs)
 
     failures: list[str] = []

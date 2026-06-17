@@ -35,6 +35,7 @@ def temp_certora_file(
     ext: str,
     content: str,
     prefix: str = "generated",
+    name: str | None = None,
     dest_dir: Path = CERTORA_DIR,
 ) -> Iterator[str]:
     """Write a temp file under ``<root>/<dest_dir>``, yield its path **relative to
@@ -46,8 +47,12 @@ def temp_certora_file(
     the same directory it will ultimately be dumped to (e.g. ``certora/specs``)
     makes the prover resolve the spec's CVL ``import`` statements identically at
     verify-time and after persistence.
+
+    *name* (without extension) names the file ``<name>.<ext>`` verbatim instead of a
+    unique ``<prefix>_<uid>.<ext>``. Since it is then not unique, callers passing
+    *name* must serialize same-name use (the file is unlinked on exit).
     """
-    tmp_name = f"{prefix}_{uuid.uuid1().hex[:16]}.{ext}"
+    tmp_name = f"{name}.{ext}" if name is not None else f"{prefix}_{uuid.uuid1().hex[:16]}.{ext}"
     target_dir = ensure_dir(Path(root) / dest_dir)
     tgt = target_dir / tmp_name
     tgt.write_text(content)
