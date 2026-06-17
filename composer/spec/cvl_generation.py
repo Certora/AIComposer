@@ -29,7 +29,7 @@ from composer.spec.context import (
 from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance
 from composer.core.state import merge_validation
 from composer.spec.graph_builder import run_to_completion
-from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl
+from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl, edit_cvl
 from composer.ui.tool_display import tool_display, suppress_ack
 
 class PropertyFeedbackProtocol(Protocol):
@@ -374,6 +374,7 @@ def static_tools() -> list[BaseTool]:
         _RecordSkipSchema.as_tool("record_skip"),
         _UnskipSchema.as_tool("unskip_property"),
         get_cvl(CVLGenerationState),
+        edit_cvl(CVLGenerationState),
         ERC20TokenGuidance.as_tool("erc20_guidance"),
         UnresolvedCallGuidance.as_tool("unresolved_call_guidance"),
     ]
