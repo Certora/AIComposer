@@ -26,6 +26,7 @@ from langgraph.runtime import get_runtime
 from pathlib import Path
 from composer.spec.gen_types import CVLResource, TypedTemplate, import_statement_for
 from composer.spec.service_host import ServiceHost
+from composer.workflow.services import CacheLevel
 
 from langgraph.types import Command
 from composer.spec.feedback import property_feedback_judge, FeedbackTemplate
@@ -362,7 +363,7 @@ async def batch_cvl_generation(
         "contract_name": source.contract_name
     })
 
-    task_graph = env.builder.with_tools(
+    task_graph = env.builder_heavy(cache_level=CacheLevel.LONG).with_tools(
         env.all_tools
     ).with_tools(
         static_tools()

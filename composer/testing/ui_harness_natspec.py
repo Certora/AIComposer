@@ -745,6 +745,14 @@ def install_harness_tape() -> _NatspecFakeLLM:
 
     services.create_llm = lambda args: fake  # type: ignore[assignment]
     services.create_llm_base = lambda args: fake  # type: ignore[assignment]
+    # Natspec now mints models via ``llm_factory(args)`` (ServiceHost path), not
+    # ``create_llm``. Patch that seam too. The returned factory closes over the
+    # single ``fake`` so all tiers share one instance / one set of lane cursors,
+    # keeping the per-lane tape deterministic. (Natspec collapses heavy==lite,
+    # so this is doubly moot, but the seam must still be the fake.)
+    services.llm_factory = lambda args: (  # type: ignore[assignment]
+        lambda model_name, *, cache_level=None, disable_thinking=False: fake
+    )
     return fake
 
 

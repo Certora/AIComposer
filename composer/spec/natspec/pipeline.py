@@ -512,7 +512,7 @@ async def run_natspec_pipeline[A: NatspecApplication, I: InterfaceDeclModel, S: 
     doc_digest = system_doc.content.to_digest()
 
     registry = await StubRegistry.acreate(
-        store, STUB_NS + (doc_digest,), start_env.builder, interface,
+        store, STUB_NS + (doc_digest,), start_env.builder_lite(), interface,
         mat, dict(generated_stubs), solc_version,
         recursion_limit=ctx.recursion_limit,
     )

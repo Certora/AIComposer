@@ -137,7 +137,7 @@ async def generate_stub[S: StubDeclarationModel](
     )
 
     workflow = (
-        env.builder
+        env.builder_lite()
         .with_state(ST)
         .with_tools([ResultTool.as_tool("result"), *env.source_tools])
         .with_output_key("result")

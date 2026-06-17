@@ -1449,6 +1449,14 @@ def install_harness_tape() -> HarnessFakeLLM:
 
     services.create_llm = lambda args: fake  # type: ignore[assignment]
     services.create_llm_base = lambda args: fake  # type: ignore[assignment]
+    # The ServiceHost path mints models via ``llm_factory(args)`` (then calls
+    # the returned factory per tier), bypassing ``create_llm`` entirely. Patch
+    # that seam too. The returned factory closes over the single ``fake``, so
+    # every tier shares one instance — i.e. one set of lane cursors — which is
+    # what keeps the per-lane tape deterministic regardless of heavy/lite.
+    services.llm_factory = lambda args: (  # type: ignore[assignment]
+        lambda model_name, *, cache_level=None, disable_thinking=False: fake
+    )
     return fake
 
 

@@ -70,11 +70,7 @@ class WorkflowOptions(RAGDBOptions, LanggraphOptions, Protocol):
     set_reqs: Optional[str]
     skip_reqs: bool
 
-
-class ModelOptionsBase(Protocol):
-    """Read-only view of model options. thinking_tokens may be None to disable thinking."""
-    @property
-    def model(self) -> str: ...
+class ModelConfiguration(Protocol):
     @property
     def tokens(self) -> int: ...
     @property
@@ -85,15 +81,26 @@ class ModelOptionsBase(Protocol):
     @property
     def interleaved_thinking(self) -> bool: ...
 
+class TieredModelOptions(ModelConfiguration, Protocol):
+    @property
+    def lite_model(self) -> str:
+        ...
 
+    @property
+    def heavy_model(self) -> str:
+        ...
 
-class ModelOptions(Protocol):
-    model: Annotated[str, Arg(
-        help="Model to use for code generation (default: {default})", default="claude-opus-4-6"
-        )]
+class ModelOptionsBase(ModelConfiguration, Protocol):
+    """Read-only view of model options. thinking_tokens may be None to disable thinking."""
+    @property
+    def model(self) -> str: ...
+
+_DEFAULT_TOKEN_COUNTS = 128_000
+
+class _ModelOptionsCommon(Protocol):
     tokens: Annotated[int, Arg(
         help="Token budget for code generation (default: {default})",
-        default=128_000
+        default=_DEFAULT_TOKEN_COUNTS
     )]
     thinking_tokens: Annotated[int, Arg(
         help="Token budget for thinking (default: {default})",
@@ -107,6 +114,19 @@ class ModelOptions(Protocol):
     interleaved_thinking: Annotated[bool, Arg(
         help="Enable interleaved thinking mode (default: {default})",
         default=False
+    )]
+
+class ModelOptions(_ModelOptionsCommon, Protocol):
+    model: Annotated[str, Arg(
+        help="Model to use for code generation (default: {default})", default="claude-opus-4-6"
+        )]
+
+class ExtendedModelOptions(_ModelOptionsCommon, Protocol):
+    heavy_model: Annotated[str, Arg(
+        help="Model to use for complex tasks (default: {default})", default="claude-opus-4-6"
+    )]
+    lite_model: Annotated[str, Arg(
+        help="Model to use for simpler tasks(default: {default})", default="claude-sonnet-4-6"
     )]
 
 class UploadPaths(Protocol):

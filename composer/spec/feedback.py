@@ -66,7 +66,7 @@ def property_feedback_judge(
     if system_prompt is None:
         system_prompt = FeedbackSystemTemplate.bind({"sort": env.sort})
 
-    builder = env.builder.with_tools(
+    builder = env.builder_heavy().with_tools(
         env.all_tools
     )
 

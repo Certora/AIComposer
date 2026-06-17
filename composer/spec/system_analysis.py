@@ -104,7 +104,7 @@ async def run_component_analysis[T: BaseApplication](
         return _validate_connectivity(app, expected_main_id)
 
     b = bind_standard(
-        builder=env.builder,
+        builder=env.builder_lite(),
         state_type=AnalysisState,
         validator=_validation_wrapper
     ).with_input(

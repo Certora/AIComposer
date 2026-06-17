@@ -1,6 +1,7 @@
 import psycopg
-from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager, TYPE_CHECKING
+from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager, TYPE_CHECKING, Protocol
 from typing_extensions import TypeVar
+import enum
 import inspect
 import os
 from dataclasses import dataclass
@@ -36,8 +37,9 @@ else:
     PostgresMemoryBackend = "PostgresMemoryBackend"
     AsyncPostgresBackend = "AsyncPostgresBackend"
 
-from composer.input.types import ModelOptions, ModelOptionsBase
+from composer.input.types import ModelOptions, ModelOptionsBase, ModelConfiguration
 from composer.input.files import FileUploader
+from .llm import model_parser
 
 
 T = TypeVar("T")
@@ -429,6 +431,89 @@ async def memory_backend_context() -> AsyncIterator[MemoryBackendGenerator]:
 
 _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7"}
 
+def _create_llm_base(
+    model_name: str,
+    args: ModelConfiguration,
+    cache_control: Literal["5m", "1h"] | None,
+    disable_thinking_override: Literal[True] | None = None
+) -> "BaseChatModel":
+    model_cap = model_parser(model_name)
+    thinking : dict[str, Any] | None
+    if args.thinking_tokens is None or disable_thinking_override is True:
+        thinking = None
+    elif model_cap.adaptive_thinking:
+        thinking = {"type": "adaptive"}
+    else:
+        thinking = {"type": "enabled", "budget_tokens": args.thinking_tokens}
+    
+    beta_headers = ["files-api-2025-04-14"]
+    if model_cap.interleaved_thinking and args.interleaved_thinking:
+        beta_headers.append("interleaved-thinking-2025-05-14")
+    if args.memory_tool:
+        beta_headers.append("context-management-2025-06-27")
+    
+    from langchain_anthropic import ChatAnthropic
+    from composer.diagnostics.usage_callback import UsageCallback
+
+    if cache_control:
+        model_kwargs = {
+            "cache_control": {
+                "type": "ephemeral",
+                "ttl": cache_control
+            }
+        }
+    else:
+        model_kwargs = {}
+
+    return ChatAnthropic(
+        model_name=model_name,
+        max_tokens_to_sample=args.tokens,
+        temperature=1,
+        timeout=None,
+        max_retries=8,
+        stop=None,
+        betas=beta_headers,
+        thinking=thinking,
+        model_kwargs=model_kwargs,
+        callbacks=[UsageCallback()],
+    )
+
+class CacheLevel(enum.StrEnum):
+    NONE = "none"
+    SHORT = "short"
+    LONG = "long"
+
+class LLMFactory(Protocol):
+    def __call__(
+        self,
+        model_name: str,
+        *,
+        cache_level: CacheLevel | None = None,
+        disable_thinking: bool = False
+    ) -> "BaseChatModel":
+        ...
+
+def llm_factory(args: ModelConfiguration) -> LLMFactory:
+    def to_ret(
+        model_name: str,
+        *,
+        cache_level: CacheLevel | None = None,
+        disable_thinking: bool = False
+    ) -> "BaseChatModel":
+        match cache_level:
+            case CacheLevel.SHORT:
+                ttl = "5m"
+            case CacheLevel.LONG:
+                ttl = "1h"
+            case None:
+                ttl = None
+        return _create_llm_base(
+            args=args,
+            model_name=model_name,
+            cache_control=ttl,
+            disable_thinking_override=True if disable_thinking else None
+        )
+    return to_ret
 
 def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
     """Create LLM; thinking disabled when args.thinking_tokens is None."""

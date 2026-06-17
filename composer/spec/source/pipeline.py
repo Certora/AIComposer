@@ -16,8 +16,6 @@ Phases:
 
 import asyncio
 
-from langchain_core.language_models.chat_models import BaseChatModel
-
 from composer.io.multi_job import (
     TaskInfo, HandlerFactory, run_task,
 )
@@ -69,7 +67,6 @@ INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 # ---------------------------------------------------------------------------
 
 async def run_autoprove_pipeline(
-    llm: BaseChatModel,
     source_input: SourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
@@ -145,7 +142,7 @@ async def run_autoprove_pipeline(
     # Prover tool is stateless with respect to setup, so build it now; it is
     # shared by every CVL-generation call below.
     prover_tool = get_prover_tool(
-        llm, source_input.contract_name,
+        env.llm_heavy(), source_input.contract_name,
         source_input.project_root, prover_opts=prover_opts,
     )
 

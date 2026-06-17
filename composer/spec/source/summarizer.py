@@ -231,7 +231,7 @@ async def _setup_summaries_impl(
     })
 
     graph = bind_standard(
-        env.builder, ST, "The commentary on the generated specification", _validator
+        env.builder_lite(), ST, "The commentary on the generated specification", _validator
     ).with_sys_prompt_template(
         "source_cvl_system_prompt.j2"
     ).inject(

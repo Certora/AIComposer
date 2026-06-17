@@ -143,7 +143,7 @@ async def generate_interface[I: InterfaceDeclModel](
     )
 
     workflow = (
-        env.builder
+        env.builder_heavy()
         .with_state(ST)
         .with_tools([ResultTool.as_tool("result"), *env.analysis_tools])
         .with_output_key("result")

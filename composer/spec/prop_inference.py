@@ -267,7 +267,7 @@ async def _run_bug_round(
         return cached
 
 
-    builder = env.builder
+    builder = env.builder_heavy()
 
     class BugAnalysisInput(FlowInput, RoughDraftState):
         pass
@@ -439,7 +439,7 @@ async def run_property_inference(
 
     async with refinement(render_properties_as_md(agent_attempt.items)) as client:
         res = await refinement_loop(
-            llm=env.llm,
+            llm=env.llm_heavy(),
             client=client,
             init_messages=edited_history,
             init_data=agent_attempt.items,

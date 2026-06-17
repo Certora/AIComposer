@@ -13,13 +13,14 @@ from graphcore.tools.memory import async_memory_tool
 
 from composer.diagnostics.logging_setup import setup_autoprove_logging
 from composer.diagnostics.timing import RunSummary, install_run_summary
-from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
+from composer.input.types import DEFAULT_RECURSION_LIMIT, ExtendedModelOptions, RAGDBOptions
 from composer.input.parsing import add_protocol_args
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.workflow.services import create_llm, standard_connections
+from composer.workflow.services import llm_factory, standard_connections
 
+from composer.spec.service_host import ModelProvider
 from composer.spec.system_model import SolidityIdentifier
 from composer.spec.context import (
     WorkflowContext, SourceCode,
@@ -55,7 +56,7 @@ def user_ns(
 # Args
 # ---------------------------------------------------------------------------
 
-class AutoProveArgs(ModelOptions, RAGDBOptions, Protocol):
+class AutoProveArgs(ExtendedModelOptions, RAGDBOptions, Protocol):
     project_root: str
     main_contract: str
     system_doc: str
@@ -96,7 +97,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         description="Auto-prove multi-agent pipeline TUI"
     )
     add_protocol_args(parser, RAGDBOptions)
-    add_protocol_args(parser, ModelOptions)
+    add_protocol_args(parser, ExtendedModelOptions)
     parser.add_argument("--recursion-limit", type=int, default=DEFAULT_RECURSION_LIMIT, help=f"The number of iterations of the graph to allow (default: {DEFAULT_RECURSION_LIMIT})")
     parser.add_argument("project_root", help="Root directory of the Solidity project")
     parser.add_argument("main_contract", help="Main contract as path:ContractName")
@@ -124,7 +125,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
     sys_path = pathlib.Path(args.system_doc)
 
     # Set up services
-    llm = create_llm(args)
+    model_factory = llm_factory(args)
     model = get_model()
 
 
@@ -180,10 +181,15 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
             await conns.uploader.get_document(pathlib.Path(threat_path))
             if (threat_path := args.threat_model) is not None else None
         )
+        models = ModelProvider(
+            factory=model_factory,
+            heavy_model=args.heavy_model,
+            lite_model=args.lite_model,
+            checkpointer=conns.checkpointer,
+        )
         source_env = build_source_env(
-            llm=llm,
+            models=models,
             db=rag_db,
-            checkpoint=conns.checkpointer,
             forbidden_read=FS_FORBIDDEN_READ,
             kb_ns=DEFAULT_KB_NS,
             root=args.project_root,
@@ -209,7 +215,6 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
 
         async def runner(handler: HandlerFactory[AutoProvePhase, None]) -> AutoProveResult:
             return await run_autoprove_pipeline(
-                    llm=llm,
                     ctx=ctx,
                     source_input=system_doc,
                     env=source_env,

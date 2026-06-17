@@ -23,33 +23,101 @@ whether the design doc describes new work or an extension. The
 autoprover pipeline always runs with ``sort="existing"``.
 """
 
-from typing import Literal, Sequence, Protocol, Callable
+from typing import Literal, Sequence
 from dataclasses import dataclass
 
+from langgraph.types import Checkpointer
 from graphcore.graph import Builder
 
 from langchain_core.language_models.chat_models import BaseChatModel as LLM
 from langchain_core.tools import BaseTool
 
+from composer.templates.loader import load_jinja_template
+from composer.workflow.services import CacheLevel, LLMFactory
+
 
 Sort = Literal["greenfield", "existing", "update"]
+
+
+@dataclass(frozen=True)
+class ModelProvider:
+    """Mints tiered LLMs / Builders on demand, deferring the model / cache /
+    thinking choice to the call site.
+
+    ``heavy_model`` and ``lite_model`` are model names fed to the same
+    :class:`~composer.workflow.services.LLMFactory`. A workflow that does not
+    support model-swapping (natspec) opts out simply by constructing this with
+    ``heavy_model == lite_model``: ``llm_lite`` then returns the same model as
+    ``llm_heavy``. ``cache_level`` / ``disable_thinking`` are honoured either
+    way, so a collapsed provider still gives access to those knobs."""
+
+    factory: LLMFactory
+    heavy_model: str
+    lite_model: str
+    checkpointer: Checkpointer
+
+    def llm_heavy(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> LLM:
+        return self.factory(self.heavy_model, cache_level=cache_level, disable_thinking=disable_thinking)
+
+    def llm_lite(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> LLM:
+        return self.factory(self.lite_model, cache_level=cache_level, disable_thinking=disable_thinking)
+
+    def builder_heavy(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> Builder[None, None, None]:
+        return self._builder(self.llm_heavy(cache_level=cache_level, disable_thinking=disable_thinking))
+
+    def builder_lite(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> Builder[None, None, None]:
+        return self._builder(self.llm_lite(cache_level=cache_level, disable_thinking=disable_thinking))
+
+    def _builder(self, llm: LLM) -> Builder[None, None, None]:
+        return Builder[None, None, None]().with_llm(
+            llm
+        ).with_loader(load_jinja_template).with_checkpointer(self.checkpointer)
 
 
 @dataclass
 class PureServiceHost:
     """``ServiceHost`` without source tools — the pre-stub natspec phase
     uses this directly. Call :meth:`bind_source_tools` once a usable
-    source-layer materializer exists to get a full ``ServiceHost``."""
+    source-layer materializer exists to get a full ``ServiceHost``.
 
-    llm: LLM
-    builder: Builder[None, None, None]
+    The model entry points (:meth:`llm_heavy` etc.) forward to :attr:`models`;
+    consumers pick a tier per pass rather than sharing one fixed model."""
+
+    models: ModelProvider
     rag_tools: tuple[BaseTool, ...]
     sort: Sort
 
+    def llm_heavy(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> LLM:
+        return self.models.llm_heavy(cache_level=cache_level, disable_thinking=disable_thinking)
+
+    def llm_lite(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> LLM:
+        return self.models.llm_lite(cache_level=cache_level, disable_thinking=disable_thinking)
+
+    def builder_heavy(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> Builder[None, None, None]:
+        return self.models.builder_heavy(cache_level=cache_level, disable_thinking=disable_thinking)
+
+    def builder_lite(
+        self, *, cache_level: CacheLevel = CacheLevel.SHORT, disable_thinking: bool = False
+    ) -> Builder[None, None, None]:
+        return self.models.builder_lite(cache_level=cache_level, disable_thinking=disable_thinking)
+
     def bind_source_tools(self, tools: Sequence[BaseTool]) -> "ServiceHost":
         return ServiceHost(
-            llm=self.llm,
-            builder=self.builder,
+            models=self.models,
             rag_tools=self.rag_tools,
             source_tools=tuple(tools),
             sort=self.sort,

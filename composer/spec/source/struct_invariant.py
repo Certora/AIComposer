@@ -144,7 +144,7 @@ async def get_invariant_formulation(
         pass
 
     feedback_graph = bind_standard(
-        env.builder,
+        env.builder_heavy(),
         FeedbackST,
     ).with_sys_prompt_template(
         "invariant_judge_system_prompt.j2"
@@ -203,7 +203,7 @@ async def get_invariant_formulation(
     })
 
     graph = bind_standard(
-        env.builder,
+        env.builder_heavy(),
         ST,
         doc="The structural/state invariants you identified",
         validator=_validate_invariants,

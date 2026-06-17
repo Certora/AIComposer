@@ -8,9 +8,9 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from graphcore.graph import Builder
 from graphcore.tools.vfs import fs_tools
 
-from composer.spec.tool_env import BaseSourceTools, BasicAgentTools
+from composer.spec.tool_env import BaseSourceTools
 from composer.spec.services import build_rag_tool_env, RAGInputs
-from composer.spec.service_host import ServiceHost, Sort
+from composer.spec.service_host import ModelProvider, ServiceHost, Sort
 from composer.spec.code_explorer import indexed_code_explorer_tool
 from composer.spec.agent_index import AgentIndex, AgentIndexConfig, RetrieveDocumentTool
 
@@ -31,13 +31,15 @@ def build_basic_source_tools(
 
 def build_source_tools(
     s: BaseSourceTools,
-    llm: BasicAgentTools,
+    models: ModelProvider,
     store: BaseStore,
     cache_ns: tuple[str, ...],
     recursion_limit: int,
 ) -> tuple[BaseTool, ...]:
     """Wrap the base source tools with the indexed code_explorer sub-agent
-    + the document-ref retrieval tool. Returns the full source tool tuple."""
+    + the document-ref retrieval tool. Returns the full source tool tuple.
+
+    The code_explorer is a support sub-agent, so it runs on the lite tier."""
 
     @dataclass(frozen=True)
     class _ExplorerEnv:
@@ -57,10 +59,10 @@ def build_source_tools(
 
     explorer_tool = indexed_code_explorer_tool(
         _ExplorerEnv(
-            builder=llm.builder,
+            builder=models.builder_lite(),
             base_source_tools=s.base_source_tools,
             index=ind,
-            llm=llm.llm,
+            llm=models.llm_lite(),
         ),
         recursion_limit=recursion_limit,
     )
@@ -91,14 +93,13 @@ def build_source_env(
     )
     full_source = build_source_tools(
         basic_source,
-        rag_env,
+        rag_env.models,
         params["store"],
         params["source_question_ns"],
         recursion_limit=params["recursion_limit"],
     )
     return ServiceHost(
-        llm=rag_env.llm,
-        builder=rag_env.builder,
+        models=rag_env.models,
         rag_tools=rag_env.rag_tools,
         source_tools=full_source,
         sort=rag_env.sort,

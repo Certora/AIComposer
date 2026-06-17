@@ -227,7 +227,7 @@ async def generate_cvl_batch(
     )
 
     g = (
-        env.builder
+        env.builder_heavy()
         .with_tools(env.all_tools)
         .with_tools(injected_tools)
         .with_tools(static_tools())

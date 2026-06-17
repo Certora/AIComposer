@@ -24,7 +24,8 @@ from composer.io.thread_logging import DEFAULT_META_NS, thread_logger
 from composer.spec.agent_index import agent_index_config_from_env
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.workflow.services import create_llm, standard_connections
+from composer.workflow.services import llm_factory, standard_connections
+from composer.spec.service_host import ModelProvider
 from composer.kb.knowledge_base import DefaultEmbedder, DEFAULT_KB_NS
 from composer.spec.services import build_rag_tool_env
 
@@ -126,8 +127,9 @@ async def _main() -> int:
 
     input_path = pathlib.Path(args.input_file)
 
-    # Set up services
-    llm = create_llm(args)
+    # Set up services. Natspec does not support model-swapping, so the heavy
+    # and lite tiers collapse onto the single configured model.
+    model_factory = llm_factory(args)
     model = get_model()
 
     logging_ns = user_data_ns() + DEFAULT_META_NS
@@ -171,8 +173,12 @@ async def _main() -> int:
         ):
             start_env = build_rag_tool_env(
                 sort=sort,
-                llm=llm,
-                checkpoint=conn.checkpointer,
+                models=ModelProvider(
+                    factory=model_factory,
+                    heavy_model=args.model,
+                    lite_model=args.model,
+                    checkpointer=conn.checkpointer,
+                ),
                 db=rag,
                 cvl_index_config=agent_index_config_from_env(DEFAULT_CVL_AGENT_INDEX_NS),
                 kb_ns=DEFAULT_KB_NS,

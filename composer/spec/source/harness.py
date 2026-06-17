@@ -172,7 +172,7 @@ async def classifier_agent(
         return None
 
     d = bind_standard(
-        builder=env.builder,
+        builder=env.builder_lite(),
         state_type=AnalysisState,
         validator=result_validator
     ).with_input(
@@ -326,7 +326,7 @@ async def generate_harnesses(
         validator=(GenerationState, result_validator)
     )
 
-    g = env.builder.with_input(
+    g = env.builder_lite().with_input(
         GenerationInput
     ).with_state(
         GenerationState
