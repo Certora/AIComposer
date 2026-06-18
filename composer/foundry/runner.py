@@ -264,9 +264,8 @@ class ForgeTestTool(
             return tool_state_update(
                 tool_call_id=self.tool_call_id,
                 content=(
-                    f"All tests passed under seed={self.seed!r} — the "
-                    "fuzz-failure cache replayed prior counterexamples and "
-                    "they no longer trigger. Call forge_test WITHOUT a seed "
+                    f"All tests passed under seed={self.seed!r} "
+                    "Call forge_test WITHOUT a seed "
                     "to run a fresh campaign and stamp the publish gate.\n\n"
                     f"{summary}"
                 ),
@@ -304,7 +303,7 @@ class ProfileConf(BaseModel):
 class FoundryFragment(BaseModel):
     profile: dict[str, ProfileConf]
 
-def _infer_test_dir(
+def infer_test_dir(
     project_root: str
 ) -> str:
     foundry_conf = Path(project_root) / "foundry.toml"
@@ -336,7 +335,7 @@ def get_forge_test_tool(
         forge_binary=forge_binary,
         timeout_s=timeout_s,
         sem=forge_sem,
-        test_root=_infer_test_dir(project_root)
+        test_root=infer_test_dir(project_root)
     )
     return ForgeTestTool.bind(deps).as_tool("forge_test")
 

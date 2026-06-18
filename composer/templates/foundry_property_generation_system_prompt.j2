@@ -32,16 +32,12 @@ wholesale, so always re-emit the full source.
 ### Workflow tools
 
 * `put_test_raw(test_source)` -- overwrite the working buffer with new
-  source. There is no put-time compile check; build/test failures only
-  surface when `forge_test` runs.
+  source.
 * `get_test()` -- read the current buffer.
-* `forge_test(seed=None)` -- stage the buffer under `<project>/test/`
-  and run `forge test`. The buffer is staged into a uniquely-named
-  file so it doesn't collide with anything already in the project.
-  Pass `seed="..."` to keep the staged path stable across calls (this
-  is what makes foundry's `cache/fuzz` replay prior counterexamples --
-  see the fuzz section below). Omit `seed` for a fresh-path run; a
-  fully-green *unseeded* run stamps the publish gate. Seeded runs
+* `forge_test(seed=None)` -- run `forge test` on your current buffer.
+  Pass `seed="..."` to replay a prior fuzz/invariant counterexample
+  (see the fuzz section below). Omit `seed` for a normal run; only a
+  fully-green *unseeded* run stamps the publish gate -- seeded runs
   never stamp, even when clean.
 * `record_skip(property_title, reason)` /
   `unskip_property(property_title)` -- declare a property unformalizable
@@ -131,17 +127,13 @@ mind so the fuzzer actually exercises the property:
   rich account -- much faster and doesn't need a "rich" address to
   exist.
 * **Iterating on a fuzz failure uses the `seed` arg of `forge_test`.**
-  By default every `forge_test()` call stages your test file under a
-  fresh path, so foundry's `cache/fuzz` replay cache never hits -- each
-  unseeded run is a brand-new fuzz campaign with no carryover. When a
+  An unseeded run is a fresh fuzz campaign with no carryover. When a
   fuzz/invariant test fails and you want to *iterate on that specific
-  counterexample*, pass `forge_test(seed="X")` -- using the SAME `seed`
-  string across calls stages the file at a stable path, so foundry's
-  failure-persistence finds and replays the prior failing inputs first.
-  Use this to make monotonic progress on a specific bug. Then, once
-  the seeded run is clean, do ONE more `forge_test()` call WITHOUT a
-  seed to run a fresh campaign and stamp the publish gate -- **only
-  unseeded runs are eligible to stamp**.
+  counterexample*, pass the SAME `forge_test(seed="X")` across calls --
+  it replays the prior failing inputs first, so you can make monotonic
+  progress on the bug. Then, once the seeded run is clean, do ONE more
+  `forge_test()` WITHOUT a seed -- **only unseeded runs are eligible to
+  stamp the publish gate**.
 * **For address fuzz inputs**, almost always `vm.assume(addr !=
   address(0))` (and often `!= address(this)`, `!= precompile addresses`).
   Foundry's fuzzer doesn't avoid these by default.

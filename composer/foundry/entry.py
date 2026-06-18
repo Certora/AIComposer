@@ -34,12 +34,13 @@ from composer.io.thread_logging import DEFAULT_META_NS, thread_logger
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import FOUNDRY_DEFAULT_CONNECTION, PostgreSQLRAGDatabase
 from composer.rag.models import get_model
-from composer.spec.context import SourceCode, WorkflowContext
+from composer.spec.context import WorkflowContext
 from composer.spec.system_model import SolidityIdentifier
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.ui.tool_display import async_tool_context
 from composer.workflow.services import create_llm, standard_connections
 
+from composer.foundry.artifacts import FoundrySourceCode
 from composer.foundry.env import build_foundry_env
 from composer.foundry.pipeline import (
     FoundryPhase, FoundryPipelineResult, run_foundry_pipeline,
@@ -181,7 +182,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
         content = await conns.uploader.get_document(sys_path)
         if content is None:
             parser.error(f"cannot read {sys_path}")
-        source_input = SourceCode(
+        source_input = FoundrySourceCode(
             content=content,
             project_root=str(project_root),
             contract_name=contract_name,

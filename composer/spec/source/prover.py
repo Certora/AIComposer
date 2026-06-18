@@ -37,8 +37,8 @@ from composer.diagnostics.stream import (
 from composer.spec.cvl_generation import CVLGenerationState, make_validation_stamper
 from composer.diagnostics.timing import RunSummary, get_run_summary
 from graphcore.graph import tool_state_update
-from composer.spec.util import temp_certora_file, ensure_dir
-from composer.spec.gen_types import CERTORA_DIR, SPECS_DIR, under_project
+from composer.spec.util import temp_certora_file
+from composer.spec.gen_types import SPECS_DIR
 
 
 _logger = logging.getLogger("composer.prover")
@@ -59,31 +59,6 @@ def prover_config_overlay(base_config: dict, *, main_contract: str, verify_targe
     }
 
 
-def dump_final_conf(
-    *,
-    project_root: str,
-    main_contract: str,
-    task_id: str,
-    spec_path: Path,
-    base_config: dict | None,
-) -> None:
-    """Write the prover conf for *task_id* to ``certora/confs/{stem}.conf``.
-
-    *base_config* is the generation's final ``state["config"]`` (persisted on
-    ``GeneratedCVL.config`` so a cache hit still has it). The fixed run overlay is applied
-    here via :func:`prover_config_overlay`, and the ``verify`` entry points at *spec_path*
-    (project-root-relative, e.g. ``certora/specs/invariants.spec``). No-op if no base config.
-    """
-    if base_config is None:
-        _logger.warning(f"Attempting to dump the conf for task_id {task_id} but no base config exists")
-        return
-    conf = prover_config_overlay(
-        base_config, main_contract=main_contract, verify_target=f"{main_contract}:{spec_path}"
-    )
-    confs_dir = ensure_dir(under_project(project_root, CERTORA_DIR / "confs"))
-    out_path = confs_dir / f"{Path(spec_path).stem}.conf"
-    out_path.write_text(json.dumps(conf, indent=2))
-    _logger.info(f"wrote final conf for task={task_id} to {out_path}")
 
 
 DELETE_SKIP = "__delete_skip"

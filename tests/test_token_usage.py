@@ -5,7 +5,7 @@ Covers the three layers of the feature:
   * **Accumulation** — :class:`RunSummary` per-model totals, per-task attribution
     folded into :class:`PhaseRecord`, ``total_tokens``, and the ``_format_summary``
     token block.
-  * **Serialization** — ``dump_token_usage`` JSON shape.
+  * **Serialization** — ``ProverArtifactStore.write_token_usage`` JSON shape.
   * **Wiring** — the ``UsageCallback`` attached at model construction fires on both
     ``.invoke`` and ``.ainvoke`` (including through a bound derivative), records into
     the active ``RunSummary``, and attributes to the active task. Driven by a fake
@@ -27,7 +27,7 @@ from composer.diagnostics.timing import (
     set_current_task_id,
 )
 from composer.diagnostics.usage_callback import UsageCallback
-from composer.spec.source.common_pipeline import dump_token_usage
+from composer.spec.source.artifacts import ProverArtifactStore
 from graphcore.utils import TokenUsageDict
 
 
@@ -106,7 +106,7 @@ def test_dump_token_usage_shape(tmp_path):
         s.record_token_usage(_usage("opus", 100, 10, 5, 2))
     s.record_phase(task_id="t1", label="t1", phase="p", wall_s=1.0, queue_wait_s=0.0)
 
-    dump_token_usage(str(tmp_path), s)
+    ProverArtifactStore(str(tmp_path), "Token").write_token_usage(s)
     out = tmp_path / ".certora_internal" / "autoProve" / "token_usage.json"
     data = json.loads(out.read_text())
 
@@ -158,7 +158,7 @@ async def test_token_usage_persisted_to_run_meta_tags():
 def test_dump_token_usage_empty_run(tmp_path):
     """A run with no LLM calls still writes a well-formed (zeroed) file."""
     s = RunSummary()
-    dump_token_usage(str(tmp_path), s)
+    ProverArtifactStore(str(tmp_path), "Token").write_token_usage(s)
     data = json.loads((tmp_path / ".certora_internal" / "autoProve" / "token_usage.json").read_text())
     assert data["totals"] == {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     assert data["by_model"] == {}

@@ -22,6 +22,7 @@ from composer.spec.prop import PropertyFormulation, PropertyType
 from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping, SkippedProperty
 from composer.spec.source.author import GaveUp
 
+from composer.spec.source.artifacts import ProverArtifactStore
 from composer.spec.source.report import build
 from composer.spec.source.report.collect import ReportComponentInput, collect
 from composer.spec.source.report.coverage import ValidationError, validate
@@ -382,15 +383,25 @@ def test_render_html_gaps_section_and_footer_bool():
 # build orchestrator (async)
 # ---------------------------------------------------------------------------
 
+def test_artifact_store_write_report_round_trips(tmp_path):
+    report = _mini_report()
+    ProverArtifactStore(str(tmp_path), "Counter").write_report(report)
+
+    out = tmp_path / "certora" / "ap_report" / "report.json"
+    assert out.is_file()
+    reloaded = AutoProverReport.model_validate_json(out.read_text())
+    assert reloaded.contract_name == "Counter"
+
+
 @pytest.mark.asyncio
-async def test_build_groups_properties_and_persists(tmp_path):
+async def test_build_groups_properties(tmp_path):
     gen = _gen({"p1": ["r1"], "p2": ["r2"]})
     api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED), _fake_check("r2", NodeStatus.VERIFIED)]})
     llm = _GroupingStubModel(result=GroupingResult(groups=[PropertyGroupDraft(
         slug="g", title="G", description="d", members=[("C", "p1"), ("C", "p2")])]))
 
     report = await build.run_autoprove_report(
-        project_root=str(tmp_path), contract_name="Counter",
+        contract_name="Counter",
         components=[_input("C", "autospec_C.spec", [_prop("p1", "d1"), _prop("p2", "d2")], gen)],
         llm=llm, api=api,
     )
@@ -398,17 +409,15 @@ async def test_build_groups_properties_and_persists(tmp_path):
     assert [g.slug for g in report.groups] == ["g"]
     assert {p.title for p in report.properties} == {"p1", "p2"}
     assert report.coverage.property_coverage_complete is True
-    assert (tmp_path / "certora" / "ap_report" / "report.json").is_file()
-
 
 @pytest.mark.asyncio
-async def test_build_empty_grouping_falls_back_and_persists(tmp_path):
+async def test_build_empty_grouping_falls_back(tmp_path):
     gen = _gen({"p1": ["r1"], "p2": ["r2"]})
     api = _FakeAPI({"L1": [_fake_check("r1", NodeStatus.VERIFIED), _fake_check("r2", NodeStatus.VIOLATED)]})
     llm = _GroupingStubModel(result=GroupingResult(groups=[]))  # empty grouping -> fallback
 
     report = await build.run_autoprove_report(
-        project_root=str(tmp_path), contract_name="C",
+        contract_name="C",
         components=[_input("C", "autospec_C.spec", [_prop("p1", "d1"), _prop("p2", "d2")], gen)],
         llm=llm, api=api,
     )
@@ -418,8 +427,6 @@ async def test_build_empty_grouping_falls_back_and_persists(tmp_path):
     assert set(g.members) == {("C", "p1"), ("C", "p2")}
     assert g.status == GroupStatus.VIOLATED  # r2 violated
     assert any("FALLBACK GROUPING APPLIED" in w for w in report.coverage.warnings)
-    assert (tmp_path / "certora" / "ap_report" / "report.json").is_file()
-
 
 @pytest.mark.asyncio
 async def test_build_surfaces_skipped_and_gave_up_gaps(tmp_path):
@@ -429,7 +436,7 @@ async def test_build_surfaces_skipped_and_gave_up_gaps(tmp_path):
         slug="g", title="G", description="d", members=[("C", "p_ok")])]))
 
     report = await build.run_autoprove_report(
-        project_root=str(tmp_path), contract_name="C",
+        contract_name="C",
         components=[
             _input("C", "autospec_C.spec", [_prop("p_ok", "d"), _prop("p_skip", "d")], gen),
             _input("D", "autospec_D.spec", [_prop("q", "d")], GaveUp(reason="stuck"), link=None),

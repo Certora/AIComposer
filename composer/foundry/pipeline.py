@@ -27,8 +27,11 @@ from typing import Awaitable, Callable
 from composer.foundry.author import (
     BatchFoundryResult, GaveUp, GeneratedFoundryTest, batch_foundry_test_generation,
 )
+from composer.foundry.artifacts import (
+    FoundryComponentEntry, FoundryRunReport, FoundrySourceCode, FoundryTestArtifact,
+)
 from composer.spec.context import (
-    CVLGeneration, CacheKey, ComponentGroup, Properties, SourceCode, WorkflowContext,
+    CVLGeneration, CacheKey, ComponentGroup, Properties, WorkflowContext,
 )
 from composer.spec.service_host import ServiceHost
 from composer.spec.prop import PropertyFormulation
@@ -133,7 +136,7 @@ class FoundryPipelineResult:
 
 
 async def run_foundry_pipeline(
-    source_input: SourceCode,
+    source_input: FoundrySourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[FoundryPhase, None],
     env: ServiceHost,
@@ -243,12 +246,15 @@ async def run_foundry_pipeline(
         for s, b in zip(raw_slugs, batches)
     ]
 
+    store = source_input.artifact_store
+    # Dump the analysis-phase properties for every extracted component (parallels
+    # the prover pipeline; recorded even if that component's tests later give up).
+    for base, batch in zip(bases, batches):
+        store.write_analysis_properties(FoundryTestArtifact(base), batch.props)
+
     # ------------------------------------------------------------------
     # Phase 3: Per-component foundry test generation.
     # ------------------------------------------------------------------
-    test_dir = pathlib.Path(source_input.project_root) / "test"
-    test_dir.mkdir(exist_ok=True)
-
     forge_runner_sem = asyncio.Semaphore(forge_concurrency)
 
     async def _generate(i: int, batch: _ComponentBatch) -> BatchFoundryResult:
@@ -289,8 +295,7 @@ async def run_foundry_pipeline(
         res = await _generate(i, batch)
         if isinstance(res, GaveUp):
             return res, None
-        out_path = test_dir / f"composer_{bases[i]}.t.sol"
-        out_path.write_text(res.test_source)
+        out_path = store.write_generated_test(FoundryTestArtifact(bases[i]), res)
         return res, out_path
 
     results = await asyncio.gather(
@@ -300,8 +305,9 @@ async def run_foundry_pipeline(
 
     written: list[pathlib.Path] = []
     failures: list[str] = []
+    components: list[FoundryComponentEntry] = []
     n_properties = 0
-    for batch, result in zip(batches, results):
+    for base, batch, result in zip(bases, batches, results):
         n_properties += len(batch.props)
         if isinstance(result, BaseException):
             failures.append(f"{batch.feat.component.name}: {result}")
@@ -313,13 +319,25 @@ async def run_foundry_pipeline(
             )
         elif path is not None:
             written.append(path)
+            components.append(FoundryComponentEntry(
+                component=batch.feat.component.name,
+                stem=FoundryTestArtifact(base).stem,
+            ))
 
-    return FoundryPipelineResult(
+    pipeline_result = FoundryPipelineResult(
         n_components=len(batches),
         n_properties=n_properties,
         written=written,
         failures=failures,
     )
+    # Run-level rollup; per-component detail lives in certora/foundry/properties/.
+    store.write_report(FoundryRunReport(
+        n_components=pipeline_result.n_components,
+        n_properties=pipeline_result.n_properties,
+        components=components,
+        failures=failures,
+    ))
+    return pipeline_result
 
 
 type FoundryPipelineExecutor = Callable[

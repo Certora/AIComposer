@@ -81,6 +81,12 @@ class GeneratedFoundryTest(BaseModel):
     test_source: str
     skipped: list[SkippedProperty] = Field(default_factory=list)
     property_tests: list[PropertyTestMapping] = Field(default_factory=list)
+    # Forge ground truth at publish time: the tests that actually ran in the
+    # gating unseeded run, and the author's expected-failure markings (test
+    # name -> reason). Together they give every test a pass / expected-failure
+    # status without trusting the model's own transcription.
+    expected_failures: dict[str, str] = Field(default_factory=dict)
+    ran_tests: list[str] = Field(default_factory=list)
 
 
 class GaveUp(BaseModel):
@@ -722,4 +728,6 @@ async def batch_foundry_test_generation(
         test_source=draft,
         skipped=res_state["skipped"],
         property_tests=res_state["property_tests"],
+        expected_failures=res_state["expected_failures"],
+        ran_tests=res_state["last_test_names"] or [],
     )

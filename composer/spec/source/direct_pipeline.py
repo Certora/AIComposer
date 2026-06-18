@@ -20,7 +20,7 @@ from composer.io.multi_job import (
 from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, CacheKey, Properties,
+    WorkflowContext, CacheKey, Properties,
 )
 from composer.spec.gen_types import CVLResource, certora_relative_to_project
 from composer.spec.source.system_analysis import run_component_analysis
@@ -33,6 +33,7 @@ from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import get_prover_tool
 from composer.prover.core import ProverOptions
 from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
+from composer.spec.source.artifacts import ProverSourceCode
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +54,7 @@ INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 
 async def run_autoprove_pipeline(
     llm: BaseChatModel,
-    source_input: SourceCode,
+    source_input: ProverSourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
     env: ServiceHost,

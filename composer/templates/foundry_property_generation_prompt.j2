@@ -55,8 +55,7 @@ time.
 
 ## Step 2 -- run forge test
 
-Call `forge_test()`. It will stage your buffer under
-`<project>/<test-dir>/` and run `forge test --match-path` on it.
+Call `forge_test()`. It runs `forge test` on your current buffer.
 
 * If the run is fully green (excluding any tests you've marked via
   `expect_test_failure`), the publish gate is stamped and you can
