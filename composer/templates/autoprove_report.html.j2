@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FV report — {{ report.contract_name }}</title>
+<style>
+:root {
+    --bg: #ffffff;
+    --fg: #1d2125;
+    --muted-fg: #5b6770;
+    --border: #e4e8ec;
+    --bg-card: #fafbfc;
+    --bg-pre: #f4f6f8;
+    --link: #1a73e8;
+    --ok-fg: #0a6b2a;
+    --ok-bg: #e6f6ec;
+    --bad-fg: #a8071a;
+    --bad-bg: #fde7e9;
+    --warn-fg: #8a5500;
+    --warn-bg: #fff1d6;
+    --info-fg: #054a8c;
+    --info-bg: #e3effb;
+    --muted-bg: #eef0f3;
+}
+* { box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    margin: 0;
+    padding: 0;
+    line-height: 1.5;
+    font-size: 14px;
+}
+.container {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 32px 28px 48px;
+}
+.muted { color: var(--muted-fg); }
+header.report-head {
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 16px;
+    margin-bottom: 28px;
+}
+header.report-head h1 {
+    margin: 0 0 4px;
+    font-size: 24px;
+    font-weight: 600;
+}
+header.report-head .subtitle {
+    color: var(--muted-fg);
+    font-size: 13px;
+}
+.meta-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 18px;
+    margin-top: 14px;
+    font-size: 13px;
+}
+.meta-grid dt {
+    color: var(--muted-fg);
+    font-weight: 500;
+    margin: 0;
+}
+.meta-grid dd {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 12.5px;
+    word-break: break-all;
+}
+.counts-label {
+    margin-top: 14px;
+    font-size: 12px;
+    color: var(--muted-fg);
+}
+.counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+.count-chip {
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 12.5px;
+    color: var(--muted-fg);
+    background: var(--bg-card);
+}
+.count-chip strong {
+    color: var(--fg);
+    margin-left: 4px;
+}
+section.prop, section.gaps {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+}
+section.prop h2, section.gaps h2 {
+    margin: 0 0 6px;
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+section.prop h2 .id {
+    color: var(--muted-fg);
+    font-weight: 500;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+section.prop .desc {
+    color: var(--fg);
+    margin: 8px 0 12px;
+}
+.badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.badge-ok    { color: var(--ok-fg);    background: var(--ok-bg); }
+.badge-bad   { color: var(--bad-fg);   background: var(--bad-bg); }
+.badge-warn  { color: var(--warn-fg);  background: var(--warn-bg); }
+.badge-info  { color: var(--info-fg);  background: var(--info-bg); }
+.badge-muted { color: var(--muted-fg); background: var(--muted-bg); }
+table.rules {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 4px;
+    font-size: 13px;
+}
+table.rules th, table.rules td {
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+    vertical-align: top;
+}
+table.rules th {
+    color: var(--muted-fg);
+    font-weight: 500;
+    background: var(--bg);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+table.rules td.col-name {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 12.5px;
+    white-space: nowrap;
+    width: 1%;
+}
+table.rules td.col-status { white-space: nowrap; width: 1%; }
+table.rules td.col-link { width: 1%; white-space: nowrap; }
+table.rules td.col-link a { color: var(--link); text-decoration: none; font-size: 12px; }
+table.rules td.col-link a:hover { text-decoration: underline; }
+section.gaps h3 {
+    margin: 18px 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+}
+section.gaps h3:first-of-type { margin-top: 8px; }
+section.gaps h4 {
+    margin: 14px 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+}
+ul.claims { margin: 4px 0 0 18px; padding: 0; font-size: 13px; }
+ul.claims li { margin-bottom: 4px; }
+.sort-tag {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 3px;
+    background: var(--bg-pre);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--muted-fg);
+}
+footer.report-foot {
+    margin-top: 36px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted-fg);
+}
+.warnings {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 14px 0;
+    font-size: 13px;
+}
+.warnings ul { margin: 4px 0 0 18px; padding: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header class="report-head">
+  <h1>Formal verification report — {{ report.contract_name }}</h1>
+  <div class="subtitle">
+    {{ coverage.total_properties }} properties &middot;
+    {{ coverage.total_rules }} CVL rules &middot;
+    {{ coverage.total_groups }} high-level properties
+  </div>
+  <dl class="meta-grid">
+    <dt>Contract</dt><dd>{{ report.contract_name }}</dd>
+    <dt>Run timestamp</dt><dd>{{ report.run_timestamp_utc or "—" }}</dd>
+    <dt>Prover runs</dt>
+    <dd>
+      {%- if prover_runs %}
+        {%- for run in prover_runs %}
+          {%- if run.href %}<a href="{{ run.href }}" target="_blank" rel="noopener">{{ run.slug }}</a>
+          {%- else %}<code>{{ run.slug }}</code>{% endif %}
+        {%- endfor %}
+      {%- else %}—{% endif %}
+    </dd>
+  </dl>
+  <div class="counts-label">Rule outcomes:</div>
+  <div class="counts">
+    {%- for c in rule_counts %}<span class="count-chip"><span class="badge badge-{{ c.kind }}">{{ c.status }}</span><strong>{{ c.n }}</strong></span>{% endfor %}
+    {%- if not rule_counts %}<span class="muted">—</span>{% endif %}
+  </div>
+  <div class="counts-label">High-level property outcomes:</div>
+  <div class="counts">
+    {%- for c in group_counts %}<span class="count-chip"><span class="badge badge-{{ c.kind }}">{{ c.status }}</span><strong>{{ c.n }}</strong></span>{% endfor %}
+    {%- if not group_counts %}<span class="muted">—</span>{% endif %}
+  </div>
+</header>
+
+{%- if coverage.warnings %}
+<div class="warnings"><strong>Coverage warnings:</strong>
+  <ul>{% for w in coverage.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+</div>
+{%- endif %}
+
+{%- for g in groups %}
+<section class="prop" id="{{ g.slug }}">
+  <h2><span class="id">{{ g.slug }}</span> {{ g.title }} <span class="badge badge-{{ g.kind }}">{{ g.status }}</span></h2>
+  <p class="desc">{{ g.description }}</p>
+  <table class="rules">
+    <thead><tr><th>Rule</th><th>Status</th><th>Description</th><th></th></tr></thead>
+    <tbody>
+      {%- for row in g.rows %}
+      <tr>
+        <td class="col-name">{{ row.name }}{% if row.line is not none %}<span class="muted">:{{ row.line }}</span>{% endif %}</td>
+        <td class="col-status"><span class="badge badge-{{ row.kind }}">{{ row.status }}</span></td>
+        <td>
+          {%- if row.descriptions | length > 1 %}
+          <ul class="claims">{% for d in row.descriptions %}<li>{{ d }}</li>{% endfor %}</ul>
+          {%- elif row.descriptions %}{{ row.descriptions[0] }}
+          {%- else %}<span class="muted">(no inferred description)</span>{%- endif %}
+        </td>
+        <td class="col-link">
+          {%- if row.link.href %}<a href="{{ row.link.href }}" target="_blank" rel="noopener">{{ row.link.label }}</a>
+          {%- else %}<span class="muted">{{ row.link.label }}</span>{% endif %}
+        </td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+</section>
+{%- endfor %}
+
+{%- if skipped or gave_up %}
+<section class="gaps">
+  <h2>Formalization gaps</h2>
+  {%- if skipped %}
+  <h3>Declined properties ({{ skipped | length }})</h3>
+  <table class="rules">
+    <thead><tr><th>Component</th><th>Property</th><th>Reason declined</th></tr></thead>
+    <tbody>
+      {%- for s in skipped %}
+      <tr>
+        <td>{{ s.component }}</td>
+        <td>{{ s.description }} <span class="sort-tag">{{ s.sort }}</span></td>
+        <td>{{ s.reason }}</td>
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+  {%- endif %}
+  {%- if gave_up %}
+  <h3>Components that gave up ({{ gave_up | length }})</h3>
+  {%- for gc in gave_up %}
+  <h4>{{ gc.component }}</h4>
+  <ul class="claims">
+    {%- for p in gc.properties %}<li><span class="sort-tag">{{ p.sort }}</span> {{ p.description }}</li>{% endfor %}
+  </ul>
+  {%- endfor %}
+  {%- endif %}
+</section>
+{%- endif %}
+
+<footer class="report-foot">
+  Coverage: {{ coverage.total_rules }} rules across {{ coverage.total_groups }} high-level properties
+  ({{ coverage.properties_per_group_min }}–{{ coverage.properties_per_group_max }} properties each).
+  Coverage complete: <strong>{{ "Yes" if coverage.property_coverage_complete else "No" }}</strong>.
+  {%- if coverage.dropped_orphan_rules %}
+  {{ coverage.dropped_orphan_rules }} prover rule(s) not attributed to any property were dropped.
+  {%- endif %}
+  {%- if coverage.rules_spanning_multiple_groups %}
+  {{ coverage.rules_spanning_multiple_groups | length }} rule(s) underwrite multiple high-level properties.
+  {%- endif %}
+</footer>
+
+</div>
+</body>
+</html>
