@@ -16,7 +16,7 @@ Lanes captured: system-analysis=4, harness=4, bug-0-Answer=3, invariants=9, cvl-
 
 import json
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 from composer.testing.harness_tape import HarnessFakeLLM
 
@@ -781,7 +781,7 @@ _TAPE_JSON = r"""
 }
 """
 
-_TAPE: dict[str, list[AIMessage]] = {
+_TAPE: dict[str, list[BaseMessage]] = {
     task_id: [AIMessage.model_validate(m) for m in messages]
     for task_id, messages in json.loads(_TAPE_JSON).items()
 }

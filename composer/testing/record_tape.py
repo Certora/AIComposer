@@ -263,7 +263,7 @@ Lanes captured: {lane_summary}
 
 import json
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 from composer.testing.harness_tape import HarnessFakeLLM
 
@@ -272,7 +272,7 @@ _TAPE_JSON = r"""
 {tape_json}
 """
 
-_TAPE: dict[str, list[AIMessage]] = {{
+_TAPE: dict[str, list[BaseMessage]] = {{
     task_id: [AIMessage.model_validate(m) for m in messages]
     for task_id, messages in json.loads(_TAPE_JSON).items()
 }}
