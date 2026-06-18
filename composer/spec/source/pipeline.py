@@ -216,6 +216,9 @@ async def run_autoprove_pipeline(
 
     certora_dir = under_project(source_input.project_root, CERTORA_DIR)
 
+    # In-memory invariant result (props + GeneratedCVL), threaded into the report phase below.
+    invariant_result: tuple[list[PropertyFormulation], GeneratedCVL] | None = None
+
     # ------------------------------------------------------------------
     # Join, stage 1: structural-invariant CVL. Runs before the per-component
     # CVL so invariants.spec exists and can be imported as preconditions.
@@ -276,7 +279,7 @@ async def run_autoprove_pipeline(
             main_contract=source_input.contract_name,
             task_id=inv_task_id,
             spec_path=inv_spec_path,
-            conf=inv_cvl.conf,
+            base_config=inv_cvl.config,
         )
         # All three streams have already joined, so `resources` is no longer
         # shared with any running task: this append is race-free, and the
@@ -287,6 +290,7 @@ async def run_autoprove_pipeline(
             description="Structural invariants that may be assumed as preconditions",
             sort="import",
         ))
+        invariant_result = (inv_props, inv_cvl)
 
     # ------------------------------------------------------------------
     # Join, stage 2: per-component CVL (parallel, semaphore-bounded). Imports
@@ -301,4 +305,5 @@ async def run_autoprove_pipeline(
         prover_config=setup_config.prover_config,
         resources=resources,
         semaphore=semaphore,
+        invariant_result=invariant_result,
     )

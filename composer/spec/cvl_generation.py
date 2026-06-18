@@ -118,10 +118,13 @@ class GeneratedCVL(BaseModel):
     cvl: str
     skipped: list[SkippedProperty] = Field(default_factory=list)
     property_rules: list[PropertyRuleMapping] = Field(default_factory=list)
-    # The final prover conf recorded during generation, persisted so that a cache hit
-    # (which skips the prover) can still write certora/confs. None for pre-existing cache
-    # entries or runs where the prover never ran.
-    conf: dict | None = Field(default=None)
+    # The base prover config (state["config"]) at completion, persisted so a cache hit
+    # (which skips the prover) can still reconstruct certora/confs. None for pre-existing
+    # cache entries or runs where no config was established.
+    config: dict | None = Field(default=None)
+    # The last prover-run link (URL or local results dir), persisted for the report and so a
+    # cache hit retains it. None when the prover never produced a link.
+    final_link: str | None = Field(default=None)
 
 
 # ---------------------------------------------------------------------------

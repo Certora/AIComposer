@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Callable, Iterator, override, AsyncContextManager
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, NotRequired
 
 from langchain_core.tools import InjectedToolCallId, tool, BaseTool
 from langgraph.prebuilt import InjectedState
@@ -44,31 +44,42 @@ from composer.spec.gen_types import CERTORA_DIR, SPECS_DIR, under_project
 _logger = logging.getLogger("composer.prover")
 
 
+def prover_config_overlay(base_config: dict, *, main_contract: str, verify_target: str) -> dict:
+    """The fixed prover settings the source pipeline layers on top of the base config.
+
+    Shared by the live ``verify_spec`` run and the persisted ``certora/confs`` dump so the
+    two can't drift. ``verify_target`` is the ``<contract>:<spec path>`` the run verifies.
+    """
+    return {
+        **base_config,
+        "verify": verify_target,
+        "parametric_contracts": main_contract,
+        "optimistic_loop": True,
+        "rule_sanity": "basic",
+    }
+
+
 def dump_final_conf(
     *,
     project_root: str,
     main_contract: str,
     task_id: str,
     spec_path: Path,
-    conf: dict | None = None,
+    base_config: dict | None,
 ) -> None:
-    """Write *task_id*'s last prover conf to ``certora/confs/{stem}.conf``,
-    rewriting the ``verify`` line to point at *spec_path*.
+    """Write the prover conf for *task_id* to ``certora/confs/{stem}.conf``.
 
-    *spec_path* is the path to the persisted spec **relative to the project root**
-    (e.g. ``certora/specs/invariants.spec``). It is used verbatim in the conf's
-    ``verify`` entry, which the prover resolves relative to the project root.
-
-    ``conf`` may be supplied explicitly (e.g. a conf persisted in the generation cache so
-    a cache hit can still produce the conf); when omitted it falls back to the conf
-    recorded by a live prover run this session. No-op if neither is available.
+    *base_config* is the generation's final ``state["config"]`` (persisted on
+    ``GeneratedCVL.config`` so a cache hit still has it). The fixed run overlay is applied
+    here via :func:`prover_config_overlay`, and the ``verify`` entry points at *spec_path*
+    (project-root-relative, e.g. ``certora/specs/invariants.spec``). No-op if no base config.
     """
-    if conf is None:
-        conf = get_run_summary().get_latest_conf(task_id=task_id)
-    if conf is None:
-        _logger.warning(f"Attempting to dump the conf for task_id {task_id} but it doesn't exist")
+    if base_config is None:
+        _logger.warning(f"Attempting to dump the conf for task_id {task_id} but no base config exists")
         return
-    conf["verify"] = f"{main_contract}:{spec_path}"
+    conf = prover_config_overlay(
+        base_config, main_contract=main_contract, verify_target=f"{main_contract}:{spec_path}"
+    )
     confs_dir = ensure_dir(under_project(project_root, CERTORA_DIR / "confs"))
     out_path = confs_dir / f"{Path(spec_path).stem}.conf"
     out_path.write_text(json.dumps(conf, indent=2))
@@ -93,6 +104,9 @@ def _merge_rule_skips(left: dict[str, str], right: dict[str, str]) -> dict[str, 
 class ProverStateExtra(TypedDict):
     rule_skips: Annotated[dict[str, str], _merge_rule_skips]
     config: dict
+    # Link of the last prover run this generation performed (URL or local results dir).
+    # Last-write-wins; absent until the first prover run. Read at completion onto GeneratedCVL.
+    prover_link: NotRequired[str | None]
 
 type ProverEvents = CEXAnalysisStart | CloudPollingEvent | ProverOutputEvent | RuleAnalysisResult | ProverRun | ProverLink | ProverResult
 
@@ -262,19 +276,14 @@ def get_prover_tool(
             return "Specification not yet put on VFS"
         conf = state["config"]
         with tmp_spec(root=project_root, content=state["curr_spec"]) as generated:
-            config = {
-                **conf,
-                "verify": f"{main_contract}:{generated}",
-                "parametric_contracts": main_contract,
-                "optimistic_loop": True,
-                "rule_sanity": "basic",
-            }
+            config = prover_config_overlay(
+                conf, main_contract=main_contract, verify_target=f"{main_contract}:{generated}"
+            )
 
             if rules:
                 config["rule"] = rules
 
             summary = get_run_summary()
-            summary.record_prover_conf(config)
 
             with temp_certora_file(
                 root = project_root,
@@ -295,7 +304,9 @@ def get_prover_tool(
             if isinstance(result, str):
                 return result
             if isinstance(result, SummarizedReport):
-                return result.todo_list
+                return tool_state_update(
+                    tool_call_id=tool_call_id, content=result.todo_list, prover_link=result.link
+                )
             all_verified = True
             for (r, stat) in result.rule_status.items():
                 if r in state["rule_skips"]:
@@ -304,7 +315,12 @@ def get_prover_tool(
                     all_verified = False
                     break
             if rules is None and all_verified:
-                return tool_state_update(tool_call_id=tool_call_id, content=result.report, validations=stamper(state))
-            return result.report
+                return tool_state_update(
+                    tool_call_id=tool_call_id, content=result.report,
+                    prover_link=result.link, validations=stamper(state),
+                )
+            return tool_state_update(
+                tool_call_id=tool_call_id, content=result.report, prover_link=result.link
+            )
 
     return verify_spec
