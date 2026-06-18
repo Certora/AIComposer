@@ -109,7 +109,7 @@ def make_prover_options(*, cloud: bool) -> ProverOptions:
     if cloud:
         extras = [
             "--global_timeout", str(int(DEFAULT_GLOBAL_TIMEOUT)),
-            "--server", cloud_server_for_env(),
+            "--server", cloud_server_for_env()
         ]
     return ProverOptions(extra_args=extras)
 

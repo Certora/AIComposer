@@ -41,6 +41,7 @@ class AutoProvePhase(enum.Enum):
     INVARIANTS = "invariants"
     SUMMARIES = "summaries"
     COMPONENT_ANALYSIS = "component_analysis"
+    FORMALIZE = "formalize"
     BUG_ANALYSIS = "bug_analysis"
     CVL_GEN = "cvl_gen"
 
@@ -51,6 +52,7 @@ AUTOPROVE_PHASE_LABELS: dict[AutoProvePhase, str] = {
     AutoProvePhase.INVARIANTS: "Structural Invariants",
     AutoProvePhase.SUMMARIES: "Summaries",
     AutoProvePhase.COMPONENT_ANALYSIS: "Component Analysis",
+    AutoProvePhase.FORMALIZE: "Formalize Properties",
     AutoProvePhase.BUG_ANALYSIS: "Property Extraction",
     AutoProvePhase.CVL_GEN: "CVL Generation",
 }
@@ -61,6 +63,7 @@ AUTOPROVE_SECTION_ORDER: list[str] = [
     "Structural Invariants",
     "Summaries",
     "Component Analysis",
+    "Formalize Properties",
     "Property Extraction",
     "CVL Generation",
 ]

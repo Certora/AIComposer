@@ -399,27 +399,15 @@ async def run_property_inference(
         AIMessage("<task-complete>", id=uuid.uuid4().hex)
     ]
 
-    def sort_to_string(
-        s: Literal["attack_vector", "invariant", "safety_property"]
-    ) -> str:
-        match s:
-            case "attack_vector":
-                return "Attack Vector"
-            case "invariant":
-                return "Invariant"
-            case "safety_property":
-                return "Safety Property"
-
     def property_as_text(
         prop: PropertyFormulation
     ) -> str:
-        return f"* [{sort_to_string(prop.sort)}] {prop.description}"
+        return f"* [{prop.sort}] {prop.description}"
 
     def property_as_md(
         prop: PropertyFormulation
     ) -> str:
-        sort_str = sort_to_string(prop.sort)
-        return f"* \\[{sort_str}\\] {prop.description}"
+        return f"* \\[{prop.sort}\\] {prop.description}"
 
     def properties_as_text(
         l: list[PropertyFormulation]

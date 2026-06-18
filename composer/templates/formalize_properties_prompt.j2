@@ -1,0 +1,73 @@
+<background>
+You are preparing a set of *already-known* security properties for formalization in CVL.
+Your job is NOT to invent properties. The properties are given to you below; you must map each
+one onto the component of the main contract whose behavior it constrains.
+</background>
+
+<context>
+{% from "application_context_macro.j2" import render_applicaton_context %}
+{% call(c) render_applicaton_context(context, True) %}{% endcall %}
+</context>
+
+<target>
+The properties below must each be mapped to one *component* of the main contract
+`{{ contract_spec.contract_name }}` (located at {{ contract_spec.relative_path }}).
+
+You MUST reference a component by BOTH its index (shown in square brackets) and its exact
+name; the two must be consistent. The valid components of
+`{{ contract_spec.contract_name }}` are:
+{% for c in context.components %}
+{% if c.name == contract_spec.contract_name %}
+{% for sub in c.components %}
+* [{{ loop.index0 }}] `{{ sub.name }}`: {{ sub.description }}
+  {% if sub.external_entry_points %}External entry points: {{ sub.external_entry_points | join(", ") }}{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+</target>
+
+<properties>
+The known properties to map:
+{% for p in properties %}
+* `{{ p.property_id }}` (sort: {{ p.sort }}): {{ p.property_desc }}
+{% endfor %}
+</properties>
+
+<task>
+Follow these instructions exactly:
+
+## Step 1
+For each property, determine which single component of `{{ contract_spec.contract_name }}` it most
+directly constrains: the component whose state variables and/or external entry points the
+property actually talks about.
+
+Decide this primarily from the component descriptions and the external entry points listed above:
+match the nouns and operations the property mentions against each component's description and its
+entry points, and pick the one whose responsibility most directly covers the property.
+
+Only as a last resort, when the descriptions and entry points above genuinely leave a property
+ambiguous between components, fall back to the source tools to read the relevant functions and
+state of `{{ contract_spec.contract_name }}` and confirm which component owns the behavior.
+
+## Step 2
+For each property you can confidently place, produce a `matched` entry with:
+- `property_id`: the exact id from the listing above,
+- `component`: the `index` AND exact `name` of one of the listed components of
+  `{{ contract_spec.contract_name }}` (the index and name must match),
+- `methods`: the external entry points (function names/signatures) of that component that are
+  involved in the property. For an invariant over contract state this may be empty.
+
+If and only if a property cannot be confidently mapped to any single component (for example,
+it concerns behavior that is not represented by any component, or it is too vague to place), put it
+in `unmatched` with a concrete `reason`. Do not force a bad mapping; an honest `unmatched` entry is
+preferable to a wrong one.
+
+## Step 3
+{% with draft_subject = "your property-to-component mapping (each property_id's component index+name and methods, plus any unmatched and why)", rough_draft_enforced = true %}
+{% include "rough_draft_protocol.j2" %}
+{% endwith %}
+
+## Step 4
+Deliver your result with the result tool. EVERY property_id from the listing must appear exactly
+once, either in `matched` or in `unmatched`, never in both, never omitted.
+</task>
