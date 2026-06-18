@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -47,6 +47,8 @@ ragbuild = [
     { name = "beautifulsoup4" },
     { name = "einops" },
     { name = "en-core-web-sm" },
+    { name = "markdown-it-py" },
+    { name = "mdit-py-plugins" },
     { name = "sentence-transformers" },
     { name = "spacy" },
 ]
@@ -86,6 +88,8 @@ ragbuild = [
     { name = "beautifulsoup4", specifier = "==4.13.5" },
     { name = "einops" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
+    { name = "markdown-it-py", specifier = ">=3.0" },
+    { name = "mdit-py-plugins", specifier = ">=0.4" },
     { name = "sentence-transformers", specifier = ">=5.1" },
     { name = "spacy", specifier = "==3.8.7" },
 ]

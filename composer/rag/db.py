@@ -47,8 +47,8 @@ _tqdm_cls.set_lock(threading.RLock())
 _RAG_HOST = os.environ.get("CERTORA_AI_COMPOSER_PGHOST", "localhost")
 _RAG_PORT = os.environ.get("CERTORA_AI_COMPOSER_PGPORT", "5432")
 DEFAULT_CONNECTION: str = f"postgresql://rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/rag_db"
-SANITY_DEFAULT_CONNECTION: str = f"postgresql://extended_rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/extended_rag_db"
-FOUNDRY_DEFAULT_CONNECTION: str = f"postgresql://rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/foundry_rag_db"
+SANITY_DEFAULT_CONNECTION: str = f"postgresql://extended_rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/rag_db"
+FOUNDRY_DEFAULT_CONNECTION: str = f"postgresql://foundry_rag_user:rag_password@{_RAG_HOST}:{_RAG_PORT}/rag_db"
 
 
 type _RagHeader = str | None
