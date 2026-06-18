@@ -27,6 +27,7 @@ from composer.diagnostics.timing import (
     set_current_task_id,
 )
 from composer.diagnostics.usage_callback import UsageCallback
+from composer.spec.source.autosetup import read_autosetup_usage
 from composer.spec.source.common_pipeline import dump_token_usage
 from graphcore.utils import TokenUsageDict
 
@@ -213,3 +214,116 @@ async def test_callback_records_on_async_invoke_through_binding():
     assert s.token_usage_by_model["claude-test"].input == 100
     s.record_phase(task_id="async-task", label="x", phase="p", wall_s=0.1, queue_wait_s=0.0)
     assert sum(s.phases[0].token_usage_by_model.values(), TokenTotals()).input == 100
+
+
+# --------------------------------------------------------------------------- #
+# AutoSetup external (subprocess) usage ingestion
+# --------------------------------------------------------------------------- #
+
+def _autosetup_bucket(i: int, o: int, cr: int, cw: int, calls: int = 1) -> dict:
+    """One AutoSetup ``rollup_llm_usage`` bucket (carries a ``calls`` count that
+    composer has no slot for and must drop)."""
+    return {
+        "calls": calls,
+        "input_tokens": i,
+        "output_tokens": o,
+        "cache_read_input_tokens": cr,
+        "cache_creation_input_tokens": cw,
+    }
+
+
+def _write_autosetup_usage(
+    project_root,
+    by_model: dict,
+    *,
+    timestamp: str = "20260101_000000",
+    write_result: bool = True,
+) -> None:
+    """Lay down the on-disk artifacts AutoSetup produces: a timestamped
+    ``.CertoraProverLiteReports/<ts>/llm_usage.json`` and (optionally) the
+    ``.certora_internal/autosetup_result.json`` carrying ``orchestration_timestamp``.
+    """
+    reports = project_root / ".CertoraProverLiteReports" / timestamp
+    reports.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "llm_usage": [],
+        "llm_usage_totals": {
+            "totals": {},
+            "by_model": by_model,
+            "by_component": {},
+            "by_contract": {},
+        },
+    }
+    (reports / "llm_usage.json").write_text(json.dumps(payload))
+    if write_result:
+        internal = project_root / ".certora_internal"
+        internal.mkdir(parents=True, exist_ok=True)
+        (internal / "autosetup_result.json").write_text(
+            json.dumps({"orchestration_timestamp": timestamp})
+        )
+
+
+def test_read_autosetup_usage_returns_token_usage_dicts(tmp_path):
+    _write_autosetup_usage(tmp_path, {
+        "claude-sonnet-4-5": _autosetup_bucket(100, 10, 5, 2),
+        "claude-opus-4": _autosetup_bucket(50, 5, 0, 1),
+    })
+    by_model = {u["model_name"]: u for u in read_autosetup_usage(tmp_path)}
+
+    assert by_model["claude-sonnet-4-5"] == {
+        "model_name": "claude-sonnet-4-5",
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "cache_read_input_tokens": 5,
+        "cache_creation_input_tokens": 2,
+    }
+    assert by_model["claude-opus-4"]["input_tokens"] == 50
+    assert "calls" not in by_model["claude-sonnet-4-5"]  # AutoSetup-only field dropped
+
+
+def test_autosetup_usage_folds_into_run_summary(tmp_path):
+    """The exact fold run_autosetup_phase performs: under AUTOSETUP_TASK_ID, each
+    model lands in run totals AND the 'autosetup' phase, with the
+    cache_creation_input_tokens -> cache_write rename applied."""
+    _write_autosetup_usage(tmp_path, {"claude-sonnet-4-5": _autosetup_bucket(100, 10, 5, 2)})
+
+    s = RunSummary()
+    with set_current_task_id("autosetup"):
+        for usage in read_autosetup_usage(tmp_path):
+            s.record_token_usage(usage)
+    s.record_phase(task_id="autosetup", label="AutoSetup", phase="autosetup",
+                   wall_s=1.0, queue_wait_s=0.0)
+
+    m = s.token_usage_by_model["claude-sonnet-4-5"]
+    assert (m.input, m.output, m.cache_read, m.cache_write) == (100, 10, 5, 2)
+    assert s.token_usage_summary()["by_phase"] == [{
+        "task_id": "autosetup", "phase": "autosetup",
+        "input": 100, "output": 10, "cache_read": 5, "cache_write": 2,
+    }]
+
+
+def test_autosetup_usage_missing_file_is_noop(tmp_path):
+    assert read_autosetup_usage(tmp_path) == []
+    s = RunSummary()
+    for usage in read_autosetup_usage(tmp_path):
+        s.record_token_usage(usage)
+    assert not s.total_tokens()
+    assert "Tokens:" not in s.format()
+
+
+def test_autosetup_usage_zero_row_file(tmp_path):
+    """A cache-hit run writes a file with no rows -> empty by_model & totals."""
+    _write_autosetup_usage(tmp_path, {})
+    assert read_autosetup_usage(tmp_path) == []
+
+
+def test_autosetup_usage_fallback_newest_dir(tmp_path):
+    """With no autosetup_result.json, the newest timestamped reports dir wins
+    (timestamps sort lexicographically)."""
+    _write_autosetup_usage(tmp_path, {"old": _autosetup_bucket(1, 1, 0, 0)},
+                           timestamp="20260101_000000", write_result=False)
+    _write_autosetup_usage(tmp_path, {"new": _autosetup_bucket(9, 9, 0, 0)},
+                           timestamp="20260102_000000", write_result=False)
+    usage = read_autosetup_usage(tmp_path)
+    assert [u["model_name"] for u in usage] == ["new"]
+    assert usage[0]["input_tokens"] == 9
