@@ -22,7 +22,7 @@ from composer.spec.prop import PropertyFormulation
 from composer.spec.gen_types import (
     CVLResource, CERTORA_DIR, SPECS_DIR, PROPERTIES_SUBDIR, AUTOPROVE_INTERNAL_DIR, under_project,
 )
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
@@ -141,7 +141,7 @@ async def extract_all_components(
     source_input: SourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
     interactive: bool,
@@ -157,7 +157,7 @@ async def extract_all_components(
     """
     ind = -1
     for i, c in enumerate(summary.contract_components):
-        if c.name == source_input.contract_name:
+        if c.solidity_identifier == source_input.contract_name:
             ind = i
             break
     if ind == -1:
@@ -208,7 +208,7 @@ async def generate_all_component_cvl(
     source_input: SourceCode,
     component_batches: list[_ComponentBatch],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     prover_tool: BaseTool,
     prover_config: dict,
     resources: list[CVLResource],
@@ -356,7 +356,7 @@ async def run_generation_pipeline(
     source_input: SourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
     resources: list[CVLResource],

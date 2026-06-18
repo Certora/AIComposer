@@ -24,7 +24,7 @@ from composer.spec.context import (
 )
 from composer.spec.gen_types import CVLResource, certora_relative_to_project
 from composer.spec.source.system_analysis import run_component_analysis
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import (
     HarnessedApplication, SourceExplicitContract,
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
@@ -56,7 +56,7 @@ async def run_autoprove_pipeline(
     source_input: SourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     custom_summary_path: str,
     standard_summary_path: str,
     config_path: str,
@@ -87,10 +87,11 @@ async def run_autoprove_pipeline(
         comp.append(HarnessedExplicitContract(
             sort=c.sort,
             name=c.name,
+            solidity_identifier=c.solidity_identifier,
             components=c.components,
             description=c.description,
             path=c.path,
-            harnesses=contract_to_harness.get(c.name, [])
+            harnesses=contract_to_harness.get(c.solidity_identifier, [])
         ))
 
 

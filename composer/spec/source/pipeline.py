@@ -33,11 +33,11 @@ from composer.spec.gen_types import CVLResource, CERTORA_DIR, SPECS_DIR, certora
 from composer.spec.util import ensure_dir
 from composer.spec.source.harness import run_harness_creation, run_autosetup_phase, ContractSetup
 from composer.spec.source.system_analysis import run_component_analysis
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.source.summarizer import setup_summaries
 from composer.spec.system_model import (
     HarnessedApplication, SourceExplicitContract,
-    HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
+    HarnessedExplicitContract, SourceExternalActor, HarnessDefinition, SolidityIdentifier
 )
 from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import get_prover_tool, dump_final_conf
@@ -73,7 +73,7 @@ async def run_autoprove_pipeline(
     source_input: SourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     *,
     prover_opts: ProverOptions,
     max_concurrent: int = 4,
@@ -107,7 +107,7 @@ async def run_autoprove_pipeline(
         lambda: run_harness_creation(ctx, source_input, env, s),
     )
 
-    contract_to_harness : dict[str, list[HarnessDefinition]] = {}
+    contract_to_harness : dict[SolidityIdentifier, list[HarnessDefinition]] = {}
     for c in sys_desc.transitive_closure:
         if not c.harness_definition:
             continue
@@ -115,7 +115,7 @@ async def run_autoprove_pipeline(
             contract_to_harness[c.harness_definition.harness_of] = []
         contract_to_harness[c.harness_definition.harness_of].append(
             HarnessDefinition(
-                name=c.name,
+                name=c.solidity_identifier,
                 path=c.path
             )
         )
@@ -128,10 +128,11 @@ async def run_autoprove_pipeline(
         comp.append(HarnessedExplicitContract(
             sort=c.sort,
             name=c.name,
+            solidity_identifier=c.solidity_identifier,
             components=c.components,
             description=c.description,
             path=c.path,
-            harnesses=contract_to_harness.get(c.name, [])
+            harnesses=contract_to_harness.get(c.solidity_identifier, [])
         ))
 
 

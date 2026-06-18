@@ -1,12 +1,12 @@
 
-from typing import Callable, NotRequired, Protocol, Sequence, Any
+from typing import Callable, NotRequired, Sequence
 from typing_extensions import TypedDict
+from composer.spec.service_host import Sort, ServiceHost
 
 from pydantic import BaseModel, Field
 
 
 from langgraph.graph import MessagesState
-from langchain_core.tools import BaseTool
 
 from graphcore.graph import FlowInput
 
@@ -19,7 +19,6 @@ from composer.cvl.tools import get_cvl
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.gen_types import TemplateInstantiation, InjectedTemplate, TypedTemplate
 from composer.spec.cvl_generation import FeedbackToolContext, Rebuttal, SkippedProperty
-from composer.spec.tool_env import BasicAgentTools
 from composer.spec.system_model import ContractComponentInstance
 from composer.spec.util import uniq_thread_id
 
@@ -30,37 +29,45 @@ class PropertyFeedback(BaseModel):
     good: bool = Field(description="Whether the properties are good as is, or if there is room for improvement")
     feedback: str = Field(description="The feedback on the rule if work is needed. Can be empty if there is no feedback")
 
-class FeedbackEnv(BasicAgentTools, Protocol):
-    @property
-    def feedback_tools(self) -> tuple[BaseTool, ...]:
-        ...
-
 class Properties(TypedDict):
     properties: list[PropertyFormulation]
 
 class FeedbackInherentParams(TypedDict):
     context: ContractComponentInstance | None
-    has_source: bool
+    # Matches the tri-state on the env-level ``sort``:
+    #   ``greenfield`` — no pre-existing Solidity anywhere; everything is stubs.
+    #   ``update``     — pre-existing codebase being extended; target is a
+    #                    new-contract stub, others are stable source.
+    #   ``existing``   — pre-existing codebase being verified as-is; target
+    #                    has real immutable source.
+    sort: Sort
 
 FeedbackTemplate = TypedTemplate[FeedbackInherentParams]("property_judge_prompt.j2")
 
-# Default judge system prompt for the no-source (natspec) flow: same template the
-# source-mode judge uses, with the source-tool sections compiled out. Source-mode
-# callers override with has_source=True (see composer/spec/source/author.py).
-FeedbackSystemTemplate = TypedTemplate[dict[str, Any]]("property_judge_system_prompt.j2").bind({"has_source": False})
+class JudgeSystemParams(TypedDict):
+    sort: Sort
+
+# Judge system prompt, shared between the natspec and source-mode flows. The fs
+# primitives are always documented; ``sort`` drives the rest (the template
+# compiles out the code_explorer / code_document_ref guidance unless
+# ``sort == "existing"``, the only mode that wires those tools).
+FeedbackSystemTemplate = TypedTemplate[JudgeSystemParams]("property_judge_system_prompt.j2")
 
 def property_feedback_judge(
     ctx: WorkflowContext[CVLJudge],
-    env: FeedbackEnv,
+    env: ServiceHost,
     prompt: InjectedTemplate[Properties] | TemplateInstantiation,
     props: list[PropertyFormulation],
     *,
     extra_inputs: list[str | dict] | Callable[[], list[str | dict]] | None = None,
-    system_prompt: TemplateInstantiation = FeedbackSystemTemplate
+    system_prompt: TemplateInstantiation | None = None,
 ) -> FeedbackToolContext:
 
+    if system_prompt is None:
+        system_prompt = FeedbackSystemTemplate.bind({"sort": env.sort})
+
     builder = env.builder.with_tools(
-        env.feedback_tools
+        env.all_tools
     )
 
     class JudgeExtra(RoughDraftState):

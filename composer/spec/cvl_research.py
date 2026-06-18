@@ -69,7 +69,7 @@ widget; pass ``None`` for top-level invocations."""
 
 
 def _did_read_draft(s: _CVLResearchST, _: Any) -> str | None:
-    if s.get("did_read", None) is None:
+    if not s.get("did_read"):
         return "You must read your rough draft before delivering your answer"
     return None
 

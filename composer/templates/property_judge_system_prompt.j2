@@ -2,22 +2,24 @@
 
 ## Tools
 
-{% if has_source %}
+{# The fs primitives are always present; only the source-mode (autoprove)
+   pipeline wires the code_explorer / code_document_ref pair. #}
+{% with source_tools_has_explorer = sort == "existing" %}
 {% include "source_tools_system_prompt.j2" %}
-{% endif %}
+{% endwith %}
 {% include "cvl_tools_system_prompt.j2" %}
 
 ## Citations
 
-{% with doc_ref_code = has_source %}
+{% with doc_ref_code = sort == "existing" %}
 {% include "doc_ref_reader.j2" %}
 {% endwith %}
 
-{% with doc_ref_artifact = "feedback", doc_ref_code = has_source %}
+{% with doc_ref_artifact = "feedback", doc_ref_code = sort == "existing" %}
 {% include "doc_ref_author.j2" %}
 {% endwith %}
 
-{% if has_source %}
+{% if sort != "greenfield" %}
 ## No Source Changes
 
 Do NOT provide any feedback suggesting the Solidity code under verification (including verification harnesses)
