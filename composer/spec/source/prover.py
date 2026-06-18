@@ -257,6 +257,9 @@ def get_prover_tool(
     # under a deterministic name and unlinked on exit, so two overlapping same-stem
     # calls (e.g. parallel verify_spec for one component) would race. Distinct stems
     # stay concurrent (notably on cloud, where ``sem`` is a no-op).
+    # Not pruned: bounded by this run's stems (per-component + invariants) and dies with
+    # the per-run tool; popping a held lock would let a later same-stem call mint a fresh,
+    # non-excluding one.
     spec_locks: dict[str, asyncio.Lock] = {}
 
     @tool_display("Running prover", None)
