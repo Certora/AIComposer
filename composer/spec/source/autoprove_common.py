@@ -33,7 +33,7 @@ from composer.core.user import get_uid, user_data_ns
 from composer.spec.cvl_research import DEFAULT_CVL_AGENT_INDEX_NS
 from composer.ui.autoprove_app import AutoProvePhase
 from composer.ui.tool_display import async_tool_context
-from composer.io.thread_logging import thread_logger, DEFAULT_META_NS
+from composer.io.thread_logging import thread_logger, default_logging_ns
 
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.io.multi_job import HandlerFactory
@@ -152,12 +152,11 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         thread_logger(
             conns.store,
             {"root_thread_id": thread_id},
-            user_ns(DEFAULT_META_NS),
+            default_logging_ns(None),
             run_id=summary.run_id,
             # Persist final token usage into RunMeta.tags at run close (totals
             # known only once the pipeline is done). Mirrors token_usage.json.
-            finalize_tags=lambda: {"token_usage": summary.token_usage_summary()},
-        )
+        ) as data_logger
     ):
         # Source-code agent caches are always per-user — the conventional
         # ``user_data_ns(uid)`` prefix lives directly in the ns we pass
@@ -224,6 +223,9 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[Executor]:
         try:
             yield runner
         finally:
+            await data_logger(
+                "token_usage", summary.token_usage_summary()
+            )
             # Dump final LLM token usage for the run (success or failure). Single
             # choke point both console and TUI entry points pass through, with
             # system_doc in scope and the summary fully populated. Guarded so a
