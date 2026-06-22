@@ -14,7 +14,7 @@ set -euo pipefail
 script_dir="$(realpath "$(dirname "$0")")"
 parent="$(realpath "$script_dir/..")"
 
-BOOK_REPO="https://github.com/foundry-rs/book/"
+BOOK_REPO="https://github.com/Certora/foundry-book"
 # Cheatcode reference pages (one .mdx per cheatcode) within the book repo.
 CHEATCODES_SUBPATH="src/pages/reference/cheatcodes"
 
