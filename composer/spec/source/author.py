@@ -362,6 +362,10 @@ async def batch_cvl_generation(
         "contract_name": source.contract_name
     })
 
+    # use "cache=long" to account for very long prover runs.
+    # on anthropic (the only backend we support) a long cache is 1hr
+    # NB that on longer prover runs we'll still get a cache miss;
+    # this is a trade off we may have to revisit later.
     task_graph = env.builder_heavy(cache_level=CacheLevel.LONG).with_tools(
         env.all_tools
     ).with_tools(

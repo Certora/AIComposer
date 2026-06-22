@@ -15,7 +15,7 @@ from graphcore.tools.schemas import WithAsyncImplementation, WithInjectedId
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.tools.thinking import get_rough_draft_tools, RoughDraftState
-from composer.spec.tool_env import BaseRAGTools, BasicAgentTools
+from composer.spec.tool_env import BaseRAGTools
 from composer.spec.util import uniq_thread_id
 from composer.spec.agent_index import AgentIndex, IndexedTool
 from composer.spec.gen_types import TypedTemplate
@@ -32,8 +32,10 @@ CVL_RESEARCH_BASE_DOC = (
     "questions related to CVL authorship."
 )
 
-class CVLResearchEnv(BaseRAGTools, BasicAgentTools, Protocol):
-    pass
+class CVLResearchEnv(BaseRAGTools, Protocol):
+    @property
+    def builder(self) -> Builder[None, None, None]:
+        ...
 
 class CVLResearchSysParams(TypedDict):
     context_instructions: str | None

@@ -34,7 +34,6 @@ def build_rag_tools(
     @dataclass(frozen=True)
     class _CVLResearchEnv:
         builder: Builder[None, None, None]
-        llm: BaseChatModel
         base_rag_tools: tuple[BaseTool, ...]
         agent_index: AgentIndex
 
@@ -43,7 +42,6 @@ def build_rag_tools(
             builder=models.builder_lite(),
             base_rag_tools=s.base_rag_tools,
             agent_index=ind,
-            llm=models.llm_lite(),
         ),
         CVL_RESEARCH_BASE_DOC,
         recursion_limit=recursion_limit,
