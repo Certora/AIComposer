@@ -20,7 +20,6 @@ from composer.spec.context import WorkflowContext, CVLGeneration, SourceCode
 from composer.spec.prop import PropertyFormulation
 from composer.spec.system_model import ContractComponentInstance, SolidityIdentifier
 from composer.spec.source.prover import ProverStateExtra, DELETE_SKIP, VALIDATION_KEY as PROVER_VALIDATION_KEY
-from composer.diagnostics.timing import get_run_summary
 from langgraph.graph import MessagesState
 from langgraph.runtime import get_runtime
 from pathlib import Path
@@ -414,14 +413,14 @@ async def batch_cvl_generation(
         return GaveUp(reason=res_state["result"])
     d = res_state["curr_spec"]
     assert d is not None
-    # Persist the final prover conf so a later cache hit (which skips the prover, and thus
-    # never re-records the conf) can still write certora/confs.
-    final_conf = get_run_summary().get_latest_conf()
+    # Persist the base prover config and last run link from the final state so a later cache
+    # hit (which skips the prover) can still reconstruct certora/confs and retain the link.
     return GeneratedCVL(
         commentary=res_state["result"],
         cvl=d,
         skipped=res_state["skipped"],
         property_rules=res_state["property_rules"],
-        conf=final_conf,
+        config=res_state["config"],
+        final_link=res_state.get("prover_link"),
     )
 

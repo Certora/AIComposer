@@ -31,8 +31,9 @@ from graphcore.graph import FlowInput
 from graphcore.tools.vfs import VFSState, VFSToolConfig, vfs_tools
 from graphcore.tools.results import result_tool_generator
 
+from composer.diagnostics.timing import get_run_summary
 from composer.spec.graph_builder import run_to_completion, bind_standard
-from composer.spec.source.autosetup import run_autosetup, SetupFailure, SetupSuccess
+from composer.spec.source.autosetup import run_autosetup, read_autosetup_usage, SetupFailure, SetupSuccess
 from composer.spec.service_host import ServiceHost
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import string_hash
@@ -589,6 +590,17 @@ async def run_autosetup_phase(
 
     if isinstance(setup_result, SetupFailure):
         raise RuntimeError(f"Auto setup failed: {setup_result.error}\nProc stderr:\n{setup_result.stderr}")
+
+    # AutoSetup runs as a subprocess; its LLM token usage never reaches composer's
+    # UsageCallback. Fold the counts it wrote to disk into the run summary so they
+    # land in token_usage.json, the run tag, and the end-of-run table. No task_id:
+    # the active task is already AUTOSETUP_TASK_ID, so this attributes to the
+    # autosetup phase. Guarded — read_autosetup_usage returns [] if absent. This is
+    # only reached on a cache miss (cache hits return above), so usage spent in this
+    # process's autosetup run is counted exactly once.
+    summary = get_run_summary()
+    for usage in read_autosetup_usage(Path(source.project_root)):
+        summary.record_token_usage(usage)
 
     await cache.cache_put(setup_result)
     return setup_result

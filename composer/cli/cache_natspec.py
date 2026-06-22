@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import sys
 from dataclasses import dataclass
+from typing import Literal, assert_never
 
 from composer.ui.cache_explorer import (
     CacheNode, CacheExplorerApp, DummyServices, StoreNode,
@@ -26,7 +27,7 @@ from composer.input.types import DEFAULT_RECURSION_LIMIT
 from composer.io.run_index import get_run
 from composer.spec.context import (
     WorkflowContext, CacheKey, CVLGeneration,
-    Contract, ComponentGroup, Properties, CVLJudge
+    Contract, ComponentGroup, Properties
 )
 from composer.spec.natspec.run_tags import NatspecRunTags
 from composer.spec.system_model import (
@@ -69,7 +70,6 @@ type NatSpecCachedValue = (
     | AuthorResult
     | _LastAttemptCache
     | RegistryRaw
-    | CVLJudge
 )
 
 
@@ -79,7 +79,7 @@ class RegistryRaw:
     KV slots — these aren't BaseModels (the registries persist plain dicts),
     so we display them via a dedicated ``format_value`` case rather than
     rehydrating into a typed model."""
-    kind: str  # "stub_state" | "file_registry_contract"
+    kind: Literal["stub_state", "file_registry_contract"]
     payload: dict
 
 # Cache-key literal used by source_analysis — same across mental models.
@@ -453,13 +453,15 @@ def format_value(val: NatSpecCachedValue) -> list[str]:
             lines.append(payload.get("content", ""))
 
         case RegistryRaw(kind="file_registry_contract", payload=payload):
-            entries = payload.get("files", [])
+            entries = val.payload.get("files", [])
             lines.append(f"Registered files ({len(entries)}):")
             for e in entries:
                 ident = e.get("solidity_identifier")
                 suffix = f":{ident}" if ident else ""
                 lines.append(f"  - {e.get('path')}{suffix}")
-
+        case RegistryRaw():
+            assert val.kind != "file_registry_contract" and val.kind != "stub_state"
+            assert_never(val.kind)
     return lines
 
 

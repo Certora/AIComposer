@@ -88,7 +88,7 @@ async def generate_interface[I: InterfaceDeclModel](
         """
 
         @override
-        async def validate(self, res: InterfaceResult[I]) -> str | None:
+        async def validate_result(self, res: InterfaceResult[I]) -> str | None:
             seen: set[SolidityIdentifier] = set()
             for nm, i in res.name_to_interface.items():
                 if nm not in external_contracts:

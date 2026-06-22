@@ -87,7 +87,7 @@ async def generate_stub[S: StubDeclarationModel](
         """
 
         @override
-        async def validate(self, res: S) -> str | None:
+        async def validate_result(self, res: S) -> str | None:
             interface_basename = pathlib.Path(interface_to_implement.path).name
             if interface_basename not in res.content:
                 return f"Stub must import the interface file ({interface_basename})."

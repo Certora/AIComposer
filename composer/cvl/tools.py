@@ -18,6 +18,7 @@ from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field, create_model
 
 from composer.certora_env import typechecker_jar
+from composer.core.edit import replace_unique, EditOk, EditErr
 from composer.cvl.schema import CVLFile
 from composer.cvl.pretty_print import pretty_print
 from composer.ui.tool_display import tool_display_of, CommonTools, ToolDisplay, suppress_ack
@@ -32,6 +33,8 @@ _put_cvl_display = ToolDisplay(
 _put_cvl_raw_display = _put_cvl_display
 
 _get_cvl_display = ToolDisplay("Reading spec", None)
+
+_edit_cvl_display = ToolDisplay("Editing spec", suppress_ack("Spec edit result"))
 
 
 put_cvl_description = """
@@ -226,3 +229,55 @@ def get_cvl(
             )
         return spec
     return get_cvl
+
+
+edit_cvl_description = """
+Make a surgical edit to the current CVL spec instead of re-emitting the whole file.
+
+Provide `old_string` — an exact span copied from the current spec — and `new_string`
+to replace it with. `old_string` must occur exactly once; include enough surrounding
+context to make it unique. Prefer this over `put_cvl_raw` when changing only part of an
+existing spec (e.g. one line of a failing rule): it is dramatically cheaper than
+re-sending the entire file.
+
+The edited spec is run through the CVL parser exactly like `put_cvl_raw`. If the result
+fails to parse, the edit is rejected with the parser errors and the buffer is unchanged.
+"""
+
+
+class EditCVLTemplate(BaseModel):
+    old_string: str = Field(
+        description="The exact span of the current spec to replace. Must occur exactly once; "
+        "include surrounding context to disambiguate."
+    )
+    new_string: str = Field(description="The text to replace `old_string` with.")
+
+
+def edit_cvl[S: WithCurrSpec](ty: type[S]) -> BaseTool:
+    """A surgical-edit tool over the ``curr_spec`` buffer: single-occurrence
+    string replace, then re-validate the result exactly like ``put_cvl_raw``."""
+    schema = create_model(
+        "EditCVL",
+        __base__=EditCVLTemplate,
+        __doc__=edit_cvl_description,
+        state=(Annotated[ty, InjectedState], ...),
+        tool_call_id=(Annotated[str, InjectedToolCallId], ...),
+    )
+
+    @tool_display_of(_edit_cvl_display)
+    @tool(args_schema=schema)
+    def edit_cvl(**args) -> str | Command:
+        st = args["state"]
+        if st["curr_spec"] is None:
+            return "No spec file written yet — use put_cvl or put_cvl_raw first."
+        match replace_unique(st["curr_spec"], args["old_string"], args["new_string"]):
+            case EditErr(message=msg):
+                return msg
+            case EditOk(text=new_text):
+                return maybe_update_cvl(
+                    tool_call_id=args["tool_call_id"],
+                    pp=new_text,
+                    spec_key=DEFAULT_SPEC_KEY,
+                    reset_read=DEFAULT_READ_KEY,
+                )
+    return edit_cvl

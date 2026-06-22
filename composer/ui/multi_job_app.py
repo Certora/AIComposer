@@ -189,7 +189,7 @@ class _ConversationSession(ToolCallRenderer):
             case StateUpdate():
                 await self._remove_spinner()
                 await self._mount(self._panel, Static(ev.state_display))
-            case ToolComplete(tid=_tid):
+            case ToolComplete(thread_id=_tid):
                 # Results are suppressed in refinement mode.  Anchor is
                 # available via renderer.get_tool_call_anchor(tid) if a
                 # future change wants to flip its styling.

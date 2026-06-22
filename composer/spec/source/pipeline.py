@@ -24,11 +24,10 @@ from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.input.files import Document
 from composer.spec.context import (
-    WorkflowContext, SourceCode, CacheKey, Properties, CVLGeneration,
+    WorkflowContext, CacheKey, Properties, CVLGeneration,
 )
 from composer.spec.prop import PropertyFormulation
-from composer.spec.gen_types import CVLResource, CERTORA_DIR, SPECS_DIR, certora_relative_to_project, under_project
-from composer.spec.util import ensure_dir
+from composer.spec.gen_types import CVLResource, SPECS_DIR, certora_relative_to_project
 from composer.spec.source.harness import run_harness_creation, run_autosetup_phase, ContractSetup
 from composer.spec.source.system_analysis import run_component_analysis
 from composer.spec.service_host import ServiceHost
@@ -38,11 +37,12 @@ from composer.spec.system_model import (
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition, SolidityIdentifier
 )
 from composer.spec.cvl_generation import GeneratedCVL
-from composer.spec.source.prover import get_prover_tool, dump_final_conf
+from composer.spec.source.prover import get_prover_tool
 from composer.prover.core import ProverOptions
 from composer.spec.source.struct_invariant import get_invariant_formulation
 from composer.spec.source.author import batch_cvl_generation, GaveUp
-from composer.spec.source.common_pipeline import extract_all_components, generate_all_component_cvl, AutoProveResult, dump_properties, dump_property_rules
+from composer.spec.source.artifacts import InvariantSpec, ProverSourceCode
+from composer.spec.source.common_pipeline import extract_all_components, generate_all_component_cvl, AutoProveResult
 from composer.spec.source.task_ids import (
     SYSTEM_ANALYSIS_TASK_ID, HARNESS_TASK_ID, AUTOSETUP_TASK_ID,
     SUMMARIES_TASK_ID, INVARIANTS_TASK_ID, INVARIANT_CVL_TASK_ID,
@@ -67,7 +67,7 @@ INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 # ---------------------------------------------------------------------------
 
 async def run_autoprove_pipeline(
-    source_input: SourceCode,
+    source_input: ProverSourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
     env: ServiceHost,
@@ -211,7 +211,10 @@ async def run_autoprove_pipeline(
     if not component_batches:
         raise ValueError("No properties extracted from any component.")
 
-    certora_dir = under_project(source_input.project_root, CERTORA_DIR)
+    store = source_input.artifact_store
+
+    # In-memory invariant result (props + GeneratedCVL), threaded into the report phase below.
+    invariant_result: tuple[list[PropertyFormulation], GeneratedCVL] | None = None
 
     # ------------------------------------------------------------------
     # Join, stage 1: structural-invariant CVL. Runs before the per-component
@@ -233,7 +236,7 @@ async def run_autoprove_pipeline(
         ]
 
         # Dump the analysis-phase invariant properties now that we have them.
-        dump_properties(certora_dir, "invariants", inv_props)
+        store.write_analysis_properties(InvariantSpec(), inv_props)
 
         if cached_inv_cvl is not None:
             inv_cvl = cached_inv_cvl
@@ -261,20 +264,10 @@ async def run_autoprove_pipeline(
             inv_cvl = inv_cvl_result
             await inv_cvl_ctx.cache_put(inv_cvl)
 
-        ensure_dir(certora_dir / "specs")  # absolute (project_root/certora/specs)
-        # Canonical (project-root-relative) path of the persisted spec. The conf's
-        # verify entry derives from it; the CVL import path is derived (relative to
-        # certora/specs/) where the import is emitted.
-        inv_spec_path = SPECS_DIR / "invariants.spec"
-        under_project(source_input.project_root, inv_spec_path).write_text(inv_cvl.cvl)
-        dump_property_rules(certora_dir, "invariants", inv_cvl.property_rules)
-        dump_final_conf(
-            project_root=source_input.project_root,
-            main_contract=source_input.contract_name,
-            task_id=inv_task_id,
-            spec_path=inv_spec_path,
-            conf=inv_cvl.conf,
-        )
+        # Writes invariants.spec + its property_rules/commentary/conf bundle, and returns the
+        # spec's canonical (project-root-relative) path. The conf's verify entry derives from
+        # it; the CVL import path is derived (relative to certora/specs/) where it is emitted.
+        inv_spec_path = store.write_generated_spec(InvariantSpec(), inv_cvl)
         # All three streams have already joined, so `resources` is no longer
         # shared with any running task: this append is race-free, and the
         # stage-2 component CVLs below will see invariants.spec.
@@ -284,6 +277,7 @@ async def run_autoprove_pipeline(
             description="Structural invariants that may be assumed as preconditions",
             sort="import",
         ))
+        invariant_result = (inv_props, inv_cvl)
 
     # ------------------------------------------------------------------
     # Join, stage 2: per-component CVL (parallel, semaphore-bounded). Imports
@@ -298,4 +292,5 @@ async def run_autoprove_pipeline(
         prover_config=setup_config.prover_config,
         resources=resources,
         semaphore=semaphore,
+        invariant_result=invariant_result,
     )

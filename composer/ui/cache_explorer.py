@@ -8,7 +8,7 @@ tree builder and value formatter.
 See scripts/cache_explorer.py for the NatSpec pipeline entry point.
 """
 
-from typing import Callable, Awaitable, AsyncIterator, Iterator
+from typing import Callable, Awaitable, AsyncIterator, Iterator, Never
 from dataclasses import dataclass, field
 from contextlib import contextmanager, asynccontextmanager
 from contextvars import ContextVar
@@ -186,9 +186,9 @@ async def leaf[T: CacheTypes, S: BaseModel](
 
 def memory[T: CacheTypes, S: Marker](
     ctx: WorkflowContext[T], child: CacheKey[T, S], label: str,
-) -> CacheNode[S]:
+) -> CacheNode[Never]:
     """A node pointing at a memory marker (no cached value to fetch)."""
-    return CacheNode[S](label=label, value=None, ctx=ctx.child(child))
+    return CacheNode[Never](label=label, value=None, ctx=ctx.child(child))
 
 
 async def collect_tree[V](

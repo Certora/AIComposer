@@ -1,4 +1,4 @@
-from typing import Any, Callable, Sequence, override
+from typing import Any, Callable, Sequence, override, cast
 import random
 import asyncio
 
@@ -8,7 +8,7 @@ from langchain_core.language_models.fake_chat_models import (
 )
 from langchain_core.prompt_values import PromptValue
 from langchain_core.tools import BaseTool
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from composer.diagnostics.timing import get_current_task_id
@@ -77,6 +77,7 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
     ):
         return self
 
+    @override
     async def ainvoke(
         self,
         input: PromptValue | str | Sequence[BaseMessage | list[str] | tuple[str, str] | str | dict[str, Any]],
@@ -84,7 +85,7 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
         *,
         stop: list[str] | None = None,
         **kwargs: Any
-    ) -> BaseMessage:
+    ) -> AIMessage:
         # Simulate LLM latency to keep the TUI from filling all at once to give some ability to judge the "feel" of the UI.
         await asyncio.sleep(random.random() * 1.5 + 1.0)
 
@@ -110,4 +111,4 @@ class HarnessFakeLLM(FakeMessagesListChatModel):
                 f"this phase. Prompt -> {_prompt_preview(input)}"
             )
         self.lane_cursors[task_id] = i + 1
-        return lane[i]
+        return cast(AIMessage, lane[i])

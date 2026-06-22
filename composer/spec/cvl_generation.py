@@ -29,7 +29,7 @@ from composer.spec.context import (
 from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance
 from composer.core.state import merge_validation
 from composer.spec.graph_builder import run_to_completion
-from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl
+from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl, edit_cvl
 from composer.ui.tool_display import tool_display, suppress_ack
 
 class PropertyFeedbackProtocol(Protocol):
@@ -57,15 +57,7 @@ class PropertyRuleMapping(BaseModel):
     property_title: str = Field(description="The unique snake_case title of the property (from the batch listing) that these rules verify")
     rules: list[str] = Field(description="The names of the rules/invariants in the spec that verify this property")
 
-
-class Rebuttal(BaseModel):
-    """A rebuttal to a specific piece of feedback from a prior round, backed by evidence.
-
-    File a rebuttal when a prior-round suggestion was tried and provably does not work —
-    a typecheck error, a persistent counterexample, a CVL construct that does not parse,
-    etc. Do NOT file rebuttals for feedback you merely disagree with; address those by
-    revising the spec.
-    """
+class RebuttalBase(BaseModel):
     prior_feedback_reference: str = Field(
         description=(
             "A brief quote from, or clear pointer to, the piece of prior-round feedback "
@@ -73,6 +65,24 @@ class Rebuttal(BaseModel):
             "suggestion you are responding to — not a full transcript."
         )
     )
+    evidence: str = Field(
+        description=(
+            "The concrete artifact backing the rebuttal: typecheck error text, a "
+            "counterexample summary, a manual quote with location, or a brief reasoned "
+            "argument. Keep it short and specific — the judge reads this verbatim."
+        )
+    )
+
+
+
+class Rebuttal(RebuttalBase):
+    """A rebuttal to a specific piece of feedback from a prior round, backed by evidence.
+
+    File a rebuttal when a prior-round suggestion was tried and provably does not work —
+    a typecheck error, a persistent counterexample, a CVL construct that does not parse,
+    etc. Do NOT file rebuttals for feedback you merely disagree with; address those by
+    revising the spec.
+    """
     evidence_type: Literal[
         "typecheck_failure",
         "counterexample",
@@ -84,13 +94,6 @@ class Rebuttal(BaseModel):
             "`counterexample`, `manual_citation`) carry more weight than `reasoned`; "
             "only use `reasoned` when you genuinely cannot produce tool output or a "
             "manual citation."
-        )
-    )
-    evidence: str = Field(
-        description=(
-            "The concrete artifact backing the rebuttal: typecheck error text, a "
-            "counterexample summary, a manual quote with location, or a brief reasoned "
-            "argument. Keep it short and specific — the judge reads this verbatim."
         )
     )
 
@@ -118,10 +121,13 @@ class GeneratedCVL(BaseModel):
     cvl: str
     skipped: list[SkippedProperty] = Field(default_factory=list)
     property_rules: list[PropertyRuleMapping] = Field(default_factory=list)
-    # The final prover conf recorded during generation, persisted so that a cache hit
-    # (which skips the prover) can still write certora/confs. None for pre-existing cache
-    # entries or runs where the prover never ran.
-    conf: dict | None = Field(default=None)
+    # The base prover config (state["config"]) at completion, persisted so a cache hit
+    # (which skips the prover) can still reconstruct certora/confs. None for pre-existing
+    # cache entries or runs where no config was established.
+    config: dict | None = Field(default=None)
+    # The last prover-run link (URL or local results dir), persisted for the report and so a
+    # cache hit retains it. None when the prover never produced a link.
+    final_link: str | None = Field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +380,7 @@ def static_tools() -> list[BaseTool]:
         _RecordSkipSchema.as_tool("record_skip"),
         _UnskipSchema.as_tool("unskip_property"),
         get_cvl(CVLGenerationState),
+        edit_cvl(CVLGenerationState),
         ERC20TokenGuidance.as_tool("erc20_guidance"),
         UnresolvedCallGuidance.as_tool("unresolved_call_guidance"),
     ]

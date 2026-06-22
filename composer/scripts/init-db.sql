@@ -5,6 +5,12 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rag_user') THEN
         CREATE USER rag_user WITH PASSWORD 'rag_password';
     END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'extended_rag_user') THEN
+        CREATE USER extended_rag_user WITH PASSWORD 'rag_password';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'foundry_rag_user') THEN
+        CREATE USER foundry_rag_user WITH PASSWORD 'rag_password';
+    END IF;
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'langgraph_store_user') THEN
         CREATE USER langgraph_store_user WITH PASSWORD 'langgraph_store_password';
     END IF;
@@ -34,9 +40,27 @@ SELECT 'CREATE DATABASE memory_tool_db OWNER memory_tool_user'
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'memory_tool_db')\gexec
 
 \c rag_db
-CREATE EXTENSION IF NOT EXISTS vector;
-GRANT ALL PRIVILEGES ON DATABASE rag_db TO rag_user;
-GRANT ALL PRIVILEGES ON SCHEMA public TO rag_user;
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS vector SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA extensions;
+
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+
+-- rag user
+CREATE SCHEMA IF NOT EXISTS rag AUTHORIZATION rag_user;
+GRANT USAGE ON SCHEMA extensions TO rag_user;
+ALTER ROLE rag_user IN DATABASE rag_db SET search_path = rag, extensions;
+
+-- extended rag
+CREATE SCHEMA IF NOT EXISTS extended_rag AUTHORIZATION extended_rag_user;
+GRANT USAGE ON SCHEMA extensions TO extended_rag_user;
+ALTER ROLE extended_rag_user IN DATABASE rag_db SET search_path = extended_rag, extensions;
+
+-- foundry rag
+CREATE SCHEMA IF NOT EXISTS foundry_rag AUTHORIZATION foundry_rag_user;
+GRANT USAGE ON SCHEMA extensions TO foundry_rag_user;
+ALTER ROLE foundry_rag_user IN DATABASE rag_db SET search_path = foundry_rag, extensions;
+
 
 \c langgraph_store_db
 CREATE EXTENSION IF NOT EXISTS vector;

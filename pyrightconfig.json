@@ -1,8 +1,11 @@
 {
-  "include": ["composer"],
+  "include": ["composer", "analyzer"],
   "extraPaths": ["graphcore"],
   "stubPath": "stubs",
-  "typeCheckingMode": "basic",
+  "typeCheckingMode": "standard",
+  "reportIncompatibleMethodOverride": "error",
   "reportMissingImports": "none",
-  "reportMissingModuleSource": "none"
+  "reportMissingModuleSource": "none",
+  "reportMatchNotExhaustive": "error",
+  "reportUnnecessaryTypeIgnoreComment": "error",    
 }

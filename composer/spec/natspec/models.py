@@ -37,7 +37,11 @@ class InterfaceDeclModel(BaseModel, ABC):
 
 class LocatedInterfaceDecl(InterfaceDeclModel):
     __doc__ = InterfaceDeclModel.__doc__
-    path: str = Field(description=(
+    # A stored field is a valid realization of the base's abstract read-only
+    # ``path``; Pyright can't model "field satisfies abstract property", so the
+    # override is suppressed here rather than reshaped.
+    path: str = Field(  # pyright: ignore[reportIncompatibleMethodOverride]
+        description=(
         "The project-relative path where this interface file lives. Must end in "
         "'.sol'; the basename should match ``{solidity_identifier}.sol``. The task "
         "prompt governs how to choose this path."
@@ -93,7 +97,10 @@ class StubDeclarationModel(BaseModel, ABC):
 
 class LocatedStubDeclaration(StubDeclarationModel):
     __doc__ = StubDeclarationModel.__doc__
-    path: str = Field(description=(
+    # See ``LocatedInterfaceDecl.path``: a stored field realizing the base's
+    # abstract read-only ``path`` property, which Pyright can't express.
+    path: str = Field(  # pyright: ignore[reportIncompatibleMethodOverride]
+        description=(
         "The project-relative path where this stub file lives. Must end in '.sol'; "
         "the basename should match ``{solidity_identifier}.sol``. The task prompt "
         "governs how to choose this path."

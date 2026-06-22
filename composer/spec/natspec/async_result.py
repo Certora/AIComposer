@@ -13,11 +13,11 @@ class AsyncResultTool[T](WithAsyncImplementation[str | Command], WithInjectedId,
     RESULT_KEY: ClassVar[str] = "result"
 
     @abstractmethod
-    async def validate(self, res: T) -> str | None:
+    async def validate_result(self, res: T) -> str | None:
         ...
 
     async def run(self) -> str | Command:
-        if (err_msg := await self.validate(self.value)) is not None:
+        if (err_msg := await self.validate_result(self.value)) is not None:
             return err_msg
         result_key = type(self).RESULT_KEY
         upd = {
