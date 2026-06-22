@@ -1,0 +1,7 @@
+Contract: {{ contract_name }}
+
+Properties to group ({{ properties | length }} total):
+{% for p in properties %}
+- [{{ p.component }}] {{ p.title }}  (sort: {{ p.sort }})
+    {{ p.description }}
+{%- endfor %}

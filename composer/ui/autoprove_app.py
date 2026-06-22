@@ -43,6 +43,7 @@ class AutoProvePhase(enum.Enum):
     COMPONENT_ANALYSIS = "component_analysis"
     BUG_ANALYSIS = "bug_analysis"
     CVL_GEN = "cvl_gen"
+    REPORT = "report"
 
 
 AUTOPROVE_PHASE_LABELS: dict[AutoProvePhase, str] = {

@@ -19,8 +19,18 @@ from pydantic import BaseModel, Field
 CERTORA_DIR = Path("certora")
 #: Generated specs (the "importers") are written here.
 SPECS_DIR = CERTORA_DIR / "specs"
+#: Per-component property dumps (`<stem>.properties.json` / `.property_rules.json`)
+#: written by the pipeline and read back by the report phase. `PROPERTIES_SUBDIR`
+#: is the bare directory name (join it to an already-resolved certora dir);
+#: `PROPERTIES_DIR` is the project-relative path (pass it to `under_project`).
+PROPERTIES_SUBDIR = "properties"
+PROPERTIES_DIR = CERTORA_DIR / PROPERTIES_SUBDIR
 #: AutoSetup / custom summaries live here.
 SUMMARIES_DIR = SPECS_DIR / "summaries"
+#: The autoprove run report (report.json, the optional rendered HTML, and the
+#: canonical slug<->id map) lives here -- a dedicated subdir so a consumer can
+#: include or exclude the human-facing report independently of the specs.
+AP_REPORT_DIR = CERTORA_DIR / "ap_report"
 
 #: Internal autoProve run artifacts (rotating logs, events.jsonl, run-link
 #: dumps). NOT part of the certora/ deliverable layout above — these are

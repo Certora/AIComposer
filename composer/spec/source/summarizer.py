@@ -22,7 +22,7 @@ from graphcore.graph import FlowInput, MessagesState, tool_state_update
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.cvl.tools import get_cvl, put_cvl, put_cvl_raw
+from composer.cvl.tools import get_cvl, put_cvl, put_cvl_raw, edit_cvl
 from composer.spec.gen_types import CVLResource, SUMMARIES_DIR, under_project
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import temp_certora_file, string_hash, ensure_dir
@@ -194,6 +194,7 @@ async def _setup_summaries_impl(
 
     tools = [
         get_cvl(ST),
+        edit_cvl(ST),
         put_cvl_raw,
         put_cvl,
         _PlanReader.as_tool("read_plan"),

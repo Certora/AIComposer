@@ -1,0 +1,8 @@
+## Editing the spec
+
+Your spec is a single buffer. Once a first version exists (written with `put_cvl` or
+`put_cvl_raw`), prefer `edit_cvl` for subsequent changes: pass an `old_string` that occurs
+exactly once in the current spec and the `new_string` to replace it with. Changing one line
+of a failing rule this way costs a fraction of the tokens of re-emitting the whole file, and
+the result is re-parsed exactly like a fresh put. Reserve `put_cvl` / `put_cvl_raw` for the
+initial spec or a wholesale rewrite.
