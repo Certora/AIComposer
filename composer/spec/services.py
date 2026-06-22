@@ -2,7 +2,6 @@ from typing import TypedDict, Unpack
 from dataclasses import dataclass
 from composer.rag.db import PostgreSQLRAGDatabase
 from langchain_core.tools import BaseTool
-from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.store.base import BaseStore
 from graphcore.graph import Builder
 from composer.spec.tool_env import BaseRAGTools

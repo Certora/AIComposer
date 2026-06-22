@@ -505,7 +505,7 @@ def llm_factory(args: ModelConfiguration) -> LLMFactory:
                 ttl = "5m"
             case CacheLevel.LONG:
                 ttl = "1h"
-            case None:
+            case None | CacheLevel.NONE:
                 ttl = None
         return _create_llm_base(
             args=args,

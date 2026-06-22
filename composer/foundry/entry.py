@@ -28,7 +28,7 @@ from composer.core.user import user_data_ns
 from composer.diagnostics.logging_setup import setup_autoprove_logging
 from composer.diagnostics.timing import RunSummary, install_run_summary
 from composer.input.parsing import Arg, add_protocol_args
-from composer.input.types import DEFAULT_RECURSION_LIMIT, ModelOptions, RAGDBOptions
+from composer.input.types import DEFAULT_RECURSION_LIMIT, TieredModelOptions, RAGDBOptions
 from composer.io.multi_job import HandlerFactory
 from composer.io.thread_logging import DEFAULT_META_NS, thread_logger
 from composer.kb.knowledge_base import DefaultEmbedder
@@ -36,9 +36,10 @@ from composer.rag.db import FOUNDRY_DEFAULT_CONNECTION, PostgreSQLRAGDatabase
 from composer.rag.models import get_model
 from composer.spec.context import WorkflowContext
 from composer.spec.system_model import SolidityIdentifier
+from composer.spec.service_host import ModelProvider
 from composer.spec.util import FS_FORBIDDEN_READ
 from composer.ui.tool_display import async_tool_context
-from composer.workflow.services import create_llm, standard_connections
+from composer.workflow.services import standard_connections, llm_factory
 
 from composer.foundry.artifacts import FoundrySourceCode
 from composer.foundry.env import build_foundry_env
@@ -63,7 +64,7 @@ class FoundryRAGDBOptions(RAGDBOptions, Protocol):
     )]
 
 
-class FoundryArgs(ModelOptions, FoundryRAGDBOptions, Protocol):
+class FoundryArgs(TieredModelOptions, FoundryRAGDBOptions, Protocol):
     project_root: str
     main_contract: str
     system_doc: str
@@ -115,7 +116,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
         description="Foundry-test author for a property-extraction pipeline",
     )
     add_protocol_args(parser, FoundryRAGDBOptions)
-    add_protocol_args(parser, ModelOptions)
+    add_protocol_args(parser, TieredModelOptions)
     parser.add_argument(
         "--recursion-limit", type=int, default=DEFAULT_RECURSION_LIMIT,
         help=f"Max graph iterations (default: {DEFAULT_RECURSION_LIMIT})",
@@ -146,7 +147,6 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
 
     sys_path = pathlib.Path(args.system_doc)
 
-    llm = create_llm(args)
     model = get_model()
 
     root_key = _root_cache_key(str(project_root), sys_path, relative_path, contract_name)
@@ -158,6 +158,8 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
     text_log, events_log = setup_autoprove_logging(project_root, thread_id)
     print(f"foundry logs: {text_log}\n         events: {events_log}", file=sys.stderr)
     install_run_summary(summary)
+
+    model_fact = llm_factory(args)
 
     async with (
         standard_connections(embedder=DefaultEmbedder(model)) as conns,
@@ -190,13 +192,19 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
             forbidden_read=FS_FORBIDDEN_READ,
         )
 
+        model_provider = ModelProvider(
+            checkpointer=conns.checkpointer,
+            factory=model_fact,
+            heavy_model=args.heavy_model,
+            lite_model=args.lite_model
+        )
+
         # Per-user cache namespace for the indexed code_explorer's question
         # cache (mirrors what autoprove_common does for the source_question_ns).
         source_question_ns = _user_ns("source_agent", "cache", root_key)
 
         env = build_foundry_env(
-            llm=llm,
-            checkpoint=conns.checkpointer,
+            model_provider=model_provider,
             project_root=str(project_root),
             forbidden_read=FS_FORBIDDEN_READ,
             rag_db=foundry_rag_db,

@@ -33,13 +33,13 @@ class DefaultEmbedder(Embeddings):
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self.model.encode_document(
             texts
-        ).tolist() #type: ignore
+        ).tolist()
 
     @override
     def embed_query(self, text: str) -> list[float]:
         return self.model.encode_query(
             [text]
-        ).tolist()[0] #type: ignore
+        ).tolist()[0]
 
 class KnowledgeBaseArticle(TypedDict):
     title: str

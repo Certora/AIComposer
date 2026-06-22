@@ -249,7 +249,7 @@ async def generate_all_component_cvl(
             lambda: run_autoprove_report(
                 contract_name=source_input.contract_name,
                 components=report_components,
-                llm=env.llm,
+                llm=env.llm_lite(),
             ),
         )
         if report is not None:

@@ -18,30 +18,23 @@ The resulting env satisfies four protocols the foundry workflow consumes:
   pick them up via their protocol fields).
 """
 
-from dataclasses import dataclass
-from typing import Protocol
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
 from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
-from graphcore.graph import Builder
 
 from composer.rag.db import ComposerRAGDB
-from composer.spec.services import _BasicLLM
 from composer.spec.source.source_env import (
     build_basic_source_tools, build_source_tools,
 )
-from composer.spec.tool_env import BasicAgentTools
+from composer.spec.service_host import ModelProvider
 from composer.spec.service_host import ServiceHost, PureServiceHost
 from composer.tools.foundry_rag import get_tools as foundry_cheatcode_tools
 
 
 def build_foundry_env(
     *,
-    llm: BaseChatModel,
-    checkpoint: Checkpointer,
+    model_provider: ModelProvider,
     project_root: str,
     forbidden_read: str,
     rag_db: ComposerRAGDB,
@@ -59,7 +52,6 @@ def build_foundry_env(
     ``code_explorer`` sub-agent for its per-user query cache (same wiring
     autoprove uses; see ``build_source_env``).
     """
-    base_llm = _BasicLLM(llm=llm, _checkpointer=checkpoint)
 
     basic_source = build_basic_source_tools(
         root=project_root,
@@ -67,7 +59,7 @@ def build_foundry_env(
     )
     full_source = build_source_tools(
         basic_source,
-        base_llm,
+        model_provider,
         store,
         source_question_ns,
         recursion_limit=recursion_limit,
@@ -76,8 +68,7 @@ def build_foundry_env(
     rag = tuple(foundry_cheatcode_tools(rag_db))
 
     return PureServiceHost(
-        llm=llm,
-        builder=base_llm.builder,
+        models=model_provider,
         rag_tools=rag,
         sort="existing"
     ).bind_source_tools(

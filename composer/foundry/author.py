@@ -407,7 +407,7 @@ def _build_feedback_thunk(
         return None
 
     workflow = bind_standard(
-        env.builder.with_tools(env.source_tools).with_tools(env.rag_tools),
+        env.builder_heavy().with_tools(env.source_tools).with_tools(env.rag_tools),
         ST,
         validator=did_rough_draft_read,
     ).with_input(
@@ -671,7 +671,7 @@ async def batch_foundry_test_generation(
     )
 
     builder = (
-        env.builder
+        env.builder_heavy()
         .with_state(FoundryGenerationState)
         .with_input(FoundryGenerationInput)
         .with_output_key("result")
