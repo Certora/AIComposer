@@ -140,6 +140,7 @@ async def run_autosetup(
 # on-disk contract (certora_autosetup constants + the autosetup_result.json it
 # drops in .certora_internal); we hard-code them rather than import
 # certora_autosetup, which composer must not depend on at import time.
+# TODO: improve this once the repos are merged.
 _CERTORA_INTERNAL = ".certora_internal"
 _AUTOSETUP_RESULT_FILE = "autosetup_result.json"
 _REPORTS_DIR = ".CertoraProverLiteReports"
