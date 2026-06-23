@@ -23,7 +23,7 @@ from graphcore.graph import FlowInput
 from composer.tools.thinking import RoughDraftState, get_rough_draft_tools
 from composer.spec.graph_builder import bind_standard, run_to_completion
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey, InvJudge
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import HarnessedApplication
 from composer.spec.gen_types import TypedTemplate
 from composer.spec.util import uniq_thread_id
@@ -86,7 +86,7 @@ _typed_invariant_prompt = TypedTemplate[InvariantParams]("structural_invariant_p
 async def get_invariant_formulation(
     ctx: WorkflowContext[None],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     app: HarnessedApplication
 ) -> Invariants:
     """Run the structural invariant formulation agent.
@@ -144,7 +144,7 @@ async def get_invariant_formulation(
         pass
 
     feedback_graph = bind_standard(
-        env.builder,
+        env.builder_heavy(),
         FeedbackST,
     ).with_sys_prompt_template(
         "invariant_judge_system_prompt.j2"
@@ -203,7 +203,7 @@ async def get_invariant_formulation(
     })
 
     graph = bind_standard(
-        env.builder,
+        env.builder_heavy(),
         ST,
         doc="The structural/state invariants you identified",
         validator=_validate_invariants,

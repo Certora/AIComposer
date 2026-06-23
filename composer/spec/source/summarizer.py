@@ -10,7 +10,7 @@ import json
 import pathlib
 import subprocess
 import sys
-from typing import NotRequired, override
+from typing import NotRequired, override, Sequence
 
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
@@ -22,15 +22,15 @@ from graphcore.graph import FlowInput, MessagesState, tool_state_update
 from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithInjectedId
 
 from composer.spec.graph_builder import bind_standard, run_to_completion
-from composer.cvl.tools import get_cvl, put_cvl, put_cvl_raw
+from composer.cvl.tools import get_cvl, put_cvl, put_cvl_raw, edit_cvl
 from composer.spec.gen_types import CVLResource, SUMMARIES_DIR, under_project
 from composer.spec.context import WorkflowContext, SourceCode, CacheKey
 from composer.spec.util import temp_certora_file, string_hash, ensure_dir
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.source.harness import ContractSetup, ExternalInterface, HarnessDef
 from composer.spec.system_model import HarnessedApplication, ExternalActor
 from composer.spec.gen_types import TypedTemplate
-from composer.ui.tool_display import tool_display, suppress_ack
+from composer.ui.tool_display import tool_display
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ class LocatedExternalInterface(ExternalInterface):
 
 class SummarizationParams(TypedDict):
     context: HarnessedApplication
-    erc20_contracts: list[str]
+    erc20_contracts: Sequence[str]
     interfaces: list[LocatedExternalInterface]
     contract_name: str
     contract_path: str
@@ -180,7 +180,7 @@ _SummarizationTemplate = TypedTemplate[SummarizationParams]("cvl_setup_summariza
 
 async def _setup_summaries_impl(
     ctx: WorkflowContext["_SummaryCache"],
-    env: SourceEnvironment,
+    env: ServiceHost,
     setup: ContractSetup,
     application: HarnessedApplication,
     source: SourceCode
@@ -194,6 +194,7 @@ async def _setup_summaries_impl(
 
     tools = [
         get_cvl(ST),
+        edit_cvl(ST),
         put_cvl_raw,
         put_cvl,
         _PlanReader.as_tool("read_plan"),
@@ -225,19 +226,19 @@ async def _setup_summaries_impl(
         "contract_path": source.relative_path,
         "erc20_contracts": setup.system_description.erc20_contracts,
         "included_contracts": [
-            c.name for c in setup.system_description.transitive_closure
+            c.solidity_identifier for c in setup.system_description.transitive_closure
         ],
         "interfaces": intf_summaries
     })
 
     graph = bind_standard(
-        env.builder, ST, "The commentary on the generated specification", _validator
+        env.builder_lite(), ST, "The commentary on the generated specification", _validator
     ).with_sys_prompt_template(
         "source_cvl_system_prompt.j2"
     ).inject(
         lambda g: bound.render_to(g.with_initial_prompt_template)
     ).with_tools(
-        [ctx.get_memory_tool(), *env.cvl_authorship_tools]
+        [ctx.get_memory_tool(), *env.all_tools]
     ).with_tools(
         tools
     ).with_input(Input).with_context(SummaryContext).compile_async()
@@ -286,7 +287,7 @@ def _summary_key(d: ContractSetup) -> CacheKey[None, _SummaryCache]:
 async def setup_summaries(
     ctx: WorkflowContext[None],
     source: SourceCode,
-    env: SourceEnvironment,
+    env: ServiceHost,
     config: ContractSetup,
     app: HarnessedApplication
 ) -> CVLResource:

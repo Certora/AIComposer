@@ -20,11 +20,11 @@ from composer.io.multi_job import (
 from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.spec.context import (
-    WorkflowContext, SourceCode, CacheKey, Properties,
+    WorkflowContext, CacheKey, Properties,
 )
 from composer.spec.gen_types import CVLResource, certora_relative_to_project
 from composer.spec.source.system_analysis import run_component_analysis
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import (
     HarnessedApplication, SourceExplicitContract,
     HarnessedExplicitContract, SourceExternalActor, HarnessDefinition
@@ -33,6 +33,7 @@ from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.prover import get_prover_tool
 from composer.prover.core import ProverOptions
 from composer.spec.source.common_pipeline import run_generation_pipeline, AutoProveResult
+from composer.spec.source.artifacts import ProverSourceCode
 
 
 # ---------------------------------------------------------------------------
@@ -53,10 +54,10 @@ INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
 
 async def run_autoprove_pipeline(
     llm: BaseChatModel,
-    source_input: SourceCode,
+    source_input: ProverSourceCode,
     ctx: WorkflowContext[None],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     custom_summary_path: str,
     standard_summary_path: str,
     config_path: str,
@@ -87,10 +88,11 @@ async def run_autoprove_pipeline(
         comp.append(HarnessedExplicitContract(
             sort=c.sort,
             name=c.name,
+            solidity_identifier=c.solidity_identifier,
             components=c.components,
             description=c.description,
             path=c.path,
-            harnesses=contract_to_harness.get(c.name, [])
+            harnesses=contract_to_harness.get(c.solidity_identifier, [])
         ))
 
 

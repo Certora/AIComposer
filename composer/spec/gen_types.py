@@ -11,21 +11,42 @@ from pydantic import BaseModel, Field
 #
 # Every persisted path variable in the spec pipeline is stored **relative to the
 # project root** (e.g. ``certora/specs/invariants.spec``). Conversions to other
-# bases happen only at the edges: ``dump_final_conf`` emits the verify entry
-# verbatim (the prover reads it relative to the project root), and CVL ``import``
+# bases happen only at the edges: the ``ArtifactStore`` conf writer emits the verify
+# entry verbatim (the prover reads it relative to the project root), and CVL ``import``
 # statements are derived with :func:`import_statement_for` (the prover reads
 # those relative to the importing spec's own directory).
 # ---------------------------------------------------------------------------
 CERTORA_DIR = Path("certora")
 #: Generated specs (the "importers") are written here.
 SPECS_DIR = CERTORA_DIR / "specs"
+#: Per-component property dumps (`<stem>.properties.json` / `.property_rules.json`)
+#: written by the pipeline and read back by the report phase. `PROPERTIES_SUBDIR`
+#: is the bare directory name (join it to an already-resolved certora dir);
+#: `PROPERTIES_DIR` is the project-relative path (pass it to `under_project`).
+PROPERTIES_SUBDIR = "properties"
+PROPERTIES_DIR = CERTORA_DIR / PROPERTIES_SUBDIR
 #: AutoSetup / custom summaries live here.
 SUMMARIES_DIR = SPECS_DIR / "summaries"
+#: The autoprove run report (report.json, the optional rendered HTML, and the
+#: canonical slug<->id map) lives here -- a dedicated subdir so a consumer can
+#: include or exclude the human-facing report independently of the specs.
+AP_REPORT_DIR = CERTORA_DIR / "ap_report"
 
 #: Internal autoProve run artifacts (rotating logs, events.jsonl, run-link
 #: dumps). NOT part of the certora/ deliverable layout above — these are
 #: diagnostics/scratch outputs under the project root.
 AUTOPROVE_INTERNAL_DIR = Path(".certora_internal") / "autoProve"
+
+#: The foundry pipeline's deliverable metadata (per-component properties,
+#: property->test maps, commentary, statuses, run report). A subdir of certora/
+#: so foundry and autoprove can target the same project without clobbering each
+#: other's outputs — everything the AI tools generate lives under certora/, the
+#: lone exception being the foundry .t.sol tests (which must live in the foundry
+#: project's own test/ for forge to find them).
+FOUNDRY_DELIVERABLE_DIR = CERTORA_DIR / "foundry"
+#: Foundry counterpart to AUTOPROVE_INTERNAL_DIR — diagnostics (token usage)
+#: under a foundry-specific subdir so a co-located autoprove run doesn't collide.
+FOUNDRY_INTERNAL_DIR = Path(".certora_internal") / "foundry"
 
 
 def under_project(project_root: "str | Path", rel: "str | Path") -> Path:

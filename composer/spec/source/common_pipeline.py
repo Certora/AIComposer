@@ -1,8 +1,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
-import json
-import pathlib
+import logging
 
 from langchain_core.tools import BaseTool
 
@@ -13,98 +12,35 @@ from composer.ui.autoprove_app import AutoProvePhase
 
 from composer.input.files import Document
 from composer.spec.context import (
-    WorkflowContext, SourceCode, CacheKey, Properties, ComponentGroup, CVLGeneration,
+    WorkflowContext, CacheKey, Properties, ComponentGroup, CVLGeneration,
 )
-from composer.spec.util import string_hash, ensure_dir
+from composer.spec.util import string_hash
 from composer.spec.prop_inference import run_property_inference
 from composer.spec.prop import PropertyFormulation
-from composer.spec.gen_types import (
-    CVLResource, CERTORA_DIR, SPECS_DIR, AUTOPROVE_INTERNAL_DIR, under_project,
-)
-from composer.spec.source.source_env import SourceEnvironment
+from composer.spec.gen_types import CVLResource, SPECS_DIR
+from composer.spec.service_host import ServiceHost
 from composer.spec.system_model import (
     ContractComponentInstance, HarnessedApplication, ContractInstance
 )
-from composer.spec.cvl_generation import GeneratedCVL, PropertyRuleMapping
+from composer.spec.cvl_generation import GeneratedCVL
 from composer.spec.source.author import batch_cvl_generation, GaveUp, BatchGeneratedCVLResult
-from composer.spec.source.prover import dump_final_conf
+from composer.spec.source.artifacts import ComponentSpec, InvariantSpec, ProverSourceCode
 from composer.spec.source.task_ids import (
-    bug_analysis_task_id, cvl_gen_task_id, INVARIANT_CVL_TASK_ID,
+    bug_analysis_task_id, cvl_gen_task_id, REPORT_TASK_ID,
 )
-from composer.diagnostics.timing import get_run_summary, RunSummary
+from composer.spec.source.report.build import run_autoprove_report
+from composer.spec.source.report.collect import ReportComponentInput
+
+_log = logging.getLogger(__name__)
 
 PROPERTIES_KEY = CacheKey[None, Properties]("properties")
 INV_CVL_KEY = CacheKey[None, GeneratedCVL]("invariant-cvl")
-
-
-def dump_properties(
-    certora_dir: pathlib.Path,
-    spec_stem: str,
-    props: list[PropertyFormulation],
-) -> None:
-    """Write the analysis-phase properties (title, sort, methods, description) to
-    ``properties/{spec_stem}.properties.json`` under ``certora_dir``, accompanying
-    ``{spec_stem}.spec``. ``title`` is the cross-reference key used by
-    ``{spec_stem}.property_rules.json``."""
-    properties_dir = ensure_dir(certora_dir / "properties")
-    properties_dump = [prop.model_dump() for prop in props]
-    (properties_dir / f"{spec_stem}.properties.json").write_text(
-        json.dumps(properties_dump, indent=2)
-    )
-
-
-def dump_property_rules(
-    certora_dir: pathlib.Path,
-    spec_stem: str,
-    property_rules: list[PropertyRuleMapping],
-) -> None:
-    """Write the property->rules mapping ``{property title: [rule names]}`` to
-    ``properties/{spec_stem}.property_rules.json`` under ``certora_dir``, accompanying
-    ``{spec_stem}.spec``. Titles are unique (enforced at extraction) and validated against
-    the batch at completion."""
-    properties_dir = ensure_dir(certora_dir / "properties")
-    mapping = {m.property_title: m.rules for m in property_rules}
-    (properties_dir / f"{spec_stem}.property_rules.json").write_text(
-        json.dumps(mapping, indent=2)
-    )
 
 
 def _output_link(link: str) -> str:
     """Rewrite a prover ``/jobStatus/`` URL to its ``/output/`` view. Local
     result-directory paths (which contain neither) pass through unchanged."""
     return link.replace("/jobStatus/", "/output/")
-
-
-def dump_component_runs(
-    project_root: str,
-    component_runs: dict[str, str],
-) -> None:
-    """Write the ``{component: final prover run link}`` mapping to
-    ``.certora_internal/autoProve/components_to_prover_runs.json`` under
-    ``project_root``. Keys are each component's slug (the ``autospec_{slug}`` spec
-    stem) plus ``"invariants"`` for the structural-invariant spec; the link is the
-    URL (cloud) or local results directory (local) of that spec's last prover run."""
-    out_dir = ensure_dir(under_project(project_root, AUTOPROVE_INTERNAL_DIR))
-    (out_dir / "components_to_prover_runs.json").write_text(
-        json.dumps(component_runs, indent=2)
-    )
-
-
-def dump_token_usage(
-    project_root: str,
-    summary: RunSummary,
-) -> None:
-    """Write the run's accumulated LLM token usage to
-    ``.certora_internal/autoProve/token_usage.json`` under ``project_root``.
-
-    Raw counts only (``input`` / ``output`` / ``cache_read`` / ``cache_write``),
-    broken down ``by_model`` and ``by_phase`` plus run-wide ``totals``. Captures
-    every call through the LLM factory — including out-of-graph prover/CEX-analysis
-    side-calls — via the usage callback attached in ``create_llm_base``. The same
-    breakdown is also persisted to the run's ``RunMeta.tags`` (see ``_entry_point``)."""
-    payload = {"run_id": summary.run_id, **summary.token_usage_summary()}
-    out_dir = ensure_dir(under_project(project_root, AUTOPROVE_INTERNAL_DIR))
-    (out_dir / "token_usage.json").write_text(json.dumps(payload, indent=2))
 
 
 def _component_cache_key(
@@ -133,10 +69,10 @@ class _ComponentBatch:
 
 async def extract_all_components(
     *,
-    source_input: SourceCode,
+    source_input: ProverSourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
     interactive: bool,
@@ -152,7 +88,7 @@ async def extract_all_components(
     """
     ind = -1
     for i, c in enumerate(summary.contract_components):
-        if c.name == source_input.contract_name:
+        if c.solidity_identifier == source_input.contract_name:
             ind = i
             break
     if ind == -1:
@@ -191,23 +127,24 @@ async def extract_all_components(
 
     # Dump the analysis-phase properties for each component now that the
     # extraction phase is complete.
-    certora_dir = under_project(source_input.project_root, CERTORA_DIR)
+    store = source_input.artifact_store
     for batch in component_batches:
-        dump_properties(certora_dir, f"autospec_{batch.feat.slugified_name}", batch.props)
+        store.write_analysis_properties(ComponentSpec(batch.feat.slugified_name), batch.props)
 
     return component_batches
 
 
 async def generate_all_component_cvl(
     *,
-    source_input: SourceCode,
+    source_input: ProverSourceCode,
     component_batches: list[_ComponentBatch],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     prover_tool: BaseTool,
     prover_config: dict,
     resources: list[CVLResource],
     semaphore: asyncio.Semaphore,
+    invariant_result: tuple[list[PropertyFormulation], GeneratedCVL] | None = None,
 ) -> AutoProveResult:
     """Phase 6 — per-component CVL generation.
 
@@ -257,23 +194,9 @@ async def generate_all_component_cvl(
         res = await _generate_batch(task_id=task_id, batch=batch)
         if isinstance(res, GaveUp):
             return res
-        certora_dir = under_project(source_input.project_root, CERTORA_DIR)
-        specs_dir = ensure_dir(certora_dir / "specs")  # absolute (project_root/certora/specs)
-        properties_dir = ensure_dir(certora_dir / "properties")
-        base = batch.feat.slugified_name
-        spec_name = pathlib.Path(f"autospec_{base}.spec")
-        (specs_dir / spec_name).write_text(res.cvl)
-        # Canonical (project-root-relative) path of the persisted spec, used for
-        # the conf's verify entry.
-        spec_path = SPECS_DIR / spec_name
-        (properties_dir / f"autospec_{base}.commentary.md").write_text(res.commentary)
-        dump_property_rules(certora_dir, f"autospec_{base}", res.property_rules)
-        dump_final_conf(
-            project_root=source_input.project_root,
-            main_contract=source_input.contract_name,
-            task_id=task_id,
-            spec_path=spec_path,
-            conf=res.conf,
+        # Writes specs/{stem}.spec + the commentary/property_rules/conf bundle.
+        source_input.artifact_store.write_generated_spec(
+            ComponentSpec(batch.feat.slugified_name), res,
         )
         return res
 
@@ -285,21 +208,54 @@ async def generate_all_component_cvl(
         return_exceptions=True,
     )
 
-    # Dump the final prover run link for each component (and the structural
-    # invariant, which ran earlier in the staged pipeline) now that every CVL
-    # generation task has completed — each link is recorded into the run summary
-    # when its task's phase is finalized.
-    link_by_task = {
-        p.task_id: p.final_link for p in get_run_summary().phases if p.final_link
-    }
-    component_runs = {
-        batch.feat.slugified_name: _output_link(link)
-        for batch in component_batches
-        if (link := link_by_task.get(cvl_gen_task_id(batch.feat.ind, batch.feat.slugified_name)))
-    }
-    if inv_link := link_by_task.get(INVARIANT_CVL_TASK_ID):
-        component_runs["invariants"] = _output_link(inv_link)
-    dump_component_runs(source_input.project_root, component_runs)
+    store = source_input.artifact_store
+
+    # Map each component (and the structural invariant) to its final prover-run link, taken from the
+    # in-memory generation result (so it survives cache hits) and rewritten to its /output/ view.
+    component_runs: dict[str, str] = {}
+    for batch, result in zip(component_batches, generation_results):
+        if isinstance(result, GeneratedCVL) and result.final_link:
+            component_runs[ComponentSpec(batch.feat.slugified_name).run_key] = _output_link(result.final_link)
+    if invariant_result is not None and invariant_result[1].final_link:
+        component_runs[InvariantSpec().run_key] = _output_link(invariant_result[1].final_link)
+    store.write_component_runs(component_runs)
+
+    # Final, best-effort phase: turn the in-memory component results + per-component prover verdicts
+    # into certora/ap_report/report.json. A failure here must never fail the run, so it is guarded.
+    try:
+        report_components: list[ReportComponentInput] = []
+        for batch, result in zip(component_batches, generation_results):
+            spec = ComponentSpec(batch.feat.slugified_name)
+            report_components.append(ReportComponentInput(
+                name=batch.feat.component.name,
+                spec_file=spec.spec_filename,
+                props=batch.props,
+                result=result,
+                prover_link=component_runs.get(spec.run_key),
+            ))
+        if invariant_result is not None:
+            inv_props, inv_cvl = invariant_result
+            inv_spec = InvariantSpec()
+            report_components.append(ReportComponentInput(
+                name="Structural Invariants",
+                spec_file=inv_spec.spec_filename,
+                props=inv_props,
+                result=inv_cvl,
+                prover_link=component_runs.get(inv_spec.run_key),
+            ))
+        report = await run_task(
+            handler_factory,
+            TaskInfo(REPORT_TASK_ID, "Report", AutoProvePhase.REPORT),
+            lambda: run_autoprove_report(
+                contract_name=source_input.contract_name,
+                components=report_components,
+                llm=env.llm_lite(),
+            ),
+        )
+        if report is not None:
+            store.write_report(report)
+    except Exception:
+        _log.warning("autoprove report phase failed (continuing)", exc_info=True)
 
     failures: list[str] = []
     n_properties = 0
@@ -318,10 +274,10 @@ async def generate_all_component_cvl(
 
 
 async def run_generation_pipeline(
-    source_input: SourceCode,
+    source_input: ProverSourceCode,
     prop_context: WorkflowContext[Properties],
     handler_factory: HandlerFactory[AutoProvePhase, None],
-    env: SourceEnvironment,
+    env: ServiceHost,
     summary: HarnessedApplication,
     semaphore: asyncio.Semaphore,
     resources: list[CVLResource],

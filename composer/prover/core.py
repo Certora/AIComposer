@@ -6,13 +6,12 @@ Both callers become thin wrappers that define callbacks and call run_prover().
 """
 
 import asyncio
-import os
 import sys
 import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterator, Dict, Literal, cast
+from typing import AsyncIterator, cast
 from abc import ABC, abstractmethod
 import json
 import logging
@@ -23,6 +22,8 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import MessagesState
 
 from graphcore.graph import LLM
+
+from prover_output_utility import cloud_server_for_env
 
 from composer.prover.analysis import analyze_cex_raw
 from composer.prover.cloud import cloud_results
@@ -36,55 +37,6 @@ _logger = logging.getLogger(__name__)
 
 DEFAULT_GLOBAL_TIMEOUT: float = 1200.0
 
-### DUPLICATED: Can be removed after autosetup / AIComposer share the same code base ###
-# certoraRun --server resolution, taken from POU.
-
-LoginEnv = Literal["prod", "stg", "dev"]
-_VALID_AISS_ENVS: frozenset[str] = frozenset(("dev", "stg", "prod"))
-
-def resolve_login_env() -> LoginEnv:
-    """
-    Resolve which Certora login environment to authenticate against.
-
-    Precedence:
-      1. If ``AISS_ENV`` is set, it must be one of ``{dev, stg, prod}`` and is used
-         directly. Any other value raises ``AuthenticationError``.
-      2. Otherwise, fall back to the legacy ``GITHUB_ENVIRONMENT`` mapping:
-         ``staging`` -> ``stg``, ``development`` -> ``dev``, anything else -> ``prod``.
-
-    Per the AISS deployment contract, only one of the two variables is set at a time.
-    """
-    aiss_env = os.environ.get("AISS_ENV")
-    if aiss_env is not None:
-        if aiss_env not in _VALID_AISS_ENVS:
-            raise ValueError(
-                f"Invalid AISS_ENV={aiss_env!r}; expected one of {sorted(_VALID_AISS_ENVS)}"
-            )
-        return aiss_env  # type: ignore[return-value]
-
-    github_env = os.environ.get("GITHUB_ENVIRONMENT", "")
-    if github_env == "staging":
-        return "stg"
-    if github_env == "development":
-        return "dev"
-    return "prod"
-
-
-# Login env -> certoraRun `--server` value. The canonical source of truth so
-# every component (autosetup, AIComposer, PreAudit) picks the same backend for a
-# given env instead of hand-rolling it. Note 'dev' -> 'vaas-dev', not 'dev'.
-_SERVER_BY_LOGIN_ENV: Dict[LoginEnv, str] = {
-    "prod": "production",
-    "stg": "staging",
-    "dev": "vaas-dev",
-}
-
-def cloud_server_for_env() -> str:
-    """The certoraRun ``--server`` value for the current login env
-    (:func:`resolve_login_env`). Raises ``AuthenticationError`` on an invalid
-    ``AISS_ENV`` (via ``resolve_login_env``)."""
-    return _SERVER_BY_LOGIN_ENV[resolve_login_env()]
-### END DUPLICATED ###
 
 @dataclass
 class ProverOptions:
@@ -109,13 +61,14 @@ def make_prover_options(*, cloud: bool) -> ProverOptions:
     if cloud:
         extras = [
             "--global_timeout", str(int(DEFAULT_GLOBAL_TIMEOUT)),
-            "--server", cloud_server_for_env(),
+            "--server", cloud_server_for_env()
         ]
     return ProverOptions(extra_args=extras)
 
 @dataclass
 class ProverReport:
     rule_status: dict[str, bool]
+    link: str  # URL (cloud) or local results dir of the prover run that produced this report
 
 @dataclass
 class RawReport(ProverReport):
@@ -328,7 +281,7 @@ async def run_prover(
 
     if isinstance(cex, SummarizingCexHandler) and cex.summarization_threshold < failed_count:
         todo_list = await cex.summarize(report)
-        return SummarizedReport(report=report, todo_list=todo_list, rule_status=prover_report)
+        return SummarizedReport(report=report, todo_list=todo_list, rule_status=prover_report, link=run_result["link"])
 
     # 14. Normal return
-    return RawReport(report=report, rule_status=prover_report)
+    return RawReport(report=report, rule_status=prover_report, link=run_result["link"])

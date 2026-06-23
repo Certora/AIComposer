@@ -15,3 +15,4 @@ emv-*
 composer/testing/**/certora/
 test_scenarios/**/certora/
 local/
+test_scenarios/**/certora/

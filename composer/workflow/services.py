@@ -1,6 +1,7 @@
 import psycopg
-from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager, TYPE_CHECKING
+from typing import Any, Callable, TypedDict, Literal, overload, AsyncContextManager, TYPE_CHECKING, Protocol
 from typing_extensions import TypeVar
+import enum
 import inspect
 import os
 from dataclasses import dataclass
@@ -36,8 +37,9 @@ else:
     PostgresMemoryBackend = "PostgresMemoryBackend"
     AsyncPostgresBackend = "AsyncPostgresBackend"
 
-from composer.input.types import ModelOptions, ModelOptionsBase
+from composer.input.types import ModelOptions, ModelOptionsBase, ModelConfiguration
 from composer.input.files import FileUploader
+from .llm import model_parser
 
 
 T = TypeVar("T")
@@ -45,11 +47,11 @@ T = TypeVar("T")
 def _adapt_async(obj: T, pairs: list[tuple[str, str]]) -> T:
     """
     Patch async methods to forward to their sync counterparts.
-    
+
     Args:
         obj: Object to patch
         pairs: List of (async_name, sync_name) tuples
-        
+
     Raises:
         AttributeError: If method names don't exist on obj
         TypeError: If async method is not a coroutine or sync method is a coroutine
@@ -63,7 +65,7 @@ def _adapt_async(obj: T, pairs: list[tuple[str, str]]) -> T:
             raise AttributeError(
                 f"Object {obj} does not have async method '{async_name}'"
             )
-        
+
         try:
             sync_method = getattr(obj, sync_name)
         except AttributeError:
@@ -76,61 +78,61 @@ def _adapt_async(obj: T, pairs: list[tuple[str, str]]) -> T:
             raise TypeError(
                 f"Method '{async_name}' is not a coroutine function"
             )
-        
+
         # Verify that sync_method is NOT a coroutine function
         if inspect.iscoroutinefunction(sync_method):
             raise TypeError(
                 f"Method '{sync_name}' is a coroutine function but should be sync"
             )
-        
+
         # Get signatures
         async_sig = inspect.signature(async_method)
         sync_sig = inspect.signature(sync_method)
-        
+
         # Compare parameters (names and annotations)
         async_params = list(async_sig.parameters.values())
         sync_params = list(sync_sig.parameters.values())
-        
+
         if len(async_params) != len(sync_params):
             raise ValueError(
                 f"Parameter count mismatch: {async_name} has {len(async_params)} "
                 f"parameters, {sync_name} has {len(sync_params)}"
             )
-        
+
         for async_param, sync_param in zip(async_params, sync_params):
             if async_param.name != sync_param.name:
                 raise ValueError(
                     f"Parameter name mismatch: {async_name} has '{async_param.name}', "
                     f"{sync_name} has '{sync_param.name}'"
                 )
-            
+
             if async_param.annotation != sync_param.annotation:
                 raise ValueError(
                     f"Parameter annotation mismatch for '{async_param.name}': "
                     f"{async_name} has {async_param.annotation}, "
                     f"{sync_name} has {sync_param.annotation}"
                 )
-            
+
             if async_param.default != sync_param.default:
                 raise ValueError(
                     f"Parameter default mismatch for '{async_param.name}': "
                     f"{async_name} has {async_param.default}, "
                     f"{sync_name} has {sync_param.default}"
                 )
-        
+
         # Step 3: Create wrapper that forwards to sync implementation
         def make_wrapper(sync_fn: Callable) -> Callable:
             async def async_wrapper(*args, **kwargs):
                 # Call the sync function
                 return sync_fn(*args, **kwargs)
-            
+
             # Preserve the original signature
             setattr(async_wrapper, "__signature__", inspect.signature(sync_fn))
             async_wrapper.__name__ = sync_fn.__name__
             async_wrapper.__doc__ = sync_fn.__doc__
-            
+
             return async_wrapper
-        
+
         # Patch the object
         new_async_method = make_wrapper(sync_method)
         setattr(obj, async_name, new_async_method)
@@ -195,7 +197,7 @@ async def _get_async_composer_pool(
     }
     if row_factory is not None:
         kwargs["row_factory"] = row_factory
-    
+
 
     pool = PGAsyncPool(
         conn_string,
@@ -429,6 +431,89 @@ async def memory_backend_context() -> AsyncIterator[MemoryBackendGenerator]:
 
 _ADAPTIVE_MODELS = {"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7"}
 
+def _create_llm_base(
+    model_name: str,
+    args: ModelConfiguration,
+    cache_control: Literal["5m", "1h"] | None,
+    disable_thinking_override: Literal[True] | None = None
+) -> "BaseChatModel":
+    model_cap = model_parser(model_name)
+    thinking : dict[str, Any] | None
+    if args.thinking_tokens is None or disable_thinking_override is True:
+        thinking = None
+    elif model_cap.adaptive_thinking:
+        thinking = {"type": "adaptive"}
+    else:
+        thinking = {"type": "enabled", "budget_tokens": args.thinking_tokens}
+    
+    beta_headers = ["files-api-2025-04-14"]
+    if model_cap.interleaved_thinking and args.interleaved_thinking:
+        beta_headers.append("interleaved-thinking-2025-05-14")
+    if args.memory_tool:
+        beta_headers.append("context-management-2025-06-27")
+    
+    from langchain_anthropic import ChatAnthropic
+    from composer.diagnostics.usage_callback import UsageCallback
+
+    if cache_control:
+        model_kwargs = {
+            "cache_control": {
+                "type": "ephemeral",
+                "ttl": cache_control
+            }
+        }
+    else:
+        model_kwargs = {}
+
+    return ChatAnthropic(
+        model_name=model_name,
+        max_tokens_to_sample=args.tokens,
+        temperature=1,
+        timeout=None,
+        max_retries=8,
+        stop=None,
+        betas=beta_headers,
+        thinking=thinking,
+        model_kwargs=model_kwargs,
+        callbacks=[UsageCallback()],
+    )
+
+class CacheLevel(enum.StrEnum):
+    NONE = "none"
+    SHORT = "short"
+    LONG = "long"
+
+class LLMFactory(Protocol):
+    def __call__(
+        self,
+        model_name: str,
+        *,
+        cache_level: CacheLevel | None = None,
+        disable_thinking: bool = False
+    ) -> "BaseChatModel":
+        ...
+
+def llm_factory(args: ModelConfiguration) -> LLMFactory:
+    def to_ret(
+        model_name: str,
+        *,
+        cache_level: CacheLevel | None = None,
+        disable_thinking: bool = False
+    ) -> "BaseChatModel":
+        match cache_level:
+            case CacheLevel.SHORT:
+                ttl = "5m"
+            case CacheLevel.LONG:
+                ttl = "1h"
+            case None | CacheLevel.NONE:
+                ttl = None
+        return _create_llm_base(
+            args=args,
+            model_name=model_name,
+            cache_control=ttl,
+            disable_thinking_override=True if disable_thinking else None
+        )
+    return to_ret
 
 def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
     """Create LLM; thinking disabled when args.thinking_tokens is None."""
@@ -450,7 +535,7 @@ def create_llm_base(args: ModelOptionsBase) -> "BaseChatModel":
         max_tokens_to_sample=args.tokens,
         temperature=1,
         timeout=None,
-        max_retries=2,
+        max_retries=8,
         stop=None,
         betas=(
             ["files-api-2025-04-14"]

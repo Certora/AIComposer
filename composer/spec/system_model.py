@@ -1,17 +1,38 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from functools import cached_property
 from composer.spec.util import slugify_filename
 
 type ContractSort = Literal["dynamic", "singleton", "multiple"]
 
+# Nominal ``str`` subtypes for the two distinct contract-identity fields.
+# Both phantom-typed (TYPE_CHECKING-only subclass; ``str`` at runtime) so they
+# remain distinct at static-check time but pydantic ``Field`` validates them
+# as plain strings.
+#
+# ``SolidityIdentifier``: a Solidity contract identifier (regex-validated where
+# stored on a pydantic field).
+# ``ContractName``: the conceptual / design-doc-readable name of a contract.
+# May be a Solidity identifier when the design doc names contracts that way,
+# but allowed to be anything human-readable.
+#
+# The two are **siblings under str**, not in a subtype relation with each
+# other — passing a ``SolidityIdentifier`` where ``ContractName`` is expected
+# (or vice-versa) is a type error, even though both are ``str`` at runtime.
+if TYPE_CHECKING:
+    class SolidityIdentifier(str): ...
+    class ContractName(str): ...
+else:
+    SolidityIdentifier = str
+    ContractName = str
+
 class ExternalDependency(BaseModel):
     external_actor: str = Field(description="The name of the external actor interacted with")
     description : str = Field(description="A description of the interaction with the external actor")
 
 class ComponentInteraction(BaseModel):
-    contract_name: str = Field(description="The name of the contract interacted with")
+    contract_name: ContractName = Field(description="The conceptual name of the contract interacted with (matching the `name` field of an ExplicitContract in the application)")
     component : str | None = Field(description="The specific component within that contract interacted with")
     description : str = Field(description="A description of the interaction with the contract component.")
 
@@ -43,7 +64,19 @@ class ExplicitContract(BaseModel):
     sort: ContractSort = Field(description=("The sort of the contract. `dynamic` if instances of this type are "
         "dynamically created by the system itself. `multiple` if multiple instances are expected to be "
         "deployed by some external actor/administrator. `singleton` if only one instance will exist in a deployed system."))
-    name: str = Field(description="A short, unique identifier for this contract")
+    name: ContractName = Field(description=(
+        "A short, conceptual label for this contract, used to refer to it across the "
+        "system description. May be the same as solidity_identifier when the design "
+        "doc names the contract by its Solidity identifier directly."
+    ))
+    solidity_identifier: SolidityIdentifier = Field(
+        pattern=r"^[a-zA-Z_$][a-zA-Z0-9_$]*$",
+        description=(
+            "The Solidity identifier this contract will be deployed/compiled under. "
+            "Derived from authoritative sources where possible (see system analysis "
+            "prompt). Always a syntactically valid Solidity identifier."
+        ),
+    )
     description : str = Field(description="A short description of what this contract's role is in the system")
     components : list[ContractComponent] = Field(description="Components making up this contract.")
 
@@ -55,7 +88,7 @@ class SourceExplicitContract(ExplicitContract):
 
 class HarnessDefinition(BaseModel):
     path: str
-    name: str
+    name: SolidityIdentifier
 
 class HarnessedExplicitContract(SourceExplicitContract):
     harnesses: list[HarnessDefinition]
@@ -121,7 +154,52 @@ class HarnessedApplication(BaseApplication[HarnessedExplicitContract | SourceExt
         return to_ret
 
 
-type AnyApplication = Application | SourceApplication | HarnessedApplication
+class FromSourceContract(ExplicitContract):
+    """Base for contracts in the ``from-current-source`` (natspec
+    ``update``/``existing``) workflow.
+
+    Split into two concrete variants by relationship to the change being
+    built: :class:`ExistingFromSource` (contract is already in the source
+    tree, either untouched or being edited) and :class:`FreshFromSource`
+    (new contract being introduced by this task — no source path yet).
+    """
+
+
+class ExistingFromSource(FromSourceContract):
+    """An already-present contract in the source tree."""
+    path: str = Field(description="The relative path to the file defining this contract.")
+    tag: Literal["unchanged", "edited"] = Field(description=(
+        "Relationship of this contract to the change being built: "
+        "'unchanged' if it's an existing dependency left as-is, "
+        "'edited' if an existing contract is being modified for this task."
+    ))
+
+
+class FreshFromSource(FromSourceContract):
+    """A new contract being introduced by this task — no source path yet."""
+    tag: Literal["new"] = Field(description=(
+        "This contract is being introduced by this task; there is no existing "
+        "source file for it yet."
+    ))
+
+
+class FromSourceApplication(BaseApplication[ExistingFromSource | FreshFromSource | SourceExternalActor]):
+    """Application variant for the ``from-current-source`` workflow — each
+    explicit contract is tagged ``edited`` / ``unchanged`` / ``new`` via the
+    :class:`FromSourceContract` subtype split.
+    """
+    @cached_property
+    def contract_components(self) -> list[FromSourceContract]:
+        to_ret: list[FromSourceContract] = []
+        for c in self.components:
+            if not isinstance(c, FromSourceContract):
+                continue
+            to_ret.append(c)
+        return to_ret
+
+
+type NatspecApplication = FromSourceApplication | Application
+type AnyApplication = Application | SourceApplication | HarnessedApplication | FromSourceApplication
 
 @dataclass
 class ContractInstance:
