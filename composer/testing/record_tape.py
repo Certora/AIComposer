@@ -214,7 +214,7 @@ def install_recorder(name: str, out_path: str | None = None, *, no_thinking: boo
         llm.callbacks.append(RecordingCallback())
         return llm
 
-    services.create_llm_base = _build_with_recording  # type: ignore[assignment]
+    services.create_llm_base = _build_with_recording
     if no_thinking:
         print("[record_tape] thinking disabled for recording (COMPOSER_RECORD_NO_THINKING)", file=sys.stderr)
 
