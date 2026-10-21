@@ -1,3 +1,9 @@
+<div align="center">
+   
+<b><i>An up-to-date version of the AI Composer suite of tools is maintained as part of [AutoProver](https://github.com/Certora/AutoProver).</i></b>
+
+</div>
+
 # Certora AI Composer
 
 AI Composer is a tool for generating verified implementations from documentation and CVL specifications.
