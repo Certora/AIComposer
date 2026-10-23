@@ -43,6 +43,15 @@ For example, if i1 states "every active position has a non-zero owner" and i2 st
 exceeds the array length", then i1 likely depends on i2 because without i2, the prover could consider
 out-of-bounds positions that vacuously violate i1.
 
+**IMPORTANT**: A *mutual* dependency (i1 depends on i2, and i2 also depends on i1) is not automatically a problem —
+each invariant's inductive step is allowed to assume the other, provided each is proven independently as an
+induction over method calls. What you must check for mutually-dependent pairs specifically is the *base case*:
+immediately after construction (before any external method has been called), does i1 hold *without* needing to
+assume i2, and does i2 hold *without* needing to assume i1? If establishing either invariant's base case implicitly
+relies on the other invariant already being true, the pair has not actually been shown to hold from a fresh
+deployment — note this explicitly when reporting the dependency, so the base case can be checked independently
+before any `requireInvariant` cross-referencing is added between them.
+
 ## Step 4
 Output the results of your analysis using the provided tool.
 </task>

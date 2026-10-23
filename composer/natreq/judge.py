@@ -31,7 +31,7 @@ class JudgeInput(FlowInput, RoughDraftState):
     vfs: dict[str, str]
     orig_reqs: list[str]
 
-ClassificationType = Literal["SATISFIED", "LIKELY", "PARTIAL", "VIOLATED"]
+ClassificationType = Literal["SATISFIED", "LIKELY", "PARTIAL", "VIOLATED", "INCONCLUSIVE"]
 
 class RequirementAnalysis(BaseModel):
     """
@@ -45,7 +45,9 @@ class RequirementAnalysis(BaseModel):
     requirement_number : int = Field(description="The requirement number.")
 
     commentary: str | None = Field(description="Any commentary or explanation for the classification of this requirement. In the case of" \
-    "PARTIAL or VIOLATED classifications, do NOT suggest code changes: simply explain the deficiencies in the implementation.")
+    "PARTIAL or VIOLATED classifications, do NOT suggest code changes: simply explain the deficiencies in the implementation. In the case of" \
+    "an INCONCLUSIVE classification, do NOT describe a deficiency (none was confirmed): instead, state specifically what you searched for" \
+    "and could not locate or confirm, so a future round knows what to investigate.")
 
 class JudgeResult(BaseModel):
     judgement_result: list[RequirementAnalysis] = Field(description="A list of analysis results, with one element per original requirement.")
@@ -95,7 +97,10 @@ provided.
 Each requirement is evaluated against the current implementation and assigned a classification:
 {classification_explanation}
 
-If any requirements are classified as PARTIAL or VIOLATED, you must address this feedback.
+If any requirements are classified as PARTIAL or VIOLATED, you must address this feedback with changes to the
+implementation. If any requirements are classified as INCONCLUSIVE, the judge was unable to locate or confirm the
+relevant code — do NOT make speculative code changes in response; instead, make the relevant code easier to find
+(e.g., by name or location) or clarify the requirement, so a future round can actually locate and judge it.
     """
 
 def _format_result(

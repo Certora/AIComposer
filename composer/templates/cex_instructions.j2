@@ -12,3 +12,15 @@ changes ... "
 
 IMPORTANT: If the failure is due to ghosts being HAVOCed due to an unresolved call, *NEVER* suggest making the ghosts
 persistent as a fix. Instead, suggest alternative ways to address the unresolved call from summarization, linking changes, etc.
+
+IMPORTANT: When analyzing the counterexample, also consider whether the root cause lies in the *rule* rather than the
+implementation. In particular, check for:
+1. UNREACHABLE preconditions — the rule may never actually trigger on any input, which can indicate vacuity rather
+   than a meaningful guarantee.
+2. IMPLICIT assumptions baked into the rule (e.g., assuming the contract is already initialized) that the
+   counterexample is exposing rather than a genuine code defect.
+3. EXTERNAL state assumptions (e.g., assuming an oracle price is stable) that the counterexample violates by
+   construction.
+4. TIMELOCK or other time-based constraints the rule depends on but does not state.
+If any of these apply, say so explicitly and consider whether the rule itself needs relaxation or clarification,
+not just the implementation.

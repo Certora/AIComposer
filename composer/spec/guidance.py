@@ -22,3 +22,15 @@ unresolved calls.
     @override
     def run(self) -> str:
         return load_jinja_template("unresolved_call_guidance.j2")
+
+@tool_display("Getting call resolution guidance", None)
+class ResolutionGuidance(WithImplementation[str]):
+    """
+Invoke this tool to receive guidance on how the Certora Prover resolves ambiguous/polymorphic calls (e.g.,
+calls through an interface type), and what it takes to *soundly* conclude that a callee is definitely one of
+the contracts in the prover's inputs. Consult this before relying on a DISPATCHER summary, which unsoundly
+assumes the callee is always one of the known contracts.
+    """
+    @override
+    def run(self) -> str:
+        return load_jinja_template("resolution_guidance.j2")

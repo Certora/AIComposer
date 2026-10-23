@@ -464,3 +464,7 @@ async def analyze_with_calltraces(
 
     report_dir = pathlib.Path(args.folder)
     return await _analyze_core(input_messages, initial_prompt, report_dir, args, output if output else _default_format, token_usage)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

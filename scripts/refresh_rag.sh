@@ -23,13 +23,15 @@ set -euo pipefail
 script_dir="$(realpath "$(dirname "$0")")"
 parent="$(realpath "$script_dir/..")"
 
-# extended_rag_db connection (mirrors populate_extended_rag.sh / SANITY_DEFAULT_CONNECTION)
-ext_conn="postgresql://extended_rag_user:rag_password@localhost:5432/extended_rag_db"
+# extended_rag connection: same rag_db database as the default connection, but as
+# extended_rag_user, whose search_path is scoped to the extended_rag schema (see
+# composer/scripts/init-db.sql). Mirrors populate_extended_rag.sh / SANITY_DEFAULT_CONNECTION.
+ext_conn="postgresql://extended_rag_user:rag_password@localhost:5432/rag_db"
 
-# --- options (defaults: regenerate docs, refresh the CVL-only rag_db) ---
+# --- options (defaults: regenerate docs, refresh the CVL-only rag schema) ---
 do_gen=1        # 0 with --skip-gen-docs to reuse existing scripts/prover-docs/*.html
-do_default=1    # refresh rag_db        (CVL only; used by AI Composer + cex-analyzer)
-do_extended=0   # refresh extended_rag_db (CVL + prover + user-guide; used by sanity-analyzer)
+do_default=1    # refresh the rag schema          (CVL only; used by AI Composer + cex-analyzer)
+do_extended=0   # refresh the extended_rag schema (CVL + prover + user-guide; used by sanity-analyzer)
 
 usage() {
     cat <<'EOF'
@@ -40,18 +42,18 @@ Regenerate the documentation and rebuild the CVL-manual RAG from scratch.
 Options:
   --skip-gen-docs   Skip the gen_docs.sh step and rebuild from the HTML already
                     present in scripts/prover-docs/. Use when the docs are fresh.
-  --extended        ALSO refresh extended_rag_db (CVL + prover + user-guide).
-                    Requires that DB / user to already be provisioned.
-  --all             Refresh both rag_db and extended_rag_db.
-  --only-extended   Refresh ONLY extended_rag_db (skip rag_db).
+  --extended        ALSO refresh the extended_rag schema (CVL + prover + user-guide).
+                    Requires that DB user to already be provisioned.
+  --all             Refresh both the rag and extended_rag schemas.
+  --only-extended   Refresh ONLY the extended_rag schema (skip rag).
   -h, --help        Show this help.
 
-Default (no options): regenerate docs, then wipe+rebuild rag_db only.
+Default (no options): regenerate docs, then wipe+rebuild the rag schema only.
 
 Examples:
-  scripts/refresh_rag.sh                 # docs -> wipe+rebuild rag_db
-  scripts/refresh_rag.sh --all           # docs -> wipe+rebuild both databases
-  scripts/refresh_rag.sh --skip-gen-docs # rebuild rag_db from existing HTML
+  scripts/refresh_rag.sh                 # docs -> wipe+rebuild the rag schema
+  scripts/refresh_rag.sh --all           # docs -> wipe+rebuild both schemas
+  scripts/refresh_rag.sh --skip-gen-docs # rebuild the rag schema from existing HTML
 EOF
 }
 
@@ -78,10 +80,10 @@ wipe_db() {
 
 echo "============================================================"
 echo "  RAG refresh"
-echo "    regenerate docs : $([[ $do_gen -eq 1 ]] && echo yes || echo 'no (reuse prover-docs/)')"
-echo "    rag_db          : $([[ $do_default -eq 1 ]] && echo 'wipe + rebuild' || echo skip)"
-echo "    extended_rag_db : $([[ $do_extended -eq 1 ]] && echo 'wipe + rebuild' || echo skip)"
-echo "  This empties the target database(s) then rebuilds. Run offline."
+echo "    regenerate docs      : $([[ $do_gen -eq 1 ]] && echo yes || echo 'no (reuse prover-docs/)')"
+echo "    rag schema           : $([[ $do_default -eq 1 ]] && echo 'wipe + rebuild' || echo skip)"
+echo "    extended_rag schema  : $([[ $do_extended -eq 1 ]] && echo 'wipe + rebuild' || echo skip)"
+echo "  This empties the target schema(s) then rebuilds. Run offline."
 echo "============================================================"
 
 # 1. (re)generate documentation HTML into scripts/prover-docs/
@@ -90,17 +92,17 @@ if [[ $do_gen -eq 1 ]]; then
     bash "$script_dir/gen_docs.sh"
 fi
 
-# 2+3. rag_db (CVL only)
+# 2+3. rag schema (CVL only)
 if [[ $do_default -eq 1 ]]; then
-    wipe_db "rag_db (CVL only)"
-    echo "==> Rebuilding rag_db (populate_rag.sh) ..."
+    wipe_db "rag schema (CVL only)"
+    echo "==> Rebuilding rag schema (populate_rag.sh) ..."
     bash "$script_dir/populate_rag.sh"
 fi
 
-# 2+3. extended_rag_db (CVL + prover + user-guide)
+# 2+3. extended_rag schema (CVL + prover + user-guide)
 if [[ $do_extended -eq 1 ]]; then
-    wipe_db "extended_rag_db (CVL + prover + user-guide)" --conn-string "$ext_conn"
-    echo "==> Rebuilding extended_rag_db (populate_extended_rag.sh) ..."
+    wipe_db "extended_rag schema (CVL + prover + user-guide)" --conn-string "$ext_conn"
+    echo "==> Rebuilding extended_rag schema (populate_extended_rag.sh) ..."
     bash "$script_dir/populate_extended_rag.sh"
 fi
 

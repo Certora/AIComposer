@@ -39,3 +39,7 @@ async def _main() -> int:
 
 def main() -> int:
     return asyncio.run(_main())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

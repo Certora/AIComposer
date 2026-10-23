@@ -295,3 +295,7 @@ async def async_analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None
 def analyze(args: SanityAnalysisArgs) -> SanityAnalysisResult | None:
     import asyncio
     return asyncio.run(async_analyze(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

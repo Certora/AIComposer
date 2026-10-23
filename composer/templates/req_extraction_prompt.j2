@@ -17,7 +17,24 @@ After your analysis, formulate these extracted requirements in natural language 
 directive should be similar to "The implementation must ensure that ...", 
 "When X happens, the implementation must ...", etc.
 
-IMPORTANT: If you are unclear as to what component the specification is targeting, as the user for help.
+IMPORTANT: Before finalizing your list of requirements, apply the following checks to each candidate:
+
+1. CONTRADICTION CHECK: If a requirement implied by the system document appears to conflict with the provided
+   specification, rather than merely supplementing it, do *NOT* silently include it and do *NOT* silently drop it.
+   Use the human_in_the_loop tool to flag the apparent conflict and ask how to proceed before deciding.
+2. EXPRESSIBILITY CHECK: Only include requirements that could, in principle, be formalized as a CVL rule or
+   invariant over the state and behavior of the component (e.g., "the balance must never decrease during a
+   withdrawal-only call"). Do *NOT* include requirements that are purely qualitative or subjective and cannot be
+   checked against contract state or behavior (e.g., "the protocol must feel responsive to users").
+3. DEDUPLICATION CHECK: Before including a requirement, check whether the provided specification already
+   enforces the same property, even if phrased differently or under a different rule name. If it does, do *NOT*
+   include it, even if the system document also describes it.
+4. PRIORITIZATION: Order your final list of requirements from most to least critical, where "most critical" means
+   most directly related to fund safety, access control, or core protocol invariants, and "least critical" means
+   secondary behavioral or usability properties. Express priority *only* through list order — do *NOT* add a
+   priority label, tag, or numeric prefix inside the requirement text itself.
+
+IMPORTANT: If you are unclear as to what component the specification is targeting, ask the user for help.
 
 IMPORTANT: You *MUST* consult the user if you are uncertain about specific requirements or the meaning
 behind parts of the system document or specification. You MUST use the human_in_the_loop tool to clarify any

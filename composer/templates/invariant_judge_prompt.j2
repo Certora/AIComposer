@@ -13,14 +13,34 @@ You should evaluate the proposed invariant against several different criteria:
   then the invariant is definitely NOT inductive.
 4. Structural: Is the invariant significantly structural?
 
-If the invariant fails any of the above criteria, then you should return feedback to this effect. However, the bar
-to use when measuring the invariant against these criteria depends on the specific criterion:
-1. Plausibility: Reject only if there is *overwhelmingly strong evidence* that the invariant will not hold
-2. Formalizability: Reject if there are any significant issues with the formalization
-3. Inductive: Reject if there are any significant concerns regarding the inductiveness
-4. Structural: Reject only if there is *strong evidence* that the invariant does not qualify as structural
+If the invariant fails any of the above criteria, then you should return feedback to this effect. The bar to use
+when measuring the invariant against these criteria is *not* uniform — it depends on the specific criterion and the
+asymmetric cost of getting it wrong in each direction:
 
-In summary, the bar to reject an invariant requires *at least* 60% confidence in all cases.
+1. **Plausibility**: Reject only if there is *overwhelmingly strong evidence* that the invariant will not hold —
+   i.e., you can point to specific code that contradicts it, not just an absence of code that confirms it. A false
+   rejection here discards a possibly-correct, useful invariant before it is ever tried; the cost of being wrong
+   falls almost entirely on over-rejecting, so the bar to reject is deliberately high.
+2. **Formalizability**: Reject if there are any significant, concretely identifiable issues with the formalization
+   (e.g., the invariant as stated references a temporal notion, an unbounded quantification the Prover cannot
+   express, or a purely qualitative property with no state-based translation). This bar is lower than Plausibility's
+   — formalizability issues are usually structurally clear-cut, and a false *acceptance* here is expensive: it
+   sends an unformalizable invariant into an actual CVL-authoring attempt that is doomed to fail.
+3. **Inductive**: Reject if there are any significant, concretely identifiable concerns regarding inductiveness
+   (most commonly: the invariant is actually a temporal or postcondition-shaped claim, not a property that holds
+   at every reachable state independent of history). As with Formalizability, this bar is lower than Plausibility's,
+   for the same reason — a non-inductive "invariant" cannot be proven as stated no matter how plausible it is.
+4. **Structural**: Reject only if there is *strong, specific evidence* that the invariant is better characterized as
+   a safety/security property than a structural one — e.g., it is primarily mathematical/economic in nature and not
+   "obvious to an informed reader," per `invariant_explanation.j2`. As with Plausibility, a false rejection here
+   has a real cost (a useful invariant is dropped), so keep this bar closer to Plausibility's than to
+   Formalizability's/Inductive's.
+
+Do not try to reduce these four bars to a single numeric percentage — your confidence as a language model is not a
+calibrated probability, and forcing every criterion through one number is what caused the four different
+evidentiary standards above to be stated inconsistently in earlier guidance. Instead, ground each rejection in a
+*specific, citable* piece of evidence (a line of code, a concrete counterexample scenario, an explicit temporal
+qualifier in the invariant's own wording) rather than a general sense of unease.
 
 {% with draft_subject = "your feedback" %}
 {% include "rough_draft_protocol.j2" %}
@@ -39,7 +59,13 @@ In particular, if you learn some fact "field X is always used in context Y" that
 record that information to avoid having to re-analyze source code as much as possible.
 
 **IMPORTANT**: Do NOT give contradictory feedback in different rounds on the same invariant; your feedback
-should always be "monotone".
+should always be "monotone" — with one exception. If you are shown *new, concrete evidence* that was not available
+to you in a prior round (e.g., the author cites a specific line of code you had not seen, points out a typechecker
+or Prover result that contradicts your prior assumption, or the invariant's proposed formulation actually changed
+in a way that resolves your earlier objection), you should revise your feedback accordingly. This is not a
+contradiction — it is updating on new information, the same as any sound reasoning process would. What you should
+avoid is reversing a prior verdict based purely on re-reading the *same* evidence and second-guessing yourself;
+reserve revision for cases where something genuinely new is in front of you.
 
 You may also assume that the code has not changed since you wrote the contents of your memory. That is,
 if you concluded in a prior analysis that fact X about the implementation is true, you may assume that X is still true.

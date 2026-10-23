@@ -26,7 +26,7 @@ from graphcore.tools.schemas import WithImplementation, WithInjectedState, WithI
 from composer.spec.context import (
     WorkflowContext, CacheKey, CVLGeneration, CVLJudge,
 )
-from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance
+from composer.spec.guidance import ERC20TokenGuidance, UnresolvedCallGuidance, ResolutionGuidance
 from composer.core.state import merge_validation
 from composer.spec.graph_builder import run_to_completion
 from composer.cvl.tools import put_cvl_raw, put_cvl, get_cvl, edit_cvl
@@ -383,6 +383,7 @@ def static_tools() -> list[BaseTool]:
         edit_cvl(CVLGenerationState),
         ERC20TokenGuidance.as_tool("erc20_guidance"),
         UnresolvedCallGuidance.as_tool("unresolved_call_guidance"),
+        ResolutionGuidance.as_tool("resolution_guidance"),
     ]
 
 

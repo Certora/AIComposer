@@ -57,3 +57,12 @@ hook Sstore _erc20_summ_stake1._balances[key address account] uint newValue {
 ```
 
 One such set of hooks will be needed for each explicit erc20 instance.
+
+IMPORTANT: This hook pattern assumes the storage layout referenced (`_erc20_summ_stake1._balances`) belongs directly
+to the contract instance you are hooking. Many large, real-world tokens (including USDC) are deployed behind an
+upgradeable proxy: the storage lives at the proxy's address, but the compiled ABI and storage-layout reasoning
+come from a separate logic contract. If a token you are explicitly modelling is proxy-based, hook the storage
+variable as it is laid out at the *proxy* contract instance provided to the prover, not the logic contract — check
+which of the two was actually given as the explicit ERC20 instance in the prover inputs before writing the hook,
+and if it is unclear from the inputs which one holds the live storage, treat this as an ambiguity to flag (as
+described in the regime-check step above) rather than guessing.

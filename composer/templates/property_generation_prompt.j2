@@ -90,6 +90,12 @@ feedback as soon as possible.
   In other words, the preconditions in the rule and the logical encoding of the implementation's code are themselves
   mutually unsatisfiable. In this case, you should try to identify places where `require` statements in your rule
   may conflict with any assumptions/requirements in the code.
+  + If your fix involves relaxing or removing a `require`/`requireInvariant` that is *shared* with other rules
+    (i.e., other rules also `requireInvariant` the same invariant, or rely on the same precondition being true),
+    check whether that precondition was load-bearing for those other rules' own base cases or reachability —
+    weakening it here can silently reintroduce vacuity elsewhere rather than only fixing the rule in front of you.
+    A full, rule-unscoped `verify_spec` run (Step 4 below) will catch this eventually, but reasoning about it now,
+    at the point of the change, is cheaper than discovering it later as an unrelated-looking sanity failure.
 * For any other logical errors/issues not described here, address the changes in a methodical way. Use your
   adaptive thinking and the cvl researcher to come to *principled* solutions. Do *NOT* try to brute force
   the solution by trying random changes.
@@ -106,6 +112,10 @@ Unless you can conclude that the DISPATCHER assumption is justified, use a hybri
 within the generated summary, match the callee contract against known implementers in the prover input.
 For those callees, simply dispatch the call to the relevant implementation. For calls "outside" of the prover
 inputs, fall back on a sound model of the external behavior, using e.g., ghosts.
+
+Before using a DISPATCHER summary, call the `resolution_guidance` tool and apply its criteria to the specific
+call site — do not treat "definitely one of the contracts in prover inputs" as a judgment call you make from
+general intuition. If the call site does not meet those criteria, use the hybrid approach above instead.
 
 ## Step 4
 

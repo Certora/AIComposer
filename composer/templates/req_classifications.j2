@@ -1,5 +1,14 @@
 * SATISFIED: with overwhelming certainty, the implementation satisfies the requirement
 * LIKELY: the implementation *seems* to satisfy the requirement, but precise verification of this fact is beyond your reasoning capabilities (e.g., requiring symbolic
 reasoning, etc.)
-* PARTIAL: The implementation partially satisfies the requirement, but some key behavior is missing
-* VIOLATED: With overwhelming certainty, the implementation does not satisfy the requirement, OR there is no evidence that the requirement is satisfied.
+* PARTIAL: you found and examined the relevant code, and it partially satisfies the requirement, but some key behavior is confirmed missing
+* VIOLATED: with overwhelming certainty, having found and examined the relevant code, the implementation does not satisfy the requirement
+* INCONCLUSIVE: after a genuine search, you could not locate the code relevant to this requirement, or could not determine whether it satisfies the requirement — this is a search/reasoning limitation, not a confirmed defect. Do NOT use VIOLATED for this case.
+
+VIOLATED and INCONCLUSIVE are easy to conflate but mean different things to whoever reads your classification: VIOLATED
+says "I checked, and it's broken" — it should only be used when you can point to the specific code that fails to meet
+the requirement. INCONCLUSIVE says "I couldn't confirm either way" — use it whenever the honest answer is that you
+didn't find enough to judge, rather than defaulting to VIOLATED because no evidence of satisfaction turned up. Both
+INCONCLUSIVE and VIOLATED still require further attention before a requirement can be considered met — the difference
+is what that attention should look like: VIOLATED calls for a fix to the implementation; INCONCLUSIVE calls for
+locating and examining the relevant code before any fix is attempted.

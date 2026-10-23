@@ -1,6 +1,44 @@
 When reasoning about ERC20 tokens, it is extremely common to simply model the behavior of all
 tokens using prover *ghost state* and *CVL summaries*.
 
+IMPORTANT: Before applying the summarization strategy below, determine which *behavioral* regime applies to
+each ERC20 instance you are summarizing. An interface being "standard ERC20" (i.e., exposing transfer/balanceOf/
+approve/etc.) says nothing about whether its *runtime* behavior matches the strict, conservation-preserving model
+assumed below. Specifically, check for evidence that the token(s) in question may exhibit:
+
+1. FEE-ON-TRANSFER / DEFLATIONARY behavior: the recipient receives less than the amount sent.
+2. REBASING behavior: balances can change without any transfer call (e.g., an explicit `rebase`/`sync` method, or
+   balances computed from a share/index rather than stored directly).
+3. CALLBACK/HOOK behavior (ERC777, ERC1363-style): the transfer call can invoke arbitrary code on the recipient or
+   sender, a reentrancy surface the flat ghost-mapping model below does not represent.
+4. BLACKLIST/PAUSABLE behavior: transfer can revert based on account status rather than balance.
+
+Look for evidence in two places:
+* **The contract under verification's own code.** Does it use a "balance-before / balance-after" diffing pattern
+  around transfers (e.g., reading `balanceOf` immediately before and after a `transferFrom` to compute the actual
+  amount received, rather than trusting the `amount` argument)? This is a strong signal the protocol is
+  *deliberately defending* against fee-on-transfer or similar tokens — using the strict conservation model below
+  would then be unsound for verifying that defense; it needs to be relaxed to allow `received <= amount` rather
+  than assuming `received == amount`.
+* **The application context / system document.** Does it name specific, known tokens (e.g., "this vault only
+  accepts USDC and WETH") versus describing arbitrary, permissionless, or user-supplied token listing?
+
+Based on what you find:
+
+- **Evidence indicates a small set of specific, well-known, standards-compliant tokens** — the strict model below
+  is appropriate. Proceed with it, but record this determination and its basis via `plan_write` so it is auditable.
+- **Evidence indicates the protocol may interact with non-standard tokens** (fee-on-transfer, rebasing, or tokens
+  permissionlessly supplied by users) — the strict model below is unsound for that case. Do NOT use it unmodified.
+  Instead, relax the summary to admit the relevant non-standard behavior (e.g., model the credited amount as any
+  value `<= amount` for a possible fee-on-transfer token, using a declared-but-undefined variable rather than
+  assuming exact conservation), and record this modeling choice in a CVL comment directly above the summary.
+- **Evidence is genuinely ambiguous** (you cannot determine which regime applies from the source code or provided
+  context) — do NOT silently default to the strict model without comment. Proceed with the strict model as a
+  documented, explicit assumption: record the ambiguity prominently via `plan_write`, naming the specific tokens
+  or interfaces it applies to, and add a CVL comment directly above the affected summary stating that a
+  standards-compliant, conservation-preserving token was assumed and that this assumption has not been confirmed
+  against the actual tokens the protocol will interact with in production.
+
 For example, the behavior of transfer is usually summarized as follows:
 
 ```cvl
@@ -44,8 +82,10 @@ in this example, if the call returns `false` or simply reverts on an error (both
 
 The other ERC20 functions are modelled similarly with ghost mappings for allowances.
 
-In the vast majority of cases, where the protocol is expected to be used with standards compliant, non-malicious ERC20 tokens,
-this modelling is sufficient; explicitly including implementations of ERC20 tokens in the prover is *generally* not necessary.
+This exact-conservation model is sufficient *only* for the regime you determined above — a small set of specific,
+well-known, standards-compliant tokens. Do not treat it as a universal default; explicitly including implementations
+of ERC20 tokens in the prover is *generally* not necessary once the regime check above has been done, but the check
+itself is not optional.
 
 However, if the protocol has its own extensions to ERC20 which expose functions that are *significant* points of interaction outside
 of the ERC20 standard, then they should be included.

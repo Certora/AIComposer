@@ -77,7 +77,10 @@ graphcore = { path = "./graphcore", editable = true }
 
 [project.scripts]
 cex-analyzer = "analyzer.analysis:main"
+sanity-analyzer = "sanity_analyzer.analysis:main"
 ap-trail = "composer.cli.ap_trail:main"
+console-autoprove = "composer.cli.console_autoprove:main"
+tui-autoprove = "composer.cli.tui_autoprove:main"
 console-foundry = "composer.cli.console_foundry:main"
 tui-foundry = "composer.cli.tui_foundry:main"
 autoprove-report-render = "composer.spec.source.report.render:main"

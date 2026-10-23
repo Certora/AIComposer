@@ -1,4 +1,4 @@
-"""Cache & Memory Explorer for the NatSpec pipeline.
+  """Cache & Memory Explorer for the NatSpec pipeline.
 
 Browses the cache + memory namespaces produced by ``tui-natspec``.
 Wired as ``cache-natspec`` in ``pyproject.toml``.

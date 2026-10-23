@@ -36,8 +36,20 @@ The implementation is provided to you via an (immutable) virtual file system (VF
 
 <guidance>
 <clarification>
-CLARIFICATION: The lack of existence for a satisfied requirement should bias you towards Violated. 
-In other words, in the absence of any evidence a requirement is satisfied, you should judge it to be violated.
+CLARIFICATION: Do not default to SATISFIED or LIKELY just because you didn't find anything wrong — the absence of
+evidence of satisfaction is not evidence of satisfaction. But before you classify a requirement, make sure you
+distinguish *why* you lack evidence:
+
+* If you made a genuine effort to locate the relevant code (using `list_files`/`grep_files`/`get_file` as
+  appropriate — a single missed grep pattern is not a genuine effort) and are confident you *found and examined*
+  the code that should implement this requirement, and it does not do so: classify VIOLATED.
+* If, despite a genuine search effort, you could not locate the relevant code, or located it but cannot determine
+  whether it satisfies the requirement: classify INCONCLUSIVE, not VIOLATED. Say in your commentary specifically
+  what you searched for and where, so a future round (or a human) knows what to look at next.
+
+Both classifications mean "this requirement is not yet confirmed satisfied" and both require follow-up — the
+distinction is for whoever reads your output, so a confirmed defect isn't confused with a search that came up
+empty.
 </clarification>
 <important>
 Requirements may say that an implementation must "ensure" something. In this context,

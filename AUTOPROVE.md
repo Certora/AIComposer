@@ -132,15 +132,16 @@ You will likely want to install the tool using the `--editable` flag. You'll als
 | `--cache-ns` | None | Cache namespace string. Enables cross-run caching so repeated runs skip completed phases |
 | `--memory-ns` | None | Memory namespace. Defaults to the auto-generated thread ID |
 | `--cloud` | off | Run prover jobs in the Certora cloud instead of locally |
-| `--model` | `claude-opus-4-6` | Anthropic model to use |
-| `--tokens` | 10000 | Token budget for LLM responses |
+| `--heavy-model` | `claude-opus-4-6` | Anthropic model for complex tasks. AutoProve has no single `--model` flag — it uses this and `--lite-model` instead |
+| `--lite-model` | `claude-sonnet-4-6` | Anthropic model for simpler tasks |
+| `--tokens` | 128000 | Token budget for code generation |
 | `--thinking-tokens` | 2048 | Thinking token budget |
 | `--rag-db` | `postgresql://rag_user:rag_password@localhost:5432/rag_db` | RAG database connection string |
 
 ### Example
 
 ```bash
-python tui_autoprove.py \
+tui-autoprove \
     ~/projects/my-defi-protocol \
     src/Vault.sol:Vault \
     docs/vault-design.pdf \
@@ -148,6 +149,10 @@ python tui_autoprove.py \
     --max-concurrent 2 \
     --cache-ns my-vault-run
 ```
+
+(`tui-autoprove` is the installed console command — see the root [`README.md`](README.md#full-installation) for
+setup. Running the underlying script directly, e.g. `python composer/cli/tui_autoprove.py`, will fail with a
+`ModuleNotFoundError` unless it's run through the installed package rather than as a bare script.)
 
 ## Pipeline Phases
 
