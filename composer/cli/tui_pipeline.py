@@ -20,7 +20,7 @@ from graphcore.tools.memory import async_memory_tool
 from composer.core.user import user_data_ns
 from composer.input.types import ModelOptions, RAGDBOptions, DEFAULT_RECURSION_LIMIT
 from composer.input.parsing import add_protocol_args
-from composer.io.thread_logging import DEFAULT_META_NS, thread_logger
+from composer.io.thread_logging import DEFAULT_META_NS, thread_logger, default_logging_ns
 from composer.spec.agent_index import agent_index_config_from_env
 from composer.rag.db import PostgreSQLRAGDatabase
 from composer.rag.models import get_model
@@ -169,7 +169,7 @@ async def _main() -> int:
         print(f"[natspec] run_id={run_id}  thread={thread_id}", file=sys.stderr)
 
         async with thread_logger(
-            conn.store, run_tags.model_dump(), logging_ns, run_id=run_id,
+            conn.store, run_tags.model_dump(), default_logging_ns(None), run_id=run_id,
         ):
             start_env = build_rag_tool_env(
                 sort=sort,

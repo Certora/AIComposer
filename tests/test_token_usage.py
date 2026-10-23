@@ -134,7 +134,7 @@ def test_token_usage_summary_shape():
 async def test_token_usage_persisted_to_run_meta_tags():
     """finalize_tags wires the run's token totals into the stored RunMeta.tags."""
     from langgraph.store.memory import InMemoryStore
-    from composer.io.thread_logging import thread_logger, runs_ns, DEFAULT_META_NS
+    from composer.io.thread_logging import thread_logger, runs_ns, DEFAULT_META_NS, data_ns
 
     store = InMemoryStore()
     s = RunSummary()
@@ -143,15 +143,12 @@ async def test_token_usage_persisted_to_run_meta_tags():
 
     async with thread_logger(
         store, {"root_thread_id": "x"}, DEFAULT_META_NS, run_id=s.run_id,
-        finalize_tags=lambda: {"token_usage": s.token_usage_summary()},
-    ):
-        pass  # pipeline body would run here; totals already recorded above
+    ) as logger:
+        await logger("token_usage", s.token_usage_summary())
 
-    item = await store.aget(runs_ns(DEFAULT_META_NS), s.run_id)
+    item = await store.aget(data_ns(DEFAULT_META_NS, s.run_id), "token_usage")
     assert item is not None
-    tags = cast(dict, item.value["tags"])
-    assert tags["root_thread_id"] == "x"  # original tag preserved
-    token_usage = cast(dict, tags["token_usage"])
+    token_usage = item.value
     assert token_usage["totals"] == {"input": 100, "output": 10, "cache_read": 5, "cache_write": 2}
     assert token_usage["by_model"] == {"opus": {"input": 100, "output": 10, "cache_read": 5, "cache_write": 2}}
 

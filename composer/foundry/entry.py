@@ -30,7 +30,7 @@ from composer.diagnostics.timing import RunSummary, install_run_summary
 from composer.input.parsing import Arg, add_protocol_args
 from composer.input.types import DEFAULT_RECURSION_LIMIT, TieredModelOptions, RAGDBOptions
 from composer.io.multi_job import HandlerFactory
-from composer.io.thread_logging import DEFAULT_META_NS, thread_logger
+from composer.io.thread_logging import DEFAULT_META_NS, thread_logger, default_logging_ns
 from composer.kb.knowledge_base import DefaultEmbedder
 from composer.rag.db import FOUNDRY_DEFAULT_CONNECTION, PostgreSQLRAGDatabase
 from composer.rag.models import get_model
@@ -177,7 +177,7 @@ async def _entry_point(summary: RunSummary) -> AsyncIterator[FoundryRunner]:
                 "cache_root": list(cache_root) if cache_root is not None else None,
                 "memory_ns": args.memory_ns if args.memory_ns is not None else thread_id,
             },
-            _user_ns(DEFAULT_META_NS),
+            default_logging_ns(uid=None),
             run_id=summary.run_id,
         ),
     ):

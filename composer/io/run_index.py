@@ -20,6 +20,7 @@ from composer.io.thread_logging import (
     DEFAULT_META_NS,
     RunMeta,
     ThreadMeta,
+    data_ns as _data_subns,
     runs_ns as _runs_subns,
     threads_ns as _threads_subns,
 )
@@ -41,6 +42,10 @@ def runs_ns(uid: str | None = None) -> tuple[str, ...]:
 
 def threads_ns(uid: str | None = None) -> tuple[str, ...]:
     return _threads_subns(logging_ns(uid))
+
+
+def data_ns(run_id: str, uid: str | None = None) -> tuple[str, ...]:
+    return _data_subns(logging_ns(uid), run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +93,26 @@ async def list_threads_for_run(
     ]
     pairs.sort(key=lambda kv: kv[1]["start_time"])
     return pairs
+
+
+async def list_run_data(
+    store: BaseStore, run_id: str, *, uid: str | None = None
+) -> list[tuple[str, dict]]:
+    """Return ``[(key, metadata), ...]`` for one run's ``run_data`` records, key-sorted."""
+    items = await store.asearch(data_ns(run_id, uid), limit=1000)
+    pairs: list[tuple[str, dict]] = [(it.key, cast(dict, it.value)) for it in items]
+    pairs.sort(key=lambda kv: kv[0])
+    return pairs
+
+
+async def get_run_data(
+    store: BaseStore, run_id: str, key: str, *, uid: str | None = None
+) -> dict | None:
+    """Return one ``run_data`` metadata dict by key, or ``None`` if absent."""
+    item = await store.aget(data_ns(run_id, uid), key)
+    if item is None:
+        return None
+    return cast(dict, item.value)
 
 
 # ---------------------------------------------------------------------------

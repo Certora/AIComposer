@@ -7,12 +7,14 @@ Subcommands:
                 ``--from-export`` replay).
 * ``export`` — dump a run + per-thread timelines to a gzipped JSON file
                 consumable by ``ap-trail view --from-export``.
+* ``data``   — show the ``run_data`` metadata dicts recorded for a run
+                (``--json`` for pipeable output).
 """
 
 import argparse
 import sys
 
-from composer.cli.diagnostics import ap_trail_export, ap_trail_ls, ap_trail_view
+from composer.cli.diagnostics import ap_trail_data, ap_trail_export, ap_trail_ls, ap_trail_view
 
 
 def main() -> int:
@@ -28,6 +30,9 @@ def main() -> int:
     p_export = sub.add_parser("export", help="Export a run to a gzipped JSON file.")
     ap_trail_export.add_arguments(p_export)
 
+    p_data = sub.add_parser("data", help="Show a run's recorded run_data metadata.")
+    ap_trail_data.add_arguments(p_data)
+
     args = parser.parse_args()
     match args.cmd:
         case "ls":
@@ -36,6 +41,8 @@ def main() -> int:
             return ap_trail_view.main(args)
         case "export":
             return ap_trail_export.main(args)
+        case "data":
+            return ap_trail_data.main(args)
         case _:
             parser.print_help()
             return 2

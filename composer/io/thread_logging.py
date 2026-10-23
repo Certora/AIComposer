@@ -7,6 +7,7 @@ from contextvars import ContextVar
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.store.base import BaseStore
+from composer.core.user import user_data_ns
 
 class _WithTimings(TypedDict):
     start_time: str
@@ -26,7 +27,6 @@ class ThreadMeta(_WithTimings):
 
 DEFAULT_META_NS = ("logging",)
 
-
 def runs_ns(parent_ns: tuple[str, ...]) -> tuple[str, ...]:
     """Sub-namespace under ``parent_ns`` where ``RunMeta`` records live."""
     return parent_ns + ("runs",)
@@ -35,6 +35,18 @@ def runs_ns(parent_ns: tuple[str, ...]) -> tuple[str, ...]:
 def threads_ns(parent_ns: tuple[str, ...]) -> tuple[str, ...]:
     """Sub-namespace under ``parent_ns`` where ``ThreadMeta`` records live."""
     return parent_ns + ("threads",)
+
+def data_ns(parent_ns: tuple[str, ...], run_id: str) -> tuple[str, ...]:
+    return parent_ns + ("run_data", run_id)
+
+def default_logging_ns(uid: str | None) -> tuple[str, ...]:
+    return user_data_ns(uid) + DEFAULT_META_NS
+
+def default_runs_ns(uid: str | None) -> tuple[str, ...]:
+    return runs_ns(default_logging_ns(uid))
+
+def default_threads_ns(uid: str | None) -> tuple[str, ...]:
+    return threads_ns(default_logging_ns(uid))
 
 def _time_string() -> str:
     return datetime.now(UTC).isoformat()
@@ -135,6 +147,10 @@ async def log_thread(
         except Exception:
             pass # swallow
 
+class RunDataLogger(Protocol):
+    async def __call__(self, key: str, val: dict[str, Any]) -> None:
+        ...
+
 @asynccontextmanager
 async def thread_logger(
     store: BaseStore,
@@ -142,8 +158,7 @@ async def thread_logger(
     ns: tuple[str, ...],
     *,
     run_id: str | None = None,
-    finalize_tags: Callable[[], dict[str, Any]] | None = None,
-) -> AsyncIterator[None]:
+) -> AsyncIterator[RunDataLogger]:
     run_id = uuid4().hex if run_id is None else run_id
 
     run_meta : RunMeta = {
@@ -156,19 +171,17 @@ async def thread_logger(
     tok = _logger.set(ThreadLogger(
         store, run_id, threads_ns(ns)
     ))
+    log_target_ns = data_ns(ns, run_id)
+    async def logger(key: str, val: dict[str, Any]):
+        try:
+            await store.aput(log_target_ns, key, val)
+        except Exception:
+            pass
     try:
-        yield
+        yield logger
     finally:
         _logger.reset(tok)
         run_meta["end_time"] = _time_string()
-        # Let the caller contribute tags computed at close time (e.g. final token
-        # usage, known only once the run is over). Guarded: tag enrichment must
-        # never break run finalization.
-        if finalize_tags is not None:
-            try:
-                run_meta["tags"] = {**run_meta["tags"], **finalize_tags()}
-            except Exception:
-                pass
         try:
             await store.aput(run_ns, run_id, {**run_meta})
         except Exception:
